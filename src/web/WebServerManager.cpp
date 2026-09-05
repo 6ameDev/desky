@@ -30,6 +30,13 @@ html, body {
 .dot-ok { background: #00e676; box-shadow: 0 0 6px #00e676; }
 .dot-warn { background: #ff9100; box-shadow: 0 0 6px #ff9100; }
 .dot-danger { background: #ff1744; box-shadow: 0 0 6px #ff1744; }
+.link-banner {
+  display: none; align-items: center; gap: 8px; font-size: 12px; font-weight: 700;
+  letter-spacing: 1px; color: #ff5252; cursor: pointer; text-transform: uppercase;
+}
+.telemetry-group.offline .link-banner { display: flex; }
+.telemetry-group.offline .telemetry-item { display: none; }
+.controls-dead { opacity: 0.35; pointer-events: none; filter: grayscale(1); }
 
 .icon-btn { 
   background: none; border: none; color: #888; cursor: pointer; padding: 4px; 
@@ -80,7 +87,7 @@ canvas { display: block; }
   <!-- Sleek Top Telemetry Bar -->
   <div class='header-bar'>
     <div class='brand'>Desky</div>
-    <div class='telemetry-group'>
+    <div class='telemetry-group' id='telemetry-group'>
       <!-- Swapped: Status is now on the LEFT side of telemetry -->
       <div class='telemetry-item'>
         <div id='status-dot' class='dot'></div>
@@ -91,6 +98,10 @@ canvas { display: block; }
         <span>DIST</span>
         <span id='dist' class='value'>---</span>
         <span style='font-size: 10px;'>mm</span>
+      </div>
+      <div id='link-banner' class='link-banner' onclick='retryNow()' title='Tap to retry now'>
+        <div class='dot dot-danger'></div>
+        <span>OFFLINE &mdash; Connecting (Retry)</span>
       </div>
       <!-- Reliable SVG Gear Icon -->
       <button class='icon-btn' onclick='toggleSettings()' title='Settings'>
@@ -116,7 +127,7 @@ canvas { display: block; }
   </div>
 
   <!-- Main Drive & Controls Area -->
-  <div class='main-stage'>
+  <div class='main-stage' id='controls'>
     
     <!-- Monotone Concentric Canvas Joystick -->
     <div id='joystick-container'>
@@ -135,8 +146,12 @@ canvas { display: block; }
 
 <script>
 document.addEventListener('gesturestart', function(e) { e.preventDefault(); });
-var websocket = new WebSocket('ws://' + window.location.hostname + '/ws');
-websocket.binaryType = "arraybuffer";
+var wsUrl = 'ws://' + window.location.hostname + '/ws';
+var websocket = null;
+var linkOnline = false;
+var reconnectDelay = 1000;
+var lastMsgMs = Date.now();
+var linkGen = 0;
 
 let lastX = 0, lastY = 0, isHolding = false, heartbeatInterval = null;
 
@@ -148,8 +163,67 @@ const threshSlider = document.getElementById('threshold');
 const threshVal = document.getElementById('thresh-val');
 const powerSlider = document.getElementById('maxpower');
 const powerVal = document.getElementById('power-val');
+const telemetryGroup = document.getElementById('telemetry-group');
+const controls = document.getElementById('controls');
 
-websocket.onmessage = function(event) {
+function setLink(online) {
+  linkOnline = online;
+  telemetryGroup.classList.toggle('offline', !online);
+  controls.classList.toggle('controls-dead', !online);
+  if (!online) resetJoystick();
+}
+
+function connect() {
+  if (websocket && (websocket.readyState === WebSocket.OPEN || websocket.readyState === WebSocket.CONNECTING)) return;
+  linkGen++;
+  let myGen = linkGen;
+  websocket = new WebSocket(wsUrl);
+  websocket.binaryType = "arraybuffer";
+  let sock = websocket;
+  websocket.onopen = function() {
+    if (myGen !== linkGen) { try { sock.close(); } catch (e) {} return; }
+    lastMsgMs = Date.now();
+    reconnectDelay = 1000;
+    setLink(true);
+  };
+  websocket.onmessage = function(event) {
+    if (myGen !== linkGen) return;
+    handleMessage(event);
+  };
+  websocket.onclose = function() {
+    if (myGen !== linkGen) return;
+    declareDead();
+  };
+  websocket.onerror = function() { try { sock.close(); } catch (e) {} };
+}
+
+function declareDead() {
+  setLink(false);
+  try { websocket.close(); } catch (e) {}
+  scheduleReconnect();
+}
+
+function scheduleReconnect() {
+  let wait = reconnectDelay + Math.random() * 500;
+  reconnectDelay = Math.min(reconnectDelay * 2, 5000);
+  setTimeout(function() { if (!linkOnline) connect(); }, wait);
+}
+
+function retryNow() {
+  reconnectDelay = 1000;
+  if (websocket && (websocket.readyState === WebSocket.CONNECTING || websocket.readyState === WebSocket.CLOSING)) {
+    try { websocket.onopen = null; websocket.onclose = null; websocket.close(); } catch (e) {}
+    websocket = null;
+  }
+  if (!linkOnline) {
+    connect();
+  } else if (websocket && websocket.readyState === WebSocket.OPEN) {
+    setLink(true);
+  }
+}
+
+function handleMessage(event) {
+  lastMsgMs = Date.now();
   var data = JSON.parse(event.data);
 
   if (data.type === 'config') {
@@ -179,7 +253,7 @@ websocket.onmessage = function(event) {
 
     ebrakeBtn.classList.toggle('active', !!data.ebrake);
   }
-};
+}
 
 function toggleSettings() {
   document.getElementById('drawer').classList.toggle('open');
@@ -292,6 +366,7 @@ function resetJoystick() {
 }
 
 canvas.addEventListener('pointerdown', (e) => {
+  if (!linkOnline) return;
   isHolding = true;
   canvas.setPointerCapture(e.pointerId);
   startHeartbeat();
@@ -305,7 +380,12 @@ canvas.addEventListener('pointermove', (e) => {
 canvas.addEventListener('pointerup', resetJoystick);
 canvas.addEventListener('pointercancel', resetJoystick);
 
+setInterval(function() {
+  if (linkOnline && Date.now() - lastMsgMs > 10000) declareDead();
+}, 1000);
+
 drawJoystick();
+connect();
 </script>
 </body>
 </html>
