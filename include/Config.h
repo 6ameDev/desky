@@ -20,3 +20,4 @@
 // --- Safety & Watchdog Constants ---
 #define DEFAULT_CLIFF_LIMIT_MM 200
 #define COMMAND_TIMEOUT_MS 300
+#define TELEMETRY_INTERVAL_MS 1000

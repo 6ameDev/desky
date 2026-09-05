@@ -85,10 +85,10 @@ void loop() {
     // Runs on Core 0 (Network Upkeep)
     webServer.cleanupClients();
 
-    static unsigned long lastPush = 0;
-    if (millis() - lastPush > 50) { // Push telemetry every 50ms
-        lastPush = millis();
-        webServer.pushTelemetry();
+    static unsigned long lastPoll = 0;
+    if (millis() - lastPoll > 50) {
+        lastPoll = millis();
+        webServer.pushTelemetryIfNeeded();
     }
 
     vTaskDelay(pdMS_TO_TICKS(10));

@@ -384,4 +384,21 @@ void WebServerManager::pushTelemetry() {
                   ",\"ebrake\":" + String(state.isEBrake ? "true" : "false") + 
                   ",\"status\":\"" + state.status + "\"}";
     _ws.textAll(json);
+    _lastPushMs = millis();
+    _lastSentCliff = state.isCliff;
+    _lastSentFault = state.isFault;
+    _lastSentEBrake = state.isEBrake;
+    _lastSentStatus = state.status;
+}
+
+void WebServerManager::pushTelemetryIfNeeded() {
+    ControlState state = _stateStore.getState();
+    bool eventChanged = (state.isCliff != _lastSentCliff) ||
+                        (state.isFault != _lastSentFault) ||
+                        (state.isEBrake != _lastSentEBrake) ||
+                        (state.status != _lastSentStatus);
+    if (!eventChanged && (millis() - _lastPushMs < TELEMETRY_INTERVAL_MS)) {
+        return;
+    }
+    pushTelemetry();
 }
