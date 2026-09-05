@@ -18,6 +18,7 @@ struct ControlState {
 class RobotStateStore {
 public:
     RobotStateStore();
+    void begin();
     ControlState getState();
     
     void updateDriveCommand(int8_t x, int8_t y);

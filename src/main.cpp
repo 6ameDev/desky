@@ -61,6 +61,7 @@ void setup() {
     Serial.begin(115200);
     Serial.println("\n--- ESP32 BOOTING UP ---");
 
+    stateStore.begin();
     motors.begin();
 
     // Reset and initialize I2C bus

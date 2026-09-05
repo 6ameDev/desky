@@ -13,9 +13,14 @@ static void ensurePrefs() {
 
 RobotStateStore::RobotStateStore() {
     _mutex = xSemaphoreCreateMutex();
+}
+
+void RobotStateStore::begin() {
     ensurePrefs();
     int saved = (int)s_prefs.getInt("maxPower", DEFAULT_MAX_POWER_PERCENT);
+    xSemaphoreTake(_mutex, portMAX_DELAY);
     _state.maxPowerPercent = constrain(saved, MIN_MAX_POWER_PERCENT, MAX_MAX_POWER_PERCENT);
+    xSemaphoreGive(_mutex);
 }
 
 ControlState RobotStateStore::getState() {
