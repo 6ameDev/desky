@@ -12,6 +12,11 @@
 #define PWM_RESOLUTION 8
 #define MIN_MOTOR_PWM 65
 
+// --- Max Power Setting ---
+#define DEFAULT_MAX_POWER_PERCENT 50
+#define MIN_MAX_POWER_PERCENT 10
+#define MAX_MAX_POWER_PERCENT 100
+
 // --- Safety & Watchdog Constants ---
 #define DEFAULT_CLIFF_LIMIT_MM 200
 #define COMMAND_TIMEOUT_MS 300

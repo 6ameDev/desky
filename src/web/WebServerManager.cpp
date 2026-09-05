@@ -41,10 +41,10 @@ html, body {
 /* Collapsible Settings Drawer */
 .drawer {
   width: 100%; background: #181818; border-bottom: 1px solid #282828; max-height: 0; overflow: hidden;
-  transition: max-height 0.3s ease-out, padding 0.3s ease; padding: 0 16px; display: flex; justify-content: center;
+  transition: max-height 0.3s ease-out, padding 0.3s ease; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; align-items: center;
   z-index: 9;
 }
-.drawer.open { max-height: 80px; padding: 12px 16px; }
+.drawer.open { max-height: 140px; padding: 12px 16px; }
 .setting-row { display: flex; align-items: center; gap: 12px; width: 100%; max-width: 360px; font-size: 13px; color: #aaa; }
 .setting-row input { flex: 1; accent-color: #00adb5; }
 
@@ -108,6 +108,11 @@ canvas { display: block; }
       <input type='range' id='threshold' min='30' max='500' value='250' oninput='updateThreshold(this.value)'>
       <span id='thresh-val' class='value'>--</span>
     </div>
+    <div class='setting-row'>
+      <span>MAX POWER</span>
+      <input type='range' id='maxpower' min='10' max='100' value='50' oninput='updateMaxPower(this.value)'>
+      <span id='power-val' class='value'>--</span>
+    </div>
   </div>
 
   <!-- Main Drive & Controls Area -->
@@ -141,6 +146,8 @@ const statusDot = document.getElementById('status-dot');
 const ebrakeBtn = document.getElementById('ebrake-btn');
 const threshSlider = document.getElementById('threshold');
 const threshVal = document.getElementById('thresh-val');
+const powerSlider = document.getElementById('maxpower');
+const powerVal = document.getElementById('power-val');
 
 websocket.onmessage = function(event) {
   var data = JSON.parse(event.data);
@@ -149,6 +156,10 @@ websocket.onmessage = function(event) {
     if (document.activeElement !== threshSlider) {
       threshSlider.value = data.threshold;
       threshVal.innerText = data.threshold == 500 ? 'OFF' : data.threshold + 'mm';
+    }
+    if (data.maxPower !== undefined && document.activeElement !== powerSlider) {
+      powerSlider.value = data.maxPower;
+      powerVal.innerText = data.maxPower + '%';
     }
   } 
   else if (data.type === 'telemetry') {
@@ -196,6 +207,14 @@ function updateThreshold(val) {
   threshVal.innerText = val == 500 ? 'OFF' : val + 'mm';
   if (websocket.readyState === WebSocket.OPEN) {
     let buffer = new Uint8Array([3, (val >> 8) & 0xFF, val & 0xFF]);
+    websocket.send(buffer.buffer);
+  }
+}
+
+function updateMaxPower(val) {
+  powerVal.innerText = val + '%';
+  if (websocket.readyState === WebSocket.OPEN) {
+    let buffer = new Uint8Array([4, val & 0xFF]);
     websocket.send(buffer.buffer);
   }
 }
@@ -320,7 +339,8 @@ void WebServerManager::cleanupClients() {
 
 void WebServerManager::sendConfig(AsyncWebSocketClient *client) {
     ControlState state = _stateStore.getState();
-    String json = "{\"type\":\"config\",\"threshold\":" + String(state.cliffThresholdMM) + "}";
+    String json = "{\"type\":\"config\",\"threshold\":" + String(state.cliffThresholdMM) +
+                  ",\"maxPower\":" + String(state.maxPowerPercent) + "}";
     if (client) {
         client->text(json);
     } else {
@@ -339,6 +359,9 @@ void WebServerManager::handleBinaryMessage(void *arg, uint8_t *data, size_t len)
         } else if (cmd == 0x03 && len >= 3) {
             uint16_t newThreshold = (data[1] << 8) | data[2];
             _stateStore.setCliffThreshold(newThreshold);
+            sendConfig();
+        } else if (cmd == 0x04 && len >= 2) {
+            _stateStore.setMaxPower(data[1]);
             sendConfig();
         }
     }
