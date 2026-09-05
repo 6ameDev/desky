@@ -163,25 +163,21 @@ websocket.onmessage = function(event) {
     }
   } 
   else if (data.type === 'telemetry') {
-    // Zero-pad distance to 3 digits (e.g., 005, 042, 120)
     let distVal = parseInt(data.distance);
-    distElem.innerText = isNaN(distVal) ? '---' : String(distVal).padStart(3, '0');
+    let newDist = isNaN(distVal) ? '---' : String(distVal).padStart(3, '0');
+    if (distElem.innerText !== newDist) distElem.innerText = newDist;
 
-    statElem.innerText = data.status;
+    if (statElem.innerText !== data.status) statElem.innerText = data.status;
 
+    let newDot = 'dot dot-ok';
     if (data.isCliff || data.isFault) {
-      statusDot.className = 'dot dot-danger';
+      newDot = 'dot dot-danger';
     } else if (data.ebrake) {
-      statusDot.className = 'dot dot-warn';
-    } else {
-      statusDot.className = 'dot dot-ok';
+      newDot = 'dot dot-warn';
     }
+    if (statusDot.className !== newDot) statusDot.className = newDot;
 
-    if (data.ebrake) {
-      ebrakeBtn.classList.add('active');
-    } else {
-      ebrakeBtn.classList.remove('active');
-    }
+    ebrakeBtn.classList.toggle('active', !!data.ebrake);
   }
 };
 
@@ -389,6 +385,7 @@ void WebServerManager::pushTelemetry() {
     _lastSentFault = state.isFault;
     _lastSentEBrake = state.isEBrake;
     _lastSentStatus = state.status;
+    _lastSentDistance = state.currentDistanceMM;
 }
 
 void WebServerManager::pushTelemetryIfNeeded() {
@@ -397,7 +394,9 @@ void WebServerManager::pushTelemetryIfNeeded() {
                         (state.isFault != _lastSentFault) ||
                         (state.isEBrake != _lastSentEBrake) ||
                         (state.status != _lastSentStatus);
-    if (!eventChanged && (millis() - _lastPushMs < TELEMETRY_INTERVAL_MS)) {
+    bool distanceMoved = abs(state.currentDistanceMM - _lastSentDistance) > TELEMETRY_DISTANCE_EPSILON_MM;
+    unsigned long interval = (eventChanged || distanceMoved) ? TELEMETRY_INTERVAL_MS : TELEMETRY_IDLE_INTERVAL_MS;
+    if (!eventChanged && !distanceMoved && (millis() - _lastPushMs < interval)) {
         return;
     }
     pushTelemetry();
