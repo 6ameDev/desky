@@ -116,12 +116,12 @@ canvas { display: block; }
   <div id='drawer' class='drawer'>
     <div class='setting-row'>
       <span>CLIFF LIMIT</span>
-      <input type='range' id='threshold' min='30' max='500' value='250' oninput='updateThreshold(this.value)'>
+      <input type='range' id='threshold' min='30' max='500' step='10' value='250' oninput='updateThreshold(this.value)'>
       <span id='thresh-val' class='value'>--</span>
     </div>
     <div class='setting-row'>
       <span>MAX POWER</span>
-      <input type='range' id='maxpower' min='10' max='100' value='50' oninput='updateMaxPower(this.value)'>
+      <input type='range' id='maxpower' min='10' max='100' step='5' value='50' oninput='updateMaxPower(this.value)'>
       <span id='power-val' class='value'>--</span>
     </div>
   </div>
@@ -344,6 +344,7 @@ function handlePointer(clientX, clientY) {
   const maxDist = outerRadius - innerRadius;
 
   let angle = Math.atan2(dy, dx);
+  angle = Math.round(angle / (Math.PI / 4)) * (Math.PI / 4);
   let clampedDist = Math.min(dist, maxDist);
 
   knobPos.x = center.x + Math.cos(angle) * clampedDist;
