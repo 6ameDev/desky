@@ -51,9 +51,13 @@ html, body {
   transition: max-height 0.3s ease-out, padding 0.3s ease; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; align-items: center;
   z-index: 9;
 }
-.drawer.open { max-height: 140px; padding: 12px 16px; }
+.drawer.open { max-height: 190px; padding: 12px 16px; }
 .setting-row { display: flex; align-items: center; gap: 12px; width: 100%; max-width: 360px; font-size: 13px; color: #aaa; }
 .setting-row input { flex: 1; accent-color: #00adb5; }
+.setting-row button {
+  flex: 1; background: #222; color: #e0e0e0; border: 1px solid #444; border-radius: 6px;
+  padding: 6px 0; font-size: 12px; font-weight: 700; letter-spacing: 1px; cursor: pointer;
+}
 
 /* Main Stage */
 .main-stage { flex: 1; width: 100%; display: flex; flex-direction: column; justify-content: space-evenly; align-items: center; }
@@ -123,6 +127,14 @@ canvas { display: block; }
       <span>MAX POWER</span>
       <input type='range' id='maxpower' min='10' max='100' step='5' value='50' oninput='updateMaxPower(this.value)'>
       <span id='power-val' class='value'>--</span>
+    </div>
+    <div class='setting-row'>
+      <span>TOF SOFT</span>
+      <button id='tof-reset' onclick='resetTof()'>RESET</button>
+    </div>
+    <div class='setting-row'>
+      <span>TOF HARD</span>
+      <button id='tof-reset-hard' onclick='resetTofHard()'>RESET</button>
     </div>
   </div>
 
@@ -244,7 +256,7 @@ function handleMessage(event) {
     if (statElem.innerText !== data.status) statElem.innerText = data.status;
 
     let newDot = 'dot dot-ok';
-    if (data.isCliff || data.isFault) {
+    if (data.isCliff || data.isFault || data.tofFault) {
       newDot = 'dot dot-danger';
     } else if (data.ebrake) {
       newDot = 'dot dot-warn';
@@ -285,6 +297,20 @@ function updateMaxPower(val) {
   powerVal.innerText = val + '%';
   if (websocket.readyState === WebSocket.OPEN) {
     let buffer = new Uint8Array([4, val & 0xFF]);
+    websocket.send(buffer.buffer);
+  }
+}
+
+function resetTof() {
+  if (websocket.readyState === WebSocket.OPEN) {
+    let buffer = new Uint8Array([5]);
+    websocket.send(buffer.buffer);
+  }
+}
+
+function resetTofHard() {
+  if (websocket.readyState === WebSocket.OPEN) {
+    let buffer = new Uint8Array([6]);
     websocket.send(buffer.buffer);
   }
 }
@@ -440,6 +466,10 @@ void WebServerManager::handleBinaryMessage(void *arg, uint8_t *data, size_t len)
         } else if (cmd == 0x04 && len >= 2) {
             _stateStore.setMaxPower(data[1]);
             sendConfig();
+        } else if (cmd == 0x05) {
+            _stateStore.requestTofRecovery(1);
+        } else if (cmd == 0x06) {
+            _stateStore.requestTofRecovery(2);
         }
     }
 }
@@ -459,6 +489,7 @@ void WebServerManager::pushTelemetry() {
                   ",\"isCliff\":" + String(state.isCliff ? "true" : "false") + 
                   ",\"isFault\":" + String(state.isFault ? "true" : "false") + 
                   ",\"ebrake\":" + String(state.isEBrake ? "true" : "false") + 
+                  ",\"tofFault\":" + String(state.tofFault ? "true" : "false") + 
                   ",\"status\":\"" + state.status + "\"}";
     _ws.textAll(json);
     _lastPushMs = millis();

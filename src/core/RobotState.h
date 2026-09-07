@@ -11,6 +11,8 @@ struct ControlState {
     bool isCliff = false;
     bool isFault = false;
     bool isEBrake = false;
+    bool tofFault = false;
+    int tofRecoveryRequest = 0;
     String status = "STOPPED";
     unsigned long lastCommandTime = 0;
 };
@@ -25,7 +27,9 @@ public:
     void toggleEBrake();
     void setCliffThreshold(int thresholdMM);
     void setMaxPower(int percent);
-    void updateTelemetry(int distanceMM, bool isCliff, bool isFault, const String& status);
+    void requestTofRecovery(int mode);
+    int takeTofRecoveryRequest();
+    void updateTelemetry(int distanceMM, bool isCliff, bool isFault, bool tofFault, const String& status);
 
 private:
     ControlState _state;

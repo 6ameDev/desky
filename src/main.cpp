@@ -12,24 +12,104 @@ MotorDriver motors(PIN_IN1, PIN_IN2, PIN_IN3, PIN_IN4, PIN_FAULT);
 WebServerManager webServer(stateStore);
 Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 
+bool tofReadingValid(const VL53L0X_RangingMeasurementData_t& measure, VL53L0X_Error err) {
+    return err == VL53L0X_ERROR_NONE &&
+           measure.RangeStatus != 4 &&
+           measure.RangeMilliMeter <= TOF_VALID_MAX_MM;
+}
+
+bool tofReinit() {
+    Wire.end();
+    Wire.begin(21, 22);
+    Wire.setTimeOut(I2C_TIMEOUT_MS);
+    Wire.setClock(100000);
+    if (!lox.begin()) {
+        Serial.println("[ToF] Re-init FAILED.");
+        return false;
+    }
+    VL53L0X_RangingMeasurementData_t trial;
+    if (!tofReadingValid(trial, lox.rangingTest(&trial, false))) {
+        Serial.println("[ToF] Re-init OK but trial reading invalid.");
+        return false;
+    }
+    Serial.println("[ToF] Sensor back online.");
+    return true;
+}
+
+void tofPulseClock() {
+    pinMode(22, OUTPUT);
+    pinMode(21, INPUT_PULLUP);
+    digitalWrite(22, HIGH);
+    delayMicroseconds(10);
+    for (int i = 0; i < 9; i++) {
+        digitalWrite(22, LOW);
+        delayMicroseconds(5);
+        digitalWrite(22, HIGH);
+        delayMicroseconds(5);
+    }
+}
+
+bool tofRecoverSoft() {
+    Serial.println("[ToF] Soft reset (no XSHUT)...");
+    tofPulseClock();
+    return tofReinit();
+}
+
+bool tofRecoverHard() {
+    Serial.println("[ToF] Hard reset (XSHUT)...");
+    digitalWrite(TOF_XSHUT_PIN, LOW);
+    delay(TOF_XSHUT_SHUTDOWN_MS);
+    tofPulseClock();
+    digitalWrite(TOF_XSHUT_PIN, HIGH);
+    delay(TOF_XSHUT_BOOT_MS);
+    return tofReinit();
+}
+
 // --- Core 1 Task: Hardware Loop (100Hz) ---
 void HardwareTask(void *pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
     const TickType_t xFrequency = pdMS_TO_TICKS(10); // 10ms loop time
+
+    int lastGoodDist = 999;
+    uint8_t lastGoodStatus = 4;
+    int consecErrors = 0;
+    int tick = 0;
 
     for (;;) {
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
 
         bool fault = motors.isFaultActive();
 
-        VL53L0X_RangingMeasurementData_t measure;
-        lox.rangingTest(&measure, false);
-        int dist = (measure.RangeStatus != 4) ? measure.RangeMilliMeter : 999;
+        int recoveryReq = stateStore.takeTofRecoveryRequest();
+        if (recoveryReq == 1) {
+            consecErrors = 0;
+            tofRecoverSoft();
+        } else if (recoveryReq == 2) {
+            consecErrors = 0;
+            tofRecoverHard();
+        }
+
+        tick++;
+        if (tick >= TOF_READ_EVERY_N_TICKS) {
+            tick = 0;
+            VL53L0X_RangingMeasurementData_t measure;
+            VL53L0X_Error err = lox.rangingTest(&measure, false);
+            if (tofReadingValid(measure, err)) {
+                consecErrors = 0;
+                lastGoodStatus = measure.RangeStatus;
+                lastGoodDist = measure.RangeMilliMeter;
+            } else {
+                consecErrors++;
+            }
+        }
+
+        int dist = lastGoodDist;
+        bool tofFault = (consecErrors >= TOF_MAX_CONSECUTIVE_ERRORS);
 
         ControlState state = stateStore.getState();
 
         bool isCliff = (state.cliffThresholdMM < 500) && 
-                       ((measure.RangeStatus == 4) || (dist > state.cliffThresholdMM));
+                       ((lastGoodStatus == 4) || (dist > state.cliffThresholdMM));
 
         int left = state.targetLeftSpeed;
         int right = state.targetRightSpeed;
@@ -41,6 +121,13 @@ void HardwareTask(void *pvParameters) {
         } else if (fault) {
             status = "DRIVER OVERLOAD!";
             motors.drive(0, 0);
+        } else if (tofFault) {
+            status = "TOF SENSOR FAULT";
+            if (left > 0 || right > 0) {
+                motors.applyBrake();
+            } else {
+                motors.drive(left, right);
+            }
         } else if (millis() - state.lastCommandTime > COMMAND_TIMEOUT_MS && (left != 0 || right != 0)) {
             status = "TIMEOUT STOP";
             stateStore.updateDriveCommand(0, 0);
@@ -53,7 +140,7 @@ void HardwareTask(void *pvParameters) {
             motors.drive(left, right);
         }
 
-        stateStore.updateTelemetry(dist, isCliff, fault, status);
+        stateStore.updateTelemetry(dist, isCliff, fault, tofFault, status);
     }
 }
 
@@ -64,9 +151,13 @@ void setup() {
     stateStore.begin();
     motors.begin();
 
+    pinMode(TOF_XSHUT_PIN, OUTPUT);
+    digitalWrite(TOF_XSHUT_PIN, HIGH);
+
     // Reset and initialize I2C bus
     Wire.end();
     Wire.begin(21, 22); 
+    Wire.setTimeOut(I2C_TIMEOUT_MS);
     Wire.setClock(100000); // 100kHz standard I2C speed
 
     // 2. Initialize distance sensor

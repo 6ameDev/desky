@@ -65,11 +65,26 @@ void RobotStateStore::setMaxPower(int percent) {
     s_prefs.putInt("maxPower", percent);
 }
 
-void RobotStateStore::updateTelemetry(int distanceMM, bool isCliff, bool isFault, const String& status) {
+void RobotStateStore::updateTelemetry(int distanceMM, bool isCliff, bool isFault, bool tofFault, const String& status) {
     xSemaphoreTake(_mutex, portMAX_DELAY);
     _state.currentDistanceMM = distanceMM;
     _state.isCliff = isCliff;
     _state.isFault = isFault;
+    _state.tofFault = tofFault;
     _state.status = status;
     xSemaphoreGive(_mutex);
+}
+
+void RobotStateStore::requestTofRecovery(int mode) {
+    xSemaphoreTake(_mutex, portMAX_DELAY);
+    _state.tofRecoveryRequest = mode;
+    xSemaphoreGive(_mutex);
+}
+
+int RobotStateStore::takeTofRecoveryRequest() {
+    xSemaphoreTake(_mutex, portMAX_DELAY);
+    int req = _state.tofRecoveryRequest;
+    _state.tofRecoveryRequest = 0;
+    xSemaphoreGive(_mutex);
+    return req;
 }
