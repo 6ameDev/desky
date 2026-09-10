@@ -51,7 +51,7 @@ html, body {
   transition: max-height 0.3s ease-out, padding 0.3s ease; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; align-items: center;
   z-index: 9;
 }
-.drawer.open { max-height: 190px; padding: 12px 16px; }
+.drawer.open { max-height: 265px; padding: 12px 16px; }
 .setting-row { display: flex; align-items: center; gap: 12px; width: 100%; max-width: 360px; font-size: 13px; color: #aaa; }
 .setting-row input { flex: 1; accent-color: #00adb5; }
 .setting-row button {
@@ -84,6 +84,24 @@ canvas { display: block; }
 .ebrake-btn.active { border-color: #ff1744; background: #2a080c; box-shadow: 0 0 16px rgba(255,23,68,0.4); }
 .ebrake-btn.active .ebrake-icon { color: #ff1744; border-color: #ff1744; text-shadow: 0 0 8px #ff1744; }
 .ebrake-btn.active + .ebrake-label { color: #ff1744; }
+
+/* IMU / Orientation Panel */
+.imu-panel {
+  width: 220px; background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 10px;
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+}
+.imu-title { font-size: 10px; font-weight: 700; letter-spacing: 1.5px; color: #888; display: flex; justify-content: space-between; align-items: center; }
+.imu-chip { font-size: 9px; font-weight: 700; letter-spacing: 1px; padding: 3px 8px; border-radius: 10px; background: #222; color: #666; }
+.imu-chip.stable { background: #06281a; color: #00e676; }
+.imu-chip.alert { background: #2a080c; color: #ff5252; }
+.imu-body { display: flex; gap: 12px; align-items: center; }
+.horizon {
+  width: 76px; height: 76px; border-radius: 50%; overflow: hidden; position: relative; flex-shrink: 0;
+  background: #0d2b45; border: 2px solid #333;
+}
+.horizon-plane { position: absolute; left: -25%; top: -25%; width: 150%; height: 150%; background: linear-gradient(to bottom, #0d2b45 49%, #00adb5 49%, #00adb5 51%, #5a3a1a 51%); }
+.imu-readouts { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.imu-row { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: #aaa; }
 </style>
 </head>
 <body>
@@ -136,6 +154,14 @@ canvas { display: block; }
       <span>TOF HARD</span>
       <button id='tof-reset-hard' onclick='resetTofHard()'>RESET</button>
     </div>
+    <div class='setting-row'>
+      <span>IMU AXIS</span>
+      <button id='axis-btn' onclick='cycleAxis()'>AXIS 0</button>
+    </div>
+    <div class='setting-row'>
+      <span>IMU FLAT</span>
+      <button onclick='calibrateIMU()'>CALIBRATE</button>
+    </div>
   </div>
 
   <!-- Main Drive & Controls Area -->
@@ -144,6 +170,19 @@ canvas { display: block; }
     <!-- Monotone Concentric Canvas Joystick -->
     <div id='joystick-container'>
       <canvas id='joystickCanvas' width='220' height='220'></canvas>
+    </div>
+
+    <!-- IMU / Orientation Panel -->
+    <div class='imu-panel'>
+      <div class='imu-title'><span>IMU / ORIENTATION</span><span id='imu-chip' class='imu-chip'>STABLE</span></div>
+      <div class='imu-body'>
+        <div class='horizon'><div id='horizon-plane' class='horizon-plane'></div></div>
+        <div class='imu-readouts'>
+          <div class='imu-row'><span>PITCH</span><span id='imu-pitch' class='value'>--</span></div>
+          <div class='imu-row'><span>ROLL</span><span id='imu-roll' class='value'>--</span></div>
+          <div class='imu-row'><span>GYRO Z</span><span id='imu-gyro' class='value'>--</span></div>
+        </div>
+      </div>
     </div>
 
     <!-- Automotive E-Brake Button -->
@@ -175,8 +214,14 @@ const threshSlider = document.getElementById('threshold');
 const threshVal = document.getElementById('thresh-val');
 const powerSlider = document.getElementById('maxpower');
 const powerVal = document.getElementById('power-val');
+const axisBtn = document.getElementById('axis-btn');
 const telemetryGroup = document.getElementById('telemetry-group');
 const controls = document.getElementById('controls');
+const imuPitch = document.getElementById('imu-pitch');
+const imuRoll = document.getElementById('imu-roll');
+const imuGyro = document.getElementById('imu-gyro');
+const imuChip = document.getElementById('imu-chip');
+const horizonPlane = document.getElementById('horizon-plane');
 
 function setLink(online) {
   linkOnline = online;
@@ -247,6 +292,9 @@ function handleMessage(event) {
       powerSlider.value = data.maxPower;
       powerVal.innerText = data.maxPower + '%';
     }
+    if (data.imuOrient !== undefined) {
+      axisBtn.innerText = 'AXIS ' + data.imuOrient;
+    }
   } 
   else if (data.type === 'telemetry') {
     let distVal = parseInt(data.distance);
@@ -264,6 +312,29 @@ function handleMessage(event) {
     if (statusDot.className !== newDot) statusDot.className = newDot;
 
     ebrakeBtn.classList.toggle('active', !!data.ebrake);
+
+    if (data.mpu !== undefined) {
+      let m = data.mpu;
+      let pText = m.healthy ? m.pitch.toFixed(1) + '°' : '--';
+      let rText = m.healthy ? m.roll.toFixed(1) + '°' : '--';
+      let gText = m.healthy ? m.gyroZ.toFixed(1) + '°/s' : '--';
+      if (imuPitch.innerText !== pText) imuPitch.innerText = pText;
+      if (imuRoll.innerText !== rText) imuRoll.innerText = rText;
+      if (imuGyro.innerText !== gText) imuGyro.innerText = gText;
+
+      let chipText = 'STABLE', chipClass = 'imu-chip stable';
+      if (!m.healthy) {
+        chipText = 'IMU OFFLINE'; chipClass = 'imu-chip';
+      } else if (m.isPickedUp) {
+        chipText = 'IN-AIR · TILTED'; chipClass = 'imu-chip alert';
+      }
+      if (imuChip.innerText !== chipText) imuChip.innerText = chipText;
+      if (imuChip.className !== chipClass) imuChip.className = chipClass;
+
+      if (m.healthy) {
+        horizonPlane.style.transform = 'rotate(' + (-m.roll) + 'deg) translateY(' + (-m.pitch * 0.6) + 'px)';
+      }
+    }
   }
 }
 
@@ -311,6 +382,20 @@ function resetTof() {
 function resetTofHard() {
   if (websocket.readyState === WebSocket.OPEN) {
     let buffer = new Uint8Array([6]);
+    websocket.send(buffer.buffer);
+  }
+}
+
+function cycleAxis() {
+  if (websocket.readyState === WebSocket.OPEN) {
+    let buffer = new Uint8Array([8]);
+    websocket.send(buffer.buffer);
+  }
+}
+
+function calibrateIMU() {
+  if (websocket.readyState === WebSocket.OPEN) {
+    let buffer = new Uint8Array([9]);
     websocket.send(buffer.buffer);
   }
 }
@@ -443,7 +528,8 @@ void WebServerManager::cleanupClients() {
 void WebServerManager::sendConfig(AsyncWebSocketClient *client) {
     ControlState state = _stateStore.getState();
     String json = "{\"type\":\"config\",\"threshold\":" + String(state.cliffThresholdMM) +
-                  ",\"maxPower\":" + String(state.maxPowerPercent) + "}";
+                  ",\"maxPower\":" + String(state.maxPowerPercent) +
+                  ",\"imuOrient\":" + String(state.imuOrientation) + "}";
     if (client) {
         client->text(json);
     } else {
@@ -470,6 +556,11 @@ void WebServerManager::handleBinaryMessage(void *arg, uint8_t *data, size_t len)
             _stateStore.requestTofRecovery(1);
         } else if (cmd == 0x06) {
             _stateStore.requestTofRecovery(2);
+        } else if (cmd == 0x08) {
+            _stateStore.cycleImuOrientation();
+            sendConfig();
+        } else if (cmd == 0x09) {
+            _stateStore.requestImuCalibrate();
         }
     }
 }
@@ -490,7 +581,13 @@ void WebServerManager::pushTelemetry() {
                   ",\"isFault\":" + String(state.isFault ? "true" : "false") + 
                   ",\"ebrake\":" + String(state.isEBrake ? "true" : "false") + 
                   ",\"tofFault\":" + String(state.tofFault ? "true" : "false") + 
-                  ",\"status\":\"" + state.status + "\"}";
+                  ",\"status\":\"" + state.status + "\"" +
+                  ",\"mpu\":{\"pitch\":" + String(state.imu.pitch, 1) +
+                  ",\"roll\":" + String(state.imu.roll, 1) +
+                  ",\"gyroZ\":" + String(state.imu.gyroZ, 1) +
+                  ",\"accelMag\":" + String(state.imu.accelMag, 2) +
+                  ",\"isPickedUp\":" + String(state.imu.isPickedUp ? "true" : "false") +
+                  ",\"healthy\":" + String(state.imu.healthy ? "true" : "false") + "}}";
     _ws.textAll(json);
     _lastPushMs = millis();
     _lastSentCliff = state.isCliff;
@@ -498,6 +595,8 @@ void WebServerManager::pushTelemetry() {
     _lastSentEBrake = state.isEBrake;
     _lastSentStatus = state.status;
     _lastSentDistance = state.currentDistanceMM;
+    _lastSentPickedUp = state.imu.isPickedUp;
+    _lastSentImuHealthy = state.imu.healthy;
 }
 
 void WebServerManager::pushTelemetryIfNeeded() {
@@ -505,6 +604,8 @@ void WebServerManager::pushTelemetryIfNeeded() {
     bool eventChanged = (state.isCliff != _lastSentCliff) ||
                         (state.isFault != _lastSentFault) ||
                         (state.isEBrake != _lastSentEBrake) ||
+                        (state.imu.isPickedUp != _lastSentPickedUp) ||
+                        (state.imu.healthy != _lastSentImuHealthy) ||
                         (state.status != _lastSentStatus);
     bool distanceMoved = abs(state.currentDistanceMM - _lastSentDistance) > TELEMETRY_DISTANCE_EPSILON_MM;
     unsigned long interval = (eventChanged || distanceMoved) ? TELEMETRY_INTERVAL_MS : TELEMETRY_IDLE_INTERVAL_MS;
