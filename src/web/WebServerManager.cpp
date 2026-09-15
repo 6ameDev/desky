@@ -51,7 +51,7 @@ html, body {
   transition: max-height 0.3s ease-out, padding 0.3s ease; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; align-items: center;
   z-index: 9;
 }
-.drawer.open { max-height: 265px; padding: 12px 16px; }
+.drawer.open { max-height: 290px; padding: 12px 16px; }
 .setting-row { display: flex; align-items: center; gap: 12px; width: 100%; max-width: 360px; font-size: 13px; color: #aaa; }
 .setting-row input { flex: 1; accent-color: #00adb5; }
 .setting-row button {
@@ -67,7 +67,8 @@ html, body {
 canvas { display: block; }
 
 /* Automotive E-Brake Button */
-.ebrake-container { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 10px; }
+.pedal-row { display: flex; gap: 28px; align-items: flex-start; margin-bottom: 10px; }
+.ebrake-container { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .ebrake-btn {
   width: 64px; height: 64px; border-radius: 50%; background: #1e1e1e; border: 2px solid #444;
   display: flex; justify-content: center; align-items: center; cursor: pointer; transition: all 0.2s ease;
@@ -84,6 +85,11 @@ canvas { display: block; }
 .ebrake-btn.active { border-color: #ff1744; background: #2a080c; box-shadow: 0 0 16px rgba(255,23,68,0.4); }
 .ebrake-btn.active .ebrake-icon { color: #ff1744; border-color: #ff1744; text-shadow: 0 0 8px #ff1744; }
 .ebrake-btn.active + .ebrake-label { color: #ff1744; }
+
+/* Wiggle Button (teal accent, same shape as e-brake) */
+.ebrake-btn.wiggle-accent { border-color: #00adb5; }
+.ebrake-btn.wiggle-accent .ebrake-icon { color: #00adb5; border-color: #00adb5; }
+.ebrake-btn.wiggle-accent:active { background: #06282a; box-shadow: 0 0 16px rgba(0,173,181,0.4); }
 
 /* IMU / Orientation Panel */
 .imu-panel {
@@ -185,12 +191,20 @@ canvas { display: block; }
       </div>
     </div>
 
-    <!-- Automotive E-Brake Button -->
-    <div class='ebrake-container'>
-      <div id='ebrake-btn' class='ebrake-btn' onclick='toggleEBrake()'>
-        <div class='ebrake-icon'>(P)</div>
+    <!-- Automotive E-Brake + Wiggle Buttons -->
+    <div class='pedal-row'>
+      <div class='ebrake-container'>
+        <div id='ebrake-btn' class='ebrake-btn' onclick='toggleEBrake()'>
+          <div class='ebrake-icon'>(P)</div>
+        </div>
+        <div class='ebrake-label'>PARK BRAKE</div>
       </div>
-      <div class='ebrake-label'>PARK BRAKE</div>
+      <div class='ebrake-container'>
+        <div id='wiggle-btn' class='ebrake-btn wiggle-accent' onclick='triggerWiggle()'>
+          <div class='ebrake-icon'>~</div>
+        </div>
+        <div class='ebrake-label'>WIGGLE</div>
+      </div>
     </div>
 
   </div>
@@ -368,6 +382,13 @@ function updateMaxPower(val) {
   powerVal.innerText = val + '%';
   if (websocket.readyState === WebSocket.OPEN) {
     let buffer = new Uint8Array([4, val & 0xFF]);
+    websocket.send(buffer.buffer);
+  }
+}
+
+function triggerWiggle() {
+  if (websocket.readyState === WebSocket.OPEN) {
+    let buffer = new Uint8Array([10, 2, 2]);
     websocket.send(buffer.buffer);
   }
 }
@@ -552,8 +573,7 @@ void WebServerManager::handleBinaryMessage(void *arg, uint8_t *data, size_t len)
         } else if (cmd == 0x04 && len >= 2) {
             _stateStore.setMaxPower(data[1]);
             sendConfig();
-        } else if (cmd == 0x05) {
-            _stateStore.requestTofRecovery(1);
+        } else if (cmd == 0x05) {            _stateStore.requestTofRecovery(1);
         } else if (cmd == 0x06) {
             _stateStore.requestTofRecovery(2);
         } else if (cmd == 0x08) {
@@ -561,6 +581,8 @@ void WebServerManager::handleBinaryMessage(void *arg, uint8_t *data, size_t len)
             sendConfig();
         } else if (cmd == 0x09) {
             _stateStore.requestImuCalibrate();
+        } else if (cmd == 0x0A && len >= 3) {
+            _stateStore.requestWiggle(data[1], data[2]);
         }
     }
 }

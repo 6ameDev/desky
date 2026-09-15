@@ -71,6 +71,26 @@ void RobotStateStore::setMaxPower(int percent) {
     s_prefs.putInt("maxPower", percent);
 }
 
+void RobotStateStore::requestWiggle(int dir, int pairs) {
+    if (dir < 0 || dir > 2) {
+        return;
+    }
+    xSemaphoreTake(_mutex, portMAX_DELAY);
+    _state.wiggleRequestDir = dir;
+    _state.wiggleRequestPairs = constrain(pairs, 1, 6);
+    xSemaphoreGive(_mutex);
+}
+
+bool RobotStateStore::takeWiggleRequest(int& dir, int& pairs) {
+    xSemaphoreTake(_mutex, portMAX_DELAY);
+    dir = _state.wiggleRequestDir;
+    pairs = _state.wiggleRequestPairs;
+    _state.wiggleRequestDir = -1;
+    _state.wiggleRequestPairs = 0;
+    xSemaphoreGive(_mutex);
+    return dir >= 0;
+}
+
 void RobotStateStore::updateTelemetry(int distanceMM, bool isCliff, bool isFault, bool tofFault, const String& status) {
     xSemaphoreTake(_mutex, portMAX_DELAY);
     _state.currentDistanceMM = distanceMM;

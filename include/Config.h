@@ -32,6 +32,17 @@
 #define PICKED_UP_TILT_DEG 45.0f
 #define MPU_REPROBE_INTERVAL_MS 5000
 
+// --- Wiggle motion primitive (1 wiggle = one left+right sway pair) ---
+// Direction base speeds: FORWARD > 0, IN_PLACE 0, BACKWARD < 0.
+// Total time is derived (pairs * 2 * half-period), never a tunable.
+#define WIGGLE_FORWARD_SPEED 15
+#define WIGGLE_REVERSE_SPEED -15
+#define WIGGLE_SWAY_DELTA 130
+#define WIGGLE_HALF_PERIOD_MS 180
+
+// --- Cliff response (backwards wiggle when driving forward off an edge) ---
+#define CLIFF_WIGGLE_PAIRS 2
+
 // --- ToF Sensor Fault Handling ---
 #define I2C_TIMEOUT_MS 20
 #define TOF_READ_EVERY_N_TICKS 5

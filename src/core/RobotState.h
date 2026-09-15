@@ -22,6 +22,10 @@ struct ControlState {
     bool isEBrake = false;
     bool tofFault = false;
     int tofRecoveryRequest = 0;
+    // Manual wiggle request from the UI. Direction codes: 0=forward,
+    // 1=backward, 2=in-place. dir < 0 means no pending request.
+    int wiggleRequestDir = -1;
+    int wiggleRequestPairs = 0;
     int imuOrientation = 0;
     bool imuCalibrateRequested = false;
     float imuPitchOffset = 0;
@@ -41,6 +45,8 @@ public:
     void toggleEBrake();
     void setCliffThreshold(int thresholdMM);
     void setMaxPower(int percent);
+    void requestWiggle(int dir, int pairs);
+    bool takeWiggleRequest(int& dir, int& pairs);
     void requestTofRecovery(int mode);
     int takeTofRecoveryRequest();
     void cycleImuOrientation();

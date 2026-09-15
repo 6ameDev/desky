@@ -6,6 +6,7 @@
 #include "Config.h"
 #include "core/RobotState.h"
 #include "drivers/MotorDriver.h"
+#include "drivers/WiggleController.h"
 #include "web/WebServerManager.h"
 
 RobotStateStore stateStore;
@@ -117,6 +118,9 @@ void HardwareTask(void *pvParameters) {
     int tick = 0;
     ImuReading imu;
     unsigned long lastMpuReprobeMs = 0;
+    WiggleController wiggle(motors);
+    bool cliffLatched = false;
+    bool wiggleIsCliff = false;
 
     for (;;) {
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
@@ -206,24 +210,64 @@ void HardwareTask(void *pvParameters) {
         int right = state.targetRightSpeed;
         String status = "STOPPED";
 
+        // Manager-level cliff hold: after one cliff wiggle, stay braked while
+        // the user keeps holding forward, even if the sensor loses the cliff
+        // mid-manoeuvre. Re-arms only when the user releases to stop/reverse.
+        if (left <= 0 && right <= 0) {
+            cliffLatched = false;
+        }
+        int wiggleReqDir, wiggleReqPairs;
+        if (stateStore.takeWiggleRequest(wiggleReqDir, wiggleReqPairs) && !wiggle.isActive()) {
+            WiggleDirection reqDir = (wiggleReqDir == 0) ? WiggleDirection::FORWARD
+                : (wiggleReqDir == 1) ? WiggleDirection::BACKWARD : WiggleDirection::IN_PLACE;
+            wiggle.start(reqDir, wiggleReqPairs);
+            wiggleIsCliff = false;
+        }
+        if (!cliffLatched && !wiggle.isActive() && isCliff && (left > 0 || right > 0) &&
+            !state.isEBrake && !fault && !tofFault) {
+            wiggle.start(WiggleDirection::BACKWARD, CLIFF_WIGGLE_PAIRS);
+            wiggleIsCliff = true;
+        }
+
         if (state.isEBrake) {
             status = "E-BRAKE LOCKED";
+            wiggle.abort();
+            wiggleIsCliff = false;
             motors.applyBrake();
         } else if (fault) {
             status = "DRIVER OVERLOAD!";
+            wiggle.abort();
+            wiggleIsCliff = false;
             motors.drive(0, 0);
         } else if (tofFault) {
             status = "TOF SENSOR FAULT";
+            wiggle.abort();
+            wiggleIsCliff = false;
             if (left > 0 || right > 0) {
                 motors.applyBrake();
             } else {
                 motors.drive(left, right);
             }
+        } else if (wiggle.isActive()) {
+            if (wiggle.update()) {
+                if (wiggleIsCliff) {
+                    status = "BLOCKED (CLIFF)";
+                    cliffLatched = true;
+                    motors.applyBrake();
+                } else {
+                    // Simple button wiggle: hand straight back to the stick.
+                    status = (left == 0 && right == 0) ? "STOPPED" : "DRIVING";
+                    motors.drive(left, right);
+                }
+                wiggleIsCliff = false;
+            } else {
+                status = wiggleIsCliff ? "CLIFF WIGGLE!" : "WIGGLE!";
+            }
         } else if (millis() - state.lastCommandTime > COMMAND_TIMEOUT_MS && (left != 0 || right != 0)) {
             status = "TIMEOUT STOP";
             stateStore.updateDriveCommand(0, 0);
             motors.drive(0, 0);
-        } else if (isCliff && (left > 0 || right > 0)) {
+        } else if ((isCliff || cliffLatched) && (left > 0 || right > 0)) {
             status = "BLOCKED (CLIFF)";
             motors.applyBrake();
         } else {

@@ -36,6 +36,12 @@ void MotorDriver::drive(int leftSpeed, int rightSpeed) {
     else { ledcWrite(_in3, 0); ledcWrite(_in4, 0); }
 }
 
+void MotorDriver::driveWiggle(int baseSpeed, int swayDelta, bool phaseLeft) {
+    int leftSpeed = phaseLeft ? baseSpeed + swayDelta : baseSpeed - swayDelta;
+    int rightSpeed = phaseLeft ? baseSpeed - swayDelta : baseSpeed + swayDelta;
+    drive(leftSpeed, rightSpeed);
+}
+
 void MotorDriver::applyBrake() {
     ledcWrite(_in1, 255); ledcWrite(_in2, 255);
     ledcWrite(_in3, 255); ledcWrite(_in4, 255);
