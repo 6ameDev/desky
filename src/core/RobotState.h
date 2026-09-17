@@ -2,6 +2,17 @@
 #include <Arduino.h>
 #include "Config.h"
 
+enum InputType { INPUT_NONE = 0, INPUT_NUDGED = 1, INPUT_SHAKEN = 2 };
+
+struct InputEvent {
+    InputType type = INPUT_NONE;
+    unsigned long timeMs = 0;
+    float accelMag = 0;
+    float gyroZ = 0;
+    float pitch = 0;
+    float roll = 0;
+};
+
 struct ImuReading {
     float pitch = 0;
     float roll = 0;
@@ -29,8 +40,15 @@ struct ControlState {
     // Display state (OLED eyes / debug). Manager sets, DisplayTask reads.
     bool displayDebugOn = false;
     uint32_t displayWorriedUntilMs = 0;
+    uint32_t displayAngryUntilMs = 0;
+    uint32_t displayHappyUntilMs = 0;
+    uint32_t displayWakeResetMs = 0;
     int displayMoodOverride = -1; // -1=auto, 0=DEFAULT,1=TIRED,2=ANGRY,3=HAPPY,4=FOCUSED,5=SLEEPING
     int displayAnimRequest = 0; // 0=none, 1=blink,2=confused,3=laugh
+    float shakeGentleG = SHAKE_GENTLE_G;
+    float shakeGentleGyro = SHAKE_GENTLE_GYRO_DPS;
+    float shakeAngryG = SHAKE_ANGRY_G;
+    float shakeAngryGyro = SHAKE_ANGRY_GYRO_DPS;
     bool mpuEnabled = (bool)MPU_ENABLED_DEFAULT;
     int imuOrientation = 0;
     bool imuCalibrateRequested = false;
@@ -39,6 +57,11 @@ struct ControlState {
     ImuReading imu;
     String status = "STOPPED";
     unsigned long lastCommandTime = 0;
+    unsigned long lastDirectMs = 0;
+    unsigned long lastMotionMs = 0;
+    InputEvent pendingInput;
+    unsigned long lastNudgedMs = 0;
+    unsigned long lastShakenMs = 0;
 };
 
 class RobotStateStore {
@@ -54,6 +77,12 @@ public:
     void requestWiggle(int dir, int pairs);
     bool takeWiggleRequest(int& dir, int& pairs);
     void setDisplayWorried(uint32_t untilMs);
+    void setDisplayAngry(uint32_t untilMs);
+    void setDisplayHappy(uint32_t untilMs);
+    void wakeFromSleep();
+    void setShakeThresholds(float gentleG, float gentleGyro, float angryG, float angryGyro);
+    void setShakeGentle(float g, float gyro);
+    void setShakeAngry(float g, float gyro);
     void toggleDisplayDebug();
     void setDisplayMood(int mood);
     void requestDisplayAnim(int anim);
@@ -68,6 +97,12 @@ public:
     void setImuOffsets(float pitchOffset, float rollOffset);
     void updateImu(const ImuReading& reading);
     void updateTelemetry(int distanceMM, bool isCliff, bool isFault, bool tofFault, const String& status);
+    void updateTelemetryMotion(const String& status);
+    void announceInput(InputType type, float accelMag, float gyroZ, float pitch, float roll);
+    bool takeInput(InputEvent &out);
+    void markDirectCommand();
+    bool isMotionCooldownActive() const;
+    bool isDirectActive(unsigned long windowMs) const;
 
 private:
     ControlState _state;

@@ -51,7 +51,7 @@ html, body {
   transition: max-height 0.3s ease-out, padding 0.3s ease; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; align-items: center;
   z-index: 9;
 }
-.drawer.open { max-height: 340px; padding: 12px 16px; overflow-y: auto; }
+.drawer.open { max-height: 480px; padding: 12px 16px; overflow-y: auto; }
 .setting-row { display: flex; align-items: center; gap: 12px; width: 100%; max-width: 360px; font-size: 13px; color: #aaa; }
 .setting-row input { flex: 1; accent-color: #00adb5; }
 .setting-row button {
@@ -183,6 +183,26 @@ canvas { display: block; }
       <span>MPU SENSOR</span>
       <button id='mpu-btn' onclick='toggleMpu()'>ON</button>
     </div>
+    <div class='setting-row'>
+      <span>GENTLE G</span>
+      <input type='range' id='shake-gentle-g' min='10' max='25' step='1' value='13' oninput='updateShakeGentleG(this.value)'>
+      <span id='shake-gentle-g-val' class='value'>1.35g</span>
+    </div>
+    <div class='setting-row'>
+      <span>GENTLE GYRO</span>
+      <input type='range' id='shake-gentle-gyro' min='1' max='150' step='1' value='50' oninput='updateShakeGentleGyro(this.value)'>
+      <span id='shake-gentle-gyro-val' class='value'>50 dps</span>
+    </div>
+    <div class='setting-row'>
+      <span>ANGRY G</span>
+      <input type='range' id='shake-angry-g' min='10' max='35' step='1' value='24' oninput='updateShakeAngryG(this.value)'>
+      <span id='shake-angry-g-val' class='value'>2.4g</span>
+    </div>
+    <div class='setting-row'>
+      <span>ANGRY GYRO</span>
+      <input type='range' id='shake-angry-gyro' min='1' max='350' step='1' value='180' oninput='updateShakeAngryGyro(this.value)'>
+      <span id='shake-angry-gyro-val' class='value'>180 dps</span>
+    </div>
   </div>
 
   <!-- Main Drive & Controls Area -->
@@ -262,6 +282,14 @@ const axisBtn = document.getElementById('axis-btn');
 const oledDbgBtn = document.getElementById('oled-dbg-btn');
 const mpuBtn = document.getElementById('mpu-btn');
 const moodPills = document.querySelectorAll('.mood-row .pill');
+const shakeGentleGSlider = document.getElementById('shake-gentle-g');
+const shakeGentleGVal = document.getElementById('shake-gentle-g-val');
+const shakeGentleGyroSlider = document.getElementById('shake-gentle-gyro');
+const shakeGentleGyroVal = document.getElementById('shake-gentle-gyro-val');
+const shakeAngryGSlider = document.getElementById('shake-angry-g');
+const shakeAngryGVal = document.getElementById('shake-angry-g-val');
+const shakeAngryGyroSlider = document.getElementById('shake-angry-gyro');
+const shakeAngryGyroVal = document.getElementById('shake-angry-gyro-val');
 const telemetryGroup = document.getElementById('telemetry-group');
 const controls = document.getElementById('controls');
 const imuPitch = document.getElementById('imu-pitch');
@@ -353,6 +381,22 @@ function handleMessage(event) {
         var m = parseInt(p.getAttribute('data-mood'));
         p.classList.toggle('active', m === data.moodOverride);
       });
+    }
+    if (data.shakeGentleG !== undefined && document.activeElement !== shakeGentleGSlider) {
+      shakeGentleGSlider.value = Math.round(data.shakeGentleG * 10);
+      shakeGentleGVal.innerText = data.shakeGentleG.toFixed(2) + 'g';
+    }
+    if (data.shakeGentleGyro !== undefined && document.activeElement !== shakeGentleGyroSlider) {
+      shakeGentleGyroSlider.value = data.shakeGentleGyro;
+      shakeGentleGyroVal.innerText = data.shakeGentleGyro + ' dps';
+    }
+    if (data.shakeAngryG !== undefined && document.activeElement !== shakeAngryGSlider) {
+      shakeAngryGSlider.value = Math.round(data.shakeAngryG * 10);
+      shakeAngryGVal.innerText = data.shakeAngryG.toFixed(2) + 'g';
+    }
+    if (data.shakeAngryGyro !== undefined && document.activeElement !== shakeAngryGyroSlider) {
+      shakeAngryGyroSlider.value = data.shakeAngryGyro;
+      shakeAngryGyroVal.innerText = data.shakeAngryGyro + ' dps';
     }
   } 
   else if (data.type === 'telemetry') {
@@ -494,6 +538,41 @@ function toggleMpu() {
   }
 }
 
+function updateShakeGentleG(val) {
+  var g = (val / 10).toFixed(2);
+  shakeGentleGVal.innerText = g + 'g';
+  if (websocket.readyState === WebSocket.OPEN) {
+    let v = parseInt(val);
+    let buffer = new Uint8Array([17, (v >> 8) & 0xFF, v & 0xFF]);
+    websocket.send(buffer.buffer);
+  }
+}
+function updateShakeGentleGyro(val) {
+  shakeGentleGyroVal.innerText = val + ' dps';
+  if (websocket.readyState === WebSocket.OPEN) {
+    let v = parseInt(val);
+    let buffer = new Uint8Array([18, (v >> 8) & 0xFF, v & 0xFF]);
+    websocket.send(buffer.buffer);
+  }
+}
+function updateShakeAngryG(val) {
+  var g = (val / 10).toFixed(2);
+  shakeAngryGVal.innerText = g + 'g';
+  if (websocket.readyState === WebSocket.OPEN) {
+    let v = parseInt(val);
+    let buffer = new Uint8Array([19, (v >> 8) & 0xFF, v & 0xFF]);
+    websocket.send(buffer.buffer);
+  }
+}
+function updateShakeAngryGyro(val) {
+  shakeAngryGyroVal.innerText = val + ' dps';
+  if (websocket.readyState === WebSocket.OPEN) {
+    let v = parseInt(val);
+    let buffer = new Uint8Array([20, (v >> 8) & 0xFF, v & 0xFF]);
+    websocket.send(buffer.buffer);
+  }
+}
+
 function startHeartbeat() {
   if (!heartbeatInterval) {
     heartbeatInterval = setInterval(function() {
@@ -626,7 +705,11 @@ void WebServerManager::sendConfig(AsyncWebSocketClient *client) {
                   ",\"imuOrient\":" + String(state.imuOrientation) +
                   ",\"oledDebug\":" + String(state.displayDebugOn ? "true" : "false") +
                   ",\"mpuEnabled\":" + String(state.mpuEnabled ? "true" : "false") +
-                  ",\"moodOverride\":" + String(state.displayMoodOverride) + "}";
+                  ",\"moodOverride\":" + String(state.displayMoodOverride) +
+                  ",\"shakeGentleG\":" + String(state.shakeGentleG, 2) +
+                  ",\"shakeGentleGyro\":" + String((int)state.shakeGentleGyro) +
+                  ",\"shakeAngryG\":" + String(state.shakeAngryG, 2) +
+                  ",\"shakeAngryGyro\":" + String((int)state.shakeAngryGyro) + "}";
     if (client) {
         client->text(json);
     } else {
@@ -670,6 +753,28 @@ void WebServerManager::handleBinaryMessage(void *arg, uint8_t *data, size_t len)
             sendConfig();
         } else if (cmd == 0x0F && len >= 2) {
             _stateStore.requestDisplayAnim(data[1]);
+        } else if (cmd == 0x11 && len >= 3) {
+            int v = (data[1] << 8) | data[2];
+            _stateStore.setShakeGentle(v / 10.0f, _stateStore.getState().shakeGentleGyro);
+            sendConfig();
+        } else if (cmd == 0x12 && len >= 3) {
+            int v = (data[1] << 8) | data[2];
+            _stateStore.setShakeGentle(_stateStore.getState().shakeGentleG, v);
+            sendConfig();
+        } else if (cmd == 0x13 && len >= 3) {
+            int v = (data[1] << 8) | data[2];
+            _stateStore.setShakeAngry(v / 10.0f, _stateStore.getState().shakeAngryGyro);
+            sendConfig();
+        } else if (cmd == 0x14 && len >= 3) {
+            int v = (data[1] << 8) | data[2];
+            _stateStore.setShakeAngry(_stateStore.getState().shakeAngryG, v);
+            sendConfig();
+        }
+        // Any WebUI direct command takes precedence over interpreted petting (500ms window) and wakes
+        bool isDirect = (cmd == 0x01 || cmd == 0x02 || cmd == 0x03 || cmd == 0x04 || cmd == 0x05 || cmd == 0x06 || cmd == 0x08 || cmd == 0x09 || cmd == 0x0A || cmd == 0x0C || cmd == 0x0D || cmd == 0x0E || cmd == 0x0F || cmd == 0x11 || cmd == 0x12 || cmd == 0x13 || cmd == 0x14);
+        if (isDirect) {
+            _stateStore.markDirectCommand();
+            _stateStore.wakeFromSleep();
         }
     }
 }

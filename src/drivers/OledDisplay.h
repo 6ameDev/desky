@@ -27,7 +27,10 @@ private:
     bool probeAddr(uint8_t addr);
     void drawDebug(const ControlState& state);
     void drawEyes(const ControlState& state);
+    void stepEyeState();
+    void drawEyeFrames();
     void applyPreset(const EyeConfig& cfg);
+    void resetBlinkTimer();
 
     // ---- RoboEyes geometry (vendored, GPL) ----
     int screenWidth = OLED_WIDTH;
