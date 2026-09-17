@@ -29,7 +29,7 @@ struct ControlState {
     // Display state (OLED eyes / debug). Manager sets, DisplayTask reads.
     bool displayDebugOn = false;
     uint32_t displayWorriedUntilMs = 0;
-    int displayMoodOverride = -1; // -1=auto, 0=DEFAULT,1=TIRED,2=ANGRY,3=HAPPY
+    int displayMoodOverride = -1; // -1=auto, 0=DEFAULT,1=TIRED,2=ANGRY,3=HAPPY,4=FOCUSED,5=SLEEPING
     int displayAnimRequest = 0; // 0=none, 1=blink,2=confused,3=laugh
     bool mpuEnabled = (bool)MPU_ENABLED_DEFAULT;
     int imuOrientation = 0;
