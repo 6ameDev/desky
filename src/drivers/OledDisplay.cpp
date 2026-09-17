@@ -89,25 +89,25 @@ void OledDisplay::resetBlinkTimer() {
 }
 
 void OledDisplay::stepEyeState() {
-    eyeLheightCurrent = (eyeLheightCurrent + eyeLheightNext) / 2;
+    eyeLheightCurrent = (eyeLheightCurrent * 2 + eyeLheightNext) / 3;
     eyeLy += ((eyeLheightDefault - eyeLheightCurrent) / 2);
-    eyeRheightCurrent = (eyeRheightCurrent + eyeRheightNext) / 2;
+    eyeRheightCurrent = (eyeRheightCurrent * 2 + eyeRheightNext) / 3;
     eyeRy += (eyeRheightDefault - eyeRheightCurrent) / 2;
 
     if (eyeL_open && eyeLheightCurrent <= 2) eyeLheightNext = eyeLheightTarget;
     if (eyeR_open && eyeRheightCurrent <= 2) eyeRheightNext = eyeRheightTarget;
 
-    eyeLwidthCurrent = (eyeLwidthCurrent + eyeLwidthNext) / 2;
-    eyeRwidthCurrent = (eyeRwidthCurrent + eyeRwidthNext) / 2;
-    spaceBetweenCurrent = (spaceBetweenCurrent + spaceBetweenNext) / 2;
-    eyeLx = (eyeLx + eyeLxNext) / 2;
-    eyeLy = (eyeLy + eyeLyNext) / 2;
+    eyeLwidthCurrent = (eyeLwidthCurrent * 2 + eyeLwidthNext) / 3;
+    eyeRwidthCurrent = (eyeRwidthCurrent * 2 + eyeRwidthNext) / 3;
+    spaceBetweenCurrent = (spaceBetweenCurrent * 2 + spaceBetweenNext) / 3;
+    eyeLx = (eyeLx * 2 + eyeLxNext) / 3;
+    eyeLy = (eyeLy * 2 + eyeLyNext) / 3;
     eyeRxNext = eyeLxNext + eyeLwidthCurrent + spaceBetweenCurrent;
     eyeRyNext = eyeLyNext;
-    eyeRx = (eyeRx + eyeRxNext) / 2;
-    eyeRy = (eyeRy + eyeRyNext) / 2;
-    eyeLborderRadiusCurrent = (eyeLborderRadiusCurrent + eyeLborderRadiusNext) / 2;
-    eyeRborderRadiusCurrent = (eyeRborderRadiusCurrent + eyeRborderRadiusNext) / 2;
+    eyeRx = (eyeRx * 2 + eyeRxNext) / 3;
+    eyeRy = (eyeRy * 2 + eyeRyNext) / 3;
+    eyeLborderRadiusCurrent = (eyeLborderRadiusCurrent * 2 + eyeLborderRadiusNext) / 3;
+    eyeRborderRadiusCurrent = (eyeRborderRadiusCurrent * 2 + eyeRborderRadiusNext) / 3;
 
     if (autoblinker && !isTransitioning() && millis() >= blinktimer) {
         close(); open();
@@ -139,9 +139,9 @@ void OledDisplay::stepEyeState() {
     if (angry) eyelidsAngryHeightNext = eyeLheightCurrent / 2; else eyelidsAngryHeightNext = 0;
     if (happy) eyelidsHappyBottomOffsetNext = (eyeLheightTarget * 4) / 5; else eyelidsHappyBottomOffsetNext = 0;
 
-    eyelidsTiredHeight = (eyelidsTiredHeight + eyelidsTiredHeightNext) / 2;
-    eyelidsAngryHeight = (eyelidsAngryHeight + eyelidsAngryHeightNext) / 2;
-    eyelidsHappyBottomOffset = (eyelidsHappyBottomOffset + eyelidsHappyBottomOffsetNext) / 2;
+    eyelidsTiredHeight = (eyelidsTiredHeight * 2 + eyelidsTiredHeightNext) / 3;
+    eyelidsAngryHeight = (eyelidsAngryHeight * 2 + eyelidsAngryHeightNext) / 3;
+    eyelidsHappyBottomOffset = (eyelidsHappyBottomOffset * 2 + eyelidsHappyBottomOffsetNext) / 3;
 }
 
 void OledDisplay::drawEyeFrames() {
@@ -180,7 +180,6 @@ void OledDisplay::drawEyes(const ControlState& state) {
 void OledDisplay::render(const ControlState& state) {
     if (!_healthy) return;
     if (millis() - fpsTimer < (unsigned long)frameInterval) return;
-    fpsTimer = millis();
 
     // Pure motion gate: interpret petting only when not generating motion (DRIVING/WIGGLE!/CLIFF WIGGLE!)
     extern RobotStateStore stateStore;
@@ -332,6 +331,7 @@ void OledDisplay::render(const ControlState& state) {
         drawEyeFrames();
     }
 
+    fpsTimer = millis();
     if (_i2cMutex) xSemaphoreGive(_i2cMutex);
 }
 
