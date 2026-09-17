@@ -1,7 +1,10 @@
 // Vendored RoboEyes core (FluxGarage, GPL-3.0) adapted for Desky squircle eyes
 // Smooth exponential tweening, idle drift, auto-blink, moods.
 // Original: https://github.com/FluxGarage/RoboEyes
+// Eye presets from playfultechnology/esp32-eyes (GPL-3.0) - see eyes/EyePresets.h
 #include "OledDisplay.h"
+#include "eyes/EyeConfig.h"
+#include "eyes/EyePresets.h"
 #include <WiFi.h>
 
 OledDisplay::OledDisplay()
@@ -63,6 +66,19 @@ int OledDisplay::getScreenConstraint_Y() { return screenHeight - eyeLheightDefau
 void OledDisplay::close() { eyeLheightNext = 1; eyeRheightNext = 1; eyeL_open = 0; eyeR_open = 0; }
 void OledDisplay::open() { eyeL_open = 1; eyeR_open = 1; }
 
+void OledDisplay::applyPreset(const EyeConfig& cfg) {
+    // Map EyeConfig to RoboEyes targets — also update height target for blink restore
+    eyeLwidthNext = cfg.Width; eyeRwidthNext = cfg.Width;
+    eyeLheightNext = cfg.Height; eyeRheightNext = cfg.Height;
+    eyeLheightTarget = cfg.Height; eyeRheightTarget = cfg.Height;
+    eyeLborderRadiusNext = constrain(cfg.Radius_Top, 0, 16);
+    eyeRborderRadiusNext = constrain(cfg.Radius_Top, 0, 16);
+    if (cfg.OffsetX != 0 || cfg.OffsetY != 0) {
+        eyeLxNext = constrain(eyeLxDefault + cfg.OffsetX, 0, getScreenConstraint_X());
+        eyeLyNext = constrain(eyeLyDefault + cfg.OffsetY, 0, getScreenConstraint_Y());
+    }
+}
+
 void OledDisplay::drawDebug(const ControlState& state) {
     _display.setTextSize(1);
     _display.setTextColor(SSD1306_WHITE);
@@ -75,9 +91,7 @@ void OledDisplay::drawDebug(const ControlState& state) {
 }
 
 void OledDisplay::drawEyes(const ControlState& state) {
-    // Idle/blink always on, drift fixed to 2 (minimal)
-    autoblinker = true;
-    idle = true;
+    // idle/autoblinker already set by render() per mood — do not overwrite
 
     // ---- PRE-CALCULATIONS (RoboEyes tween) ----
     eyeLheightCurrent = (eyeLheightCurrent + eyeLheightNext) / 2;
@@ -85,8 +99,8 @@ void OledDisplay::drawEyes(const ControlState& state) {
     eyeRheightCurrent = (eyeRheightCurrent + eyeRheightNext) / 2;
     eyeRy += (eyeRheightDefault - eyeRheightCurrent) / 2;
 
-    if (eyeL_open && eyeLheightCurrent <= 2) eyeLheightNext = eyeLheightDefault;
-    if (eyeR_open && eyeRheightCurrent <= 2) eyeRheightNext = eyeRheightDefault;
+    if (eyeL_open && eyeLheightCurrent <= 2) eyeLheightNext = eyeLheightTarget;
+    if (eyeR_open && eyeRheightCurrent <= 2) eyeRheightNext = eyeRheightTarget;
 
     eyeLwidthCurrent = (eyeLwidthCurrent + eyeLwidthNext) / 2;
     eyeRwidthCurrent = (eyeRwidthCurrent + eyeRwidthNext) / 2;
@@ -134,7 +148,7 @@ void OledDisplay::drawEyes(const ControlState& state) {
 
     if (tired) eyelidsTiredHeightNext = eyeLheightCurrent / 2; else eyelidsTiredHeightNext = 0;
     if (angry) eyelidsAngryHeightNext = eyeLheightCurrent / 2; else eyelidsAngryHeightNext = 0;
-    if (happy) eyelidsHappyBottomOffsetNext = eyeLheightCurrent / 2; else eyelidsHappyBottomOffsetNext = 0;
+    if (happy) eyelidsHappyBottomOffsetNext = (eyeLheightTarget * 4) / 5; else eyelidsHappyBottomOffsetNext = 0;
 
     eyelidsTiredHeight = (eyelidsTiredHeight + eyelidsTiredHeightNext) / 2;
     _display.fillTriangle(eyeLx, eyeLy - 1, eyeLx + eyeLwidthCurrent, eyeLy - 1, eyeLx, eyeLy + eyelidsTiredHeight - 1, SSD1306_BLACK);
@@ -149,19 +163,6 @@ void OledDisplay::drawEyes(const ControlState& state) {
     _display.fillRoundRect(eyeRx - 1, (eyeRy + eyeRheightCurrent) - eyelidsHappyBottomOffset + 1, eyeRwidthCurrent + 2, eyeRheightDefault, eyeRborderRadiusCurrent, SSD1306_BLACK);
 
 
-
-    // Happy sparkle (big proper tear shine) only when HAPPY mood is active
-    if (happy && eyelidsHappyBottomOffset > 4) {
-        for (int i = 0; i < 2; i++) {
-            int ex = (i == 0) ? eyeLx : eyeRx;
-            int ey = (i == 0) ? eyeLy : eyeRy;
-            int cx = ex + eyeLwidthCurrent - 12;
-            int cy = ey + 8;
-            _display.fillCircle(cx, cy, 7, SSD1306_WHITE);
-            _display.fillCircle(cx, cy, 4, SSD1306_BLACK);
-            _display.fillCircle(cx - 2, cy - 2, 2, SSD1306_WHITE);
-        }
-    }
 
     _display.display();
 }
@@ -181,16 +182,41 @@ void OledDisplay::render(const ControlState& state) {
 
     // Forced mood from web UI overrides auto mapping (debug still wins)
     bool hasForced = state.displayMoodOverride >= 0;
-    // Mood mapping: worried = confused shiver (no brow), sleepy = tired, happy = wiggle + big tear
+    // Edge-trigger preset changes so per-frame applyPreset does not kill blink
+    if (hasForced && state.displayMoodOverride != lastMoodOverride) {
+        int m = state.displayMoodOverride;
+        if (m == 4) applyPreset(Preset_Focused);
+        else if (m == 5) applyPreset(Preset_Sleeping);
+        else applyPreset(Preset_Normal); // DEFAULT/TIRED/ANGRY/HAPPY all use Normal size
+        lastMoodOverride = m;
+    } else if (!hasForced && lastMoodOverride != -1) {
+        applyPreset(Preset_Normal);
+        lastMoodOverride = -1;
+    }
+    // Auto-sleep edge-trigger (60s idle)
+    if (!hasForced) {
+        if (sleepy && !wasSleepy) { applyPreset(Preset_Sleeping); wasSleepy = true; }
+        else if (!sleepy && wasSleepy) { applyPreset(Preset_Normal); wasSleepy = false; }
+    }
+    // Mood mapping: worried = confused shiver (no brow), sleepy = sleeping static, happy = wiggle
     if (debug) {
         tired = 0; angry = 0; happy = 0;
         idle = 0; autoblinker = 0;
     } else if (hasForced) {
-        tired = (state.displayMoodOverride == 1);
-        angry = (state.displayMoodOverride == 2);
-        happy = (state.displayMoodOverride == 3);
-        idle = (state.displayMoodOverride == 0) ? 1 : 0;
-        autoblinker = 1;
+        int m = state.displayMoodOverride;
+        if (m == 4) {
+            tired = 0; angry = 0; happy = 0;
+            idle = 0; autoblinker = 1;
+        } else if (m == 5) {
+            tired = 0; angry = 0; happy = 0;
+            idle = 0; autoblinker = 0;
+        } else {
+            tired = (m == 1);
+            angry = (m == 2);
+            happy = (m == 3);
+            idle = (m == 0) ? 1 : 0;
+            autoblinker = 1;
+        }
     } else if (worried) {
         // Cliff: open squircle with confused horizontal shiver, no brow
         tired = 0; angry = 0; happy = 0;
@@ -198,8 +224,9 @@ void OledDisplay::render(const ControlState& state) {
         // ensure confused shiver is active during worried window
         if (!hFlicker) { hFlicker = 1; confusedUntilMs = state.displayWorriedUntilMs; }
     } else if (sleepy) {
-        tired = 1; angry = 0; happy = 0;
-        idle = 0; autoblinker = 1;
+        // Auto sleeping after 60s idle: closed static, no blink/drift
+        tired = 0; angry = 0; happy = 0;
+        idle = 0; autoblinker = 0;
     } else if (isWiggling || (happyUntilMs != 0 && (long)(millis() - happyUntilMs) < 0)) {
         if (isWiggling) happyUntilMs = millis() + 800;
         tired = 0; angry = 0; happy = 1;

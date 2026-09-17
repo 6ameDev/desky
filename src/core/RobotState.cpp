@@ -109,7 +109,7 @@ void RobotStateStore::toggleDisplayDebug() {
 
 void RobotStateStore::setDisplayMood(int mood) {
     xSemaphoreTake(_mutex, portMAX_DELAY);
-    if (mood < 0 || mood > 3) mood = -1;
+    if (mood < 0 || mood > 5) mood = -1;
     if (_state.displayMoodOverride == mood) _state.displayMoodOverride = -1;
     else _state.displayMoodOverride = mood;
     if (mood >= 0) _state.displayDebugOn = false;

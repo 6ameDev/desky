@@ -3,6 +3,7 @@
 #include <Wire.h>
 #include "Config.h"
 #include "core/RobotState.h"
+#include "eyes/EyeConfig.h"
 
 // Calm squircle eyes - vendored RoboEyes tween (FluxGarage, GPL-3.0) adapted
 // for Desky. Smooth exponential transitions, idle drift, auto-blink.
@@ -26,6 +27,7 @@ private:
     bool probeAddr(uint8_t addr);
     void drawDebug(const ControlState& state);
     void drawEyes(const ControlState& state);
+    void applyPreset(const EyeConfig& cfg);
 
     // ---- RoboEyes geometry (vendored, GPL) ----
     int screenWidth = OLED_WIDTH;
@@ -86,6 +88,9 @@ private:
     unsigned long happyUntilMs = 0;
     unsigned long lastActiveMs = 0;
     unsigned long confusedUntilMs = 0, laughUntilMs = 0;
+    int8_t lastMoodOverride = -2;
+    int eyeLheightTarget = EYE_H, eyeRheightTarget = EYE_H;
+    bool wasSleepy = false;
 
     int getScreenConstraint_X();
     int getScreenConstraint_Y();

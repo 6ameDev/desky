@@ -228,6 +228,8 @@ canvas { display: block; }
       <button class='pill' data-mood='1' onclick='setMood(1)'>TIRED</button>
       <button class='pill' data-mood='2' onclick='setMood(2)'>ANGRY</button>
       <button class='pill' data-mood='3' onclick='setMood(3)'>HAPPY</button>
+      <button class='pill' data-mood='4' onclick='setMood(4)'>FOCUSED</button>
+      <button class='pill' data-mood='5' onclick='setMood(5)'>SLEEPING</button>
     </div>
     <div class='action-row'>
       <button class='pill play' onclick='playAnim(1)'>BLINK</button>
