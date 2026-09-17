@@ -24,6 +24,11 @@ and versions live in `include/Config.h` and `platformio.ini`; read them there.
   UI-to-firmware requests use the take/request flag idiom there.
 - Never block the 100 Hz loop: bound every I2C transaction with a timeout
   and poll slow sensors on decimated ticks, never every tick.
+- `HardwareTask` (Core 1, 10 ms) runs motors + I2C sensors sequentially. I2C
+  components (`ToF 0x29`/`MPU 0x68/69`/`OLED 0x3C/3D` on `Wire 21/22`) may wait
+  on the shared `i2cMutex` (5 ms acquire, ~23 ms OLED hold). Non-I2C actors
+  (motors on `25/26/18/19` PWM) do not use the bridge — keep sequential for
+  now; if jitter matters, split motor control to never wait on the I2C bridge.
 
 ## Web UI lives in a C++ string
 
@@ -33,16 +38,11 @@ and versions live in `include/Config.h` and `platformio.ini`; read them there.
 - After uploading, hard-refresh the browser. No cache headers are served,
   so a normal refresh may test stale code.
 
-## I2C is guilty until proven innocent
+## I2C — shared Wire 21/22, now stable at 400 kHz
 
-- Expect `259`/`INVALID_STATE` storms, sentinel readings, and wedged
-  peripherals on loose wiring. Established patterns (reuse, don't re-derive):
-  validity-gate every reading, hold-last-good, distinct fault status with
-  fail-safe posture, manual recovery triggers; automatic recovery only for
-  proven scenarios.
-- Cautionary precedent: a sensor-error sentinel was once consumed as a real
-  distance and caused a permanent false cliff block. Return codes alone are
-  not validation — plausibility-check sensor data.
+- Wiring is now stable at `400 kHz` (`Wire` on `21/22` shared by ToF `0x29`, MPU `0x68/0x69`, OLED `0x3C/0x3D`). Revisit only if harness changes.
+- Keep proven patterns (reuse, don't re-derive): validity-gate every reading, hold-last-good, distinct fault status with fail-safe posture, manual recovery triggers; automatic recovery only for proven scenarios. On loose wiring expect `259`/`INVALID_STATE` storms.
+- Cautionary precedent: a sensor-error sentinel was once consumed as a real distance and caused a permanent false cliff block. Return codes alone are not validation — plausibility-check sensor data.
 
 ## Verified hardware truths (do not re-derive)
 

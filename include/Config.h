@@ -60,7 +60,7 @@
 #define OLED_I2C_ADDR_ALT 0x3D
 #define OLED_WIDTH 128
 #define OLED_HEIGHT 64
-#define OLED_FPS_MS 33
+#define OLED_FPS_MS 66
 #define OLED_WORRIED_DURATION_MS (CLIFF_WIGGLE_PAIRS * 2 * WIGGLE_HALF_PERIOD_MS + 500)
 #define EYE_W 34
 #define EYE_H 34
@@ -77,7 +77,7 @@
 
 // --- ToF Sensor Fault Handling ---
 #define I2C_TIMEOUT_MS 20
-#define TOF_READ_EVERY_N_TICKS 5
+#define TOF_READ_EVERY_N_TICKS 10
 #define TOF_MAX_CONSECUTIVE_ERRORS 5
 #define TOF_VALID_MAX_MM 4000
 #define TOF_XSHUT_PIN 4
