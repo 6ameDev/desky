@@ -26,6 +26,12 @@ struct ControlState {
     // 1=backward, 2=in-place. dir < 0 means no pending request.
     int wiggleRequestDir = -1;
     int wiggleRequestPairs = 0;
+    // Display state (OLED eyes / debug). Manager sets, DisplayTask reads.
+    bool displayDebugOn = false;
+    uint32_t displayWorriedUntilMs = 0;
+    int displayMoodOverride = -1; // -1=auto, 0=DEFAULT,1=TIRED,2=ANGRY,3=HAPPY
+    int displayAnimRequest = 0; // 0=none, 1=blink,2=confused,3=laugh
+    bool mpuEnabled = (bool)MPU_ENABLED_DEFAULT;
     int imuOrientation = 0;
     bool imuCalibrateRequested = false;
     float imuPitchOffset = 0;
@@ -47,6 +53,13 @@ public:
     void setMaxPower(int percent);
     void requestWiggle(int dir, int pairs);
     bool takeWiggleRequest(int& dir, int& pairs);
+    void setDisplayWorried(uint32_t untilMs);
+    void toggleDisplayDebug();
+    void setDisplayMood(int mood);
+    void requestDisplayAnim(int anim);
+    bool takeDisplayAnim(int &anim);
+    void setMpuEnabled(bool enabled);
+    void toggleMpuEnabled();
     void requestTofRecovery(int mode);
     int takeTofRecoveryRequest();
     void cycleImuOrientation();

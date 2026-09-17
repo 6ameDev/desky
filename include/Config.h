@@ -43,6 +43,27 @@
 // --- Cliff response (backwards wiggle when driving forward off an edge) ---
 #define CLIFF_WIGGLE_PAIRS 2
 
+// --- OLED Display (0.96" 128x64 SSD1306 on shared I2C bus) ---
+#define OLED_ENABLED 1
+#define OLED_I2C_ADDR_PRIMARY 0x3C
+#define OLED_I2C_ADDR_ALT 0x3D
+#define OLED_WIDTH 128
+#define OLED_HEIGHT 64
+#define OLED_FPS_MS 25
+#define OLED_WORRIED_DURATION_MS (CLIFF_WIGGLE_PAIRS * 2 * WIGGLE_HALF_PERIOD_MS + 500)
+#define EYE_W 34
+#define EYE_H 34
+#define EYE_GAP 20
+#define EYE_RADIUS 10
+#define EYE_SLEEPY_AFTER_MS 60000
+#define IDLE_INTERVAL_SEC 3
+#define IDLE_VARIATION_SEC 2
+#define BLINK_INTERVAL_SEC 3
+#define BLINK_VARIATION_SEC 2
+
+// --- MPU Toggle ---
+#define MPU_ENABLED_DEFAULT 1
+
 // --- ToF Sensor Fault Handling ---
 #define I2C_TIMEOUT_MS 20
 #define TOF_READ_EVERY_N_TICKS 5

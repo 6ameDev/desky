@@ -21,11 +21,13 @@ void RobotStateStore::begin() {
     int orient = (int)s_prefs.getInt("imuOrient", 0);
     float pitchOff = s_prefs.getFloat("imuPitchOff", 0);
     float rollOff = s_prefs.getFloat("imuRollOff", 0);
+    bool mpuEn = s_prefs.getBool("mpuEn", (bool)MPU_ENABLED_DEFAULT);
     xSemaphoreTake(_mutex, portMAX_DELAY);
     _state.maxPowerPercent = constrain(saved, MIN_MAX_POWER_PERCENT, MAX_MAX_POWER_PERCENT);
     _state.imuOrientation = constrain(orient, 0, 3);
     _state.imuPitchOffset = constrain(pitchOff, -45.0f, 45.0f);
     _state.imuRollOffset = constrain(rollOff, -45.0f, 45.0f);
+    _state.mpuEnabled = mpuEn;
     xSemaphoreGive(_mutex);
 }
 
@@ -89,6 +91,61 @@ bool RobotStateStore::takeWiggleRequest(int& dir, int& pairs) {
     _state.wiggleRequestPairs = 0;
     xSemaphoreGive(_mutex);
     return dir >= 0;
+}
+
+void RobotStateStore::setDisplayWorried(uint32_t untilMs) {
+    xSemaphoreTake(_mutex, portMAX_DELAY);
+    _state.displayWorriedUntilMs = untilMs;
+    xSemaphoreGive(_mutex);
+}
+
+void RobotStateStore::toggleDisplayDebug() {
+    xSemaphoreTake(_mutex, portMAX_DELAY);
+    _state.displayDebugOn = !_state.displayDebugOn;
+    // Debug wins: clear forced mood so eyes don't clash
+    if (_state.displayDebugOn) _state.displayMoodOverride = -1;
+    xSemaphoreGive(_mutex);
+}
+
+void RobotStateStore::setDisplayMood(int mood) {
+    xSemaphoreTake(_mutex, portMAX_DELAY);
+    if (mood < 0 || mood > 3) mood = -1;
+    if (_state.displayMoodOverride == mood) _state.displayMoodOverride = -1;
+    else _state.displayMoodOverride = mood;
+    if (mood >= 0) _state.displayDebugOn = false;
+    xSemaphoreGive(_mutex);
+}
+
+void RobotStateStore::requestDisplayAnim(int anim) {
+    if (anim < 1 || anim > 4) return;
+    xSemaphoreTake(_mutex, portMAX_DELAY);
+    _state.displayAnimRequest = anim;
+    xSemaphoreGive(_mutex);
+}
+
+bool RobotStateStore::takeDisplayAnim(int &anim) {
+    xSemaphoreTake(_mutex, portMAX_DELAY);
+    anim = _state.displayAnimRequest;
+    _state.displayAnimRequest = 0;
+    xSemaphoreGive(_mutex);
+    return anim != 0;
+}
+
+void RobotStateStore::setMpuEnabled(bool enabled) {
+    xSemaphoreTake(_mutex, portMAX_DELAY);
+    _state.mpuEnabled = enabled;
+    xSemaphoreGive(_mutex);
+    ensurePrefs();
+    s_prefs.putBool("mpuEn", enabled);
+}
+
+void RobotStateStore::toggleMpuEnabled() {
+    xSemaphoreTake(_mutex, portMAX_DELAY);
+    _state.mpuEnabled = !_state.mpuEnabled;
+    bool en = _state.mpuEnabled;
+    xSemaphoreGive(_mutex);
+    ensurePrefs();
+    s_prefs.putBool("mpuEn", en);
 }
 
 void RobotStateStore::updateTelemetry(int distanceMM, bool isCliff, bool isFault, bool tofFault, const String& status) {
