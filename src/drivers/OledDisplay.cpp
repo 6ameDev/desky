@@ -65,6 +65,10 @@ int OledDisplay::getScreenConstraint_X() { return screenWidth - eyeLwidthCurrent
 int OledDisplay::getScreenConstraint_Y() { return screenHeight - eyeLheightDefault; }
 void OledDisplay::close() { eyeLheightNext = 1; eyeRheightNext = 1; eyeL_open = 0; eyeR_open = 0; }
 void OledDisplay::open() { eyeL_open = 1; eyeR_open = 1; }
+bool OledDisplay::isTransitioning() const {
+    return abs(eyeLwidthCurrent - eyeLwidthNext) > 1 || abs(eyeRwidthCurrent - eyeRwidthNext) > 1 ||
+           abs(eyeLheightCurrent - eyeLheightNext) > 1 || abs(eyeRheightCurrent - eyeRheightNext) > 1;
+}
 
 void OledDisplay::applyPreset(const EyeConfig& cfg) {
     // Map EyeConfig to RoboEyes targets — also update height target for blink restore
@@ -114,7 +118,7 @@ void OledDisplay::drawEyes(const ControlState& state) {
     eyeLborderRadiusCurrent = (eyeLborderRadiusCurrent + eyeLborderRadiusNext) / 2;
     eyeRborderRadiusCurrent = (eyeRborderRadiusCurrent + eyeRborderRadiusNext) / 2;
 
-    if (autoblinker && millis() >= blinktimer) {
+    if (autoblinker && !isTransitioning() && millis() >= blinktimer) {
         close(); open();
         blinktimer = millis() + (blinkInterval * 1000) + (random(blinkIntervalVariation + 1) * 1000);
     }
@@ -266,6 +270,7 @@ void OledDisplay::hello() {
 }
 
 void OledDisplay::triggerAnim(int anim) {
+    if (isTransitioning() && anim == 1) return; // drop blink during transition
     switch (anim) {
         case 1: close(); open(); break;
         case 2: hFlicker = 1; confusedUntilMs = millis() + 600; break;

@@ -96,4 +96,5 @@ private:
     int getScreenConstraint_Y();
     void close();
     void open();
+    bool isTransitioning() const;
 };
