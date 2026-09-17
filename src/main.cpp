@@ -427,9 +427,9 @@ void setup() {
     // WiFi must connect before display shows IP; keep hello then start renderer
     webServer.begin();
 
-    // Start tasks
+    // Start tasks - DisplayTask prio 1 on Core0 to avoid WebServer starvation (Layer2)
     xTaskCreatePinnedToCore(HardwareTask, "HardwareTask", 4096, NULL, 1, NULL, 1);
-    xTaskCreatePinnedToCore(DisplayTask, "DisplayTask", 3072, NULL, 0, NULL, 0);
+    xTaskCreatePinnedToCore(DisplayTask, "DisplayTask", 4096, NULL, 1, NULL, 0);
 }
 
 void loop() {
