@@ -43,16 +43,17 @@
 #define CLIFF_WIGGLE_PAIRS 2
 
 // --- Shake / Interaction (MPU) ---
-#define SHAKE_GENTLE_G 1.35f
-#define SHAKE_GENTLE_GYRO_DPS 50.0f
+#define SHAKE_GENTLE_G 1.10f
+#define SHAKE_GENTLE_GYRO_DPS 10.0f
 #define SHAKE_GENTLE_N 2
-#define SHAKE_ANGRY_G 2.4f
-#define SHAKE_ANGRY_GYRO_DPS 180.0f
+#define SHAKE_ANGRY_G 1.40f
+#define SHAKE_ANGRY_GYRO_DPS 70.0f
 #define SHAKE_ANGRY_N 3
 #define SHAKE_COOLDOWN_MS 2000
 #define ANGRY_MOOD_MS 10000
 #define HAPPY_MOOD_MS 1500
 #define MOTION_COOLDOWN_MS 500
+#define SHAKE_TILT_DEG 5.0f
 
 // --- OLED Display (0.96" 128x64 SSD1306 on shared I2C bus) ---
 #define OLED_ENABLED 1
