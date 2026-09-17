@@ -81,23 +81,14 @@ void OledDisplay::applyPreset(const EyeConfig& cfg) {
         eyeLxNext = constrain(eyeLxDefault + cfg.OffsetX, 0, getScreenConstraint_X());
         eyeLyNext = constrain(eyeLyDefault + cfg.OffsetY, 0, getScreenConstraint_Y());
     }
+    resetBlinkTimer();
 }
 
-void OledDisplay::drawDebug(const ControlState& state) {
-    _display.setTextSize(1);
-    _display.setTextColor(SSD1306_WHITE);
-    _display.setCursor(0, 0);
-    _display.printf("D:%3dmm %s\n", state.currentDistanceMM, state.isCliff ? "CLIFF" : "ok");
-    _display.printf("ST:%s\n", state.status.c_str());
-    if (!state.imu.healthy) _display.println("IMU:OFF");
-    else _display.printf("P:%+.0f R:%+.0f\n", state.imu.pitch, state.imu.roll);
-    _display.printf("PWR:%d%%", state.maxPowerPercent);
+void OledDisplay::resetBlinkTimer() {
+    blinktimer = millis() + (blinkInterval * 1000) + (random(blinkIntervalVariation + 1) * 1000);
 }
 
-void OledDisplay::drawEyes(const ControlState& state) {
-    // idle/autoblinker already set by render() per mood — do not overwrite
-
-    // ---- PRE-CALCULATIONS (RoboEyes tween) ----
+void OledDisplay::stepEyeState() {
     eyeLheightCurrent = (eyeLheightCurrent + eyeLheightNext) / 2;
     eyeLy += ((eyeLheightDefault - eyeLheightCurrent) / 2);
     eyeRheightCurrent = (eyeRheightCurrent + eyeRheightNext) / 2;
@@ -132,7 +123,6 @@ void OledDisplay::drawEyes(const ControlState& state) {
         eyeLyNext = constrain(cy + (int)random(-drift, drift + 1), 0, maxY);
         idleAnimationTimer = millis() + (idleInterval * 1000) + (random(idleIntervalVariation + 1) * 1000);
     }
-    // One-shot flickers expire
     if (hFlicker && millis() >= confusedUntilMs) { hFlicker = 0; }
     if (vFlicker && millis() >= laughUntilMs) { vFlicker = 0; }
     if (hFlicker) {
@@ -145,36 +135,99 @@ void OledDisplay::drawEyes(const ControlState& state) {
         else { eyeLy -= vFlickerAmplitude; eyeRy -= vFlickerAmplitude; }
         vFlickerAlternate = !vFlickerAlternate;
     }
-
-    _display.clearDisplay();
-    _display.fillRoundRect(eyeLx, eyeLy, eyeLwidthCurrent, eyeLheightCurrent, eyeLborderRadiusCurrent, SSD1306_WHITE);
-    _display.fillRoundRect(eyeRx, eyeRy, eyeRwidthCurrent, eyeRheightCurrent, eyeRborderRadiusCurrent, SSD1306_WHITE);
-
     if (tired) eyelidsTiredHeightNext = eyeLheightCurrent / 2; else eyelidsTiredHeightNext = 0;
     if (angry) eyelidsAngryHeightNext = eyeLheightCurrent / 2; else eyelidsAngryHeightNext = 0;
     if (happy) eyelidsHappyBottomOffsetNext = (eyeLheightTarget * 4) / 5; else eyelidsHappyBottomOffsetNext = 0;
 
     eyelidsTiredHeight = (eyelidsTiredHeight + eyelidsTiredHeightNext) / 2;
+    eyelidsAngryHeight = (eyelidsAngryHeight + eyelidsAngryHeightNext) / 2;
+    eyelidsHappyBottomOffset = (eyelidsHappyBottomOffset + eyelidsHappyBottomOffsetNext) / 2;
+}
+
+void OledDisplay::drawEyeFrames() {
+    _display.clearDisplay();
+    _display.fillRoundRect(eyeLx, eyeLy, eyeLwidthCurrent, eyeLheightCurrent, eyeLborderRadiusCurrent, SSD1306_WHITE);
+    _display.fillRoundRect(eyeRx, eyeRy, eyeRwidthCurrent, eyeRheightCurrent, eyeRborderRadiusCurrent, SSD1306_WHITE);
+
     _display.fillTriangle(eyeLx, eyeLy - 1, eyeLx + eyeLwidthCurrent, eyeLy - 1, eyeLx, eyeLy + eyelidsTiredHeight - 1, SSD1306_BLACK);
     _display.fillTriangle(eyeRx, eyeRy - 1, eyeRx + eyeRwidthCurrent, eyeRy - 1, eyeRx + eyeRwidthCurrent, eyeRy + eyelidsTiredHeight - 1, SSD1306_BLACK);
 
-    eyelidsAngryHeight = (eyelidsAngryHeight + eyelidsAngryHeightNext) / 2;
     _display.fillTriangle(eyeLx, eyeLy - 1, eyeLx + eyeLwidthCurrent, eyeLy - 1, eyeLx + eyeLwidthCurrent, eyeLy + eyelidsAngryHeight - 1, SSD1306_BLACK);
     _display.fillTriangle(eyeRx, eyeRy - 1, eyeRx + eyeRwidthCurrent, eyeRy - 1, eyeRx, eyeRy + eyelidsAngryHeight - 1, SSD1306_BLACK);
 
-    eyelidsHappyBottomOffset = (eyelidsHappyBottomOffset + eyelidsHappyBottomOffsetNext) / 2;
     _display.fillRoundRect(eyeLx - 1, (eyeLy + eyeLheightCurrent) - eyelidsHappyBottomOffset + 1, eyeLwidthCurrent + 2, eyeLheightDefault, eyeLborderRadiusCurrent, SSD1306_BLACK);
     _display.fillRoundRect(eyeRx - 1, (eyeRy + eyeRheightCurrent) - eyelidsHappyBottomOffset + 1, eyeRwidthCurrent + 2, eyeRheightDefault, eyeRborderRadiusCurrent, SSD1306_BLACK);
 
-
-
     _display.display();
+}
+
+void OledDisplay::drawDebug(const ControlState& state) {
+    _display.setTextSize(1);
+    _display.setTextColor(SSD1306_WHITE);
+    _display.setCursor(0, 0);
+    _display.printf("D:%3dmm %s\n", state.currentDistanceMM, state.isCliff ? "CLIFF" : "ok");
+    _display.printf("ST:%s\n", state.status.c_str());
+    if (!state.imu.healthy) _display.println("IMU:OFF");
+    else _display.printf("P:%+.0f R:%+.0f\n", state.imu.pitch, state.imu.roll);
+    _display.printf("PWR:%d%%", state.maxPowerPercent);
+}
+
+void OledDisplay::drawEyes(const ControlState& state) {
+    stepEyeState();
+    drawEyeFrames();
 }
 
 void OledDisplay::render(const ControlState& state) {
     if (!_healthy) return;
     if (millis() - fpsTimer < (unsigned long)frameInterval) return;
     fpsTimer = millis();
+
+    // Pure motion gate: interpret petting only when not generating motion (DRIVING/WIGGLE!/CLIFF WIGGLE!)
+    extern RobotStateStore stateStore;
+    InputEvent evt;
+    bool hasInput = stateStore.takeInput(evt);
+    bool robotMovingForGate = (state.status == "DRIVING" || state.status == "WIGGLE!" || state.status == "CLIFF WIGGLE!");
+    bool inMotionCooldown = (millis() - state.lastMotionMs < (unsigned long)MOTION_COOLDOWN_MS);
+    bool isAngryGate = state.displayAngryUntilMs != 0 && (long)(millis() - state.displayAngryUntilMs) < 0;
+    bool isHappyGate = state.displayHappyUntilMs != 0 && (long)(millis() - state.displayHappyUntilMs) < 0;
+    bool worriedGate = state.displayWorriedUntilMs != 0 && (long)(millis() - state.displayWorriedUntilMs) < 0;
+    bool isWigglingForGate = state.status == "WIGGLE!" || state.status == "CLIFF WIGGLE!";
+    bool isStoppedGate = state.status == "STOPPED";
+    bool sleepyGate = isStoppedGate && (millis() - lastActiveMs >= EYE_SLEEPY_AFTER_MS);
+
+    if (hasInput) {
+        if (robotMovingForGate || inMotionCooldown) {
+            Serial.printf("[DROP] %s gated by motion%s status=%s age=%lums\n", evt.type==INPUT_SHAKEN?"SHAKEN":"NUDGED", robotMovingForGate?"":" cooldown", state.status.c_str(), (unsigned long)(millis()-state.lastMotionMs));
+        } else {
+            int inputPrec = (evt.type==INPUT_SHAKEN)?2:1;
+            int activePrec = isAngryGate?2 : (isHappyGate||worriedGate||isWigglingForGate?1:0);
+            bool busy = (activePrec>0);
+            bool isSleepyNow = sleepyGate;
+            if (isSleepyNow) {
+                // Sleeping: any petting wakes + reacts per input (one-frame)
+                lastActiveMs = millis();
+                if (wasSleepy) { wasSleepy = false; applyPreset(Preset_Normal); }
+                if (evt.type==INPUT_SHAKEN) {
+                    stateStore.setDisplayAngry(millis() + ANGRY_MOOD_MS);
+                } else {
+                    stateStore.setDisplayHappy(millis() + HAPPY_MOOD_MS);
+                }
+                stateStore.wakeFromSleep();
+            } else if (!busy) {
+                if (evt.type==INPUT_SHAKEN) stateStore.setDisplayAngry(millis() + ANGRY_MOOD_MS);
+                else stateStore.setDisplayHappy(millis() + HAPPY_MOOD_MS);
+            } else {
+                if (inputPrec > activePrec) {
+                    // Higher prec overrides (angry overrides happy)
+                    if (evt.type==INPUT_SHAKEN) stateStore.setDisplayAngry(millis() + ANGRY_MOOD_MS);
+                } else {
+                    Serial.printf("[DROP] %s ignored, busy %s prec %d vs %d\n", evt.type==INPUT_SHAKEN?"SHAKEN":"NUDGED", isAngryGate?"angry":(isHappyGate?"happy":(worriedGate?"worried":"wiggling")), inputPrec, activePrec);
+                }
+            }
+        }
+    }
+    // Keep lastActiveMs update for sleep truth (moved after gate to avoid double)
+    if (!isStoppedGate) lastActiveMs = millis();
 
     bool debug = state.displayDebugOn;
     bool worried = state.displayWorriedUntilMs != 0 && (long)(millis() - state.displayWorriedUntilMs) < 0;
@@ -183,6 +236,17 @@ void OledDisplay::render(const ControlState& state) {
 
     if (!isStopped) lastActiveMs = millis();
     bool sleepy = isStopped && (millis() - lastActiveMs >= EYE_SLEEPY_AFTER_MS);
+    // Gentle wake: reset sleep timer and wasSleepy latch (edge-only log)
+    if (state.displayWakeResetMs != 0 && millis() - state.displayWakeResetMs < 1500) {
+        bool wasSleepyBefore = wasSleepy;
+        lastActiveMs = millis();
+        if (wasSleepy) { wasSleepy = false; applyPreset(Preset_Normal); }
+        if (wasSleepyBefore) {
+            Serial.printf("[WAKE] display woke from sleep via gentle nudge (wakeMs=%lu wasSleepy=1)\n", (unsigned long)state.displayWakeResetMs);
+        }
+    }
+    bool isAngryShake = state.displayAngryUntilMs != 0 && (long)(millis() - state.displayAngryUntilMs) < 0;
+    bool isHappyNudge = state.displayHappyUntilMs != 0 && (long)(millis() - state.displayHappyUntilMs) < 0;
 
     // Forced mood from web UI overrides auto mapping (debug still wins)
     bool hasForced = state.displayMoodOverride >= 0;
@@ -197,15 +261,25 @@ void OledDisplay::render(const ControlState& state) {
         applyPreset(Preset_Normal);
         lastMoodOverride = -1;
     }
-    // Auto-sleep edge-trigger (60s idle)
+    // Auto-sleep edge-trigger (60s idle) — edge-only log
     if (!hasForced) {
-        if (sleepy && !wasSleepy) { applyPreset(Preset_Sleeping); wasSleepy = true; }
-        else if (!sleepy && wasSleepy) { applyPreset(Preset_Normal); wasSleepy = false; }
+        if (sleepy && !wasSleepy) {
+            Serial.printf("[SLEEP] idle %lums (threshold %dms) status=%s -> SLEEPING\n", (unsigned long)(millis() - lastActiveMs), EYE_SLEEPY_AFTER_MS, state.status.c_str());
+            applyPreset(Preset_Sleeping); wasSleepy = true;
+        } else if (!sleepy && wasSleepy) {
+            Serial.printf("[WAKE] auto wake after %lums sleep, status=%s -> NORMAL\n", (unsigned long)(millis() - lastActiveMs), state.status.c_str());
+            applyPreset(Preset_Normal); wasSleepy = false;
+        }
     }
-    // Mood mapping: worried = confused shiver (no brow), sleepy = sleeping static, happy = wiggle
+    // Mood mapping: angry shake > forced > happy nudge > worried > sleepy > happy > default (debug always wins)
     if (debug) {
         tired = 0; angry = 0; happy = 0;
         idle = 0; autoblinker = 0;
+    } else if (isAngryShake) {
+        tired = 0; angry = 1; happy = 0;
+        idle = 0; autoblinker = 1;
+        if (wasSleepy) { wasSleepy = false; applyPreset(Preset_Normal); }
+        if (eyeLheightTarget == 1) applyPreset(Preset_Normal);
     } else if (hasForced) {
         int m = state.displayMoodOverride;
         if (m == 4) {
@@ -221,6 +295,11 @@ void OledDisplay::render(const ControlState& state) {
             idle = (m == 0) ? 1 : 0;
             autoblinker = 1;
         }
+    } else if (isHappyNudge) {
+        tired = 0; angry = 0; happy = 1;
+        idle = 1; autoblinker = 1;
+        if (wasSleepy) { wasSleepy = false; applyPreset(Preset_Normal); }
+        if (eyeLheightTarget == 1) applyPreset(Preset_Normal);
     } else if (worried) {
         // Cliff: open squircle with confused horizontal shiver, no brow
         tired = 0; angry = 0; happy = 0;
@@ -240,14 +319,17 @@ void OledDisplay::render(const ControlState& state) {
         idle = 1; autoblinker = 1;
     }
 
-    if (_i2cMutex && xSemaphoreTake(_i2cMutex, pdMS_TO_TICKS(I2C_TIMEOUT_MS)) != pdTRUE) return;
+    // Step eye state even if I2C busy — prevents blink-closed/idle stall
+    stepEyeState();
+
+    if (_i2cMutex && xSemaphoreTake(_i2cMutex, pdMS_TO_TICKS(5)) != pdTRUE) return;
 
     if (debug) {
         _display.clearDisplay();
         drawDebug(state);
         _display.display();
     } else {
-        drawEyes(state);
+        drawEyeFrames();
     }
 
     if (_i2cMutex) xSemaphoreGive(_i2cMutex);

@@ -51,7 +51,7 @@ bool tofReinit() {
     Wire.end();
     Wire.begin(21, 22);
     Wire.setTimeOut(I2C_TIMEOUT_MS);
-    Wire.setClock(100000);
+    Wire.setClock(400000);
     if (!lox.begin()) {
         Serial.println("[ToF] Re-init FAILED.");
         return false;
@@ -118,9 +118,12 @@ void HardwareTask(void *pvParameters) {
     int lastGoodDist = 999;
     uint8_t lastGoodStatus = 4;
     int consecErrors = 0;
-    int tick = 0;
+    int tofTick = 0;
+    int mpuTick = 0;
     ImuReading imu;
     unsigned long lastMpuReprobeMs = 0;
+    int gentleCount = 0;
+    int angryCount = 0;
     WiggleController wiggle(motors);
     bool cliffLatched = false;
     bool wiggleIsCliff = false;
@@ -139,83 +142,133 @@ void HardwareTask(void *pvParameters) {
             tofRecoverHard();
         }
 
-        tick++;
-        bool doTofRead = (tick >= TOF_READ_EVERY_N_TICKS);
+        tofTick++;
+        mpuTick++;
+        bool doTofRead = (tofTick >= TOF_READ_EVERY_N_TICKS);
         if (doTofRead) {
-            tick = 0;
-            // Guard shared Wire with i2cMutex
-            bool got = (i2cMutex == nullptr) || (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_TIMEOUT_MS)) == pdTRUE);
-            VL53L0X_RangingMeasurementData_t measure;
-            VL53L0X_Error err = lox.rangingTest(&measure, false);
-            if (got && i2cMutex) xSemaphoreGive(i2cMutex);
-            if (tofReadingValid(measure, err)) {
-                consecErrors = 0;
-                lastGoodStatus = measure.RangeStatus;
-                lastGoodDist = measure.RangeMilliMeter;
+            tofTick = 0;
+            if (i2cMutex != nullptr && xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(5)) != pdTRUE) {
+                // Bus busy (OLED holding ~22ms) — skip this cycle, keep lastGood, don't count as sensor fault
             } else {
-                consecErrors++;
+                VL53L0X_RangingMeasurementData_t measure;
+                VL53L0X_Error err = lox.rangingTest(&measure, false);
+                if (i2cMutex) xSemaphoreGive(i2cMutex);
+                if (tofReadingValid(measure, err)) {
+                    consecErrors = 0;
+                    lastGoodStatus = measure.RangeStatus;
+                    lastGoodDist = measure.RangeMilliMeter;
+                } else {
+                    consecErrors++;
+                }
             }
         }
 
         int dist = lastGoodDist;
         bool tofFault = (consecErrors >= TOF_MAX_CONSECUTIVE_ERRORS);
 
-        if (tick == MPU_READ_TICK_OFFSET) {
+        bool doMpuRead = (mpuTick >= MPU_READ_EVERY_N_TICKS);
+        if (doMpuRead) {
+            mpuTick = 0;
             ControlState mpuCfg = stateStore.getState();
             if (!mpuCfg.mpuEnabled) {
                 imu.healthy = false;
-                stateStore.updateImu(imu);
             } else if (mpuAddr == 0) {
                 if (millis() - lastMpuReprobeMs >= MPU_REPROBE_INTERVAL_MS) {
                     lastMpuReprobeMs = millis();
-                    bool got = (i2cMutex == nullptr) || (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_TIMEOUT_MS)) == pdTRUE);
-                    bool ok = mpuProbe();
-                    if (got && i2cMutex) xSemaphoreGive(i2cMutex);
-                    if (ok) {
-                        Serial.printf("[OK] MPU6050 found at 0x%02X.\n", mpuAddr);
+                    if (i2cMutex == nullptr || xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+                        bool ok = mpuProbe();
+                        if (i2cMutex) xSemaphoreGive(i2cMutex);
+                        if (ok) Serial.printf("[OK] MPU6050 found at 0x%02X.\n", mpuAddr);
                     }
                 }
             } else {
-                bool readOk = false;
-                bool got = (i2cMutex == nullptr) || (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_TIMEOUT_MS)) == pdTRUE);
-                readOk = mpu.Read();
-                if (readOk && !imu.healthy) {
-                    readOk = mpuProbe() && mpu.Read();
-                }
-                if (got && i2cMutex) xSemaphoreGive(i2cMutex);
-                if (readOk) {
-                    float sx = mpu.accel_x_mps2() / 9.80665f;
-                    float sy = mpu.accel_y_mps2() / 9.80665f;
-                    float sz = -mpu.accel_z_mps2() / 9.80665f;
-                    ControlState imuCfg = stateStore.getState();
-                    float fwd, right;
-                    switch (imuCfg.imuOrientation & 3) {
-                        case 0: fwd = -sx; right = sy; break;
-                        case 1: fwd = sy; right = sx; break;
-                        case 2: fwd = sx; right = -sy; break;
-                        default: fwd = -sy; right = -sx; break;
-                    }
-                    float up = sz;
-                    float rawPitch = atan2(fwd, sqrt(right * right + up * up)) * 180.0f / PI;
-                    float rawRoll = atan2(right, up) * 180.0f / PI;
-                    if (stateStore.takeImuCalibrateRequest()) {
-                        stateStore.setImuOffsets(rawPitch, rawRoll);
-                        imuCfg.imuPitchOffset = constrain(rawPitch, -45.0f, 45.0f);
-                        imuCfg.imuRollOffset = constrain(rawRoll, -45.0f, 45.0f);
-                    }
-                    imu.pitch = rawPitch - imuCfg.imuPitchOffset;
-                    imu.roll = rawRoll - imuCfg.imuRollOffset;
-                    imu.gyroZ = -mpu.gyro_z_radps() * 57.29578f;
-                    imu.accelMag = sqrt(fwd * fwd + right * right + up * up);
-                    imu.isPickedUp = (imu.accelMag > PICKED_UP_ACCEL_G) ||
-                                     (fabsf(imu.pitch) > PICKED_UP_TILT_DEG) ||
-                                     (fabsf(imu.roll) > PICKED_UP_TILT_DEG);
-                    imu.healthy = true;
+                bool got = (i2cMutex == nullptr) || (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(5)) == pdTRUE);
+                if (!got) {
+                    // Bus busy (OLED ~22ms) — skip this cycle, keep last imu
                 } else {
-                    imu.healthy = false;
+                    bool readOk = false;
+                    readOk = mpu.Read();
+                    if (readOk && !imu.healthy) {
+                        readOk = mpuProbe() && mpu.Read();
+                    }
+                    if (i2cMutex) xSemaphoreGive(i2cMutex);
+                    if (readOk) {
+                        float sx = mpu.accel_x_mps2() / 9.80665f;
+                        float sy = mpu.accel_y_mps2() / 9.80665f;
+                        float sz = -mpu.accel_z_mps2() / 9.80665f;
+                        ControlState imuCfg = stateStore.getState();
+                        float fwd, right;
+                        switch (imuCfg.imuOrientation & 3) {
+                            case 0: fwd = -sx; right = sy; break;
+                            case 1: fwd = sy; right = sx; break;
+                            case 2: fwd = sx; right = -sy; break;
+                            default: fwd = -sy; right = -sx; break;
+                        }
+                        float up = sz;
+                        float rawPitch = atan2(fwd, sqrt(right * right + up * up)) * 180.0f / PI;
+                        float rawRoll = atan2(right, up) * 180.0f / PI;
+                        if (stateStore.takeImuCalibrateRequest()) {
+                            stateStore.setImuOffsets(rawPitch, rawRoll);
+                            imuCfg.imuPitchOffset = constrain(rawPitch, -45.0f, 45.0f);
+                            imuCfg.imuRollOffset = constrain(rawRoll, -45.0f, 45.0f);
+                        }
+                        imu.pitch = rawPitch - imuCfg.imuPitchOffset;
+                        imu.roll = rawRoll - imuCfg.imuRollOffset;
+                        imu.gyroZ = -mpu.gyro_z_radps() * 57.29578f;
+                        imu.accelMag = sqrt(fwd * fwd + right * right + up * up);
+                        imu.isPickedUp = (imu.accelMag > PICKED_UP_ACCEL_G) ||
+                                         (fabsf(imu.pitch) > PICKED_UP_TILT_DEG) ||
+                                         (fabsf(imu.roll) > PICKED_UP_TILT_DEG);
+                        imu.healthy = true;
+                    } else {
+                        imu.healthy = false;
+                    }
                 }
             }
             stateStore.updateImu(imu);
+            // Pure motion gate + 500ms cooldown after motion: inertial decel not mis-tagged as nudge
+            if (imu.healthy) {
+                ControlState shakeCfg = stateStore.getState();
+                unsigned long now = millis();
+                bool robotMoving = (shakeCfg.status == "DRIVING" || shakeCfg.status == "WIGGLE!" || shakeCfg.status == "CLIFF WIGGLE!" || wiggle.isActive());
+                bool inMotionCooldown = (now - shakeCfg.lastMotionMs < (unsigned long)MOTION_COOLDOWN_MS);
+                if (robotMoving || inMotionCooldown) {
+                    gentleCount = 0;
+                    angryCount = 0;
+                } else {
+                    bool angryCooldown = (now - shakeCfg.lastShakenMs < (unsigned long)SHAKE_COOLDOWN_MS);
+                    bool gentleCooldown = (now - shakeCfg.lastNudgedMs < (unsigned long)SHAKE_COOLDOWN_MS);
+                    bool angryHit = (imu.accelMag >= shakeCfg.shakeAngryG) || (fabsf(imu.gyroZ) >= shakeCfg.shakeAngryGyro);
+                    bool gentleHit = (imu.accelMag >= shakeCfg.shakeGentleG) || (fabsf(imu.gyroZ) >= shakeCfg.shakeGentleGyro);
+                    if (!angryCooldown && angryHit) {
+                        angryCount++;
+                        gentleCount = 0;
+                    } else if (!angryCooldown) {
+                        angryCount = 0;
+                        if (!gentleCooldown && gentleHit) gentleCount++;
+                        else if (!gentleCooldown) gentleCount = 0;
+                    } else {
+                        // In angry cooldown, still allow gentle counting if not in gentle cooldown
+                        if (!gentleCooldown && gentleHit) gentleCount++;
+                        else if (!gentleCooldown) gentleCount = 0;
+                    }
+                    if (!angryCooldown && angryCount >= SHAKE_ANGRY_N) {
+                        Serial.printf("[SHAKEN] accel=%.2fg (thr %.2fg) gyro=%.0fdps (thr %.0fdps) counts a=%d/%d pitch=%.1f roll=%.1f\n",
+                                      imu.accelMag, shakeCfg.shakeAngryG, imu.gyroZ, shakeCfg.shakeAngryGyro, angryCount, SHAKE_ANGRY_N, imu.pitch, imu.roll);
+                        stateStore.announceInput(INPUT_SHAKEN, imu.accelMag, imu.gyroZ, imu.pitch, imu.roll);
+                        gentleCount = 0;
+                        angryCount = 0;
+                    } else if (!gentleCooldown && gentleCount >= SHAKE_GENTLE_N) {
+                        Serial.printf("[NUDGED] accel=%.2fg (thr %.2fg) gyro=%.0fdps (thr %.0fdps) counts g=%d/%d pitch=%.1f roll=%.1f\n",
+                                      imu.accelMag, shakeCfg.shakeGentleG, imu.gyroZ, shakeCfg.shakeGentleGyro, gentleCount, SHAKE_GENTLE_N, imu.pitch, imu.roll);
+                        stateStore.announceInput(INPUT_NUDGED, imu.accelMag, imu.gyroZ, imu.pitch, imu.roll);
+                        gentleCount = 0;
+                        angryCount = 0;
+                    }
+                    if (angryCooldown && angryCount>0) angryCount=0;
+                    if (gentleCooldown && gentleCount>0) gentleCount=0;
+                }
+            }
         }
 
         ControlState state = stateStore.getState();
@@ -239,6 +292,7 @@ void HardwareTask(void *pvParameters) {
                 : (wiggleReqDir == 1) ? WiggleDirection::BACKWARD : WiggleDirection::IN_PLACE;
             wiggle.start(reqDir, wiggleReqPairs);
             wiggleIsCliff = false;
+            stateStore.setDisplayHappy(millis() + HAPPY_MOOD_MS);
         }
         if (!cliffLatched && !wiggle.isActive() && isCliff && (left > 0 || right > 0) &&
             !state.isEBrake && !fault && !tofFault) {
@@ -294,6 +348,7 @@ void HardwareTask(void *pvParameters) {
         }
 
         stateStore.updateTelemetry(dist, isCliff, fault, tofFault, status);
+        stateStore.updateTelemetryMotion(status);
     }
 }
 
@@ -324,11 +379,11 @@ void setup() {
     pinMode(TOF_XSHUT_PIN, OUTPUT);
     digitalWrite(TOF_XSHUT_PIN, HIGH);
 
-    // Reset and initialize I2C bus
+    // Reset and initialize I2C bus - 400kHz shared (ToF/MPU/OLED + future camera)
     Wire.end();
     Wire.begin(21, 22); 
     Wire.setTimeOut(I2C_TIMEOUT_MS);
-    Wire.setClock(100000); // 100kHz standard I2C speed
+    Wire.setClock(400000); // 400kHz fast I2C
     i2cScanBus();
 
     // 2. Initialize distance sensor
