@@ -51,7 +51,7 @@ html, body {
   transition: max-height 0.3s ease-out, padding 0.3s ease; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; align-items: center;
   z-index: 9;
 }
-.drawer.open { max-height: 290px; padding: 12px 16px; }
+.drawer.open { max-height: 340px; padding: 12px 16px; overflow-y: auto; }
 .setting-row { display: flex; align-items: center; gap: 12px; width: 100%; max-width: 360px; font-size: 13px; color: #aaa; }
 .setting-row input { flex: 1; accent-color: #00adb5; }
 .setting-row button {
@@ -90,6 +90,13 @@ canvas { display: block; }
 .ebrake-btn.wiggle-accent { border-color: #00adb5; }
 .ebrake-btn.wiggle-accent .ebrake-icon { color: #00adb5; border-color: #00adb5; }
 .ebrake-btn.wiggle-accent:active { background: #06282a; box-shadow: 0 0 16px rgba(0,173,181,0.4); }
+
+/* Mood / Action controls (temporary dev) */
+.mood-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin: 6px 0 4px; }
+.pill { background: #1e1e1e; color: #aaa; border: 1px solid #444; border-radius: 16px; padding: 6px 10px; font-size: 10px; font-weight: 700; letter-spacing: 1px; cursor: pointer; }
+.pill.active { color: #fff; border-color: #00adb5; background: #0a2a2c; }
+.action-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin: 2px 0 8px; }
+.pill.play { border-color: #666; }
 
 /* IMU / Orientation Panel */
 .imu-panel {
@@ -168,6 +175,14 @@ canvas { display: block; }
       <span>IMU FLAT</span>
       <button onclick='calibrateIMU()'>CALIBRATE</button>
     </div>
+    <div class='setting-row'>
+      <span>OLED DEBUG</span>
+      <button id='oled-dbg-btn' onclick='toggleOledDebug()'>OFF</button>
+    </div>
+    <div class='setting-row'>
+      <span>MPU SENSOR</span>
+      <button id='mpu-btn' onclick='toggleMpu()'>ON</button>
+    </div>
   </div>
 
   <!-- Main Drive & Controls Area -->
@@ -207,6 +222,19 @@ canvas { display: block; }
       </div>
     </div>
 
+    <!-- Mood + Action (temporary dev) -->
+    <div class='mood-row' id='mood-row'>
+      <button class='pill' data-mood='0' onclick='setMood(0)'>DEFAULT</button>
+      <button class='pill' data-mood='1' onclick='setMood(1)'>TIRED</button>
+      <button class='pill' data-mood='2' onclick='setMood(2)'>ANGRY</button>
+      <button class='pill' data-mood='3' onclick='setMood(3)'>HAPPY</button>
+    </div>
+    <div class='action-row'>
+      <button class='pill play' onclick='playAnim(1)'>BLINK</button>
+      <button class='pill play' onclick='playAnim(2)'>CONFUSED</button>
+      <button class='pill play' onclick='playAnim(3)'>LAUGH</button>
+    </div>
+
   </div>
 
 <script>
@@ -229,6 +257,9 @@ const threshVal = document.getElementById('thresh-val');
 const powerSlider = document.getElementById('maxpower');
 const powerVal = document.getElementById('power-val');
 const axisBtn = document.getElementById('axis-btn');
+const oledDbgBtn = document.getElementById('oled-dbg-btn');
+const mpuBtn = document.getElementById('mpu-btn');
+const moodPills = document.querySelectorAll('.mood-row .pill');
 const telemetryGroup = document.getElementById('telemetry-group');
 const controls = document.getElementById('controls');
 const imuPitch = document.getElementById('imu-pitch');
@@ -308,6 +339,18 @@ function handleMessage(event) {
     }
     if (data.imuOrient !== undefined) {
       axisBtn.innerText = 'AXIS ' + data.imuOrient;
+    }
+    if (data.oledDebug !== undefined) {
+      oledDbgBtn.innerText = data.oledDebug ? 'ON' : 'OFF';
+    }
+    if (data.mpuEnabled !== undefined) {
+      mpuBtn.innerText = data.mpuEnabled ? 'ON' : 'OFF';
+    }
+    if (data.moodOverride !== undefined) {
+      moodPills.forEach(function(p){
+        var m = parseInt(p.getAttribute('data-mood'));
+        p.classList.toggle('active', m === data.moodOverride);
+      });
     }
   } 
   else if (data.type === 'telemetry') {
@@ -414,9 +457,37 @@ function cycleAxis() {
   }
 }
 
+function setMood(m) {
+  if (websocket.readyState === WebSocket.OPEN) {
+    let buffer = new Uint8Array([14, m & 0xFF]);
+    websocket.send(buffer.buffer);
+  }
+}
+
+function playAnim(a) {
+  if (websocket.readyState === WebSocket.OPEN) {
+    let buffer = new Uint8Array([15, a & 0xFF]);
+    websocket.send(buffer.buffer);
+  }
+}
+
 function calibrateIMU() {
   if (websocket.readyState === WebSocket.OPEN) {
     let buffer = new Uint8Array([9]);
+    websocket.send(buffer.buffer);
+  }
+}
+
+function toggleOledDebug() {
+  if (websocket.readyState === WebSocket.OPEN) {
+    let buffer = new Uint8Array([12]);
+    websocket.send(buffer.buffer);
+  }
+}
+
+function toggleMpu() {
+  if (websocket.readyState === WebSocket.OPEN) {
+    let buffer = new Uint8Array([13]);
     websocket.send(buffer.buffer);
   }
 }
@@ -550,7 +621,10 @@ void WebServerManager::sendConfig(AsyncWebSocketClient *client) {
     ControlState state = _stateStore.getState();
     String json = "{\"type\":\"config\",\"threshold\":" + String(state.cliffThresholdMM) +
                   ",\"maxPower\":" + String(state.maxPowerPercent) +
-                  ",\"imuOrient\":" + String(state.imuOrientation) + "}";
+                  ",\"imuOrient\":" + String(state.imuOrientation) +
+                  ",\"oledDebug\":" + String(state.displayDebugOn ? "true" : "false") +
+                  ",\"mpuEnabled\":" + String(state.mpuEnabled ? "true" : "false") +
+                  ",\"moodOverride\":" + String(state.displayMoodOverride) + "}";
     if (client) {
         client->text(json);
     } else {
@@ -583,6 +657,17 @@ void WebServerManager::handleBinaryMessage(void *arg, uint8_t *data, size_t len)
             _stateStore.requestImuCalibrate();
         } else if (cmd == 0x0A && len >= 3) {
             _stateStore.requestWiggle(data[1], data[2]);
+        } else if (cmd == 0x0C) {
+            _stateStore.toggleDisplayDebug();
+            sendConfig();
+        } else if (cmd == 0x0D) {
+            _stateStore.toggleMpuEnabled();
+            sendConfig();
+        } else if (cmd == 0x0E && len >= 2) {
+            _stateStore.setDisplayMood(data[1]);
+            sendConfig();
+        } else if (cmd == 0x0F && len >= 2) {
+            _stateStore.requestDisplayAnim(data[1]);
         }
     }
 }

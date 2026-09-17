@@ -62,6 +62,12 @@ and versions live in `include/Config.h` and `platformio.ini`; read them there.
   batteries; keep it.
 - The server pushes `config` on every WebSocket connect; clients self-sync.
 
+## Eyes / display
+
+- OLED `128×64 SSD1306` on shared `Wire` (`0x3C`/`0x3D`), rendered by a low-prio Core 0 `DisplayTask` with an `I2C` mutex.
+- [FluxGarage/RoboEyes](https://github.com/FluxGarage/RoboEyes) (GPL-3.0, GFX) — directly vendored smooth tween `cur=(cur+next)/2`, autoblinker/idle drift and eyelid moods.
+- [playfultechnology/esp32-eyes](https://github.com/playfultechnology/esp32-eyes) (GPL-3.0, `u8g2`) — inspiration/ideas from 18-emotion presets (slopes/radii), not vendored.
+
 ## Constraints
 
 - Flash sits near 80%: check the size line after any dependency change.

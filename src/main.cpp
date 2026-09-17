@@ -7,14 +7,17 @@
 #include "core/RobotState.h"
 #include "drivers/MotorDriver.h"
 #include "drivers/WiggleController.h"
+#include "drivers/OledDisplay.h"
 #include "web/WebServerManager.h"
 
 RobotStateStore stateStore;
 MotorDriver motors(PIN_IN1, PIN_IN2, PIN_IN3, PIN_IN4, PIN_FAULT);
 WebServerManager webServer(stateStore);
+OledDisplay oled;
 Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 bfs::Mpu6500 mpu;
 uint8_t mpuAddr = 0;
+SemaphoreHandle_t i2cMutex = nullptr;
 
 bool mpuProbeAddr(uint8_t addr) {
     mpu.Config(&Wire, addr == MPU_I2C_ADDR_FALLBACK ? bfs::Mpu6500::I2C_ADDR_SEC : bfs::Mpu6500::I2C_ADDR_PRIM);
@@ -137,10 +140,14 @@ void HardwareTask(void *pvParameters) {
         }
 
         tick++;
-        if (tick >= TOF_READ_EVERY_N_TICKS) {
+        bool doTofRead = (tick >= TOF_READ_EVERY_N_TICKS);
+        if (doTofRead) {
             tick = 0;
+            // Guard shared Wire with i2cMutex
+            bool got = (i2cMutex == nullptr) || (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_TIMEOUT_MS)) == pdTRUE);
             VL53L0X_RangingMeasurementData_t measure;
             VL53L0X_Error err = lox.rangingTest(&measure, false);
+            if (got && i2cMutex) xSemaphoreGive(i2cMutex);
             if (tofReadingValid(measure, err)) {
                 consecErrors = 0;
                 lastGoodStatus = measure.RangeStatus;
@@ -154,18 +161,28 @@ void HardwareTask(void *pvParameters) {
         bool tofFault = (consecErrors >= TOF_MAX_CONSECUTIVE_ERRORS);
 
         if (tick == MPU_READ_TICK_OFFSET) {
-            if (mpuAddr == 0) {
+            ControlState mpuCfg = stateStore.getState();
+            if (!mpuCfg.mpuEnabled) {
+                imu.healthy = false;
+                stateStore.updateImu(imu);
+            } else if (mpuAddr == 0) {
                 if (millis() - lastMpuReprobeMs >= MPU_REPROBE_INTERVAL_MS) {
                     lastMpuReprobeMs = millis();
-                    if (mpuProbe()) {
+                    bool got = (i2cMutex == nullptr) || (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_TIMEOUT_MS)) == pdTRUE);
+                    bool ok = mpuProbe();
+                    if (got && i2cMutex) xSemaphoreGive(i2cMutex);
+                    if (ok) {
                         Serial.printf("[OK] MPU6050 found at 0x%02X.\n", mpuAddr);
                     }
                 }
             } else {
-                bool readOk = mpu.Read();
+                bool readOk = false;
+                bool got = (i2cMutex == nullptr) || (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(I2C_TIMEOUT_MS)) == pdTRUE);
+                readOk = mpu.Read();
                 if (readOk && !imu.healthy) {
                     readOk = mpuProbe() && mpu.Read();
                 }
+                if (got && i2cMutex) xSemaphoreGive(i2cMutex);
                 if (readOk) {
                     float sx = mpu.accel_x_mps2() / 9.80665f;
                     float sy = mpu.accel_y_mps2() / 9.80665f;
@@ -227,6 +244,7 @@ void HardwareTask(void *pvParameters) {
             !state.isEBrake && !fault && !tofFault) {
             wiggle.start(WiggleDirection::BACKWARD, CLIFF_WIGGLE_PAIRS);
             wiggleIsCliff = true;
+            stateStore.setDisplayWorried(millis() + OLED_WORRIED_DURATION_MS);
         }
 
         if (state.isEBrake) {
@@ -279,12 +297,29 @@ void HardwareTask(void *pvParameters) {
     }
 }
 
+void DisplayTask(void *pvParameters) {
+    TickType_t xLast = xTaskGetTickCount();
+    const TickType_t xFreq = pdMS_TO_TICKS(OLED_FPS_MS);
+    for (;;) {
+        vTaskDelayUntil(&xLast, xFreq);
+        int anim = 0;
+        if (stateStore.takeDisplayAnim(anim)) {
+            oled.triggerAnim(anim);
+        }
+        ControlState s = stateStore.getState();
+        oled.render(s);
+    }
+}
+
 void setup() {
     Serial.begin(115200);
     Serial.println("\n--- ESP32 BOOTING UP ---");
 
     stateStore.begin();
     motors.begin();
+
+    i2cMutex = xSemaphoreCreateMutex();
+    oled.setI2cMutex(i2cMutex);
 
     pinMode(TOF_XSHUT_PIN, OUTPUT);
     digitalWrite(TOF_XSHUT_PIN, HIGH);
@@ -304,30 +339,42 @@ void setup() {
     }
 
     // 3. Initialize IMU (non-fatal: robot runs fine without it)
-    bool mpuOk = false;
-    for (int attempt = 0; attempt < 3 && !mpuOk; attempt++) {
-        if (attempt > 0) {
-            delay(100);
-        }
-        mpuOk = mpuProbe();
-    }
-    if (mpuOk) {
-        Serial.printf("[OK] MPU6050 initialized at 0x%02X.\n", mpuAddr);
+    ControlState mpuCheck = stateStore.getState();
+    if (!mpuCheck.mpuEnabled) {
+        Serial.println("[MPU] Disabled via settings.");
     } else {
-        Serial.println("[WARN] MPU6050 not found, IMU disabled.");
-        uint8_t who = 0xFF;
-        Wire.beginTransmission(MPU_I2C_ADDR_PRIMARY);
-        Wire.write(0x75);
-        if (Wire.endTransmission(false) == 0 && Wire.requestFrom(MPU_I2C_ADDR_PRIMARY, (uint8_t)1) == 1) {
-            who = Wire.read();
+        bool mpuOk = false;
+        for (int attempt = 0; attempt < 3 && !mpuOk; attempt++) {
+            if (attempt > 0) {
+                delay(100);
+            }
+            mpuOk = mpuProbe();
         }
-        Serial.printf("[MPU] WHO_AM_I (0x75) reads 0x%02X (expect 0x68).\n", who);
+        if (mpuOk) {
+            Serial.printf("[OK] MPU6050 initialized at 0x%02X.\n", mpuAddr);
+        } else {
+            Serial.println("[WARN] MPU6050 not found, IMU disabled.");
+            uint8_t who = 0xFF;
+            Wire.beginTransmission(MPU_I2C_ADDR_PRIMARY);
+            Wire.write(0x75);
+            if (Wire.endTransmission(false) == 0 && Wire.requestFrom(MPU_I2C_ADDR_PRIMARY, (uint8_t)1) == 1) {
+                who = Wire.read();
+            }
+            Serial.printf("[MPU] WHO_AM_I (0x75) reads 0x%02X (expect 0x68).\n", who);
+        }
     }
 
+    // 4. Initialize OLED
+    if (oled.begin()) {
+        oled.hello();
+    }
+
+    // WiFi must connect before display shows IP; keep hello then start renderer
     webServer.begin();
 
-    // Start Hardware Task on Core 1
+    // Start tasks
     xTaskCreatePinnedToCore(HardwareTask, "HardwareTask", 4096, NULL, 1, NULL, 1);
+    xTaskCreatePinnedToCore(DisplayTask, "DisplayTask", 3072, NULL, 0, NULL, 0);
 }
 
 void loop() {
