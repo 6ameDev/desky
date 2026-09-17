@@ -235,8 +235,10 @@ void HardwareTask(void *pvParameters) {
                 } else {
                     bool angryCooldown = (now - shakeCfg.lastShakenMs < (unsigned long)SHAKE_COOLDOWN_MS);
                     bool gentleCooldown = (now - shakeCfg.lastNudgedMs < (unsigned long)SHAKE_COOLDOWN_MS);
-                    bool angryHit = (imu.accelMag >= shakeCfg.shakeAngryG) || (fabsf(imu.gyroZ) >= shakeCfg.shakeAngryGyro);
-                    bool gentleHit = (imu.accelMag >= shakeCfg.shakeGentleG) || (fabsf(imu.gyroZ) >= shakeCfg.shakeGentleGyro);
+                    float jerk = fabsf(imu.accelMag - 1.0f);
+                    bool angryHit = (jerk >= shakeCfg.shakeAngryG - 1.0f) || (fabsf(imu.gyroZ) >= shakeCfg.shakeAngryGyro);
+                    bool gentleHit = (jerk >= shakeCfg.shakeGentleG - 1.0f) || (fabsf(imu.gyroZ) >= shakeCfg.shakeGentleGyro) ||
+                                     (fabsf(imu.pitch) >= SHAKE_TILT_DEG) || (fabsf(imu.roll) >= SHAKE_TILT_DEG);
                     if (!angryCooldown && angryHit) {
                         angryCount++;
                         gentleCount = 0;
