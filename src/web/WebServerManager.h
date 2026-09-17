@@ -21,7 +21,6 @@ private:
     bool _lastSentEBrake = false;
     String _lastSentStatus = "";
     int _lastSentDistance = 0;
-    bool _lastSentPickedUp = false;
     bool _lastSentImuHealthy = false;
 
     void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);

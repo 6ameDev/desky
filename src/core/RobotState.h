@@ -18,7 +18,6 @@ struct ImuReading {
     float roll = 0;
     float gyroZ = 0;
     float accelMag = 0;
-    bool isPickedUp = false;
     bool healthy = false;
 };
 

@@ -216,9 +216,6 @@ void HardwareTask(void *pvParameters) {
                         imu.roll = rawRoll - imuCfg.imuRollOffset;
                         imu.gyroZ = -mpu.gyro_z_radps() * 57.29578f;
                         imu.accelMag = sqrt(fwd * fwd + right * right + up * up);
-                        imu.isPickedUp = (imu.accelMag > PICKED_UP_ACCEL_G) ||
-                                         (fabsf(imu.pitch) > PICKED_UP_TILT_DEG) ||
-                                         (fabsf(imu.roll) > PICKED_UP_TILT_DEG);
                         imu.healthy = true;
                     } else {
                         imu.healthy = false;

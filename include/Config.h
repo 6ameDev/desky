@@ -29,8 +29,6 @@
 #define MPU_I2C_ADDR_FALLBACK 0x69
 #define MPU_READ_TICK_OFFSET 2
 #define MPU_READ_EVERY_N_TICKS 2
-#define PICKED_UP_ACCEL_G 1.5f
-#define PICKED_UP_TILT_DEG 45.0f
 #define MPU_REPROBE_INTERVAL_MS 5000
 
 // --- Wiggle motion primitive (1 wiggle = one left+right sway pair) ---

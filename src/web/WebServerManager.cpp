@@ -428,8 +428,6 @@ function handleMessage(event) {
       let chipText = 'STABLE', chipClass = 'imu-chip stable';
       if (!m.healthy) {
         chipText = 'IMU OFFLINE'; chipClass = 'imu-chip';
-      } else if (m.isPickedUp) {
-        chipText = 'IN-AIR · TILTED'; chipClass = 'imu-chip alert';
       }
       if (imuChip.innerText !== chipText) imuChip.innerText = chipText;
       if (imuChip.className !== chipClass) imuChip.className = chipClass;
@@ -800,7 +798,6 @@ void WebServerManager::pushTelemetry() {
                   ",\"roll\":" + String(state.imu.roll, 1) +
                   ",\"gyroZ\":" + String(state.imu.gyroZ, 1) +
                   ",\"accelMag\":" + String(state.imu.accelMag, 2) +
-                  ",\"isPickedUp\":" + String(state.imu.isPickedUp ? "true" : "false") +
                   ",\"healthy\":" + String(state.imu.healthy ? "true" : "false") + "}}";
     _ws.textAll(json);
     _lastPushMs = millis();
@@ -809,7 +806,6 @@ void WebServerManager::pushTelemetry() {
     _lastSentEBrake = state.isEBrake;
     _lastSentStatus = state.status;
     _lastSentDistance = state.currentDistanceMM;
-    _lastSentPickedUp = state.imu.isPickedUp;
     _lastSentImuHealthy = state.imu.healthy;
 }
 
@@ -818,7 +814,6 @@ void WebServerManager::pushTelemetryIfNeeded() {
     bool eventChanged = (state.isCliff != _lastSentCliff) ||
                         (state.isFault != _lastSentFault) ||
                         (state.isEBrake != _lastSentEBrake) ||
-                        (state.imu.isPickedUp != _lastSentPickedUp) ||
                         (state.imu.healthy != _lastSentImuHealthy) ||
                         (state.status != _lastSentStatus);
     bool distanceMoved = abs(state.currentDistanceMM - _lastSentDistance) > TELEMETRY_DISTANCE_EPSILON_MM;
