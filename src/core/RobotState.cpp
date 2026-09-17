@@ -299,10 +299,24 @@ void RobotStateStore::updateTelemetryMotion(const String& status) {
 void RobotStateStore::announceInput(InputType type, float accelMag, float gyroZ, float pitch, float roll) {
     if (type == INPUT_NONE) return;
     xSemaphoreTake(_mutex, portMAX_DELAY);
-    // Per-input cooldown already checked in detector, but keep single pending slot: drop if pending not consumed
+    // Single pending slot: SHAKEN (prec 2) overwrites NUDGED (prec 1); same-type refreshes time
     if (_state.pendingInput.type != INPUT_NONE) {
-        xSemaphoreGive(_mutex);
-        return;
+        if (type == INPUT_SHAKEN && _state.pendingInput.type == INPUT_NUDGED) {
+            // fall through: overwrite
+        } else if (type == _state.pendingInput.type) {
+            _state.pendingInput.timeMs = millis();
+            _state.pendingInput.accelMag = accelMag;
+            _state.pendingInput.gyroZ = gyroZ;
+            _state.pendingInput.pitch = pitch;
+            _state.pendingInput.roll = roll;
+            if (type == INPUT_NUDGED) _state.lastNudgedMs = millis();
+            else if (type == INPUT_SHAKEN) _state.lastShakenMs = millis();
+            xSemaphoreGive(_mutex);
+            return;
+        } else {
+            xSemaphoreGive(_mutex);
+            return;
+        }
     }
     _state.pendingInput.type = type;
     _state.pendingInput.timeMs = millis();

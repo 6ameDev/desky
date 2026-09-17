@@ -225,15 +225,14 @@ void OledDisplay::render(const ControlState& state) {
             }
         }
     }
-    // Keep lastActiveMs update for sleep truth (moved after gate to avoid double)
-    if (!isStoppedGate) lastActiveMs = millis();
-
     bool debug = state.displayDebugOn;
     bool worried = state.displayWorriedUntilMs != 0 && (long)(millis() - state.displayWorriedUntilMs) < 0;
     bool isWiggling = state.status == "WIGGLE!" || state.status == "CLIFF WIGGLE!";
     bool isStopped = state.status == "STOPPED";
 
+    // Single source for idle: any non-STOPPED resets timer; sync with store's lastMotionMs to avoid core drift
     if (!isStopped) lastActiveMs = millis();
+    if (state.lastMotionMs != 0 && state.lastMotionMs > lastActiveMs) lastActiveMs = state.lastMotionMs;
     bool sleepy = isStopped && (millis() - lastActiveMs >= EYE_SLEEPY_AFTER_MS);
     // Gentle wake: reset sleep timer and wasSleepy latch (edge-only log)
     if (state.displayWakeResetMs != 0 && millis() - state.displayWakeResetMs < 1500) {
@@ -337,7 +336,7 @@ void OledDisplay::render(const ControlState& state) {
 
 void OledDisplay::hello() {
     if (!_healthy) return;
-    if (_i2cMutex && xSemaphoreTake(_i2cMutex, pdMS_TO_TICKS(I2C_TIMEOUT_MS)) != pdTRUE) return;
+    if (_i2cMutex && xSemaphoreTake(_i2cMutex, pdMS_TO_TICKS(5)) != pdTRUE) return;
     _display.clearDisplay();
     _display.setTextSize(1);
     _display.setTextColor(SSD1306_WHITE);
