@@ -38,6 +38,38 @@ class FaultManager {
 
   static void registerAllocFailureHook() { heap_caps_register_failed_alloc_callback(&onAllocFailed); }
 
+  // Short reset-cause string for the boot banner (IDF idiom).
+  static const char* resetReasonStr() {
+    switch (esp_reset_reason()) {
+      case ESP_RST_UNKNOWN:
+        return "UNKNOWN";
+      case ESP_RST_POWERON:
+        return "POWERON";
+      case ESP_RST_EXT:
+        return "EXT";
+      case ESP_RST_SW:
+        return "SW";
+      case ESP_RST_PANIC:
+        return "PANIC";
+      case ESP_RST_INT_WDT:
+        return "INT_WDT";
+      case ESP_RST_TASK_WDT:
+        return "TASK_WDT";
+      case ESP_RST_WDT:
+        return "WDT";
+      case ESP_RST_DEEPSLEEP:
+        return "DEEPSLEEP";
+      case ESP_RST_BROWNOUT:
+        return "BROWNOUT";
+      case ESP_RST_SDIO:
+        return "SDIO";
+      case ESP_RST_USB:
+        return "USB";
+      default:
+        return "UNKNOWN_N";
+    }
+  }
+
   [[noreturn]] static void fail(const char* file, int line, const char* expr) {
     Logger::log(LOG_LEVEL_ERROR, "ASSERT", "%s:%d %s", file, line, expr);
 #if defined(DESKY_RELEASE)
