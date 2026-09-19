@@ -241,18 +241,3 @@ inline SemaphoreHandle_t Logger::s_mutex = nullptr;
       LOG_I(tag, fmt, ##__VA_ARGS__);            \
     }                                            \
   } while (0)
-
-// ── Debug assert (logs + halts; stripped when ERROR stripped) ─
-#if LOG_LEVEL <= LOG_LEVEL_ERROR
-#define DESKY_ASSERT(cond)                                                           \
-  do {                                                                               \
-    if (!(cond)) {                                                                   \
-      Logger::log(LOG_LEVEL_ERROR, "ASSERT", "%s:%d %s", __FILE__, __LINE__, #cond); \
-      while (true) {                                                                 \
-        delay(1000);                                                                 \
-      }                                                                              \
-    }                                                                                \
-  } while (0)
-#else
-#define DESKY_ASSERT(cond) ((void)0)
-#endif
