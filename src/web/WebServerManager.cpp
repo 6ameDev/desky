@@ -769,9 +769,13 @@ void WebServerManager::handleBinaryMessage(void *arg, uint8_t *data, size_t len)
             sendConfig();
         }
         // Any WebUI direct command takes precedence over interpreted petting (500ms window) and wakes
+        // Mood (0x0E) and anim (0x0F) are direct but must not clear forced mood via wakeFromSleep
         bool isDirect = (cmd == 0x01 || cmd == 0x02 || cmd == 0x03 || cmd == 0x04 || cmd == 0x05 || cmd == 0x06 || cmd == 0x08 || cmd == 0x09 || cmd == 0x0A || cmd == 0x0C || cmd == 0x0D || cmd == 0x0E || cmd == 0x0F || cmd == 0x11 || cmd == 0x12 || cmd == 0x13 || cmd == 0x14);
+        bool shouldWake = (cmd == 0x01 || cmd == 0x02 || cmd == 0x03 || cmd == 0x04 || cmd == 0x05 || cmd == 0x06 || cmd == 0x08 || cmd == 0x09 || cmd == 0x0A || cmd == 0x0C || cmd == 0x0D || cmd == 0x11 || cmd == 0x12 || cmd == 0x13 || cmd == 0x14);
         if (isDirect) {
             _stateStore.markDirectCommand();
+        }
+        if (shouldWake) {
             _stateStore.wakeFromSleep();
         }
     }

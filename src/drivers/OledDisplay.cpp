@@ -89,25 +89,32 @@ void OledDisplay::resetBlinkTimer() {
 }
 
 void OledDisplay::stepEyeState() {
-    eyeLheightCurrent = (eyeLheightCurrent * 2 + eyeLheightNext) / 3;
+    auto tween = [](int cur, int nxt) -> int {
+        if (cur == nxt) return cur;
+        int v = (cur * 2 + nxt + 1) / 3;
+        if (v == cur) v += (nxt > cur) ? 1 : -1;
+        if (abs(v - nxt) <= 1) return nxt;
+        return v;
+    };
+    eyeLheightCurrent = tween(eyeLheightCurrent, eyeLheightNext);
     eyeLy += ((eyeLheightDefault - eyeLheightCurrent) / 2);
-    eyeRheightCurrent = (eyeRheightCurrent * 2 + eyeRheightNext) / 3;
+    eyeRheightCurrent = tween(eyeRheightCurrent, eyeRheightNext);
     eyeRy += (eyeRheightDefault - eyeRheightCurrent) / 2;
 
     if (eyeL_open && eyeLheightCurrent <= 2) eyeLheightNext = eyeLheightTarget;
     if (eyeR_open && eyeRheightCurrent <= 2) eyeRheightNext = eyeRheightTarget;
 
-    eyeLwidthCurrent = (eyeLwidthCurrent * 2 + eyeLwidthNext) / 3;
-    eyeRwidthCurrent = (eyeRwidthCurrent * 2 + eyeRwidthNext) / 3;
-    spaceBetweenCurrent = (spaceBetweenCurrent * 2 + spaceBetweenNext) / 3;
-    eyeLx = (eyeLx * 2 + eyeLxNext) / 3;
-    eyeLy = (eyeLy * 2 + eyeLyNext) / 3;
+    eyeLwidthCurrent = tween(eyeLwidthCurrent, eyeLwidthNext);
+    eyeRwidthCurrent = tween(eyeRwidthCurrent, eyeRwidthNext);
+    spaceBetweenCurrent = tween(spaceBetweenCurrent, spaceBetweenNext);
+    eyeLx = tween(eyeLx, eyeLxNext);
+    eyeLy = tween(eyeLy, eyeLyNext);
     eyeRxNext = eyeLxNext + eyeLwidthCurrent + spaceBetweenCurrent;
     eyeRyNext = eyeLyNext;
-    eyeRx = (eyeRx * 2 + eyeRxNext) / 3;
-    eyeRy = (eyeRy * 2 + eyeRyNext) / 3;
-    eyeLborderRadiusCurrent = (eyeLborderRadiusCurrent * 2 + eyeLborderRadiusNext) / 3;
-    eyeRborderRadiusCurrent = (eyeRborderRadiusCurrent * 2 + eyeRborderRadiusNext) / 3;
+    eyeRx = tween(eyeRx, eyeRxNext);
+    eyeRy = tween(eyeRy, eyeRyNext);
+    eyeLborderRadiusCurrent = tween(eyeLborderRadiusCurrent, eyeLborderRadiusNext);
+    eyeRborderRadiusCurrent = tween(eyeRborderRadiusCurrent, eyeRborderRadiusNext);
 
     if (autoblinker && millis() >= blinktimer) {
         close(); open();
@@ -139,9 +146,12 @@ void OledDisplay::stepEyeState() {
     if (angry) eyelidsAngryHeightNext = eyeLheightCurrent / 2; else eyelidsAngryHeightNext = 0;
     if (happy) eyelidsHappyBottomOffsetNext = (eyeLheightTarget * 4) / 5; else eyelidsHappyBottomOffsetNext = 0;
 
-    eyelidsTiredHeight = (eyelidsTiredHeight * 2 + eyelidsTiredHeightNext) / 3;
-    eyelidsAngryHeight = (eyelidsAngryHeight * 2 + eyelidsAngryHeightNext) / 3;
-    eyelidsHappyBottomOffset = (eyelidsHappyBottomOffset * 2 + eyelidsHappyBottomOffsetNext) / 3;
+    eyelidsTiredHeight = (eyelidsTiredHeight * 2 + eyelidsTiredHeightNext + 1) / 3;
+    eyelidsAngryHeight = (eyelidsAngryHeight * 2 + eyelidsAngryHeightNext + 1) / 3;
+    eyelidsHappyBottomOffset = (eyelidsHappyBottomOffset * 2 + eyelidsHappyBottomOffsetNext + 1) / 3;
+    if (abs(eyelidsTiredHeight - eyelidsTiredHeightNext) <= 1) eyelidsTiredHeight = eyelidsTiredHeightNext;
+    if (abs(eyelidsAngryHeight - eyelidsAngryHeightNext) <= 1) eyelidsAngryHeight = eyelidsAngryHeightNext;
+    if (abs(eyelidsHappyBottomOffset - eyelidsHappyBottomOffsetNext) <= 1) eyelidsHappyBottomOffset = eyelidsHappyBottomOffsetNext;
 }
 
 void OledDisplay::drawEyeFrames() {
@@ -305,8 +315,8 @@ void OledDisplay::render(const ControlState& state) {
         // Auto sleeping after 60s idle: closed static, no blink/drift
         tired = 0; angry = 0; happy = 0;
         idle = 0; autoblinker = 0;
-    } else if (isWiggling || (happyUntilMs != 0 && (long)(millis() - happyUntilMs) < 0)) {
-        if (isWiggling) happyUntilMs = millis() + 800;
+    } else if (isWiggling || (wiggleHappyUntilMs != 0 && (long)(millis() - wiggleHappyUntilMs) < 0)) {
+        if (isWiggling) wiggleHappyUntilMs = millis() + 800;
         tired = 0; angry = 0; happy = 1;
         idle = 1; autoblinker = 1;
     } else {

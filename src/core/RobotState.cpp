@@ -340,26 +340,6 @@ bool RobotStateStore::takeInput(InputEvent &out) {
 
 void RobotStateStore::markDirectCommand() {
     xSemaphoreTake(_mutex, portMAX_DELAY);
-    _state.lastDirectMs = millis();
     _state.lastCommandTime = millis();
     xSemaphoreGive(_mutex);
-}
-
-bool RobotStateStore::isMotionCooldownActive() const {
-    auto *self = const_cast<RobotStateStore*>(this);
-    xSemaphoreTake(self->_mutex, portMAX_DELAY);
-    bool active = (millis() - self->_state.lastMotionMs < (unsigned long)MOTION_COOLDOWN_MS);
-    bool moving = (self->_state.status == "DRIVING" || self->_state.status == "WIGGLE!" || self->_state.status == "CLIFF WIGGLE!");
-    bool cool = moving || active;
-    xSemaphoreGive(self->_mutex);
-    return cool;
-}
-
-bool RobotStateStore::isDirectActive(unsigned long windowMs) const {
-    // const method but needs mutex - cast away const for lock
-    auto *self = const_cast<RobotStateStore*>(this);
-    xSemaphoreTake(self->_mutex, portMAX_DELAY);
-    bool active = (millis() - self->_state.lastDirectMs < windowMs);
-    xSemaphoreGive(self->_mutex);
-    return active;
 }

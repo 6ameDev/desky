@@ -56,7 +56,6 @@ struct ControlState {
     ImuReading imu;
     String status = "STOPPED";
     unsigned long lastCommandTime = 0;
-    unsigned long lastDirectMs = 0;
     unsigned long lastMotionMs = 0;
     InputEvent pendingInput;
     unsigned long lastNudgedMs = 0;
@@ -100,8 +99,6 @@ public:
     void announceInput(InputType type, float accelMag, float gyroZ, float pitch, float roll);
     bool takeInput(InputEvent &out);
     void markDirectCommand();
-    bool isMotionCooldownActive() const;
-    bool isDirectActive(unsigned long windowMs) const;
 
 private:
     ControlState _state;

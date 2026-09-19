@@ -239,18 +239,12 @@ void HardwareTask(void *pvParameters) {
                     bool angryHit = (jerk >= shakeCfg.shakeAngryG - 1.0f) || (fabsf(imu.gyroZ) >= shakeCfg.shakeAngryGyro);
                     bool gentleHit = (jerk >= shakeCfg.shakeGentleG - 1.0f) || (fabsf(imu.gyroZ) >= shakeCfg.shakeGentleGyro) ||
                                      (fabsf(imu.pitch) >= SHAKE_TILT_DEG) || (fabsf(imu.roll) >= SHAKE_TILT_DEG);
-                    if (!angryCooldown && angryHit) {
-                        angryCount++;
-                        gentleCount = 0;
-                    } else if (!angryCooldown) {
-                        angryCount = 0;
-                        if (!gentleCooldown && gentleHit) gentleCount++;
-                        else if (!gentleCooldown) gentleCount = 0;
-                    } else {
-                        // In angry cooldown, still allow gentle counting if not in gentle cooldown
-                        if (!gentleCooldown && gentleHit) gentleCount++;
-                        else if (!gentleCooldown) gentleCount = 0;
-                    }
+                    if (angryCooldown) angryCount = 0;
+                    else if (angryHit) angryCount++;
+                    else angryCount = 0;
+                    if (gentleCooldown) gentleCount = 0;
+                    else if (gentleHit) gentleCount++;
+                    else gentleCount = 0;
                     if (!angryCooldown && angryCount >= SHAKE_ANGRY_N) {
                         Serial.printf("[SHAKEN] accel=%.2fg (thr %.2fg) gyro=%.0fdps (thr %.0fdps) counts a=%d/%d pitch=%.1f roll=%.1f\n",
                                       imu.accelMag, shakeCfg.shakeAngryG, imu.gyroZ, shakeCfg.shakeAngryGyro, angryCount, SHAKE_ANGRY_N, imu.pitch, imu.roll);
@@ -264,8 +258,6 @@ void HardwareTask(void *pvParameters) {
                         gentleCount = 0;
                         angryCount = 0;
                     }
-                    if (angryCooldown && angryCount>0) angryCount=0;
-                    if (gentleCooldown && gentleCount>0) gentleCount=0;
                 }
             }
         }
