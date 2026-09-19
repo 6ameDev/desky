@@ -1,0 +1,41 @@
+name: CI
+
+# v2-branch only for now. Widen to main/all branches when v2 merges.
+on:
+  push:
+    branches: [v2]
+  pull_request:
+    branches: [v2]
+
+env:
+  # platformio.ini injects these as build macros; dummies keep CI hermetic.
+  WIFI_SSID: CI
+  WIFI_PASS: CI
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ hashFiles('platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Gate (format + firmware builds + host tests)
+        run: make check
