@@ -11,17 +11,17 @@
 #define MCU_NUM_CORES 2
 #define MCU_CPU_FREQ_MHZ 240
 #define MCU_FLASH_SIZE_MB 4
-#define MCU_HAS_PSRAM 0        // No PSRAM — Vision task stays stubbed
+#define MCU_HAS_PSRAM 0  // No PSRAM — Vision task stays stubbed
 #define MCU_HAS_NATIVE_USB 0
 #define MCU_HAS_CAMERA 0
 
 // ── Proven V1 pin map (locked as baseline) ───────────────────
-#define MCU_MOTOR_IN1 25       // MotorDriver IN1, LEDC 20kHz 8-bit
-#define MCU_MOTOR_IN2 26       // MotorDriver IN2
-#define MCU_MOTOR_IN3 18       // MotorDriver IN3
-#define MCU_MOTOR_IN4 19       // MotorDriver IN4
-#define MCU_MOTOR_FAULT 27     // Active-low fault, INPUT_PULLUP
-#define MCU_TOF_XSHUT 4        // ToF enable, plain OUTPUT HIGH
+#define MCU_MOTOR_IN1 25    // MotorDriver IN1, LEDC 20kHz 8-bit
+#define MCU_MOTOR_IN2 26    // MotorDriver IN2
+#define MCU_MOTOR_IN3 18    // MotorDriver IN3
+#define MCU_MOTOR_IN4 19    // MotorDriver IN4
+#define MCU_MOTOR_FAULT 27  // Active-low fault, INPUT_PULLUP
+#define MCU_TOF_XSHUT 4     // ToF enable, plain OUTPUT HIGH
 #define MCU_I2C_SDA 21
 #define MCU_I2C_SCL 22
 
@@ -37,7 +37,7 @@
 #define MCU_I2C_TIMEOUT_MS 20
 #define MCU_PWM_FREQ_HZ 20000
 #define MCU_PWM_RESOLUTION_BITS 8
-#define MCU_PWM_MIN_DUTY 65    // MIN_MOTOR_PWM from V1
+#define MCU_PWM_MIN_DUTY 65  // MIN_MOTOR_PWM from V1
 
 // ── Hard constraints (do not violate without new MCU file) ──
 // - Strapping pins 0/2/5/12/15: keep unconnected at boot (none used above).

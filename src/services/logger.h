@@ -16,7 +16,6 @@
 // Rules: no heap in log path, no String, never call from ISR.
 
 #include <Arduino.h>
-
 #include <stdarg.h>
 #include <stdio.h>
 
@@ -41,9 +40,7 @@ class LogSink {
 
 class SerialSink : public LogSink {
  public:
-  void write(const char* line) override {
-    Serial.println(line);
-  }
+  void write(const char* line) override { Serial.println(line); }
 };
 
 // ── Logger ───────────────────────────────────────────────────
@@ -117,8 +114,7 @@ class Logger {
     char line[kBufSize];
     // Padded boot-millis: fixed 10 cols, monotonic, script-friendly.
     // Wall-clock join later via one TIME sync-marker (epoch + boot_ms).
-    snprintf(line, sizeof(line), "[%010lu][%s][%s][c%d:%s] %s", ms, lvl, tag,
-             core, task, msg);
+    snprintf(line, sizeof(line), "[%010lu][%s][%s][c%d:%s] %s", ms, lvl, tag, core, task, msg);
 
     lock();
     if (s_sinkCount == 0) {
@@ -226,37 +222,36 @@ inline SemaphoreHandle_t Logger::s_mutex = nullptr;
 #define _LOG_EVERY_N_CONCAT(a, b) a##b
 #define _LOG_EVERY_N_VAR(line) _LOG_EVERY_N_CONCAT(_log_every_n_, line)
 
-#define LOG_EVERY_N(n, tag, fmt, ...)                             \
-  do {                                                            \
-    static uint32_t _LOG_EVERY_N_VAR(__LINE__) = 0;               \
-    if (++_LOG_EVERY_N_VAR(__LINE__) % (uint32_t)(n) == 0) {      \
-      LOG_D(tag, fmt, ##__VA_ARGS__);                             \
-    }                                                             \
+#define LOG_EVERY_N(n, tag, fmt, ...)                        \
+  do {                                                       \
+    static uint32_t _LOG_EVERY_N_VAR(__LINE__) = 0;          \
+    if (++_LOG_EVERY_N_VAR(__LINE__) % (uint32_t)(n) == 0) { \
+      LOG_D(tag, fmt, ##__VA_ARGS__);                        \
+    }                                                        \
   } while (0)
 
 #define _LOG_ONCE_CONCAT(a, b) a##b
 #define _LOG_ONCE_VAR(line) _LOG_ONCE_CONCAT(_log_once_, line)
 
-#define LOG_ONCE(tag, fmt, ...)                           \
-  do {                                                    \
-    static bool _LOG_ONCE_VAR(__LINE__) = false;          \
-    if (!_LOG_ONCE_VAR(__LINE__)) {                       \
-      _LOG_ONCE_VAR(__LINE__) = true;                     \
-      LOG_I(tag, fmt, ##__VA_ARGS__);                     \
-    }                                                     \
+#define LOG_ONCE(tag, fmt, ...)                  \
+  do {                                           \
+    static bool _LOG_ONCE_VAR(__LINE__) = false; \
+    if (!_LOG_ONCE_VAR(__LINE__)) {              \
+      _LOG_ONCE_VAR(__LINE__) = true;            \
+      LOG_I(tag, fmt, ##__VA_ARGS__);            \
+    }                                            \
   } while (0)
 
 // ── Debug assert (logs + halts; stripped when ERROR stripped) ─
 #if LOG_LEVEL <= LOG_LEVEL_ERROR
-#define DESKY_ASSERT(cond)                                            \
-  do {                                                                \
-    if (!(cond)) {                                                    \
-      Logger::log(LOG_LEVEL_ERROR, "ASSERT", "%s:%d %s", __FILE__,     \
-                  __LINE__, #cond);                                   \
-      while (true) {                                                  \
-        delay(1000);                                                  \
-      }                                                               \
-    }                                                                 \
+#define DESKY_ASSERT(cond)                                                           \
+  do {                                                                               \
+    if (!(cond)) {                                                                   \
+      Logger::log(LOG_LEVEL_ERROR, "ASSERT", "%s:%d %s", __FILE__, __LINE__, #cond); \
+      while (true) {                                                                 \
+        delay(1000);                                                                 \
+      }                                                                              \
+    }                                                                                \
   } while (0)
 #else
 #define DESKY_ASSERT(cond) ((void)0)

@@ -1,0 +1,5 @@
+# desky v2 formatting — Google base, 120 col. Standard LLVM tooling.
+# Check: clang-format --dry-run --Werror <files> (CI later)
+# Apply: clang-format -i <files>
+BasedOnStyle: Google
+ColumnLimit: 120
