@@ -1,0 +1,9 @@
+# PlatformIO build outputs
+.pio/
+.vscode/
+
+# Secrets
+.env
+
+# Docs
+docs/
