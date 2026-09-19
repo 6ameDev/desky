@@ -1,6 +1,7 @@
 #include <Arduino.h>
 
 #include "config.h"
+#include "services/diagnostics.h"
 #include "services/logger.h"
 
 void setup() {
@@ -12,5 +13,6 @@ void setup() {
 
 void loop() {
   LOG_I("MAIN", "desky v2 skeleton alive");
+  Diagnostics::logWatermarks();
   delay(2000);
 }
