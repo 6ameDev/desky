@@ -109,7 +109,7 @@ void OledDisplay::stepEyeState() {
     eyeLborderRadiusCurrent = (eyeLborderRadiusCurrent * 2 + eyeLborderRadiusNext) / 3;
     eyeRborderRadiusCurrent = (eyeRborderRadiusCurrent * 2 + eyeRborderRadiusNext) / 3;
 
-    if (autoblinker && !isTransitioning() && millis() >= blinktimer) {
+    if (autoblinker && millis() >= blinktimer) {
         close(); open();
         blinktimer = millis() + (blinkInterval * 1000) + (random(blinkIntervalVariation + 1) * 1000);
     }
@@ -179,7 +179,6 @@ void OledDisplay::drawEyes(const ControlState& state) {
 
 void OledDisplay::render(const ControlState& state) {
     if (!_healthy) return;
-    if (millis() - fpsTimer < (unsigned long)frameInterval) return;
 
     // Pure motion gate: interpret petting only when not generating motion (DRIVING/WIGGLE!/CLIFF WIGGLE!)
     extern RobotStateStore stateStore;
@@ -277,7 +276,6 @@ void OledDisplay::render(const ControlState& state) {
         tired = 0; angry = 1; happy = 0;
         idle = 0; autoblinker = 1;
         if (wasSleepy) { wasSleepy = false; applyPreset(Preset_Normal); }
-        if (eyeLheightTarget == 1) applyPreset(Preset_Normal);
     } else if (hasForced) {
         int m = state.displayMoodOverride;
         if (m == 4) {
@@ -297,7 +295,6 @@ void OledDisplay::render(const ControlState& state) {
         tired = 0; angry = 0; happy = 1;
         idle = 1; autoblinker = 1;
         if (wasSleepy) { wasSleepy = false; applyPreset(Preset_Normal); }
-        if (eyeLheightTarget == 1) applyPreset(Preset_Normal);
     } else if (worried) {
         // Cliff: open squircle with confused horizontal shiver, no brow
         tired = 0; angry = 0; happy = 0;
@@ -317,8 +314,10 @@ void OledDisplay::render(const ControlState& state) {
         idle = 1; autoblinker = 1;
     }
 
-    // Step eye state even if I2C busy — prevents blink-closed/idle stall
+    // Step eye state even if frame skipped / I2C busy — blink/idle must progress
     stepEyeState();
+
+    if (millis() - fpsTimer < (unsigned long)frameInterval) return;
 
     if (_i2cMutex && xSemaphoreTake(_i2cMutex, pdMS_TO_TICKS(5)) != pdTRUE) return;
 
