@@ -2,7 +2,7 @@
 -include .env
 export
 
-.PHONY: clean build build-release test test-verbose check upload-monitor upload-monitor-release monitor-decode
+.PHONY: clean build build-release test test-verbose check check-pins upload-monitor upload-monitor-release monitor-decode
 
 clean:
 	pio run -e desky -t clean
@@ -15,13 +15,19 @@ build:
 build-release:
 	pio run -e desky-release
 
-# Build, upload to ESP32, and monitor serial output (dev)
+# Build, upload to ESP32, and monitor serial output (dev).
+# Upload is verified (hashes + hard reset) before the monitor starts —
+# a bare SUCCESS table proves the build, not the flash.
 upload-monitor:
-	pio run -e desky -t upload -t monitor
+	pio run -e desky -t upload > /tmp/desky-upload.log 2>&1; CODE=$$?; cat /tmp/desky-upload.log; test $$CODE -eq 0
+	grep -q "Hash of data verified" /tmp/desky-upload.log && grep -q "Hard resetting" /tmp/desky-upload.log
+	pio device monitor
 
 # Build, upload to ESP32, and monitor serial output (release)
 upload-monitor-release:
-	pio run -e desky-release -t upload -t monitor
+	pio run -e desky-release -t upload > /tmp/desky-release-upload.log 2>&1; CODE=$$?; cat /tmp/desky-release-upload.log; test $$CODE -eq 0
+	grep -q "Hash of data verified" /tmp/desky-release-upload.log && grep -q "Hard resetting" /tmp/desky-release-upload.log
+	pio device monitor
 
 # Serial monitor with backtrace decoding (see docs/debugging.md)
 monitor-decode:
@@ -35,9 +41,19 @@ test:
 test-verbose:
 	pio test -e native-test -vvv
 
-# Full gate: formatting + both firmware builds + host tests
+# Pin lint: exact pins only — no ^ ranges, no bare git URLs, no floating platform.
+# (PlatformIO has no lockfile; platformio.ini IS the lockfile.)
+check-pins:
+	@! grep -E "@ \\^" platformio.ini
+	@! grep -E "\\.git$$" platformio.ini
+	@! grep -E "releases/download/stable" platformio.ini
+
+# Full gate: formatting + pin lint + both firmware builds (deprecation-scanned) + host tests
 check:
-	clang-format --dry-run --Werror src/main.cpp src/services/*.h src/hal/*.h src/middleware/*.h src/behavior/*.h include/*.h include/mcu/*.h
-	pio run -e desky
-	pio run -e desky-release
+	clang-format --dry-run --Werror src/main.cpp src/services/*.h src/hal/*.h src/middleware/*.h src/behavior/*.h include/*.h include/mcu/*.h test/*.cpp
+	$(MAKE) check-pins
+	pio run -e desky > /tmp/check-desky.log 2>&1; CODE=$$?; cat /tmp/check-desky.log; test $$CODE -eq 0
+	@! grep -i "is deprecated and will be removed" /tmp/check-desky.log
+	pio run -e desky-release > /tmp/check-release.log 2>&1; CODE=$$?; cat /tmp/check-release.log; test $$CODE -eq 0
+	@! grep -i "is deprecated and will be removed" /tmp/check-release.log
 	pio test -e native-test
