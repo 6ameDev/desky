@@ -2,7 +2,7 @@
 -include .env
 export
 
-.PHONY: clean build build-release test test-verbose check upload-monitor upload-monitor-release
+.PHONY: clean build build-release test test-verbose check upload-monitor upload-monitor-release monitor-decode
 
 clean:
 	pio run -e desky -t clean
@@ -22,6 +22,10 @@ upload-monitor:
 # Build, upload to ESP32, and monitor serial output (release)
 upload-monitor-release:
 	pio run -e desky-release -t upload -t monitor
+
+# Serial monitor with backtrace decoding (see docs/debugging.md)
+monitor-decode:
+	pio device monitor --filter esp32_exception_decoder
 
 # Host unit tests, no hardware (Unity)
 test:
