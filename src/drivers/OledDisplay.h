@@ -88,7 +88,7 @@ private:
     bool vFlicker = 0, vFlickerAlternate = 0;
     byte vFlickerAmplitude = 4;
 
-    unsigned long happyUntilMs = 0;
+    unsigned long wiggleHappyUntilMs = 0;
     unsigned long lastActiveMs = 0;
     unsigned long confusedUntilMs = 0, laughUntilMs = 0;
     int8_t lastMoodOverride = -2;
