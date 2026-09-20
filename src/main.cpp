@@ -3,12 +3,14 @@
 #include "config.h"
 #include "services/config_store.h"
 #include "services/diagnostics.h"
+#include "services/event_bus.h"
 #include "services/fault_manager.h"
 #include "services/logger.h"
 
 void setup() {
   Serial.begin(115200);
   Logger::begin();
+  EventBus::begin();
   FaultManager::watchdogInit();
   FaultManager::registerAllocFailureHook();
   ConfigStore::begin();

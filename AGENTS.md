@@ -1,5 +1,10 @@
 # AGENTS.md — desky v2
 
+> **Critical constraint for subagents:** you have no access to the shared
+> task list or prior session context. Treat every instruction as
+> self-contained: if background is missing, ask for it — never assume it.
+> Re-read this file before each new task; do not let earlier tasks fade it.
+
 ## Start here (reading order for any task)
 
 1. `docs/architecture/v2.md` — the design decisions; everything else follows it.
@@ -47,7 +52,10 @@ Envs: `desky` (dev/debug artifact), `desky-release` (field artifact),
 - The port (`/dev/cu.usbserial-0001`) opens at **9600 baud** and **opening it
   resets the chip**. Scripted captures must use pyserial with explicit
   `baudrate=115200`, and every capture head holds ~200ms of settling noise
-  plus a fresh boot — never conclude "it just booted" from that.
+  plus a fresh boot — never conclude "it just booted" from that. If a
+  capture comes back silent/stale, pulse DTR/RTS explicitly and flush the
+  buffer inside a single capture session — reopen alone doesn't always
+  reset the chip.
 - Arduino pre-inits the task watchdog (`TWDT already initialized` is
   benign); effective timeout is Arduino's (~10s), not the 5s config.
 - A halted task that stays WDT-subscribed becomes a panic-reboot loop
