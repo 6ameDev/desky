@@ -87,6 +87,24 @@ void test_cliff_gated_when_level();
 void test_unhealthy_mpu_freezes_tilt_and_flags();
 void test_invalid_tof_retains_distance_no_cliff_from_stale();
 
+// Coordinator arbitrator tests, defined in test_coordinator.cpp.
+void test_coord_stick_bytes_map_center_128();
+void test_coord_cliff_entry_brakes_and_latches();
+void test_coord_forward_veto_while_latched();
+void test_coord_reverse_allowed_while_latched();
+void test_coord_turn_allowed_while_latched();
+void test_coord_latched_ignores_fresh_cmd_while_cliffed();
+void test_coord_stays_stopped_after_clear_without_new_cmd();
+void test_coord_stale_held_stick_does_not_resume();
+void test_coord_centered_fresh_cmd_does_not_resume();
+void test_coord_resumes_on_clear_plus_fresh_cmd();
+void test_coord_done_advances_behavior();
+void test_coord_running_maneuver_survives_centered_stick();
+void test_coord_stale_udp_failsafe_stop();
+void test_coord_drive_passes_throttle_raw();
+void test_coord_centered_stick_releases_drive();
+void test_coord_mismatched_done_does_not_clear();
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_control_golden_vector);
@@ -106,5 +124,21 @@ int main() {
   RUN_TEST(test_cliff_gated_when_level);
   RUN_TEST(test_unhealthy_mpu_freezes_tilt_and_flags);
   RUN_TEST(test_invalid_tof_retains_distance_no_cliff_from_stale);
+  RUN_TEST(test_coord_stick_bytes_map_center_128);
+  RUN_TEST(test_coord_cliff_entry_brakes_and_latches);
+  RUN_TEST(test_coord_forward_veto_while_latched);
+  RUN_TEST(test_coord_reverse_allowed_while_latched);
+  RUN_TEST(test_coord_turn_allowed_while_latched);
+  RUN_TEST(test_coord_latched_ignores_fresh_cmd_while_cliffed);
+  RUN_TEST(test_coord_stays_stopped_after_clear_without_new_cmd);
+  RUN_TEST(test_coord_stale_held_stick_does_not_resume);
+  RUN_TEST(test_coord_centered_fresh_cmd_does_not_resume);
+  RUN_TEST(test_coord_resumes_on_clear_plus_fresh_cmd);
+  RUN_TEST(test_coord_done_advances_behavior);
+  RUN_TEST(test_coord_running_maneuver_survives_centered_stick);
+  RUN_TEST(test_coord_stale_udp_failsafe_stop);
+  RUN_TEST(test_coord_drive_passes_throttle_raw);
+  RUN_TEST(test_coord_centered_stick_releases_drive);
+  RUN_TEST(test_coord_mismatched_done_does_not_clear);
   return UNITY_END();
 }

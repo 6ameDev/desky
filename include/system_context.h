@@ -4,6 +4,15 @@
 
 #include <stdint.h>
 
+// Minimal maneuver vocabulary for the async-maneuver + DONE-event pattern.
+// Payload-sized: BehaviorId fits SystemEvent.payload (uint32_t) by construction.
+// Declared before SystemState (which owns the activeBehavior intent field).
+enum BehaviorId : uint32_t {
+  BEHAVIOR_NONE = 0,
+  BEHAVIOR_DRIVE_FORWARD,
+  BEHAVIOR_HAPPY_WIGGLE,
+};
+
 struct SystemState {
   float pitch = 0.0f;
   float roll = 0.0f;
@@ -14,6 +23,11 @@ struct SystemState {
   bool isDriving = false;
 
   enum RobotMode { MODE_MANUAL, MODE_AUTONOMOUS, MODE_LOW_POWER, MODE_EMERGENCY } mode = MODE_MANUAL;
+
+  // Coordinator-owned intent (v2 §D intent fan-out): WHAT is running, never
+  // HOW. Actuator subsystems own private behavior→primitive maps; completion
+  // closes the loop via EVENT_BEHAVIOR_DONE.
+  BehaviorId activeBehavior = BEHAVIOR_NONE;
 };
 
 enum EventType {
@@ -25,14 +39,6 @@ enum EventType {
   EVENT_FACE_RECOGNIZED,
   EVENT_BEHAVIOR_STARTED,
   EVENT_BEHAVIOR_DONE
-};
-
-// Minimal maneuver vocabulary for the async-maneuver + DONE-event pattern.
-// Payload-sized: BehaviorId fits SystemEvent.payload (uint32_t) by construction.
-enum BehaviorId : uint32_t {
-  BEHAVIOR_NONE = 0,
-  BEHAVIOR_DRIVE_FORWARD,
-  BEHAVIOR_HAPPY_WIGGLE,
 };
 
 struct SystemEvent {

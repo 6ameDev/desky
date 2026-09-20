@@ -41,3 +41,15 @@
 // the sensor Y axis, left-roll on sensor X. 0 = as-mounted, 1 = swap X/Y
 // before tilt math.
 #define CFG_FUSION_SWAP_AXAY 1
+
+// Behavior coordinator task (v2 §F: Core 1 behavior slot, below Motion's +5).
+// Priority is stored as an offset: firmware computes
+// tskIDLE_PRIORITY + CFG_COORDINATOR_PRIORITY_OFFSET (config.h itself stays
+// FreeRTOS-free so Arduino-free headers keep compiling on host).
+#define CFG_COORDINATOR_STACK_WORDS 4096
+#define CFG_COORDINATOR_PRIORITY_OFFSET 4
+#define CFG_COORDINATOR_CORE 1
+// UDP failsafe: no command within this window → failsafe stop (P4).
+#define CFG_COORDINATOR_STALE_MS 500
+// Coordinator tick: event drain + arbitrate + WDT feed period.
+#define CFG_COORDINATOR_LOOP_MS 20

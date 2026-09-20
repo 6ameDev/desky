@@ -1,5 +1,6 @@
 #include <Arduino.h>
 
+#include "behavior/coordinator.h"
 #include "behavior/motion_controller.h"
 #include "config.h"
 #include "hal/motor_driver.h"
@@ -15,6 +16,7 @@
 namespace {
 MotorDriver g_motorDriver(MCU_MOTOR_IN1, MCU_MOTOR_IN2, MCU_MOTOR_IN3, MCU_MOTOR_IN4, MCU_MOTOR_FAULT);
 MotionController g_motion;
+Coordinator g_coordinator;
 I2CManager g_i2c;
 Mpu6500Driver g_mpu(g_i2c);
 Vl53l0xDriver g_tof(g_i2c);
@@ -38,6 +40,8 @@ void setup() {
   DESKY_ASSERT(tofOk);
   const bool mpuOk = g_mpu.init();
   DESKY_ASSERT(mpuOk);
+  const bool coordOk = g_coordinator.begin(&g_motion);
+  DESKY_ASSERT(coordOk);
   LOG_I("BOOT", "sensors ready tof=%dmm mpu=0x%02X", g_tof.distanceMm(), g_mpu.address());
   LOG_I("BOOT", "motor L0+L1 ready pins=%d,%d,%d,%d fault=%d", MCU_MOTOR_IN1, MCU_MOTOR_IN2, MCU_MOTOR_IN3,
         MCU_MOTOR_IN4, MCU_MOTOR_FAULT);
