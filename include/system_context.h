@@ -27,6 +27,14 @@ enum EventType {
   EVENT_BEHAVIOR_DONE
 };
 
+// Minimal maneuver vocabulary for the async-maneuver + DONE-event pattern.
+// Payload-sized: BehaviorId fits SystemEvent.payload (uint32_t) by construction.
+enum BehaviorId : uint32_t {
+  BEHAVIOR_NONE = 0,
+  BEHAVIOR_DRIVE_FORWARD,
+  BEHAVIOR_HAPPY_WIGGLE,
+};
+
 struct SystemEvent {
   EventType type;
   uint32_t payload = 0;
