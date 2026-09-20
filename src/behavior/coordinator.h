@@ -261,6 +261,7 @@ class Coordinator {
   Coordinator()
       : motion_(nullptr),
         task_(nullptr),
+        mutex_(nullptr),
         mode_(SystemState::MODE_MANUAL),
         active_(BEHAVIOR_NONE),
         cliffLatched_(false),
@@ -284,10 +285,30 @@ class Coordinator {
     if (!sub_.valid()) {
       return false;
     }
+    mutex_ = xSemaphoreCreateMutex();
+    DESKY_ASSERT(mutex_ != nullptr);
+    if (mutex_ == nullptr) {
+      return false;
+    }
     const BaseType_t ok =
         xTaskCreatePinnedToCore(&Coordinator::taskEntry, "coord", kStackWords, this, kPriority, &task_, kCore);
     DESKY_ASSERT(ok == pdPASS);
     return ok == pdPASS;
+  }
+
+  // Telemetry seam (Workstream B, additive only — arbitration untouched):
+  // mutex-guarded copy of coordinator-owned intent {mode, activeBehavior,
+  // cliffDetected level} for the UDP telemetry task. Returns false before
+  // begin(). isDriving is NOT here: the server tracks it locally from RX
+  // freshness (see udp_server.h).
+  bool snapshot(SystemState& out) {
+    if (mutex_ == nullptr) {
+      return false;
+    }
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    out = snap_;
+    xSemaphoreGive(mutex_);
+    return true;
   }
 
  private:
@@ -389,6 +410,14 @@ class Coordinator {
       active_ = out.nextBehavior;
       cliffLatched_ = (mode_ == SystemState::MODE_EMERGENCY);
 
+      // Shadow the intent fields the telemetry task snapshots (under mutex;
+      // the arbitration fields above stay task-local, untouched).
+      xSemaphoreTake(mutex_, portMAX_DELAY);
+      snap_.mode = mode_;
+      snap_.activeBehavior = active_;
+      snap_.cliffDetected = cliffActive_;
+      xSemaphoreGive(mutex_);
+
       FaultManager::watchdogFeed();
       ++ticks;
       if (ticks % (5000 / kLoopMs) == 0) {
@@ -400,6 +429,8 @@ class Coordinator {
   MotionController* motion_;
   TaskHandle_t task_;
   EventBus::Subscription sub_;
+  SemaphoreHandle_t mutex_;
+  SystemState snap_;  // Shadow for snapshot(); written by task, read under mutex.
   SystemState::RobotMode mode_;
   BehaviorId active_;
   bool cliffLatched_;

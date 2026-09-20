@@ -105,6 +105,13 @@ void test_coord_drive_passes_throttle_raw();
 void test_coord_centered_stick_releases_drive();
 void test_coord_mismatched_done_does_not_clear();
 
+// UDP server helpers (statusFlags bitmap + edges), defined in test_udp_server.cpp.
+void test_status_flags_pack_bits();
+void test_status_flags_unpack_round_trip();
+void test_pack_command_center_edges();
+void test_telemetry_round_trip_with_flags_set();
+void test_deg_to_decideg_edges_and_clamp();
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_control_golden_vector);
@@ -140,5 +147,10 @@ int main() {
   RUN_TEST(test_coord_drive_passes_throttle_raw);
   RUN_TEST(test_coord_centered_stick_releases_drive);
   RUN_TEST(test_coord_mismatched_done_does_not_clear);
+  RUN_TEST(test_status_flags_pack_bits);
+  RUN_TEST(test_status_flags_unpack_round_trip);
+  RUN_TEST(test_pack_command_center_edges);
+  RUN_TEST(test_telemetry_round_trip_with_flags_set);
+  RUN_TEST(test_deg_to_decideg_edges_and_clamp);
   return UNITY_END();
 }

@@ -53,3 +53,23 @@
 #define CFG_COORDINATOR_STALE_MS 500
 // Coordinator tick: event drain + arbitrate + WDT feed period.
 #define CFG_COORDINATOR_LOOP_MS 20
+
+// WiFi + UDP server (Workstream B: dual-mode WiFi, binary control/telemetry).
+// AP mode (default build) hosts "desky" with a human-typable WPA2 pass
+// (min 8 chars); STA mode (desky-sta env) joins the home router via
+// WIFI_SSID/WIFI_PASS from .env (never logged, never committed).
+#define CFG_WIFI_AP_SSID "desky"
+#define CFG_WIFI_AP_PASS "desky1234"
+// UDP control RX + telemetry TX port. Firmware, scripts/udp_*.py must agree.
+#define CFG_UDP_PORT 3333
+// Telemetry TX rate (spec window 10-20Hz).
+#define CFG_TELEMETRY_HZ 15
+// UDP server task (Core 0: noisy comms off the Core 1 real-time slot;
+// priority below WiFi internals and below Motion +5 / Coordinator +4).
+#define CFG_UDP_STACK_WORDS 4096
+#define CFG_UDP_PRIORITY_OFFSET 3
+#define CFG_UDP_CORE 0
+// UDP task tick: RX drain + TX schedule + WDT feed period.
+#define CFG_UDP_LOOP_MS 5
+// STA reconnect cadence inside the UDP task loop (non-blocking).
+#define CFG_WIFI_STA_RETRY_MS 5000
