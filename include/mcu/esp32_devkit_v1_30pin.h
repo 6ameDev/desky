@@ -32,6 +32,14 @@
 #define MCU_ADDR_OLED_PRIMARY 0x3C
 #define MCU_ADDR_OLED_ALT 0x3D
 
+// ── Reserved second I2C bus (NOT initialized — no Wire1 instance yet) ──
+// RESERVED-for-future-bus (e.g. OLED-on-bus2, isolating its ~23ms render
+// hold from ToF/MPU). GPIO32/33 are safe spares: not strapping, not SPI
+// flash (6-11), not input-only (34-39), ADC1 (no ADC2/WiFi conflict).
+// Do NOT call Wire1.begin() until the second I2CManager instance lands.
+#define MCU_I2C1_SDA 32
+#define MCU_I2C1_SCL 33
+
 // ── Bus / peripheral defaults ────────────────────────────────
 #define MCU_I2C_FREQ_HZ 400000
 #define MCU_I2C_TIMEOUT_MS 20

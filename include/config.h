@@ -18,5 +18,16 @@
 // Task rates (v2 architecture target)
 #define CFG_MOTOR_LOOP_HZ 100
 #define CFG_MPU_RATE_HZ 50
-#define CFG_TOF_RATE_HZ 20
+// 10Hz, not 20: proven V1 budget (TOF_READ_EVERY_N_TICKS=10 @ 10ms tick).
+#define CFG_TOF_RATE_HZ 10
 #define CFG_DISPLAY_FPS 25
+
+// Sensor poll intervals (single source for ISensor::getTargetIntervalMs)
+#define CFG_MPU_TARGET_INTERVAL_MS 20
+#define CFG_TOF_TARGET_INTERVAL_MS 100
+
+// ToF validity + recovery (ported from V1 Config.h, unchanged values)
+#define CFG_TOF_VALID_MAX_MM 4000
+#define CFG_TOF_MAX_CONSEC_ERRORS 5
+#define CFG_TOF_XSHUT_SHUTDOWN_MS 20
+#define CFG_TOF_XSHUT_BOOT_MS 50
