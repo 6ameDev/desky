@@ -31,3 +31,13 @@
 #define CFG_TOF_MAX_CONSEC_ERRORS 5
 #define CFG_TOF_XSHUT_SHUTDOWN_MS 20
 #define CFG_TOF_XSHUT_BOOT_MS 50
+
+// Sensor fusion (on-demand pure logic, see src/middleware/sensor_fusion.h)
+#define CFG_CLIFF_MM 100
+#define CFG_CLIFF_ACCEL_Z_GATE_G 0.5f
+
+// Static XY swap for fusion (compile-time): bench-proven 2026-09-20, the
+// MPU is mounted rotated 90deg about vertical — nose-down tilt appears on
+// the sensor Y axis, left-roll on sensor X. 0 = as-mounted, 1 = swap X/Y
+// before tilt math.
+#define CFG_FUSION_SWAP_AXAY 1

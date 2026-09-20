@@ -73,6 +73,20 @@ void test_telemetry_rejects_bad_header_checksum() {
   TEST_ASSERT_FALSE(udp::decodeTelemetry(buf, sizeof(buf), pkt));
 }
 
+// Sensor fusion tests, defined in test_sensor_fusion.cpp (pio test links all
+// test/*.cpp into one binary, so the single main lives here).
+void test_flat_rest_no_cliff_near_zero_tilt();
+void test_nose_up_45_pitch_tracks_identity();
+void test_nose_up_45_pitch_tracks_swapped();
+void test_sign_convention_identity();
+void test_sign_convention_swapped();
+void test_board_mounting_matches_bench();
+void test_cliff_far_and_unloaded();
+void test_cliff_near_ground_false();
+void test_cliff_gated_when_level();
+void test_unhealthy_mpu_freezes_tilt_and_flags();
+void test_invalid_tof_retains_distance_no_cliff_from_stale();
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_control_golden_vector);
@@ -81,5 +95,16 @@ int main() {
   RUN_TEST(test_telemetry_golden_vector);
   RUN_TEST(test_telemetry_decode_round_trip_negative);
   RUN_TEST(test_telemetry_rejects_bad_header_checksum);
+  RUN_TEST(test_flat_rest_no_cliff_near_zero_tilt);
+  RUN_TEST(test_nose_up_45_pitch_tracks_identity);
+  RUN_TEST(test_nose_up_45_pitch_tracks_swapped);
+  RUN_TEST(test_sign_convention_identity);
+  RUN_TEST(test_sign_convention_swapped);
+  RUN_TEST(test_board_mounting_matches_bench);
+  RUN_TEST(test_cliff_far_and_unloaded);
+  RUN_TEST(test_cliff_near_ground_false);
+  RUN_TEST(test_cliff_gated_when_level);
+  RUN_TEST(test_unhealthy_mpu_freezes_tilt_and_flags);
+  RUN_TEST(test_invalid_tof_retains_distance_no_cliff_from_stale);
   return UNITY_END();
 }
