@@ -6,6 +6,7 @@
 #include "hal/motor_driver.h"
 #include "hal/mpu6500_driver.h"
 #include "hal/vl53l0x_driver.h"
+#include "middleware/sensor_task.h"
 #include "middleware/udp_server.h"
 #include "services/config_store.h"
 #include "services/diagnostics.h"
@@ -18,6 +19,7 @@ namespace {
 MotorDriver g_motorDriver(MCU_MOTOR_IN1, MCU_MOTOR_IN2, MCU_MOTOR_IN3, MCU_MOTOR_IN4, MCU_MOTOR_FAULT);
 MotionController g_motion;
 Coordinator g_coordinator;
+SensorTask g_sensor;
 UdpServer g_udp;
 I2CManager g_i2c;
 Mpu6500Driver g_mpu(g_i2c);
@@ -44,6 +46,8 @@ void setup() {
   DESKY_ASSERT(mpuOk);
   const bool coordOk = g_coordinator.begin(&g_motion);
   DESKY_ASSERT(coordOk);
+  const bool sensorOk = g_sensor.begin(&g_mpu, &g_tof);
+  DESKY_ASSERT(sensorOk);
   const bool udpOk = g_udp.begin(&g_coordinator, &g_tof, &g_mpu);
   DESKY_ASSERT(udpOk);
   LOG_I("BOOT", "sensors ready tof=%dmm mpu=0x%02X", g_tof.distanceMm(), g_mpu.address());

@@ -133,14 +133,10 @@ void test_board_mounting_matches_bench() {
   TEST_ASSERT_FLOAT_WITHIN(3.0f, 45.0f, st.pitch);
 }
 
-void test_cliff_far_and_unloaded() {
-  fusion::SensorSnapshot s;
-  s.ax = 0.7f;
-  s.ay = 0.0f;
-  s.az = 0.1f;  // |az| < 0.5g gate: not level, not resting on ground
+void test_cliff_far_and_level_fires() {
+  // ToF looks 30deg down: the catch moment is far + level (|az| > 0.8 gate).
+  fusion::SensorSnapshot s = restSnapshot();  // level, az=-1.044g
   s.tofMm = 150;
-  s.tofValid = true;
-  s.mpuHealthy = true;
   SystemState st;
   kIdentity.evaluate(s, st);
   TEST_ASSERT_TRUE(st.cliffDetected);
@@ -153,24 +149,49 @@ void test_cliff_near_ground_false() {
   TEST_ASSERT_FALSE(st.cliffDetected);
   TEST_ASSERT_EQUAL_UINT16(50, st.distanceMM);
 
-  // Boundary: exactly CFG_CLIFF_MM (100) is NOT a cliff (strict >).
-  fusion::SensorSnapshot s;
-  s.az = 0.1f;
+  // Boundary: exactly CFG_CLIFF_MM (100) is NOT a cliff (strict >), even level.
+  fusion::SensorSnapshot s = restSnapshot();
   s.tofMm = 100;
-  s.tofValid = true;
-  s.mpuHealthy = true;
   kIdentity.evaluate(s, st);
   TEST_ASSERT_FALSE(st.cliffDetected);
 }
 
-void test_cliff_gated_when_level() {
-  // Far ToF but level (|az| ~ 1g at rest): gate blocks the cliff flag.
-  fusion::SensorSnapshot s = restSnapshot();
+void test_cliff_tilted_far_holds() {
+  // Far ToF but tipped (|az| ~ 0.1g): not level, so no cliff.
+  fusion::SensorSnapshot s;
+  s.ax = 0.7f;
+  s.ay = 0.0f;
+  s.az = 0.1f;
   s.tofMm = 150;
+  s.tofValid = true;
+  s.mpuHealthy = true;
   SystemState st;
   kIdentity.evaluate(s, st);
   TEST_ASSERT_FALSE(st.cliffDetected);
   TEST_ASSERT_EQUAL_UINT16(150, st.distanceMM);  // ToF path still live
+}
+
+void test_cliff_30deg_fires_45deg_holds() {
+  // Gate 0.8 = level within ~37deg of flat: 30deg tip (|az|=cos30~0.87)
+  // fires, 45deg tip (|az|=cos45~0.71) holds.
+  fusion::SensorSnapshot tipped;
+  tipped.ax = 0.5f;  // sin30
+  tipped.az = -0.8660254f;
+  tipped.tofMm = 150;
+  tipped.tofValid = true;
+  tipped.mpuHealthy = true;
+  SystemState st;
+  kIdentity.evaluate(tipped, st);
+  TEST_ASSERT_TRUE(st.cliffDetected);
+
+  fusion::SensorSnapshot tipped45;
+  tipped45.ax = kSin45;
+  tipped45.az = -kCos45;
+  tipped45.tofMm = 150;
+  tipped45.tofValid = true;
+  tipped45.mpuHealthy = true;
+  kIdentity.evaluate(tipped45, st);
+  TEST_ASSERT_FALSE(st.cliffDetected);
 }
 
 void test_unhealthy_mpu_freezes_tilt_and_flags() {

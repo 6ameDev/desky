@@ -22,8 +22,9 @@
 // Rules:
 //   - Tilt always updates pitch/roll when the MPU is healthy (no thresholds,
 //     no picked-up flag — pitch/roll are computed for telemetry/behavior only).
-//   - Cliff (ground drop): (tofMm > CFG_CLIFF_MM) && (|az| < gate). The accel
-//     gate rejects false positives when level (|az| ~ 1g at rest).
+//   - Cliff (ground drop): (tofMm > CFG_CLIFF_MM) && (|az| > gate). The ToF
+//     looks 30deg down, so the catch moment is far+level (bench: az=-1.044g
+//     level; gate 0.8 holds level within ~37deg, rejects 45deg-tip |az|~0.71).
 //   - Health gating: an unhealthy source skips its own updates and retains
 //     last state — MPU unhealthy freezes pitch/roll, ToF invalid freezes
 //     distanceMM, and the fused cliffDetected freezes unless BOTH sources
@@ -100,8 +101,8 @@ class Fusion {
     }
     if (snap.mpuHealthy && snap.tofValid) {
       const bool far = snap.tofMm > CFG_CLIFF_MM;
-      const bool unloaded = fabsf(snap.az) < CFG_CLIFF_ACCEL_Z_GATE_G;
-      state.cliffDetected = far && unloaded;
+      const bool level = fabsf(snap.az) > CFG_CLIFF_ACCEL_Z_GATE_G;
+      state.cliffDetected = far && level;
     }
   }
 

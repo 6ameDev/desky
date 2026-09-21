@@ -81,11 +81,22 @@ void test_nose_up_45_pitch_tracks_swapped();
 void test_sign_convention_identity();
 void test_sign_convention_swapped();
 void test_board_mounting_matches_bench();
-void test_cliff_far_and_unloaded();
+void test_cliff_far_and_level_fires();
 void test_cliff_near_ground_false();
-void test_cliff_gated_when_level();
+void test_cliff_tilted_far_holds();
+void test_cliff_30deg_fires_45deg_holds();
 void test_unhealthy_mpu_freezes_tilt_and_flags();
 void test_invalid_tof_retains_distance_no_cliff_from_stale();
+
+// Sensor task edge + hold logic, defined in test_sensor_task.cpp.
+void test_sensor_rising_publishes_once();
+void test_sensor_held_levels_silent();
+void test_sensor_falling_publishes_once();
+void test_sensor_reassert_after_clear();
+void test_sensor_boot_into_cliff_publishes_once();
+void test_sensor_frozen_inputs_silent();
+void test_sensor_tof_sentinel_invalid();
+void test_sensor_due_wrap_safe();
 
 // Coordinator arbitrator tests, defined in test_coordinator.cpp.
 void test_coord_stick_bytes_map_center_128();
@@ -126,11 +137,20 @@ int main() {
   RUN_TEST(test_sign_convention_identity);
   RUN_TEST(test_sign_convention_swapped);
   RUN_TEST(test_board_mounting_matches_bench);
-  RUN_TEST(test_cliff_far_and_unloaded);
+  RUN_TEST(test_cliff_far_and_level_fires);
   RUN_TEST(test_cliff_near_ground_false);
-  RUN_TEST(test_cliff_gated_when_level);
+  RUN_TEST(test_cliff_tilted_far_holds);
+  RUN_TEST(test_cliff_30deg_fires_45deg_holds);
   RUN_TEST(test_unhealthy_mpu_freezes_tilt_and_flags);
   RUN_TEST(test_invalid_tof_retains_distance_no_cliff_from_stale);
+  RUN_TEST(test_sensor_rising_publishes_once);
+  RUN_TEST(test_sensor_held_levels_silent);
+  RUN_TEST(test_sensor_falling_publishes_once);
+  RUN_TEST(test_sensor_reassert_after_clear);
+  RUN_TEST(test_sensor_boot_into_cliff_publishes_once);
+  RUN_TEST(test_sensor_frozen_inputs_silent);
+  RUN_TEST(test_sensor_tof_sentinel_invalid);
+  RUN_TEST(test_sensor_due_wrap_safe);
   RUN_TEST(test_coord_stick_bytes_map_center_128);
   RUN_TEST(test_coord_cliff_entry_brakes_and_latches);
   RUN_TEST(test_coord_forward_veto_while_latched);

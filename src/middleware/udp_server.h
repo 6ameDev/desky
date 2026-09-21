@@ -22,15 +22,15 @@
 // loop retries WiFi.begin() every CFG_WIFI_STA_RETRY_MS and logs the DHCP
 // IP once when the link comes up.
 //
-// Telemetry source (minimal but forward-compatible):
-//   mode/active/cliff = Coordinator::snapshot() (coordinator-owned intent);
+// Telemetry source:
+//   mode/active/cliff = Coordinator::snapshot() (coordinator-owned intent;
+//     the cliff level is fed by the sensor task's EVENT_CLIFF_DETECTED edge
+//     publish, so the bit is live);
 //   distanceMM = ToF distanceMm() live; pitch/roll = fusion::Fusion over the
-//     live MPU reading on demand (same atan2f convention as fusion; TODO(C):
-//     still 0 until the MPU is healthy — healthy on a live robot);
+//     live MPU reading on demand (same atan2f convention as fusion; real
+//     tilt once the MPU is healthy, 0 before that);
 //   isDriving = tracked LOCALLY from RX (last commanded v/omega nonzero AND
 //     fresh within CFG_COORDINATOR_STALE_MS), not from the coordinator.
-//   cliff bit = coordinator cliffDetected LEVEL (no fusion task publishes
-//     EVENT_CLIFF_DETECTED yet, so it stays 0 — Workstream C wires the veto).
 // Destination: unicast to the last control peer (IP+port of the incoming
 // datagram); before any peer is seen, subnet broadcast (AP /24 .255, STA
 // ip|~mask) so telemetry flows with zero registration. scripts/ also send
@@ -142,6 +142,15 @@ inline int16_t degToDecideg(float deg) {
 #endif
 #ifndef WIFI_PASS
 #define WIFI_PASS ""
+#endif
+
+// desky-sta requires real credentials from .env (build via make so the
+// values arrive shell-quoted; see platformio.ini). An empty SSID means the
+// env never reached the compiler — fail the build here with a message, not
+// on-chip in a 5s reconnect loop. AP builds skip this (their empty defines
+// are never referenced).
+#if DESKY_WIFI_STA
+static_assert(sizeof(WIFI_SSID) > 1, "desky-sta needs WIFI_SSID from .env (use make build-sta)");
 #endif
 
 class UdpServer {
@@ -287,9 +296,8 @@ class UdpServer {
     SystemState snap;
     coord_->snapshot(snap);
 
-    // Live sensors -> fusion on demand (same atan2f convention as fusion).
-    // No fusion task exists yet (Workstream C); pitch/roll are real tilt
-    // once the MPU is healthy, 0 before that.
+    // Live sensors -> fusion on demand (same atan2f convention as fusion):
+    // real tilt once the MPU is healthy (the sensor task polls it), 0 before.
     float pitchDeg = 0.0f;
     float rollDeg = 0.0f;
     const uint16_t distMm = tof_->distanceMm();
@@ -309,9 +317,8 @@ class UdpServer {
     }
 
     // Driving = last commanded stick nonzero AND fresh (server-local RX
-    // tracking; the coordinator owns no driving flag).
-    // TODO(C): cliff bit mirrors the coordinator level, which stays 0 until
-    // the fusion task publishes EVENT_CLIFF_DETECTED — no real veto yet.
+    // tracking; the coordinator owns no driving flag). The cliff bit below
+    // mirrors the coordinator level, which the sensor task keeps live.
     const bool driving = (lastV_ != 0.0f || lastOmega_ != 0.0f) && (nowMs - lastRxMs_ <= kStaleMs);
     udp::TelemetryPacket tp;
     tp.pitch = udpstatus::degToDecideg(pitchDeg);

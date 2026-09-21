@@ -32,15 +32,27 @@
 #define CFG_TOF_XSHUT_SHUTDOWN_MS 20
 #define CFG_TOF_XSHUT_BOOT_MS 50
 
-// Sensor fusion (on-demand pure logic, see src/middleware/sensor_fusion.h)
+// Sensor fusion (pure logic, see src/middleware/sensor_fusion.h)
+// CFG_CLIFF_MM=100: hands-on bench 2026-09-21 reads 54-72mm VALID near and
+// 1032mm+ VALID far (open beam) — 28mm above the near band, fired live 4mm
+// past a real edge crossing (104mm).
 #define CFG_CLIFF_MM 100
-#define CFG_CLIFF_ACCEL_Z_GATE_G 0.5f
+// Level is |az| > gate: bench level az=-1.044g stable, so 0.8 holds level
+// within ~37deg of flat while a 45deg tip (|az|~0.71) stays held, not cliff.
+#define CFG_CLIFF_ACCEL_Z_GATE_G 0.8f
 
 // Static XY swap for fusion (compile-time): bench-proven 2026-09-20, the
 // MPU is mounted rotated 90deg about vertical — nose-down tilt appears on
 // the sensor Y axis, left-roll on sensor X. 0 = as-mounted, 1 = swap X/Y
 // before tilt math.
 #define CFG_FUSION_SWAP_AXAY 1
+
+// Sensor task (Core 1 poll + fusion + cliff publish; FreeRTOS-free offsets,
+// firmware adds tskIDLE_PRIORITY — config.h itself never includes FreeRTOS).
+#define CFG_SENSOR_STACK_WORDS 4096   // V1-proven task stack depth.
+#define CFG_SENSOR_PRIORITY_OFFSET 3  // Below coordinator +4 / motion +5 so sensing never preempts control.
+#define CFG_SENSOR_CORE 1             // Real-time slot alongside motion + coordinator.
+#define CFG_SENSOR_LOOP_MS 15         // Faster than the fastest sensor (MPU 20ms) so elapsed scheduling never slips.
 
 // Behavior coordinator task (v2 §F: Core 1 behavior slot, below Motion's +5).
 // Priority is stored as an offset: firmware computes
