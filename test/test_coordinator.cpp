@@ -4,6 +4,12 @@
 // Covers coordinator::arbitrate() only — the pure P1>P2>P3>P4 decision
 // function. The Coordinator task (event drain, L1 calls, WDT) is firmware-only
 // (#ifdef ARDUINO) and exercised on hardware via synthetic events.
+//
+// Vocabulary is per-direction ground: gndFwd/gndRev levels (1 = ground),
+// groundEvent edge (fresh 1→0 on either rail), emergencyLatched. The 16 legacy
+// scenarios replay with rev pinned true (gndRev=true) with identical verdicts
+// to the old single-rail cliff suite; the rev/bit suites below cover the new
+// direction (entry on rev edge, reverse veto, escape-forward, resume variants).
 
 #include <unity.h>
 
@@ -18,14 +24,18 @@ coordinator::ArbitrateInput manualDrive(float v, float omega) {
   in.cmdOmega = omega;
   in.hasCommand = true;
   in.freshCommand = true;
+  in.gndFwd = true;
+  in.gndRev = true;
   return in;
 }
 
 coordinator::ArbitrateInput latchedDrive(float v, float omega) {
   coordinator::ArbitrateInput in = manualDrive(v, omega);
   in.mode = SystemState::MODE_EMERGENCY;
-  in.cliffLatched = true;
-  in.cliffActive = true;  // hazard still physically present unless a test clears it
+  in.emergencyLatched = true;
+  in.gndFwd = false;  // fwd void, rev pinned true: replays every old behavior
+  in.gndRev = true;
+  in.freshCommand = false;  // held stick by default: escape motion passes, latch holds
   return in;
 }
 
@@ -49,13 +59,40 @@ void test_coord_stick_bytes_map_center_128() {
   TEST_ASSERT_EQUAL_UINT8(0x00, flags);
 }
 
+void test_coord_ground_bits_pack_unpack() {
+  TEST_ASSERT_EQUAL_UINT32(0x03u, packGround(true, true));
+  TEST_ASSERT_EQUAL_UINT32(0x02u, packGround(false, true));
+  TEST_ASSERT_EQUAL_UINT32(0x01u, packGround(true, false));
+  TEST_ASSERT_EQUAL_UINT32(0x00u, packGround(false, false));
+  bool fwd = false;
+  bool rev = false;
+  unpackGround(0x02u, fwd, rev);
+  TEST_ASSERT_FALSE(fwd);
+  TEST_ASSERT_TRUE(rev);
+  unpackGround(0x01u, fwd, rev);
+  TEST_ASSERT_TRUE(fwd);
+  TEST_ASSERT_FALSE(rev);
+}
+
 void test_coord_cliff_entry_brakes_and_latches() {
   coordinator::ArbitrateInput in = manualDrive(0.6f, 0.0f);
-  in.cliffEvent = true;
+  in.groundEvent = true;
+  in.gndFwd = false;
   const coordinator::ArbitrateOutput out = coordinator::arbitrate(in);
   TEST_ASSERT_TRUE(out.doBrake);
   TEST_ASSERT_EQUAL_FLOAT(0.0f, out.v);
   TEST_ASSERT_EQUAL_FLOAT(0.0f, out.omega);
+  TEST_ASSERT_EQUAL_INT(SystemState::MODE_EMERGENCY, out.nextMode);
+  TEST_ASSERT_EQUAL_UINT32(BEHAVIOR_NONE, out.nextBehavior);
+}
+
+void test_coord_entry_on_rev_edge() {
+  coordinator::ArbitrateInput in = manualDrive(0.0f, 0.0f);
+  in.groundEvent = true;
+  in.gndFwd = true;
+  in.gndRev = false;
+  const coordinator::ArbitrateOutput out = coordinator::arbitrate(in);
+  TEST_ASSERT_TRUE(out.doBrake);
   TEST_ASSERT_EQUAL_INT(SystemState::MODE_EMERGENCY, out.nextMode);
   TEST_ASSERT_EQUAL_UINT32(BEHAVIOR_NONE, out.nextBehavior);
 }
@@ -76,6 +113,31 @@ void test_coord_reverse_allowed_while_latched() {
   TEST_ASSERT_EQUAL_INT(SystemState::MODE_EMERGENCY, out.nextMode);
 }
 
+void test_coord_reverse_veto_while_rev_latched() {
+  coordinator::ArbitrateInput in = manualDrive(-0.6f, 0.0f);
+  in.mode = SystemState::MODE_EMERGENCY;
+  in.emergencyLatched = true;
+  in.gndFwd = true;
+  in.gndRev = false;
+  const coordinator::ArbitrateOutput out = coordinator::arbitrate(in);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, out.v);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, out.omega);
+  TEST_ASSERT_EQUAL_INT(SystemState::MODE_EMERGENCY, out.nextMode);
+}
+
+void test_coord_escape_forward_while_rev_latched() {
+  // Held (not fresh) forward while rev is void: motion passes, latch holds.
+  coordinator::ArbitrateInput in = manualDrive(0.6f, 0.0f);
+  in.mode = SystemState::MODE_EMERGENCY;
+  in.emergencyLatched = true;
+  in.gndFwd = true;
+  in.gndRev = false;
+  in.freshCommand = false;
+  const coordinator::ArbitrateOutput out = coordinator::arbitrate(in);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.6f, out.v);
+  TEST_ASSERT_EQUAL_INT(SystemState::MODE_EMERGENCY, out.nextMode);
+}
+
 void test_coord_turn_allowed_while_latched() {
   const coordinator::ArbitrateOutput out = coordinator::arbitrate(latchedDrive(0.0f, 0.5f));
   TEST_ASSERT_EQUAL_FLOAT(0.0f, out.v);
@@ -87,7 +149,22 @@ void test_coord_latched_ignores_fresh_cmd_while_cliffed() {
   // Nonzero command arriving while still cliffed must NOT unlatch.
   coordinator::ArbitrateInput in = latchedDrive(0.5f, 0.0f);
   in.freshCommand = true;
-  in.cliffActive = true;
+  in.gndFwd = false;
+  in.gndRev = true;
+  const coordinator::ArbitrateOutput out = coordinator::arbitrate(in);
+  TEST_ASSERT_EQUAL_INT(SystemState::MODE_EMERGENCY, out.nextMode);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, out.v);
+  TEST_ASSERT_EQUAL_UINT32(BEHAVIOR_NONE, out.nextBehavior);
+}
+
+void test_coord_blocked_rev_never_exits() {
+  // Fresh reverse while rev is void: blocked direction never exits.
+  coordinator::ArbitrateInput in = manualDrive(-0.5f, 0.0f);
+  in.mode = SystemState::MODE_EMERGENCY;
+  in.emergencyLatched = true;
+  in.gndFwd = true;
+  in.gndRev = false;
+  in.freshCommand = true;
   const coordinator::ArbitrateOutput out = coordinator::arbitrate(in);
   TEST_ASSERT_EQUAL_INT(SystemState::MODE_EMERGENCY, out.nextMode);
   TEST_ASSERT_EQUAL_FLOAT(0.0f, out.v);
@@ -95,9 +172,10 @@ void test_coord_latched_ignores_fresh_cmd_while_cliffed() {
 }
 
 void test_coord_stays_stopped_after_clear_without_new_cmd() {
-  // Cleared cliff with no new command stays stopped in EMERGENCY.
+  // Cleared ground with no new command stays stopped in EMERGENCY.
   coordinator::ArbitrateInput in = latchedDrive(0.0f, 0.0f);
-  in.cliffActive = false;
+  in.gndFwd = true;
+  in.gndRev = true;
   in.freshCommand = false;
   const coordinator::ArbitrateOutput out = coordinator::arbitrate(in);
   TEST_ASSERT_EQUAL_INT(SystemState::MODE_EMERGENCY, out.nextMode);
@@ -109,8 +187,23 @@ void test_coord_stale_held_stick_does_not_resume() {
   // Clear happened (level), but the nonzero stick is stale-held, not fresh:
   // wheels must not restart on an old-held command.
   coordinator::ArbitrateInput in = latchedDrive(0.5f, 0.0f);
-  in.cliffActive = false;
+  in.gndFwd = true;
+  in.gndRev = true;
   in.freshCommand = false;
+  in.udpStale = true;
+  const coordinator::ArbitrateOutput out = coordinator::arbitrate(in);
+  TEST_ASSERT_EQUAL_INT(SystemState::MODE_EMERGENCY, out.nextMode);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, out.v);
+}
+
+void test_coord_stale_fresh_never_exits() {
+  // Even a fresh nonzero in a permitted direction never exits while stale.
+  coordinator::ArbitrateInput in = latchedDrive(0.5f, 0.0f);
+  in.gndFwd = true;
+  in.gndRev = true;
+  in.freshCommand = true;
+  in.udpStale = true;
+  in.hasCommand = true;
   const coordinator::ArbitrateOutput out = coordinator::arbitrate(in);
   TEST_ASSERT_EQUAL_INT(SystemState::MODE_EMERGENCY, out.nextMode);
   TEST_ASSERT_EQUAL_FLOAT(0.0f, out.v);
@@ -119,7 +212,8 @@ void test_coord_stale_held_stick_does_not_resume() {
 void test_coord_centered_fresh_cmd_does_not_resume() {
   // Clear + freshly-centered stick (no drive intent) stays stopped.
   coordinator::ArbitrateInput in = latchedDrive(0.0f, 0.0f);
-  in.cliffActive = false;
+  in.gndFwd = true;
+  in.gndRev = true;
   in.freshCommand = true;
   const coordinator::ArbitrateOutput out = coordinator::arbitrate(in);
   TEST_ASSERT_EQUAL_INT(SystemState::MODE_EMERGENCY, out.nextMode);
@@ -130,7 +224,8 @@ void test_coord_centered_fresh_cmd_does_not_resume() {
 void test_coord_resumes_on_clear_plus_fresh_cmd() {
   // Clear latched earlier as a level (different tick), fresh drive now.
   coordinator::ArbitrateInput in = latchedDrive(0.5f, 0.1f);
-  in.cliffActive = false;
+  in.gndFwd = true;
+  in.gndRev = true;
   in.freshCommand = true;
   const coordinator::ArbitrateOutput out = coordinator::arbitrate(in);
   TEST_ASSERT_EQUAL_INT(SystemState::MODE_MANUAL, out.nextMode);
@@ -138,6 +233,56 @@ void test_coord_resumes_on_clear_plus_fresh_cmd() {
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.5f, out.v);
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.1f, out.omega);
   TEST_ASSERT_FALSE(out.doBrake);
+}
+
+void test_coord_resume_permitted_direction_while_other_void() {
+  // Fresh forward while fwd is present (rev still void): the commanded
+  // direction is permitted, so it exits to MANUAL.
+  coordinator::ArbitrateInput in = manualDrive(0.5f, 0.0f);
+  in.mode = SystemState::MODE_EMERGENCY;
+  in.emergencyLatched = true;
+  in.gndFwd = true;
+  in.gndRev = false;
+  in.freshCommand = true;
+  const coordinator::ArbitrateOutput out = coordinator::arbitrate(in);
+  TEST_ASSERT_EQUAL_INT(SystemState::MODE_MANUAL, out.nextMode);
+  TEST_ASSERT_EQUAL_UINT32(BEHAVIOR_DRIVE_FORWARD, out.nextBehavior);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.5f, out.v);
+}
+
+void test_coord_turn_resume_needs_either_rail() {
+  // Fresh pure turn with one rail present exits ...
+  coordinator::ArbitrateInput in = latchedDrive(0.0f, 0.5f);
+  in.gndFwd = false;
+  in.gndRev = true;
+  in.freshCommand = true;
+  const coordinator::ArbitrateOutput out = coordinator::arbitrate(in);
+  TEST_ASSERT_EQUAL_INT(SystemState::MODE_MANUAL, out.nextMode);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.5f, out.omega);
+  // ... but both-false blocks every exit (turn motion still passes silently).
+  coordinator::ArbitrateInput both = latchedDrive(0.0f, 0.5f);
+  both.gndFwd = false;
+  both.gndRev = false;
+  both.freshCommand = true;
+  const coordinator::ArbitrateOutput outBoth = coordinator::arbitrate(both);
+  TEST_ASSERT_EQUAL_INT(SystemState::MODE_EMERGENCY, outBoth.nextMode);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.5f, outBoth.omega);
+}
+
+void test_coord_both_false_blocks_everything() {
+  coordinator::ArbitrateInput in = latchedDrive(0.5f, 0.0f);
+  in.gndFwd = false;
+  in.gndRev = false;
+  in.freshCommand = true;
+  const coordinator::ArbitrateOutput out = coordinator::arbitrate(in);
+  TEST_ASSERT_EQUAL_INT(SystemState::MODE_EMERGENCY, out.nextMode);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, out.v);
+  coordinator::ArbitrateInput rev = latchedDrive(-0.5f, 0.0f);
+  rev.gndFwd = false;
+  rev.gndRev = false;
+  rev.freshCommand = true;
+  TEST_ASSERT_EQUAL_INT(SystemState::MODE_EMERGENCY, coordinator::arbitrate(rev).nextMode);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, coordinator::arbitrate(rev).v);
 }
 
 void test_coord_done_advances_behavior() {

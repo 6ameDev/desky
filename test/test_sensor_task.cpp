@@ -107,5 +107,70 @@ void test_sensor_due_wrap_safe() {
   TEST_ASSERT_EQUAL_UINT32(0x00000005u, last);
 }
 
+void test_ground_fwd_loss_publishes_packed_bits() {
+  bool lastFwd = true;
+  bool lastRev = true;  // boots with ground present
+  uint32_t payload = 0;
+  TEST_ASSERT_FALSE(sensortask::groundTransition(true, true, true, lastFwd, lastRev, payload));
+  TEST_ASSERT_TRUE(sensortask::groundTransition(true, false, true, lastFwd, lastRev, payload));
+  TEST_ASSERT_EQUAL_UINT32(packGround(false, true), payload);
+  TEST_ASSERT_FALSE(lastFwd);
+  TEST_ASSERT_TRUE(lastRev);
+  TEST_ASSERT_FALSE(sensortask::groundTransition(true, false, true, lastFwd, lastRev, payload));
+}
+
+void test_ground_rev_loss_publishes_packed_bits() {
+  bool lastFwd = true;
+  bool lastRev = true;
+  uint32_t payload = 0;
+  TEST_ASSERT_TRUE(sensortask::groundTransition(true, true, false, lastFwd, lastRev, payload));
+  TEST_ASSERT_EQUAL_UINT32(packGround(true, false), payload);
+  bool fwd = false;
+  bool rev = false;
+  unpackGround(payload, fwd, rev);
+  TEST_ASSERT_TRUE(fwd);
+  TEST_ASSERT_FALSE(rev);
+}
+
+void test_ground_either_rail_transition_only() {
+  bool lastFwd = true;
+  bool lastRev = true;
+  uint32_t payload = 0xDEAD;
+  // Held levels silent on both rails.
+  TEST_ASSERT_FALSE(sensortask::groundTransition(true, true, true, lastFwd, lastRev, payload));
+  // Rev-only flip fires; fwd-only clear edge fires with both bits packed.
+  TEST_ASSERT_TRUE(sensortask::groundTransition(true, true, false, lastFwd, lastRev, payload));
+  TEST_ASSERT_EQUAL_UINT32(packGround(true, false), payload);
+  TEST_ASSERT_TRUE(sensortask::groundTransition(true, false, false, lastFwd, lastRev, payload));
+  TEST_ASSERT_EQUAL_UINT32(packGround(false, false), payload);
+  // Held void silent.
+  TEST_ASSERT_FALSE(sensortask::groundTransition(true, false, false, lastFwd, lastRev, payload));
+  // Clear edge fires.
+  TEST_ASSERT_TRUE(sensortask::groundTransition(true, true, true, lastFwd, lastRev, payload));
+  TEST_ASSERT_EQUAL_UINT32(packGround(true, true), payload);
+}
+
+void test_ground_dead_ticks_hold_silence() {
+  bool lastFwd = false;  // latched void
+  bool lastRev = true;
+  uint32_t payload = 0xDEAD;
+  TEST_ASSERT_FALSE(sensortask::groundTransition(false, true, true, lastFwd, lastRev, payload));
+  TEST_ASSERT_FALSE(lastFwd);  // dead tick never moves the latch
+  TEST_ASSERT_TRUE(lastRev);
+  TEST_ASSERT_FALSE(sensortask::groundTransition(false, false, false, lastFwd, lastRev, payload));
+  // Live tick on the held level stays silent; only a real flip fires.
+  TEST_ASSERT_FALSE(sensortask::groundTransition(true, false, true, lastFwd, lastRev, payload));
+  TEST_ASSERT_TRUE(sensortask::groundTransition(true, true, true, lastFwd, lastRev, payload));
+  TEST_ASSERT_EQUAL_UINT32(packGround(true, true), payload);
+}
+
+void test_ground_boot_into_void_publishes_once() {
+  bool lastFwd = true;
+  bool lastRev = true;  // boot state is always ground present
+  uint32_t payload = 0;
+  TEST_ASSERT_TRUE(sensortask::groundTransition(true, false, true, lastFwd, lastRev, payload));
+  TEST_ASSERT_FALSE(sensortask::groundTransition(true, false, true, lastFwd, lastRev, payload));
+}
+
 // Runner lives in test_udp_codec.cpp (single main for the native-test
 // binary): the sensortask tests are declared extern there.

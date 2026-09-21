@@ -6,10 +6,10 @@
 // bus contention and hold last-good inside the drivers. Fusion runs on live
 // ticks only (mpuHealthy && tofValid, tofValid = enabled && != 9999
 // sentinel); dead ticks hold the last published level in silence so a dead
-// source can never clear a latched cliff. Transitions publish
-// EVENT_CLIFF_DETECTED (nonzero rising, zero falling, silence while held);
-// the level boots clear so boot-into-cliff publishes once. isPickedUp is
-// never touched (no pickup rule).
+// source can never clear a latched ground bit. Transitions publish
+// EVENT_GROUND_CHANGED (packed gndFwd bit0 + gndRev bit1, on either rail's
+// flip only, silence while held); the level boots with ground present so
+// boot-into-void publishes once. isPickedUp is never touched (no pickup rule).
 //
 // Structure mirrors coordinator.h: the top half (namespace sensortask) is
 // Arduino-free pure logic (stdint only) so host Unity tests include this
@@ -20,6 +20,8 @@
 // task never halts, no heap/String in the loop.
 
 #include <stdint.h>
+
+#include "system_context.h"
 
 namespace sensortask {
 
@@ -43,6 +45,8 @@ inline bool due(uint32_t nowMs, uint32_t& lastMs, uint32_t intervalMs) {
 // Transitions-only cliff edge: dead ticks never evaluate and never publish
 // (lastPublished holds in silence); live ticks publish once per level flip
 // (nonzero rising / zero falling). Boots clear, so boot-into-cliff fires.
+// Legacy single-rail helper (kept for host tests; firmware uses the unified
+// groundTransition below).
 inline bool cliffTransition(bool liveTick, bool cliffNow, bool& lastPublished, uint32_t& payloadOut) {
   if (!liveTick) {
     return false;
@@ -52,6 +56,24 @@ inline bool cliffTransition(bool liveTick, bool cliffNow, bool& lastPublished, u
   }
   lastPublished = cliffNow;
   payloadOut = cliffNow ? 1u : 0u;
+  return true;
+}
+
+// Transitions-only unified ground edge: dead ticks never evaluate and never
+// publish (lastFwd/lastRev hold in silence); live ticks publish the packed
+// ground payload once per flip on EITHER rail. Boots with ground present
+// (true,true), so boot-into-void fires once.
+inline bool groundTransition(bool liveTick, bool gndFwdNow, bool gndRevNow, bool& lastFwd, bool& lastRev,
+                             uint32_t& payloadOut) {
+  if (!liveTick) {
+    return false;
+  }
+  if (gndFwdNow == lastFwd && gndRevNow == lastRev) {
+    return false;
+  }
+  lastFwd = gndFwdNow;
+  lastRev = gndRevNow;
+  payloadOut = packGround(gndFwdNow, gndRevNow);
   return true;
 }
 
@@ -102,7 +124,14 @@ class SensorTask {
   static constexpr uint32_t kMpuMs = CFG_MPU_TARGET_INTERVAL_MS;
   static constexpr uint32_t kTofMs = CFG_TOF_TARGET_INTERVAL_MS;
 
-  SensorTask() : mpu_(nullptr), tof_(nullptr), task_(nullptr), lastPublished_(false), lastMpuMs_(0), lastTofMs_(0) {}
+  SensorTask()
+      : mpu_(nullptr),
+        tof_(nullptr),
+        task_(nullptr),
+        lastGndFwd_(true),
+        lastGndRev_(true),
+        lastMpuMs_(0),
+        lastTofMs_(0) {}
 
   // Pins the sensor task to Core 1. Call once in setup(), after
   // Coordinator::begin (cliff events have a subscriber from the first
@@ -144,14 +173,18 @@ class SensorTask {
         tof_->update();
       }
 
-      // Live gate: both sources must be live or the tick holds in silence.
+      // Live gate: the forward rail needs MPU + ToF; the rear rail is absent
+      // (no rear sensor yet) so its invalid-hold pins gndRev at default-true.
+      // Either live rail makes the tick live; dead ticks hold in silence.
       const uint16_t distMm = tof_->distanceMm();
-      const bool live = mpu_->isHealthy() && sensortask::tofReadingValid(tof_->isEnabled(), distMm);
-      bool cliffNow = false;
-      float azG = 0.0f;
+      const bool fwdLive = mpu_->isHealthy() && sensortask::tofReadingValid(tof_->isEnabled(), distMm);
+      const bool live = fwdLive;  // rev absent: no second source yet
+      bool gndFwdNow = true;
+      bool gndRevNow = true;
+      float pitchDeg = 0.0f;
+      float thrMm = 0.0f;
       if (live) {
         const MpuReading& r = mpu_->reading();
-        azG = r.az;
         fusion::SensorSnapshot snap;
         snap.ax = r.ax;
         snap.ay = r.ay;
@@ -162,14 +195,24 @@ class SensorTask {
         snap.tofMm = distMm;
         snap.tofValid = true;
         snap.mpuHealthy = true;
+        // No rear sensor exists yet: leave tofRevValid false so the
+        // invalid-hold pins gndRev true. When the rear driver lands it just
+        // fills tofRevMm/tofRevValid here — zero logic change.
+        snap.tofRevMm = 0;
+        snap.tofRevValid = false;
         SystemState fused;
         fusion::Fusion{fusion::kBoardMounting}.evaluate(snap, fused);
-        cliffNow = fused.cliffDetected;
+        gndFwdNow = fused.gndFwd;
+        gndRevNow = fused.gndRev;
+        pitchDeg = fused.pitch;
+        thrMm = fusion::cliffThresholdMm(static_cast<float>(CFG_CLIFF_MM), fused.pitch, true);
       }
       uint32_t payload = 0;
-      if (sensortask::cliffTransition(live, cliffNow, lastPublished_, payload)) {
-        EventBus::publish(EVENT_CLIFF_DETECTED, payload);
-        LOG_I("SENSOR", "CLIFF %s dist=%umm az=%.2fg", cliffNow ? "asserted" : "cleared", distMm, azG);
+      if (sensortask::groundTransition(live, gndFwdNow, gndRevNow, lastGndFwd_, lastGndRev_, payload)) {
+        EventBus::publish(EVENT_GROUND_CHANGED, payload);
+        LOG_I("SENSOR", "CLIFF %s dist=%umm thr=%umm pitch=%+.1f gndFwd=%u gndRev=%u",
+              gndFwdNow ? "cleared" : "asserted", distMm, static_cast<unsigned>(thrMm + 0.5f), pitchDeg,
+              gndFwdNow ? 1u : 0u, gndRevNow ? 1u : 0u);
       }
 
       FaultManager::watchdogFeed();
@@ -183,7 +226,8 @@ class SensorTask {
   Mpu6500Driver* mpu_;
   Vl53l0xDriver* tof_;
   TaskHandle_t task_;
-  bool lastPublished_;
+  bool lastGndFwd_;
+  bool lastGndRev_;
   uint32_t lastMpuMs_;
   uint32_t lastTofMs_;
 };

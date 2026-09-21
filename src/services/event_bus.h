@@ -179,6 +179,8 @@ class EventBus {
     switch (type) {
       case EVENT_CLIFF_DETECTED:
         return "CLIFF_DETECTED";
+      case EVENT_GROUND_CHANGED:
+        return "GROUND_CHANGED";
       case EVENT_PICKED_UP:
         return "PICKED_UP";
       case EVENT_UDP_COMMAND_RECEIVED:

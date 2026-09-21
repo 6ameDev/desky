@@ -37,9 +37,16 @@
 // 1032mm+ VALID far (open beam) — 28mm above the near band, fired live 4mm
 // past a real edge crossing (104mm).
 #define CFG_CLIFF_MM 100
-// Level is |az| > gate: bench level az=-1.044g stable, so 0.8 holds level
-// within ~37deg of flat while a 45deg tip (|az|~0.71) stays held, not cliff.
-#define CFG_CLIFF_ACCEL_Z_GATE_G 0.8f
+// CFG_CLIFF_MM_REV=100: mirror placeholder for the future rear beam (no rear
+// sensor exists yet; invalid-hold pins gndRev true until the driver lands).
+#define CFG_CLIFF_MM_REV 100
+// CFG_BEAM_DEPRESSION_DEG=30: single symmetric beam depression below
+// horizontal in degrees (fwd and mirrored rev share it).
+#define CFG_BEAM_DEPRESSION_DEG 30
+// CFG_LEVEL_MAX_TILT_DEG=35.0: total-tilt-magnitude gate in degrees — level
+// ⟺ (pitch²+roll²) < 35² from freshly fused pitch/roll (pose-explicit; only
+// evaluated when the MPU is healthy, else the ground bits hold).
+#define CFG_LEVEL_MAX_TILT_DEG 35.0f
 
 // Static XY swap for fusion (compile-time): bench-proven 2026-09-20, the
 // MPU is mounted rotated 90deg about vertical — nose-down tilt appears on

@@ -150,10 +150,18 @@ void test_cliff_near_ground_false() {
   TEST_ASSERT_EQUAL_UINT16(50, st.distanceMM);
 
   // Boundary: exactly CFG_CLIFF_MM (100) is NOT a cliff (strict >), even level.
-  fusion::SensorSnapshot s = restSnapshot();
+  // Pinned at exact level (pitch 0 → thr exactly 100); the rest pose carries
+  // ~-1.4° pitch so its compensated threshold sits just under 100.
+  fusion::SensorSnapshot s;
+  s.ax = 0.0f;
+  s.ay = 0.0f;
+  s.az = -1.0f;
   s.tofMm = 100;
+  s.tofValid = true;
+  s.mpuHealthy = true;
   kIdentity.evaluate(s, st);
   TEST_ASSERT_FALSE(st.cliffDetected);
+  TEST_ASSERT_TRUE(st.gndFwd);
 }
 
 void test_cliff_tilted_far_holds() {
@@ -172,17 +180,18 @@ void test_cliff_tilted_far_holds() {
 }
 
 void test_cliff_30deg_fires_45deg_holds() {
-  // Gate 0.8 = level within ~37deg of flat: 30deg tip (|az|=cos30~0.87)
-  // fires, 45deg tip (|az|=cos45~0.71) holds.
-  fusion::SensorSnapshot tipped;
-  tipped.ax = 0.5f;  // sin30
-  tipped.az = -0.8660254f;
-  tipped.tofMm = 150;
-  tipped.tofValid = true;
-  tipped.mpuHealthy = true;
+  // Tilt gate is total-tilt-magnitude < 35°: 30° single-axis (roll, so the
+  // pitch-compensated fwd threshold stays ~100) fires, 45° holds.
+  fusion::SensorSnapshot rolled;
+  rolled.ay = 0.5f;  // sin30
+  rolled.az = -0.8660254f;
+  rolled.tofMm = 150;
+  rolled.tofValid = true;
+  rolled.mpuHealthy = true;
   SystemState st;
-  kIdentity.evaluate(tipped, st);
+  kIdentity.evaluate(rolled, st);
   TEST_ASSERT_TRUE(st.cliffDetected);
+  TEST_ASSERT_FALSE(st.gndFwd);
 
   fusion::SensorSnapshot tipped45;
   tipped45.ax = kSin45;
@@ -232,6 +241,124 @@ void test_invalid_tof_retains_distance_no_cliff_from_stale() {
   // Healthy MPU path stays live even while ToF is invalid.
   TEST_ASSERT_FLOAT_WITHIN(5.0f, 0.0f, st.pitch);
   TEST_ASSERT_FLOAT_WITHIN(5.0f, 0.0f, st.roll);
+}
+
+void test_threshold_level_is_base() {
+  TEST_ASSERT_FLOAT_WITHIN(0.5f, 100.0f, fusion::cliffThresholdMm(100.0f, 0.0f, true));
+  TEST_ASSERT_FLOAT_WITHIN(0.5f, 100.0f, fusion::cliffThresholdMm(100.0f, 0.0f, false));
+}
+
+void test_threshold_nose_up_15_fwd_193() {
+  TEST_ASSERT_FLOAT_WITHIN(3.0f, 193.0f, fusion::cliffThresholdMm(100.0f, 15.0f, true));
+}
+
+void test_threshold_nose_down_15_fwd_71() {
+  TEST_ASSERT_FLOAT_WITHIN(3.0f, 71.0f, fusion::cliffThresholdMm(100.0f, -15.0f, true));
+}
+
+void test_threshold_clamp_bounds() {
+  // Nose-up +40° fwd: dep = 30−40 = −10 → clamped to 10° → ~288mm.
+  TEST_ASSERT_FLOAT_WITHIN(5.0f, 288.0f, fusion::cliffThresholdMm(100.0f, 40.0f, true));
+  // Nose-down −60° fwd: dep = 30+60 = 90 → clamped to 80° → ~51mm.
+  TEST_ASSERT_FLOAT_WITHIN(3.0f, 51.0f, fusion::cliffThresholdMm(100.0f, -60.0f, true));
+}
+
+void test_threshold_rear_mirrors_fwd() {
+  // Rear beam mirrors: fwd(+15) == rev(−15), fwd(−15) == rev(+15).
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, fusion::cliffThresholdMm(100.0f, 15.0f, true),
+                           fusion::cliffThresholdMm(100.0f, -15.0f, false));
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, fusion::cliffThresholdMm(100.0f, -15.0f, true),
+                           fusion::cliffThresholdMm(100.0f, 15.0f, false));
+}
+
+void test_bump_climb_120_passes_at_plus15() {
+  // Bump scenario: nose-up +15° while climbing, beam reads 120mm. The old
+  // fixed 100mm rule would fire; the compensated ~193mm threshold passes.
+  fusion::SensorSnapshot s;
+  s.ax = 0.2588190f;  // sin15
+  s.ay = 0.0f;
+  s.az = -0.9659258f;  // -cos15
+  s.tofMm = 120;
+  s.tofValid = true;
+  s.mpuHealthy = true;
+  SystemState st;
+  kIdentity.evaluate(s, st);
+  TEST_ASSERT_FLOAT_WITHIN(2.0f, 15.0f, st.pitch);
+  TEST_ASSERT_FALSE(st.cliffDetected);
+  TEST_ASSERT_TRUE(st.gndFwd);
+  TEST_ASSERT_EQUAL_UINT16(120, st.distanceMM);
+}
+
+void test_level_2deg_fires() {
+  // Bench verdict pin: ~2° total tilt is level enough to fire on far+level.
+  fusion::SensorSnapshot s;
+  s.ax = 0.0348995f;  // sin2
+  s.ay = 0.0f;
+  s.az = -0.9993908f;  // -cos2
+  s.tofMm = 150;
+  s.tofValid = true;
+  s.mpuHealthy = true;
+  SystemState st;
+  kIdentity.evaluate(s, st);
+  TEST_ASSERT_TRUE(st.cliffDetected);
+  TEST_ASSERT_FALSE(st.gndFwd);
+}
+
+void test_rev_far_level_drops_rev_only() {
+  // Mirrored rev rail: rev far+level drops gndRev while fwd stays grounded
+  // and cliffDetected (raw fwd flag) stays false.
+  fusion::SensorSnapshot s = restSnapshot();  // fwd 50mm near, level
+  s.tofRevMm = 150;
+  s.tofRevValid = true;
+  SystemState st;
+  kIdentity.evaluate(s, st);
+  TEST_ASSERT_TRUE(st.gndFwd);
+  TEST_ASSERT_FALSE(st.cliffDetected);
+  TEST_ASSERT_FALSE(st.gndRev);
+}
+
+void test_rev_invalid_holds_default_true() {
+  // No rear sensor yet: invalid rev holds gndRev at default-true even when
+  // the fwd rail drops.
+  fusion::SensorSnapshot s = restSnapshot();
+  s.tofMm = 500;  // far, level → fwd drops
+  s.tofRevValid = false;
+  SystemState st;
+  kIdentity.evaluate(s, st);
+  TEST_ASSERT_FALSE(st.gndFwd);
+  TEST_ASSERT_TRUE(st.cliffDetected);
+  TEST_ASSERT_TRUE(st.gndRev);
+}
+
+void test_dead_sources_hold_both_bits() {
+  // Dead rails never clear: preset dropped bits survive a dead tick ...
+  SystemState st;
+  st.gndFwd = false;
+  st.gndRev = false;
+  st.cliffDetected = true;
+  st.distanceMM = 60;
+  fusion::SensorSnapshot dead = restSnapshot();
+  dead.tofValid = false;
+  dead.tofRevValid = false;
+  dead.mpuHealthy = false;
+  kIdentity.evaluate(dead, st);
+  TEST_ASSERT_FALSE(st.gndFwd);
+  TEST_ASSERT_FALSE(st.gndRev);
+  TEST_ASSERT_TRUE(st.cliffDetected);
+  TEST_ASSERT_EQUAL_UINT16(60, st.distanceMM);
+  // ... and preset present bits survive a one-sided dead tick.
+  SystemState st2;
+  st2.gndFwd = true;
+  st2.gndRev = true;
+  st2.cliffDetected = false;
+  fusion::SensorSnapshot half = restSnapshot();
+  half.tofValid = false;  // fwd dead, rev invalid too
+  half.tofRevValid = false;
+  half.mpuHealthy = true;  // tilt still live
+  kIdentity.evaluate(half, st2);
+  TEST_ASSERT_TRUE(st2.gndFwd);
+  TEST_ASSERT_TRUE(st2.gndRev);
+  TEST_ASSERT_FALSE(st2.cliffDetected);
 }
 
 // Single-program runner lives in test_udp_codec.cpp (pio test links all

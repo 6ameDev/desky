@@ -21,6 +21,8 @@ struct SystemState {
   bool isPickedUp = false;
   bool cliffDetected = false;
   bool isDriving = false;
+  bool gndFwd = true;  // fwd = ToF cliff derivation (compensated fwd rule)
+  bool gndRev = true;  // rev = fail-open, no rear sensor yet (invalid-hold pins true)
 
   enum RobotMode { MODE_MANUAL, MODE_AUTONOMOUS, MODE_LOW_POWER, MODE_EMERGENCY } mode = MODE_MANUAL;
 
@@ -32,6 +34,7 @@ struct SystemState {
 
 enum EventType {
   EVENT_CLIFF_DETECTED,
+  EVENT_GROUND_CHANGED,
   EVENT_PICKED_UP,
   EVENT_UDP_COMMAND_RECEIVED,
   EVENT_BATTERY_LOW,
@@ -40,6 +43,17 @@ enum EventType {
   EVENT_BEHAVIOR_STARTED,
   EVENT_BEHAVIOR_DONE
 };
+
+// Unified ground event (documented once, here): EVENT_GROUND_CHANGED payload
+// packs both rails' levels — bit0 = gndFwd level, bit1 = gndRev level
+// (1 = ground present, 0 = drop). Published on either rail's transition only;
+// dead sources hold (never clear). Arduino-free helpers below.
+inline uint32_t packGround(bool gndFwd, bool gndRev) { return (gndFwd ? 1u : 0u) | ((gndRev ? 1u : 0u) << 1); }
+
+inline void unpackGround(uint32_t payload, bool& gndFwd, bool& gndRev) {
+  gndFwd = (payload & 1u) != 0;
+  gndRev = (payload & 2u) != 0;
+}
 
 struct SystemEvent {
   EventType type;

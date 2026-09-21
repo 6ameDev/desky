@@ -20,8 +20,10 @@
 // - Throttle/steering bytes are uint8 center-128:
 //     signed = (byte - 128) / 127, clamped to -1..1. Zero stick = 128.
 //   Throttle passes into L1 raw (-1..1, no scaling).
-// - EVENT_CLIFF_DETECTED payload != 0 asserts the cliff; payload == 0 is the
-//   cliff-cleared signal (no separate event type).
+// - EVENT_GROUND_CHANGED payload packs both ground rails (system_context.h
+//   packGround/unpackGround): bit0 = gndFwd level, bit1 = gndRev level
+//   (1 = ground present, 0 = drop). Published on either rail's transition
+//   only. Entry (brake+EMERGENCY) fires on a fresh 1→0 on either rail.
 // - EVENT_BEHAVIOR_STARTED payload = BehaviorId. Continuous behaviors
 //   (DRIVE_FORWARD) carry no duration; timed maneuvers carry theirs in the
 //   arm call (cf. MotionController::startWiggle), so no second word is needed.
@@ -29,16 +31,17 @@
 //   The coordinator never publishes DONE: cancellation (preempt/stale) is
 //   itself coordinator-caused, so it needs no completion signal.
 //
-// Safety semantics (locked):
-// - Cliff blocks forward only: while latched, v > 0 clamps to 0, v <= 0 and
-//   turning still pass (escape). P1 entry brakes via MotionController::brake().
-// - EMERGENCY latches on cliff: mode=EMERGENCY + brake + BEHAVIOR_NONE.
-//   Wheels never auto-restart: resume needs BOTH a physically-clear cliff
-//   (level tracked by the task from CLIFF_DETECTED 0-payloads, NOT the clear
-//   edge — clear and re-command land on different ticks) AND a fresh nonzero
-//   UDP command (a nonzero command arriving while still-cliffed must NOT
-//   unlatch; a cleared cliff with no new command, a stale-held stick, or a
-//   freshly-centered stick all stay stopped in EMERGENCY).
+// Safety semantics (locked, per-direction latch):
+// - Ground loss on either rail latches EMERGENCY: P1 entry brakes via
+//   MotionController::brake() + mode=EMERGENCY + BEHAVIOR_NONE.
+// - Steady-state veto per commanded direction while latched: forward needs
+//   gndFwd, reverse needs gndRev, pure turn (v==0) always passes (silent
+//   clamp of the vetoed component to 0, omega untouched).
+// - EMERGENCY holds until a fresh nonzero UDP command arrives whose direction
+//   is currently permitted (fwd needs gndFwd, rev needs gndRev, pure turn
+//   needs either rail; both-false blocks every exit). Centered, stale-held,
+//   or blocked-direction commands never exit; clear-without-command stays put.
+//   Wheels never auto-restart.
 // - Failsafe: no UDP within CFG_COORDINATOR_STALE_MS preempts everything to
 //   stop (including running maneuvers).
 // - Non-drive behaviors (timed maneuvers armed by future P3 code) own the L1
@@ -51,15 +54,18 @@
 
 namespace coordinator {
 
-// P1>P2>P3>P4 input snapshot. cliffEvent/freshCommand/doneReceived are
-// single-tick edges from the event drain; cliffActive is the level the task
-// maintains from CLIFF_DETECTED payloads (nonzero = hazard present).
+// P1>P2>P3>P4 input snapshot. groundEvent/freshCommand/doneReceived are
+// single-tick edges from the event drain; gndFwd/gndRev are the levels the
+// task maintains from EVENT_GROUND_CHANGED payloads (1 = ground present);
+// emergencyLatched is the persisted stop condition (set on any ground-loss
+// edge, lifted only by a fresh command in a permitted direction).
 struct ArbitrateInput {
   SystemState::RobotMode mode = SystemState::MODE_MANUAL;
   BehaviorId activeBehavior = BEHAVIOR_NONE;
-  bool cliffLatched = false;
-  bool cliffEvent = false;
-  bool cliffActive = false;
+  bool emergencyLatched = false;
+  bool groundEvent = false;
+  bool gndFwd = true;
+  bool gndRev = true;
   float cmdV = 0.0f;
   float cmdOmega = 0.0f;
   bool hasCommand = false;
@@ -132,9 +138,10 @@ inline ArbitrateOutput arbitrate(const ArbitrateInput& in) {
   out.nextMode = in.mode;
   out.nextBehavior = in.activeBehavior;
 
-  // P1 entry: fresh cliff assertion latches EMERGENCY + brakes, even over a
-  // running maneuver (preemption, no DONE needed — coordinator-caused).
-  if (in.cliffEvent) {
+  // P1 entry: fresh ground loss on either rail latches EMERGENCY + brakes,
+  // even over a running maneuver (preemption, no DONE needed —
+  // coordinator-caused).
+  if (in.groundEvent) {
     out.v = 0.0f;
     out.omega = 0.0f;
     out.doBrake = true;
@@ -144,14 +151,24 @@ inline ArbitrateOutput arbitrate(const ArbitrateInput& in) {
     return out;
   }
 
-  // P1 latched: hold EMERGENCY until the cliff is physically clear (level,
-  // which persists across ticks) AND a fresh drive command arrives.
-  if (in.cliffLatched || in.mode == SystemState::MODE_EMERGENCY) {
+  // P1 latched: hold EMERGENCY until a fresh nonzero command arrives whose
+  // direction is currently permitted (fwd needs gndFwd, rev needs gndRev,
+  // pure turn needs either rail — both-false blocks every exit). Levels
+  // persist across ticks (clear and re-command land on different ticks).
+  if (in.emergencyLatched || in.mode == SystemState::MODE_EMERGENCY) {
     out.nextMode = SystemState::MODE_EMERGENCY;
     out.nextBehavior = BEHAVIOR_NONE;
-    const bool wantDrive = in.freshCommand && (in.cmdV != 0.0f || in.cmdOmega != 0.0f);
-    if (!in.cliffActive && wantDrive) {
-      // Resume: cliff is gone, so the forward veto lifts.
+    const bool wantDrive = in.freshCommand && in.hasCommand && !in.udpStale && (in.cmdV != 0.0f || in.cmdOmega != 0.0f);
+    bool permitted = false;
+    if (in.cmdV > 0.0f) {
+      permitted = in.gndFwd;
+    } else if (in.cmdV < 0.0f) {
+      permitted = in.gndRev;
+    } else if (in.cmdOmega != 0.0f) {
+      permitted = in.gndFwd || in.gndRev;
+    }
+    if (wantDrive && permitted) {
+      // Resume: the commanded direction is permitted, so the veto lifts.
       out.doBrake = false;
       out.holdMotion = false;
       out.nextMode = SystemState::MODE_MANUAL;
@@ -161,9 +178,10 @@ inline ArbitrateOutput arbitrate(const ArbitrateInput& in) {
       return out;
     }
     // Still latched (includes clear-but-no-new-command, stale-held stick,
-    // and freshly-centered stick: all stay stopped in EMERGENCY, never
-    // auto-restart). Escape hatch: forward vetoed, reverse and turning
-    // still allowed while the hazard is physically present.
+    // freshly-centered stick, and blocked-direction commands: all stay
+    // stopped in EMERGENCY, never auto-restart). Escape hatch: per-direction
+    // veto — forward needs gndFwd, reverse needs gndRev, pure turn always
+    // passes (silent clamp, omega untouched).
     out.doBrake = false;
     out.holdMotion = false;
     if (in.udpStale || !in.hasCommand) {
@@ -171,7 +189,13 @@ inline ArbitrateOutput arbitrate(const ArbitrateInput& in) {
       out.omega = 0.0f;
       return out;
     }
-    out.v = (in.cmdV > 0.0f) ? 0.0f : in.cmdV;
+    if (in.cmdV > 0.0f) {
+      out.v = in.gndFwd ? in.cmdV : 0.0f;
+    } else if (in.cmdV < 0.0f) {
+      out.v = in.gndRev ? in.cmdV : 0.0f;
+    } else {
+      out.v = 0.0f;
+    }
     out.omega = in.cmdOmega;
     return out;
   }
@@ -264,8 +288,9 @@ class Coordinator {
         mutex_(nullptr),
         mode_(SystemState::MODE_MANUAL),
         active_(BEHAVIOR_NONE),
-        cliffLatched_(false),
-        cliffActive_(false),
+        emergencyLatched_(false),
+        gndFwd_(true),
+        gndRev_(true),
         cmdV_(0.0f),
         cmdOmega_(0.0f),
         hasCmd_(false),
@@ -329,25 +354,31 @@ class Coordinator {
       const uint32_t nowMs = millis();
 
       // Drain the private queue (non-blocking): at most one decision per
-      // tick. Edges reset every tick; the cliff level persists (resume needs
+      // tick. Edges reset every tick; the ground levels persist (resume needs
       // clear-then-recommand across ticks, never same-tick coincidence).
-      bool cliffEvent = false;
+      bool groundEvent = false;
       bool freshCommand = false;
       bool doneReceived = false;
       uint32_t doneId = BEHAVIOR_NONE;
       SystemEvent ev;
       while (sub_.receive(ev, 0)) {
         switch (ev.type) {
-          case EVENT_CLIFF_DETECTED:
-            if (ev.payload != 0) {
-              cliffActive_ = true;
-              cliffEvent = true;
-              LOG_D("COORD", "cliff asserted");
+          case EVENT_GROUND_CHANGED: {
+            bool fwd = true;
+            bool rev = true;
+            unpackGround(ev.payload, fwd, rev);
+            // Entry edge: fresh 1→0 on either rail. Clear edges (0→1) only
+            // update the levels below.
+            if ((gndFwd_ && !fwd) || (gndRev_ && !rev)) {
+              groundEvent = true;
+              LOG_D("COORD", "ground lost fwd=%u rev=%u", fwd ? 1u : 0u, rev ? 1u : 0u);
             } else {
-              cliffActive_ = false;
-              LOG_D("COORD", "cliff cleared");
+              LOG_D("COORD", "ground update fwd=%u rev=%u", fwd ? 1u : 0u, rev ? 1u : 0u);
             }
+            gndFwd_ = fwd;
+            gndRev_ = rev;
             break;
+          }
           case EVENT_UDP_COMMAND_RECEIVED: {
             uint8_t mode = 0;
             uint8_t flags = 0;
@@ -374,9 +405,10 @@ class Coordinator {
       coordinator::ArbitrateInput in;
       in.mode = mode_;
       in.activeBehavior = active_;
-      in.cliffLatched = cliffLatched_;
-      in.cliffEvent = cliffEvent;
-      in.cliffActive = cliffActive_;
+      in.emergencyLatched = emergencyLatched_;
+      in.groundEvent = groundEvent;
+      in.gndFwd = gndFwd_;
+      in.gndRev = gndRev_;
       in.cmdV = cmdV_;
       in.cmdOmega = cmdOmega_;
       in.hasCommand = hasCmd_ && !stale;
@@ -397,8 +429,8 @@ class Coordinator {
       }
 
       if (out.nextMode != mode_) {
-        LOG_I("COORD", "mode %d->%d cliffEv=%d cliffActive=%d stale=%d", static_cast<int>(mode_),
-              static_cast<int>(out.nextMode), cliffEvent, cliffActive_, stale);
+        LOG_I("COORD", "mode %d->%d gndEv=%d gndFwd=%d gndRev=%d stale=%d", static_cast<int>(mode_),
+              static_cast<int>(out.nextMode), groundEvent, gndFwd_ ? 1 : 0, gndRev_ ? 1 : 0, stale);
       }
       if (out.nextBehavior != active_) {
         LOG_I("COORD", "behavior %lu->%lu", (unsigned long)active_, (unsigned long)out.nextBehavior);
@@ -408,14 +440,16 @@ class Coordinator {
       }
       mode_ = out.nextMode;
       active_ = out.nextBehavior;
-      cliffLatched_ = (mode_ == SystemState::MODE_EMERGENCY);
+      emergencyLatched_ = (mode_ == SystemState::MODE_EMERGENCY);
 
       // Shadow the intent fields the telemetry task snapshots (under mutex;
       // the arbitration fields above stay task-local, untouched).
       xSemaphoreTake(mutex_, portMAX_DELAY);
       snap_.mode = mode_;
       snap_.activeBehavior = active_;
-      snap_.cliffDetected = cliffActive_;
+      snap_.cliffDetected = !gndFwd_;  // raw fwd flag: wire untouched
+      snap_.gndFwd = gndFwd_;
+      snap_.gndRev = gndRev_;
       xSemaphoreGive(mutex_);
 
       FaultManager::watchdogFeed();
@@ -433,8 +467,9 @@ class Coordinator {
   SystemState snap_;  // Shadow for snapshot(); written by task, read under mutex.
   SystemState::RobotMode mode_;
   BehaviorId active_;
-  bool cliffLatched_;
-  bool cliffActive_;
+  bool emergencyLatched_;
+  bool gndFwd_;
+  bool gndRev_;
   float cmdV_;
   float cmdOmega_;
   bool hasCmd_;
