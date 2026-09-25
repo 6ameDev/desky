@@ -1,0 +1,6 @@
+# Gradle / Kotlin build artifacts (future KMP / Compose client)
+.gradle/
+build/
+.kotlin/
+*.apk
+*.ipa

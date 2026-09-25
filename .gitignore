@@ -1,12 +1,15 @@
-# PlatformIO build outputs
-.pio/
-.vscode/
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Workspace metadata
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
 
 # Secrets
+*.env
 .env
 
-# Docs
-docs/
-
-# Generated debugging scripts
-scripts/
+# Stale root build cache (builds now live in embedded/.pio/)
+.pio/

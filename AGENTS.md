@@ -5,23 +5,31 @@
 > self-contained: if background is missing, ask for it — never assume it.
 > Re-read this file before each new task; do not let earlier tasks fade it.
 
+## Monorepo layout
+
+- `embedded/` — C++ PlatformIO microcontroller firmware (all builds run
+  here, e.g. `cd embedded && pio run` / `cd embedded && make check`).
+- `client/` — empty placeholder for the future KMP / Compose app.
+- `shared/protocol/` — protocol contracts; normative source is
+  `embedded/src/middleware/udp_codec.h`.
+
 ## Start here (reading order for any task)
 
 1. `docs/architecture/v2.md` — the design decisions; everything else follows it.
 2. This file — navigation below, then the short gotcha list at the bottom.
-3. `platformio.ini` — envs and pins (it doubles as the lockfile).
-4. `src/main.cpp` — `setup()` order is the system boot order.
-5. The service under change (`src/` map below).
+3. `embedded/platformio.ini` — envs and pins (it doubles as the lockfile).
+4. `embedded/src/main.cpp` — `setup()` order is the system boot order.
+5. The service under change (`embedded/src/` map below).
 
 ## Project map
 
-- `src/hal/` — sensor/actuator interfaces (`ISensor`, `IActuator`) + drivers.
-- `src/services/` — system services: logger, fault/diag/config/i2c/power managers.
-- `src/middleware/` — sensor fusion, UDP codec/server (network-facing logic).
-- `src/behavior/` — coordinator (state machine), motion controller.
-- `include/mcu/` — board definitions; swap MCUs via `active_mcu.h` only.
-- `include/config.h` — tunable constants; never hardcode pins elsewhere.
-- `test/` — host Unity tests (Arduino-free headers only).
+- `embedded/src/hal/` — sensor/actuator interfaces (`ISensor`, `IActuator`) + drivers.
+- `embedded/src/services/` — system services: logger, fault/diag/config/i2c/power managers.
+- `embedded/src/middleware/` — sensor fusion, UDP codec/server (network-facing logic).
+- `embedded/src/behavior/` — coordinator (state machine), motion controller.
+- `embedded/include/mcu/` — board definitions; swap MCUs via `active_mcu.h` only.
+- `embedded/include/config.h` — tunable constants; never hardcode pins elsewhere.
+- `embedded/test/` — host Unity tests (Arduino-free headers only).
 
 ## Docs (which answers what)
 
@@ -32,6 +40,7 @@
 ## Commands & envs
 
 Prefer `make` targets over raw `pio` — the targets encode the lessons.
+Run them from `embedded/` (e.g. `cd embedded && make check`).
 `check` (format + pins + both firmware builds + host tests) is the gate;
 `test`, `upload-monitor(*)`, `monitor-decode` for the rest.
 Envs: `desky` (dev/debug artifact), `desky-release` (field artifact),
@@ -62,7 +71,7 @@ Envs: `desky` (dev/debug artifact), `desky-release` (field artifact),
   (bisect-proven) — `esp_task_wdt_delete` before halting is load-bearing.
 - V1 silkscreen lies (its "MPU6050" is an MPU6500); verify hardware claims
   against silicon, and assert chip IDs in future HAL `init()`.
-- Exact pins in `platformio.ini` ARE the lockfile (no `@ ^`, no bare `.git`
+- Exact pins in `embedded/platformio.ini` ARE the lockfile (no `@ ^`, no bare `.git`
   URLs, no `stable/` platform — `check-pins` enforces).
 
 ## Process rules for hardware runs

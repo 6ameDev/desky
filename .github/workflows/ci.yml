@@ -32,10 +32,11 @@ jobs:
           path: |
             ~/.platformio
             ~/.cache/pip
-          key: pio-${{ hashFiles('platformio.ini') }}
+          key: pio-${{ hashFiles('embedded/platformio.ini') }}
 
       - name: Install PlatformIO
         run: pip install platformio
 
       - name: Gate (format + firmware builds + host tests)
+        working-directory: embedded
         run: make check

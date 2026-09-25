@@ -1,0 +1,12 @@
+# PlatformIO build outputs
+.pio/
+.pioenvs/
+.piolibdeps/
+.clangd/
+
+# Secrets
+*.env
+.env
+
+docs/
+scripts/
