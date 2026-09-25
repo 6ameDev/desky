@@ -12,10 +12,12 @@
 - `client/` — empty placeholder for the future KMP / Compose app.
 - `shared/protocol/` — protocol contracts; normative source is
   `embedded/src/middleware/udp_codec.h`.
+- `embedded/docs/` + `embedded/scripts/` — intentionally untracked
+  (owner-managed); not in git, so their absence from `git status` is normal.
 
 ## Start here (reading order for any task)
 
-1. `docs/architecture/v2.md` — the design decisions; everything else follows it.
+1. `embedded/docs/architecture/v2.md` — the design decisions; everything else follows it.
 2. This file — navigation below, then the short gotcha list at the bottom.
 3. `embedded/platformio.ini` — envs and pins (it doubles as the lockfile).
 4. `embedded/src/main.cpp` — `setup()` order is the system boot order.
@@ -33,9 +35,8 @@
 
 ## Docs (which answers what)
 
-- `docs/architecture/v2.md` — decisions. Read this, not the proposals.
-- `docs/architecture/01|02|03.md` — superseded proposals; history only.
-- `docs/debugging.md` — serial/crash workflow, baselines, coredump spike note.
+- `embedded/docs/architecture/v2.md` — decisions.
+- `embedded/docs/debugging.md` — serial/crash workflow, baselines, coredump spike note.
 
 ## Commands & envs
 

@@ -8,10 +8,11 @@ client, and shared protocol contracts.
 ```plaintext
 /
 ├── .github/              # CI/CD workflows
-├── docs/                 # Human-readable documentation & architecture diagrams
 ├── shared/
 │   └── protocol/         # Machine-readable contracts, packet schemas, byte maps
 ├── embedded/             # C++ PlatformIO microcontroller firmware
+│   ├── docs/             # documentation & architecture (untracked, owner-managed)
+│   ├── scripts/          # UDP drive/telemetry peers (untracked, owner-managed)
 │   ├── include/
 │   ├── lib/
 │   ├── src/
@@ -58,5 +59,5 @@ Normative source: `embedded/src/middleware/udp_codec.h`.
 
 ## Docs
 
-Start at `docs/architecture/v2.md`, then `AGENTS.md`.
-Serial/crash workflow: `docs/debugging.md`.
+Start at `embedded/docs/architecture/v2.md`, then `AGENTS.md`.
+Serial/crash workflow: `embedded/docs/debugging.md`.

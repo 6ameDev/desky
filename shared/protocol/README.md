@@ -5,7 +5,7 @@ embedded firmware (`embedded/`) and the future cross-platform client
 (`client/`).
 
 Normative source of truth today: `embedded/src/middleware/udp_codec.h`.
-Python peers: `scripts/udp_drive.py`, `scripts/udp_telemetry.py`.
+Python peers: `embedded/scripts/udp_drive.py`, `embedded/scripts/udp_telemetry.py`.
 
 ## Conventions
 
