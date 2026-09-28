@@ -11,5 +11,5 @@ Thumbs.db
 *.env
 .env
 
-# Stale root build cache (builds now live in embedded/.pio/)
+# Stale root build cache (builds now live in embedded/core/.pio/ + embedded/head/.pio/)
 .pio/

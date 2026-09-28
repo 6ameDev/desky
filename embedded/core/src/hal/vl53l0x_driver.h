@@ -66,7 +66,7 @@ class Vl53l0xDriver : public ISensor {
     }
     VL53L0X_RangingMeasurementData_t measure{};
     if (!bus_.acquire()) {
-      return;  // Bus busy (OLED holds ~23ms) — skip, keep last-good.
+      return;  // Bus busy — skip, keep last-good.
     }
     const VL53L0X_Error err = lox_.rangingTest(&measure, false);
     bus_.release();

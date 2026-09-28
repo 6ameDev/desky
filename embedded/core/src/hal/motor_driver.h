@@ -2,10 +2,11 @@
 // desky v2 L0 motor driver (DRV8833 dual-H-bridge) — header-only HAL.
 //
 // Ports the PROVEN V1 logic (main:src/drivers/MotorDriver.{h,cpp} +
-// main:include/Config.h): IN1=25, IN2=26, IN3=18, IN4=19 (LEDC 20kHz
-// 8-bit, Arduino-3.x ledcAttach(pin,freq,res)+ledcWrite API),
-// FAULT=27 INPUT_PULLUP active-low, MIN_PWM=65 floor, brake=all-255.
-// Pins here are cross-checked against include/mcu/esp32_devkit_v1_30pin.h
+// main:include/Config.h) onto the S3 map (see
+// include/mcu/esp32s3_wroom1_n16r8.h): IN1=4, IN2=5, IN3=6, IN4=7 (LEDC
+// 20kHz 8-bit, Arduino-3.x ledcAttach(pin,freq,res)+ledcWrite API),
+// FAULT=8 INPUT_PULLUP active-low, MIN_PWM=65 floor, brake=all-255.
+// Pins here are cross-checked against the active MCU header
 // (MCU_MOTOR_IN1/IN2/IN3/IN4/FAULT, MCU_PWM_*): they match, no conflict.
 //
 // Implements IActuator (init/setPowerState/isEnabled) plus motor verbs:

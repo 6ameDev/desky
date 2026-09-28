@@ -7,8 +7,10 @@
 
 ## Monorepo layout
 
-- `embedded/` — C++ PlatformIO microcontroller firmware (all builds run
-  here, e.g. `cd embedded && pio run` / `cd embedded && make check`).
+- `embedded/` — two sibling firmwares + one gate: `core/` (desky-core,
+  primary brain, ESP32-S3) + `head/` (desky-head, face-unit stub) +
+  `shared/link/` (talk-wire codec placeholder). Focused work runs inside
+  one sibling; `cd embedded && make check` gates the whole robot.
 - `client/` — empty placeholder for the future KMP / Compose app.
 - `shared/protocol/` — protocol contracts; normative source is
   `embedded/src/middleware/udp_codec.h`.
@@ -19,19 +21,20 @@
 
 1. `embedded/docs/architecture/v2.md` — the design decisions; everything else follows it.
 2. This file — navigation below, then the short gotcha list at the bottom.
-3. `embedded/platformio.ini` — envs and pins (it doubles as the lockfile).
-4. `embedded/src/main.cpp` — `setup()` order is the system boot order.
-5. The service under change (`embedded/src/` map below).
+3. `embedded/core/platformio.ini` — envs and pins (it doubles as the lockfile).
+4. `embedded/core/src/main.cpp` — `setup()` order is the system boot order.
+5. The service under change (`embedded/core/src/` map below).
 
 ## Project map
 
-- `embedded/src/hal/` — sensor/actuator interfaces (`ISensor`, `IActuator`) + drivers.
-- `embedded/src/services/` — system services: logger, fault/diag/config/i2c/power managers.
-- `embedded/src/middleware/` — sensor fusion, UDP codec/server (network-facing logic).
-- `embedded/src/behavior/` — coordinator (state machine), motion controller.
-- `embedded/include/mcu/` — board definitions; swap MCUs via `active_mcu.h` only.
-- `embedded/include/config.h` — tunable constants; never hardcode pins elsewhere.
-- `embedded/test/` — host Unity tests (Arduino-free headers only).
+- `embedded/core/src/hal/` — sensor/actuator interfaces (`ISensor`, `IActuator`) + drivers.
+- `embedded/core/src/services/` — system services: logger, fault/diag/config/i2c/power managers.
+- `embedded/core/src/middleware/` — sensor fusion, UDP codec/server (network-facing logic).
+- `embedded/core/src/behavior/` — coordinator (state machine), motion controller.
+- `embedded/core/include/mcu/` — board definitions; swap MCUs via `active_mcu.h` only.
+- `embedded/core/include/config.h` — tunable constants; never hardcode pins elsewhere.
+- `embedded/core/test/` — host Unity tests (Arduino-free headers only).
+- `embedded/head/` — face-unit shell (boot banner only until task 2).
 
 ## Docs (which answers what)
 
@@ -41,11 +44,10 @@
 ## Commands & envs
 
 Prefer `make` targets over raw `pio` — the targets encode the lessons.
-Run them from `embedded/` (e.g. `cd embedded && make check`).
-`check` (format + pins + both firmware builds + host tests) is the gate;
-`test`, `upload-monitor(*)`, `monitor-decode` for the rest.
-Envs: `desky` (dev/debug artifact), `desky-release` (field artifact),
-`native-test` (laptop Unity runs).
+Focused: run inside one sibling (`cd embedded/core && make check`).
+Holistic gate: `cd embedded && make check` (checks both siblings).
+Core envs: `desky` (dev/debug), `desky-release` (field), `native-test`
+(laptop Unity); head env: `desky-head` (+ stub `native-test`).
 
 ## Conventions (structural, keep them)
 
@@ -72,7 +74,7 @@ Envs: `desky` (dev/debug artifact), `desky-release` (field artifact),
   (bisect-proven) — `esp_task_wdt_delete` before halting is load-bearing.
 - V1 silkscreen lies (its "MPU6050" is an MPU6500); verify hardware claims
   against silicon, and assert chip IDs in future HAL `init()`.
-- Exact pins in `embedded/platformio.ini` ARE the lockfile (no `@ ^`, no bare `.git`
+- Exact pins in each `platformio.ini` ARE the lockfile (no `@ ^`, no bare `.git`
   URLs, no `stable/` platform — `check-pins` enforces).
 
 ## Process rules for hardware runs

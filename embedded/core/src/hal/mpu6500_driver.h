@@ -69,8 +69,8 @@ class Mpu6500Driver : public ISensor {
     return true;
   }
 
-  // Single non-blocking poll: skip the cycle if the bus is held (OLED
-  // ~23ms), keep the last reading. Lock is released before any conversion.
+  // Single non-blocking poll: skip the cycle if the bus is held by a slow
+  // subordinate, keep the last reading. Lock is released before any conversion.
   void update() override {
     if (!enabled_) {
       return;

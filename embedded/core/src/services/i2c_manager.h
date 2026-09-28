@@ -3,12 +3,11 @@
 //
 // Bus-agnostic by construction: drivers hold an I2CManager reference and
 // reach Wire only through it (bus().wire()), never a global directly.
-// A second bus later (e.g. OLED on Wire1 via MCU_I2C1_SDA/SCL) is a second
-// instance — no driver changes.
+// A second bus later is a second instance — no driver changes.
 //
 // Locking model (mirrors proven V1 i2cMutex use): one FreeRTOS mutex per
-// bus. acquire() with a short wait (default 5ms, V1's budget — OLED holds
-// ~23ms); on failure the caller SKIPS the cycle and keeps last-good data,
+// bus. acquire() with a short wait (default 5ms, V1's budget — a slow
+// subordinate can hold the bus for tens of ms); on failure the caller SKIPS the cycle and keeps last-good data,
 // never blocks the control loop. The mutex is NEVER held across delays:
 // device boot/XSHUT waits happen outside acquire/release pairs.
 //

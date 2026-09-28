@@ -1,0 +1,7 @@
+# desky-head include/
+
+Head = face-unit: eyes (OV3660) + face OLED + MCU + talk-wire.
+Smart lives in desky-core, drawings live here.
+
+Task 1: empty shell — no headers yet. Face-unit drivers and the shared
+link codec land in tasks 2/3.

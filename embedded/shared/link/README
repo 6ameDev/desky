@@ -1,0 +1,11 @@
+# shared/link — core<->head talk-wire codec (TASK 3, placeholder).
+
+Locked link map (do NOT implement here in task 1):
+- 2-wire UART: CAM GPIO14/15 <-> S3 GPIO17/18 (UART1).
+- S3-waits-for-AWAKE boot rule, drop-stale-frames, `[HEAD]` log prefix.
+- OLED on CAM 12/13; GPIO2/4 reserved; star 5V power.
+
+The real codec (framing, AWAKE handshake, stale-frame drop) lands in
+task 3, shared by `core/` and `head/` from this directory.
+Normative protocol source until then: `core/src/middleware/udp_codec.h`
+(core<->app UDP contract — unrelated to this link).

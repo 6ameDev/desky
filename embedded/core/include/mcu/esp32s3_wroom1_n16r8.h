@@ -1,0 +1,68 @@
+#pragma once
+// MCU definition: ESP32-S3-WROOM-1-N16R8 DevKit (primary brain, desky-core).
+// 16MB quad flash + 8MB octal PSRAM, CH9102 USB-UART console.
+// Framework: Arduino + FreeRTOS, board = esp32-s3-devkitc1-n16r8.
+// Replaces esp32_devkit_v1_30pin.h (kept for rollback); swap back via
+// include/mcu/active_mcu.h — no driver/fusion/behavior changes.
+
+#include "mcu_common.h"
+
+// ── Identity / capabilities ──────────────────────────────────
+#define MCU_NAME "ESP32-S3-WROOM-1-N16R8"
+#define MCU_NUM_CORES 2
+#define MCU_CPU_FREQ_MHZ 240
+#define MCU_FLASH_SIZE_MB 16
+#define MCU_HAS_PSRAM 1  // 8MB octal PSRAM — present; core vision use is TBD
+#define MCU_HAS_NATIVE_USB \
+  1                       // S3 USB-OTG exists, but the console is the
+                          // CH9102 USB-UART (UART0) — Serial just works
+#define MCU_HAS_CAMERA 0  // No camera on core — eyes live in desky-head
+
+// ── Fresh S3 pin map (all safe: no strapping, no USB, no flash) ──
+// Motors: GPIO4-7 — plain GPIOs, LEDC PWM-capable, none strapping.
+// (Classic-ESP32 rule "GPIO6-11 are flash" does NOT apply on S3 —
+// octal flash/PSRAM lives on GPIO33-37 instead.)
+#define MCU_MOTOR_IN1 4    // MotorDriver IN1, LEDC 20kHz 8-bit
+#define MCU_MOTOR_IN2 5    // MotorDriver IN2
+#define MCU_MOTOR_IN3 6    // MotorDriver IN3
+#define MCU_MOTOR_IN4 7    // MotorDriver IN4
+#define MCU_MOTOR_FAULT 8  // Active-low fault, INPUT_PULLUP
+#define MCU_TOF_XSHUT 9    // ToF enable, plain OUTPUT HIGH
+#define MCU_I2C_SDA 10     // Shared bus0 SDA (ToF + MPU)
+#define MCU_I2C_SCL 11     // Shared bus0 SCL (ToF + MPU)
+
+// I2C device addresses on shared Wire bus
+#define MCU_ADDR_TOF 0x29
+#define MCU_ADDR_MPU_PRIMARY 0x68
+#define MCU_ADDR_MPU_ALT 0x69
+// OLED addrs RESERVED-moved-to-head: the face OLED lives on desky-head
+// (CAM GPIO12/13) — core never addresses a local display.
+#define MCU_ADDR_OLED_PRIMARY 0x3C
+#define MCU_ADDR_OLED_ALT 0x3D
+
+// ── Talk-wire UART1 (task 3 — defines only, no driver yet) ──
+// 2-wire link: S3 GPIO17/18 <-> CAM GPIO14/15. S3-waits-for-AWAKE boot
+// rule, drop-stale-frames, [HEAD] log prefix all land in task 3.
+// GPIO15/16 RESERVED for future RTS/CTS hardware flow control (not wired).
+#define MCU_LINK_UART_TX 17
+#define MCU_LINK_UART_RX 18
+// UART0 console (GPIO43/44 via CH9102) is RESERVED — Serial only.
+
+// ── Bus / peripheral defaults ────────────────────────────────
+#define MCU_I2C_FREQ_HZ 400000
+#define MCU_I2C_TIMEOUT_MS 20
+#define MCU_PWM_FREQ_HZ 20000
+#define MCU_PWM_RESOLUTION_BITS 8
+#define MCU_PWM_MIN_DUTY 65  // MIN_MOTOR_PWM from V1
+
+// ── Hard constraints (do not violate without a new MCU file) ──
+// - Strapping pins 0/3/45/46: keep unconnected at boot (none used above).
+// - GPIO19/20: USB D-/D+ — never use as GPIO.
+// - GPIO33-37: octal flash + octal PSRAM — NEVER touch.
+// - GPIO43/44: UART0 console (CH9102) — Serial only.
+// - GPIO48: onboard RGB LED — leave alone (no status-LED driving).
+// - GPIO0: BOOT button; GPIO3: strapping — both avoided above.
+// - No second I2C bus in core: the display moved to desky-head, so no
+//   bus2 instance exists; add one here only if a new core subordinate
+//   needs isolation from ToF/MPU timing.
+// - Single shared Wire bus + i2cMutex model required for ToF/MPU.
