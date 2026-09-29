@@ -71,7 +71,7 @@ check-pins:
 
 # Full gate: formatting + pin lint + both firmware builds (deprecation-scanned) + host tests
 check:
-	clang-format --dry-run --Werror src/main.cpp src/services/*.h src/hal/*.h src/middleware/*.h src/behavior/*.h include/*.h include/mcu/*.h test/*.cpp
+	clang-format --dry-run --Werror src/main.cpp src/services/*.h src/hal/*.h src/middleware/*.h src/behavior/*.h include/*.h include/mcu/*.h ../shared/common/*.h test/*.cpp
 	$(MAKE) check-pins
 	pio run -e desky > /tmp/check-desky.log 2>&1; CODE=$$?; cat /tmp/check-desky.log; test $$CODE -eq 0
 	@! grep -i "is deprecated and will be removed" /tmp/check-desky.log

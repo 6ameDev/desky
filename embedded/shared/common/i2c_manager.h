@@ -19,8 +19,8 @@
 #include <Arduino.h>
 #include <Wire.h>
 
-#include "config.h"
-#include "services/logger.h"
+#include "common/logger.h"
+#include "config.h"  // Per-firmware defaults: resolves to the including project's config.h (core or head).
 
 class I2CManager {
  public:

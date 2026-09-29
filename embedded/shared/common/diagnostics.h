@@ -8,7 +8,7 @@
 
 #include <Arduino.h>
 
-#include "services/logger.h"
+#include "common/logger.h"
 
 class Diagnostics {
  public:

@@ -24,10 +24,10 @@
 #include <Arduino.h>
 
 #include "Adafruit_VL53L0X.h"
+#include "common/i2c_manager.h"
+#include "common/isensor.h"
+#include "common/logger.h"
 #include "config.h"
-#include "hal/isensor.h"
-#include "services/i2c_manager.h"
-#include "services/logger.h"
 
 class Vl53l0xDriver : public ISensor {
  public:

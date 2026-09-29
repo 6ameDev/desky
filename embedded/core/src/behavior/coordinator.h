@@ -249,11 +249,11 @@ inline ArbitrateOutput arbitrate(const ArbitrateInput& in) {
 #include <Arduino.h>
 
 #include "behavior/motion_controller.h"
+#include "common/diagnostics.h"
+#include "common/fault_manager.h"
+#include "common/logger.h"
 #include "config.h"
-#include "services/diagnostics.h"
 #include "services/event_bus.h"
-#include "services/fault_manager.h"
-#include "services/logger.h"
 
 // Fallbacks keep this header compilable if config keys ever drift; in-project
 // include/config.h always wins (same pattern as sensor_fusion.h).

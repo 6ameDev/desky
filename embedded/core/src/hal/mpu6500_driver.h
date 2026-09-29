@@ -24,11 +24,11 @@
 #include <Arduino.h>
 #include <mpu6500.h>
 
+#include "common/fault_manager.h"
+#include "common/i2c_manager.h"
+#include "common/isensor.h"
+#include "common/logger.h"
 #include "config.h"
-#include "hal/isensor.h"
-#include "services/fault_manager.h"
-#include "services/i2c_manager.h"
-#include "services/logger.h"
 
 // Raw sensor-frame reading. Units: ax/ay/az in g, gx/gy/gz in dps.
 struct MpuReading {

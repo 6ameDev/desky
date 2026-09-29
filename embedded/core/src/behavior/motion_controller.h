@@ -34,12 +34,12 @@
 #include <cmath>
 #include <cstdint>
 
+#include "common/diagnostics.h"
+#include "common/fault_manager.h"
+#include "common/logger.h"
 #include "config.h"
 #include "hal/motor_driver.h"
-#include "services/diagnostics.h"
 #include "services/event_bus.h"
-#include "services/fault_manager.h"
-#include "services/logger.h"
 #include "system_context.h"
 
 class MotionController {

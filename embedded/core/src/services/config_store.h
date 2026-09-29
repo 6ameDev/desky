@@ -15,7 +15,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 
-#include "services/logger.h"
+#include "common/logger.h"
 
 class ConfigStore {
  public:

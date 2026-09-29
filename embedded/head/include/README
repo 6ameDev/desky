@@ -3,5 +3,8 @@
 Head = face-unit: eyes (OV3660) + face OLED + MCU + talk-wire.
 Smart lives in desky-core, drawings live here.
 
-Task 1: empty shell — no headers yet. Face-unit drivers and the shared
-link codec land in tasks 2/3.
+- `mcu/` — board truth (AI Thinker ESP32-CAM + OV3660 map, constraints);
+  swap MCUs via `mcu/active_mcu.h` only.
+- `config.h` — tunables (HEAD_BOOT_LEAN, rates); never hardcode pins here.
+- `head_context.h` — Arduino-free shared vocabulary: face ids, power-matrix
+  states, the ONE command-table verb struct, head event types (host-tested).

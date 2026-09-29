@@ -84,14 +84,14 @@ inline bool groundTransition(bool liveTick, bool gndFwdNow, bool gndRevNow, bool
 
 #include <Arduino.h>
 
+#include "common/diagnostics.h"
+#include "common/fault_manager.h"
+#include "common/logger.h"
 #include "config.h"
 #include "hal/mpu6500_driver.h"
 #include "hal/vl53l0x_driver.h"
 #include "middleware/sensor_fusion.h"
-#include "services/diagnostics.h"
 #include "services/event_bus.h"
-#include "services/fault_manager.h"
-#include "services/logger.h"
 
 // Fallbacks keep this header compilable if config keys ever drift; in-project
 // include/config.h always wins (same pattern as coordinator.h).

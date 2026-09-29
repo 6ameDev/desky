@@ -2,6 +2,10 @@
 
 #include "behavior/coordinator.h"
 #include "behavior/motion_controller.h"
+#include "common/diagnostics.h"
+#include "common/fault_manager.h"
+#include "common/i2c_manager.h"
+#include "common/logger.h"
 #include "config.h"
 #include "hal/motor_driver.h"
 #include "hal/mpu6500_driver.h"
@@ -9,11 +13,7 @@
 #include "middleware/sensor_task.h"
 #include "middleware/udp_server.h"
 #include "services/config_store.h"
-#include "services/diagnostics.h"
 #include "services/event_bus.h"
-#include "services/fault_manager.h"
-#include "services/i2c_manager.h"
-#include "services/logger.h"
 
 namespace {
 MotorDriver g_motorDriver(MCU_MOTOR_IN1, MCU_MOTOR_IN2, MCU_MOTOR_IN3, MCU_MOTOR_IN4, MCU_MOTOR_FAULT);

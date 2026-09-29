@@ -3,11 +3,11 @@
 clean:
 	pio run -e desky-head -t clean
 
-# Verify compilation (stub)
+# Verify compilation (face-unit: ESP32-CAM + OV3660 + OLED + talk-wire stub)
 build:
 	pio run -e desky-head
 
-# No host tests yet (native-test env is a stub) — kept for shape parity.
+# Host unit tests, no hardware (Unity)
 test:
 	pio test -e native-test
 
@@ -18,8 +18,10 @@ check-pins:
 	@! grep -E "\\.git$$" platformio.ini
 	@! grep -E "releases/download/stable" platformio.ini
 
-# Full gate (stub scope): formatting + pin lint + firmware build.
+# Full gate: formatting + pin lint + firmware build (deprecation-scanned) + host tests
 check:
-	clang-format --dry-run --Werror src/main.cpp
+	clang-format --dry-run --Werror src/main.cpp src/hal/*.h src/services/*.h src/middleware/*.h include/*.h include/mcu/*.h ../shared/common/*.h test/*.cpp
 	$(MAKE) check-pins
-	pio run -e desky-head
+	pio run -e desky-head > /tmp/check-head.log 2>&1; CODE=$$?; cat /tmp/check-head.log; test $$CODE -eq 0
+	@! grep -i "is deprecated and will be removed" /tmp/check-head.log
+	pio test -e native-test

@@ -52,6 +52,11 @@ Core envs: `desky` (dev/debug), `desky-release` (field), `native-test`
 ## Conventions (structural, keep them)
 
 - Services are header-only; shared suffix is `*_manager`.
+- HAL files carry the chip name when bound to one chip's registers/lib
+  (`mpu6500_*`, `ssd1306_*`), the role name when written against an
+  abstraction (`motor_*`, `camera_*`) — a part swap must never force a rename.
+- No firmware prefixes on filenames; the project path scopes them
+  (`core|head/src/...`) — shared concepts live once in `shared/common/`.
 - `setup()` order: logger → fault → config → banner (nothing that can fail
   runs before logging exists).
 - Shared ESP32 settings live in `[common]` + explicit `extends`; never

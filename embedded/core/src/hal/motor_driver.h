@@ -1,5 +1,10 @@
 #pragma once
-// desky v2 L0 motor driver (DRV8833 dual-H-bridge) — header-only HAL.
+// desky v2 L0 motor driver (dual-H-bridge role) — header-only HAL.
+//
+// Currently wired to a DRV8833; valid for any dual-H-bridge with 4xIN +
+// active-low FAULT (e.g. DRV8871, A4950) with no change — only raw GPIO/PWM
+// below, no chip registers. A chip-bound bridge (SPI config, current sense)
+// would land in a separate drv<chip>_driver.h sibling instead.
 //
 // Ports the PROVEN V1 logic (main:src/drivers/MotorDriver.{h,cpp} +
 // main:include/Config.h) onto the S3 map (see
@@ -20,9 +25,9 @@
 #include <Arduino.h>
 #include <stdint.h>
 
+#include "common/fault_manager.h"
+#include "common/iactuator.h"
 #include "config.h"
-#include "hal/iactuator.h"
-#include "services/fault_manager.h"
 
 class MotorDriver : public IActuator {
  public:

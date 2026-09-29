@@ -36,13 +36,17 @@
 #define MCU_ADDR_MPU_PRIMARY 0x68
 #define MCU_ADDR_MPU_ALT 0x69
 // OLED addrs RESERVED-moved-to-head: the face OLED lives on desky-head
-// (CAM GPIO12/13) — core never addresses a local display.
+// (CAM SDA=GPIO14/SCL=GPIO15) — core never addresses a local display.
 #define MCU_ADDR_OLED_PRIMARY 0x3C
 #define MCU_ADDR_OLED_ALT 0x3D
 
 // ── Talk-wire UART1 (task 3 — defines only, no driver yet) ──
-// 2-wire link: S3 GPIO17/18 <-> CAM GPIO14/15. S3-waits-for-AWAKE boot
-// rule, drop-stale-frames, [HEAD] log prefix all land in task 3.
+// 2-wire link: S3 GPIO17/18 <-> CAM TX=GPIO12/RX=GPIO13 (UART2). CAM-TX is
+// an output (reset-silent), so the S3 never drives the CAM's GPIO12
+// strapping pin — PROVIDED the S3 keeps its own TX tristated until the CAM
+// is up (extends S3-waits-for-AWAKE to the pin level; task-3 driver owns
+// this). S3-waits-for-AWAKE boot rule, drop-stale-frames, [HEAD] log prefix
+// all land in task 3.
 // GPIO15/16 RESERVED for future RTS/CTS hardware flow control (not wired).
 #define MCU_LINK_UART_TX 17
 #define MCU_LINK_UART_RX 18

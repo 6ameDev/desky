@@ -18,7 +18,7 @@
 #include <esp_task_wdt.h>
 #include <rom/ets_sys.h>
 
-#include "services/logger.h"
+#include "common/logger.h"
 
 class FaultManager {
  public:
