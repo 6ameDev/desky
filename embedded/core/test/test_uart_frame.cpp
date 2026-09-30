@@ -4,6 +4,7 @@
 // NOTE endianness: uart_frame.h is little-endian by design (ESP<->ESP only),
 // a deliberate deviation from middleware/udp_codec.h (big-endian app link).
 
+#include <stdio.h>
 #include <unity.h>
 
 #include "link/poc_config.h"
@@ -274,6 +275,15 @@ void test_uart_config_set_clamp() {
   TEST_ASSERT_TRUE(uartpoc::parseSet("baud", "230400", cfg, msg, sizeof(msg)));
   TEST_ASSERT_EQUAL_UINT32(230400, cfg.baud);
   TEST_ASSERT_EQUAL_STRING("ACK baud 230400", msg);
+  const uint32_t hiBauds[] = {1000000, 1500000, 2000000, 3000000, 4000000, 5000000};
+  for (size_t i = 0; i < sizeof(hiBauds) / sizeof(hiBauds[0]); ++i) {
+    char val[12];
+    snprintf(val, sizeof(val), "%lu", static_cast<unsigned long>(hiBauds[i]));
+    TEST_ASSERT_TRUE(uartpoc::parseSet("baud", val, cfg, msg, sizeof(msg)));
+    TEST_ASSERT_EQUAL_UINT32(hiBauds[i], cfg.baud);
+  }
+  TEST_ASSERT_FALSE(uartpoc::parseSet("baud", "6000000", cfg, msg, sizeof(msg)));
+  TEST_ASSERT_EQUAL_STRING("NACK bad_baud", msg);
 }
 
 void test_uart_config_reject() {

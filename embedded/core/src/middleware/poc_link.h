@@ -365,7 +365,7 @@ class PocLink {
     }
     if (isWord_(line, "HELP")) {
       LOG_I("POC", "cmds: STATS | RESET | SET k v | GET k | GET all | HEAD SET k v | HEAD GET k | HELP");
-      LOG_I("POC", "keys: chunk|chunk_bytes 16..1024 pace|pace_us 0..50000 baud <list> mode 0..3 fps 1..30");
+      LOG_I("POC", "keys: chunk|chunk_bytes 16..1024 pace|pace_us 0..50000 baud <list incl 1M-5M> mode 0..3 fps 1..30");
       return;
     }
     if (line[0] != '\0') {

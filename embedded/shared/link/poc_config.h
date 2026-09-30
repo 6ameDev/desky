@@ -36,7 +36,8 @@ constexpr uint16_t kFpsMin = 1;
 constexpr uint16_t kFpsMax = 30;
 
 inline bool isValidBaud(uint32_t b) {
-  return b == 9600 || b == 57600 || b == 115200 || b == 230400 || b == 460800 || b == 921600;
+  return b == 9600 || b == 57600 || b == 115200 || b == 230400 || b == 460800 || b == 921600 || b == 1000000 ||
+         b == 1500000 || b == 2000000 || b == 3000000 || b == 4000000 || b == 5000000;
 }
 
 inline bool keyEq(const char* a, const char* b) {

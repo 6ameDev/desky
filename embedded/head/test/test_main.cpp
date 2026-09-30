@@ -55,6 +55,12 @@ void test_uart_reasm_cap_drop();
 void test_uart_config_set_clamp();
 void test_uart_config_reject();
 void test_uart_config_get();
+void test_synth_totals_and_flags();
+void test_synth_ramp_pattern();
+void test_synth_jpeg_markers_and_determinism();
+void test_synth_text_shape();
+void test_synth_null_safe();
+void test_synth_mem_loopback_modes012();
 
 int main() {
   UNITY_BEGIN();
@@ -105,5 +111,11 @@ int main() {
   RUN_TEST(test_uart_config_set_clamp);
   RUN_TEST(test_uart_config_reject);
   RUN_TEST(test_uart_config_get);
+  RUN_TEST(test_synth_totals_and_flags);
+  RUN_TEST(test_synth_ramp_pattern);
+  RUN_TEST(test_synth_jpeg_markers_and_determinism);
+  RUN_TEST(test_synth_text_shape);
+  RUN_TEST(test_synth_null_safe);
+  RUN_TEST(test_synth_mem_loopback_modes012);
   return UNITY_END();
 }
