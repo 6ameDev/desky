@@ -38,6 +38,24 @@ void test_rejects_bad_rules();
 void test_table_full_rejects_overflow();
 void test_clear_resets_policy();
 
+void test_uart_crc_known_vectors();
+void test_uart_roundtrip_all_types();
+void test_uart_roundtrip_empty_and_max();
+void test_uart_encode_rejects();
+void test_uart_hdr_crc_kill();
+void test_uart_pay_crc_kill();
+void test_uart_magic_resync();
+void test_uart_byte_at_a_time();
+void test_uart_overlong_dropped();
+void test_uart_back_to_back();
+void test_uart_reasm_basic();
+void test_uart_reasm_ooo_and_duplicate();
+void test_uart_reasm_loss_then_stale();
+void test_uart_reasm_cap_drop();
+void test_uart_config_set_clamp();
+void test_uart_config_reject();
+void test_uart_config_get();
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_face_names_match_ids);
@@ -70,5 +88,22 @@ int main() {
   RUN_TEST(test_rejects_bad_rules);
   RUN_TEST(test_table_full_rejects_overflow);
   RUN_TEST(test_clear_resets_policy);
+  RUN_TEST(test_uart_crc_known_vectors);
+  RUN_TEST(test_uart_roundtrip_all_types);
+  RUN_TEST(test_uart_roundtrip_empty_and_max);
+  RUN_TEST(test_uart_encode_rejects);
+  RUN_TEST(test_uart_hdr_crc_kill);
+  RUN_TEST(test_uart_pay_crc_kill);
+  RUN_TEST(test_uart_magic_resync);
+  RUN_TEST(test_uart_byte_at_a_time);
+  RUN_TEST(test_uart_overlong_dropped);
+  RUN_TEST(test_uart_back_to_back);
+  RUN_TEST(test_uart_reasm_basic);
+  RUN_TEST(test_uart_reasm_ooo_and_duplicate);
+  RUN_TEST(test_uart_reasm_loss_then_stale);
+  RUN_TEST(test_uart_reasm_cap_drop);
+  RUN_TEST(test_uart_config_set_clamp);
+  RUN_TEST(test_uart_config_reject);
+  RUN_TEST(test_uart_config_get);
   return UNITY_END();
 }
