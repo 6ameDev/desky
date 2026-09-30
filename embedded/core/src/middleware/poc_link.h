@@ -233,7 +233,14 @@ class PocLink {
     // MSG_CMD is unexpected on the S3 side: counted as traffic, otherwise ignored.
   }
 
-  // Send a CMD frame and wait ≤2s for its RESP. True + respOut on reply.
+  // Send a CMD frame and wait ≤2s per attempt for its RESP (up to 3 attempts).
+  // Retry is load-bearing, not garnish: the S3 decoder is greedy — a RESP that
+  // arrives on top of a partial streaming chunk is consumed as that chunk's
+  // payload (the chunk's own header CRC stays valid), destroying the RESP with
+  // exactly one perr and zero other symptoms (measured ~25% first-try loss with
+  // streaming on, 0% stopped). CMDs are idempotent (SET/GET/STATS), so resend
+  // is safe. Each attempt uses a fresh frameId + deadline; 50ms between
+  // attempts lets in-flight bytes settle. True + respOut on first reply.
   bool sendCmdAndWait_(const char* cmd, char* respOut, size_t respCap) {
     if (!txEnabled_) {
       LOG_W("POC", "no link yet (tx tristated), bridge refused");
@@ -243,33 +250,36 @@ class PocLink {
     while (cmd[n] != '\0') {
       ++n;
     }
-    size_t outLen = 0;
-    if (!uartpoc::encodeFrame(uartpoc::MSG_CMD, 0, txFrameId_++, 0, reinterpret_cast<const uint8_t*>(cmd),
-                              static_cast<uint16_t>(n), txBuf_, uartpoc::kMaxFrameLen, outLen)) {
-      LOG_W("POC", "cmd too long, refused");
-      return false;
+    for (int att = 0; att < 3; ++att) {
+      size_t outLen = 0;
+      if (!uartpoc::encodeFrame(uartpoc::MSG_CMD, 0, txFrameId_++, 0, reinterpret_cast<const uint8_t*>(cmd),
+                                static_cast<uint16_t>(n), txBuf_, uartpoc::kMaxFrameLen, outLen)) {
+        LOG_W("POC", "cmd too long, refused");
+        return false;
+      }
+      waitingResp_ = false;
+      respGot_ = false;
+      respBuf_[0] = '\0';
+      Serial1.write(txBuf_, outLen);
+      waitingResp_ = true;
+      const uint32_t deadline = millis() + 2000;
+      while (!respGot_ && (int32_t)(deadline - millis()) > 0) {
+        pollLink();
+        delay(1);
+      }
+      waitingResp_ = false;
+      if (respGot_) {
+        size_t i = 0;
+        while (i + 1 < respCap && respBuf_[i] != '\0') {
+          respOut[i] = respBuf_[i];
+          ++i;
+        }
+        respOut[i] = '\0';
+        return true;
+      }
+      delay(50);  // Let in-flight bytes settle before resending.
     }
-    waitingResp_ = false;
-    respGot_ = false;
-    respBuf_[0] = '\0';
-    Serial1.write(txBuf_, outLen);
-    waitingResp_ = true;
-    const uint32_t deadline = millis() + 2000;
-    while (!respGot_ && (int32_t)(deadline - millis()) > 0) {
-      pollLink();
-      delay(1);
-    }
-    waitingResp_ = false;
-    if (!respGot_) {
-      return false;
-    }
-    size_t i = 0;
-    while (i + 1 < respCap && respBuf_[i] != '\0') {
-      respOut[i] = respBuf_[i];
-      ++i;
-    }
-    respOut[i] = '\0';
-    return true;
+    return false;
   }
 
   // Deferred baud protocol: CMD at old baud, ACK ≤2s else abort, then both

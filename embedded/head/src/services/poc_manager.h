@@ -80,11 +80,14 @@ class PocManager {
         rxCmds_(0),
         rxInvalid_(0),
         usbLen_(0),
-        genTask_(nullptr) {}
+        genTask_(nullptr),
+        txMutex_(nullptr) {}
 
   void begin() {
     // Setup order (core convention): logger + fault already up in main before
     // this runs; config defaults live in cfg_; banner is main's job.
+    txMutex_ = xSemaphoreCreateMutex();  // Serializes ALL Serial2 TX (generator task vs loop task).
+    DESKY_ASSERT(txMutex_ != nullptr);
     txBuf_ = static_cast<uint8_t*>(heap_caps_malloc(uartpoc::kMaxFrameLen, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     DESKY_ASSERT(txBuf_ != nullptr);
     chunkBuf_ = static_cast<uint8_t*>(heap_caps_malloc(uartpoc::kMaxPayload, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
@@ -277,19 +280,37 @@ class PocManager {
     return camOk_;
   }
 
+  // ALL Serial2 TX funnels through here. The generator task (streaming chunks) and
+  // the loop task (HB/RESP/tests) share one UART: unguarded writes interleave
+  // mid-frame (measured: 20% RESP loss + S3-side perr/drops with streaming on,
+  // 10/10 ACK with it stopped). FreeRTOS mutex (blocking, not spin); worst hold
+  // ~12ms (144B @115200). No lock ordering issues: single mutex, TX ring drains
+  // via ISR with no dependency on either task.
+  size_t txWriteRaw_(const uint8_t* buf, size_t len) {
+    if (txMutex_ == nullptr || buf == nullptr) {
+      return 0;
+    }
+    size_t n = 0;
+    if (xSemaphoreTake(txMutex_, portMAX_DELAY) == pdTRUE) {
+      n = Serial2.write(buf, len);
+      xSemaphoreGive(txMutex_);
+    }
+    return n;
+  }
+
   void writeChunk(uint8_t type, uint8_t flags, uint16_t fid, uint16_t idx, const uint8_t* payload, uint16_t n) {
     size_t outLen = 0;
     if (!uartpoc::encodeFrame(type, flags, fid, idx, payload, n, txBuf_, uartpoc::kMaxFrameLen, outLen)) {
       return;
     }
-    txBytes_ += Serial2.write(txBuf_, outLen);
+    txBytes_ += txWriteRaw_(txBuf_, outLen);
     ++txChunks_;
   }
 
   void sendHb() {
     size_t outLen = 0;
     if (uartpoc::encodeFrame(uartpoc::MSG_HB, 0, txFrameId_++, 0, nullptr, 0, txBuf_, uartpoc::kMaxFrameLen, outLen)) {
-      txBytes_ += Serial2.write(txBuf_, outLen);
+      txBytes_ += txWriteRaw_(txBuf_, outLen);
     }
   }
 
@@ -301,7 +322,7 @@ class PocManager {
     size_t outLen = 0;
     if (uartpoc::encodeFrame(uartpoc::MSG_RESP, 0, cmdId, 0, reinterpret_cast<const uint8_t*>(text),
                              static_cast<uint16_t>(n), txBuf_, uartpoc::kMaxFrameLen, outLen)) {
-      txBytes_ += Serial2.write(txBuf_, outLen);
+      txBytes_ += txWriteRaw_(txBuf_, outLen);
     }
   }
 
@@ -729,7 +750,7 @@ class PocManager {
         r.maxEncUs = encUs;
       }
       if (wire) {
-        Serial2.write(enc, encLen);
+        txWriteRaw_(enc, encLen);
         wireDrain_(dec, mode, chunk, total, r, done, outTotal);
       } else {
         pumpSlice_(dec, mode, chunk, total, enc, encLen, r, done, outTotal);
@@ -806,7 +827,7 @@ class PocManager {
           r.maxEncUs = encUs;
         }
         if (wire) {
-          Serial2.write(enc, encLen);
+          txWriteRaw_(enc, encLen);
           wireDrain_(dec, uartpoc::MODE_HW_CAM, chunk, total, r, done, outTotal);
         } else {
           pumpSlice_(dec, uartpoc::MODE_HW_CAM, chunk, total, enc, encLen, r, done, outTotal);
@@ -953,7 +974,7 @@ class PocManager {
     if (!uartpoc::encodeFrame(uartpoc::MSG_HB, 0, 0xFFFF, 0, nullptr, 0, hb, sizeof(hb), hbLen)) {
       return;
     }
-    Serial2.write(hb, hbLen);
+    txWriteRaw_(hb, hbLen);
     uartpoc::Decoder junk;
     const uint32_t end = millis() + 200;
     while ((int32_t)(end - millis()) > 0) {
@@ -1245,6 +1266,7 @@ class PocManager {
   size_t usbLen_;
   char cmdBuf_[160];
   TaskHandle_t genTask_;
+  SemaphoreHandle_t txMutex_;  // Serializes ALL Serial2 TX (generator task vs loop task).
 };
 
 #endif  // ARDUINO

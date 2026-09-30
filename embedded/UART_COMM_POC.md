@@ -21,8 +21,16 @@ Frozen stage definitions (a stage is done only when its exit criteria pass):
   ⇒ §5 island LOCALIZED to the Head's loopback-RX path (classic-ESP32
   silicon/driver at that divider); shared codec exonerated, Head-TX presumed
   fine — Stage 3 verifies live.
-- [ ] **Stage 3 — Integration.** Exit: linked boards prove Head→S3 streaming,
-  CMD bridge, deferred-baud switch, 230400 localization (§5), cross-clock 2M.
+- [x] **Stage 3 — Integration.** PASS 2026-09-30, linked boards over 30cm
+  breadboard jumpers: baseline 115200 clean (70f, 0 err) · bridge 10/10 ACK with
+  CMD retry (streaming ON) · deferred-baud 115200→460800 clean (69f, 0 err) ·
+  **230400 Head→S3 CLEAR** (73f, 0 err + bridge ACK — island is Head-RX-only,
+  link configs unaffected) · **2M cross-clock CLEAR** (73f, 0 err + bridge ACK,
+  two crystal domains) · restored to 115200 defaults. Two incidents below.
+- [ ] **Carry-over to v2 task 3:** port codec + config + deferred-baud + retry
+  discipline; keep defaults 115200/128/1000; 460800 approved step-up, 2M ceiling;
+  230400 link-approved (Head self-loopback at 230400 stays a known-bad TEST
+  configuration); separate control/stream channels or keep CMD retry.
   Requires: loopback jumpers OFF both boards, CAM-TX12→S3-RX18 /
   CAM-RX13←S3-TX17 / common GND. NOTHING else may drive either console during runs.
 
@@ -111,7 +119,8 @@ Stage 3 starts only after both are green. Never rewire a board mid-suite.
 ## 4. Reliable envelope (carries into v2 task 3)
 
 Baud {57600, 115200, 460800, 921600, 1M, 1.5M, **2M**} verified loopback-clean
-(see HIGH note below) · chunk 16–1024 unconstrained · pace floor 0 (no minimum) ·
+(see HIGH note below) **and 460800 / 230400 / 2M verified live Head→S3 with
+bridge ACK** · chunk 16–1024 unconstrained · pace floor 0 (no minimum) ·
 modes 0–3 · 30cm dupont worst case.
 **Defaults stay 115200/128/1000** (huge margins); 460800 approved step-up
 (mode-3 airtime ~0.5s/frame @115200 → ~4× at 460800); **2M approved ceiling**
@@ -143,6 +152,37 @@ proves Head-TX→S3-RX live.**
   WIRE path must keep all three.
 - S3-side note: the deferred-baud switch crosses the same settle window; the
   protocol's HB handshake + 3s rollback absorbs it (HBs are cheap and retried).
+- **Head TX race (found in Stage 3 integration, fixed):** the generator task
+  (streaming chunks) and the loop task (HB/RESP) shared one UART with unguarded
+  `Serial2.write` calls → mid-frame interleave on the wire. Fix: ALL Head
+  Serial2 TX funnels through `txWriteRaw_()` under a FreeRTOS mutex (S3 is
+  single-threaded loop — no equivalent hazard). Necessary hygiene, but it did
+  NOT cure the ~25% bridge RESP loss — that had a deeper cause (next).
+- **Greedy-decoder frankenframes (the real RESP-loss mechanism, fixed by retry):**
+  the S3 decoder commits to a header as soon as 12 bytes buffer. A RESP arriving
+  on top of a partial streaming chunk is consumed as that chunk's payload (the
+  chunk's own header CRC stays valid) → RESP destroyed with exactly one `perr`
+  and zero other symptoms (measured ~25% first-try loss streaming-on, 0%
+  stopped; `perr` count == timeout count). Unfixable in the decoder (bytes are
+  genuinely ambiguous) — fixed at the transport layer instead: S3
+  `sendCmdAndWait_()` retries idempotent CMDs up to 3× (≈70% → ≈99.7%).
+  Residual: each collision also drops one streaming frame (its bytes were eaten
+  as franken-payload) — rare, telemetry-redundant, acceptable for POC. v2 task 3
+  should separate control/stream channels or keep retry.
+- **Counter reconciliation note:** Head `rxcmd` once lagged S3's ACK count across
+  sessions — traced to a mid-session Head reboot (txf timeline; likely breadboard
+  power blip, single occurrence, cause undetermined — watch for repeats).
+  Always reconcile `rxcmd` deltas within one uptime window, never across reboots.
+- **Stage 3 incidents (both closed):**
+  - *First 460800 attempt went dark bilaterally* (zero counters both sides after a
+    verified switch). Prime suspect was a marginal jumper contact healed by the
+    reseat; `updateBaudRate()` exonerated by the clean retry. If it ever recurs,
+    suspect physical contact first, API second.
+  - *S3 reboots on native-USB port open* (DTR): every new console session starts
+    the S3 at compiled-default 115200 while the Head keeps its rate — a recurring
+    mismatch trap that burned two sessions. Methodology: always park the Head via
+    Nano (`SET baud 115200`) at session start, or run switch+verify in ONE session
+    without re-opening. v2 consoles should document this.
 - `pio device monitor` doesn't work in headless shells (no TTY) — use pyserial
   with explicit baud + DTR/RTS handling per `AGENTS.md`.
 
