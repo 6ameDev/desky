@@ -15,12 +15,12 @@ Frozen stage definitions (a stage is done only when its exit criteria pass):
 - [x] **Stage-1 final suite (CAM regression on current image).** PASS 2026-09-30:
   45/45 MEM + QUICK 18/24 (6 known-230400 only) + mode-3 fb_count=2 points clean,
   intfree 182744 stable. Constraints observed: jumper stayed ON, no reflash/rewire.
-- [ ] **Stage 2 — S3 isolation (Path A: S3 loopback self-test).** Exit: S3 proves
-  its own receiver engine (decode/CRC/reassembly/counters/stale-flush/ovf) with
-  the CAM powered off — TX17↔RX18 jumper, S3's own USB port. S3-side SELFTEST
-  verbs required (generate synthetic RAMP/TEXT → TX → RX → verify). MUST NOT
-  interleave with CAM-side hardware runs sharing the breadboard; parallel with
-  CAM-suite is OK (fully independent setups).
+- [x] **Stage 2 — S3 isolation (Path A: S3 loopback self-test).** PASS 2026-09-30:
+  S3 SELFTEST SWEEP FULL **156/156 clean** (all bauds 115200→5M, chunks 16–1024,
+  pace 0–5000, modes 0–1, TX17↔RX18 jumper, CAM off). **230400 fully clean on S3**
+  ⇒ §5 island LOCALIZED to the Head's loopback-RX path (classic-ESP32
+  silicon/driver at that divider); shared codec exonerated, Head-TX presumed
+  fine — Stage 3 verifies live.
 - [ ] **Stage 3 — Integration.** Exit: linked boards prove Head→S3 streaming,
   CMD bridge, deferred-baud switch, 230400 localization (§5), cross-clock 2M.
   Requires: loopback jumpers OFF both boards, CAM-TX12→S3-RX18 /
@@ -120,17 +120,19 @@ HIGH note: 3M/4M/5M also passed loopback, but loopback cancels clock error while
 Head↔S3 are separate clock domains — divider accuracy up there is unvalidated
 across two chips, so 3M+ stays investigational until Stage 2 retests it live.
 
-## 5. Quarantined: 230400 (deterministic perr island, cause unknown)
+## 5. Quarantined: 230400 (deterministic perr island — LOCALIZED to Head-RX)
 
-All 230400 combos fail identically (`perr` = exactly 2× chunks/frame, `herr=0`,
-exact byte counts, every mode/chunk/pace, standalone-reproducible). Ruled out:
-harness bug, driver rot (fresh-boot fails), streaming interleave (fails streaming
-provably idle), data-dependence (TEXT fails too), timing (pace-5000 fails too),
-signal integrity (middle-baud island while 921600 shines over the same wires),
-clock accuracy (same-peripheral loopback cancels it). Suspect: ESP32 UART
-data-path quirk at that divider value. **Do not use 230400.** Stage 2 localizes
-it free: S3-decodes-230400-clean ⇒ Head-RX-path quirk (harmless for the robot);
-S3-chokes-too ⇒ Head-TX-path quirk.
+All 230400 combos fail identically on Head loopback (`perr` = exactly 2×
+chunks/frame, `herr=0`, exact byte counts, every mode/chunk/pace,
+standalone-reproducible). Ruled out: harness bug, driver rot (fresh-boot fails),
+streaming interleave (fails streaming provably idle), data-dependence (TEXT fails
+too), timing (pace-5000 fails too), signal integrity (middle-baud island while
+921600 shines over the same wires), clock accuracy (same-peripheral loopback
+cancels it). **LOCALIZED 2026-09-30: S3 loopback passes 230400 perfectly
+(156/156 FULL incl. all six 230400 combos)** — so the island lives in the Head's
+loopback-RX path (classic-ESP32 UART silicon/driver at that divider); shared
+codec exonerated, Head-TX presumed fine. **Do not use 230400 until Stage 3
+proves Head-TX→S3-RX live.**
 
 ## 6. Mechanism lessons (don't regress these)
 

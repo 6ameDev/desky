@@ -5,9 +5,11 @@
 // a deliberate deviation from middleware/udp_codec.h (big-endian app link).
 
 #include <stdio.h>
+#include <string.h>
 #include <unity.h>
 
 #include "link/poc_config.h"
+#include "link/poc_synth.h"
 #include "link/uart_frame.h"
 
 void test_uart_crc_known_vectors() {
@@ -336,4 +338,150 @@ void test_uart_reasm_stale_due() {
   TEST_ASSERT_FALSE(uartpoc::reasmStaleDue(true, 0xFFFFFFF0UL, 0x0000000FUL, 100));
   // Same wrap, 131ms later > 100ms: due.
   TEST_ASSERT_TRUE(uartpoc::reasmStaleDue(true, 0xFFFFFFF0UL, 0x00000073UL, 100));
+}
+
+void test_synth_totals_and_flags() {
+  TEST_ASSERT_EQUAL_UINT32(512, pocself::synthTotal(0));
+  TEST_ASSERT_EQUAL_UINT32(1024, pocself::synthTotal(1));
+  TEST_ASSERT_EQUAL_UINT32(2048, pocself::synthTotal(2));
+  TEST_ASSERT_EQUAL_UINT32(0, pocself::synthTotal(3));
+  TEST_ASSERT_EQUAL_UINT8(0, pocself::synthFlags(0));
+  TEST_ASSERT_EQUAL_UINT8(uartpoc::FLAG_SYNTHETIC, pocself::synthFlags(1));
+  TEST_ASSERT_EQUAL_UINT8(uartpoc::FLAG_SYNTHETIC, pocself::synthFlags(2));
+  TEST_ASSERT_EQUAL_UINT8(0, pocself::synthFlags(3));
+}
+
+void test_synth_ramp_pattern() {
+  uint8_t a[16];
+  pocself::fillSynthetic(1, 7, 250, a, sizeof(a), pocself::synthTotal(1));
+  for (size_t i = 0; i < sizeof(a); ++i) {
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>((250 + i) & 0xFF), a[i]);
+  }
+  uint8_t b[16];
+  pocself::fillSynthetic(1, 7, 250, b, sizeof(b), pocself::synthTotal(1));
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(a, b, sizeof(a));  // Deterministic in (fid, off).
+}
+
+void test_synth_jpeg_markers_and_determinism() {
+  const uint32_t total = pocself::synthTotal(2);
+  uint8_t first[64];
+  pocself::fillSynthetic(2, 3, 0, first, sizeof(first), total);
+  TEST_ASSERT_EQUAL_UINT8(0xFF, first[0]);
+  TEST_ASSERT_EQUAL_UINT8(0xD8, first[1]);
+  uint8_t last[64];
+  pocself::fillSynthetic(2, 3, total - sizeof(last), last, sizeof(last), total);
+  TEST_ASSERT_EQUAL_UINT8(0xFF, last[sizeof(last) - 2]);
+  TEST_ASSERT_EQUAL_UINT8(0xD9, last[sizeof(last) - 1]);
+  uint8_t rep[64];
+  pocself::fillSynthetic(2, 3, 0, rep, sizeof(rep), total);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(first, rep, sizeof(first));
+  uint8_t other[64];
+  pocself::fillSynthetic(2, 4, 0, other, sizeof(other), total);
+  TEST_ASSERT_EQUAL_UINT8(first[0], other[0]);                              // SOI marker is fid-independent...
+  TEST_ASSERT_FALSE(memcmp(first + 2, other + 2, sizeof(first) - 2) == 0);  // ...but payload is fid-seeded.
+}
+
+void test_synth_text_shape() {
+  uint8_t line[32];
+  pocself::fillSynthetic(0, 5, 0, line, sizeof(line), pocself::synthTotal(0));
+  const char* expect = "TXT 0005:0000 ";
+  for (size_t i = 0; expect[i] != '\0'; ++i) {
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expect[i]), line[i]);
+  }
+  TEST_ASSERT_EQUAL_UINT8('\n', line[31]);
+  uint8_t line2[32];
+  pocself::fillSynthetic(0, 5, 32, line2, sizeof(line2), pocself::synthTotal(0));
+  const char* expect2 = "TXT 0005:0032 ";
+  for (size_t i = 0; expect2[i] != '\0'; ++i) {
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expect2[i]), line2[i]);
+  }
+  uint8_t rep[32];
+  pocself::fillSynthetic(0, 5, 0, rep, sizeof(rep), pocself::synthTotal(0));
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(line, rep, sizeof(line));
+}
+
+void test_synth_null_safe() {
+  pocself::fillSynthetic(0, 1, 0, nullptr, 10, pocself::synthTotal(0));
+  pocself::fillSynthetic(1, 1, 0, nullptr, 10, pocself::synthTotal(1));
+  pocself::fillSynthetic(2, 1, 0, nullptr, 10, pocself::synthTotal(2));
+}
+
+void test_synth_mem_loopback_modes01() {
+  // Mirrors the S3 firmware SELFTEST WIRE verify path (modes 0-1 only, no
+  // camera on the S3): fragment -> encode -> 7-byte slices -> Decoder ->
+  // Reassembler -> regen + memcmp.
+  for (uint8_t mode = 0; mode <= 1; ++mode) {
+    const uint32_t total = pocself::synthTotal(mode);
+    const uint16_t stride = 64;
+    const uint32_t nChunks = (total + stride - 1) / stride;
+    uint8_t slot[2048];
+    uartpoc::Reassembler reasm;
+    reasm.attach(slot, sizeof(slot));
+    uartpoc::Decoder dec;
+    uint8_t src[uartpoc::kMaxPayload];
+    uint8_t exp[uartpoc::kMaxPayload];
+    uint8_t enc[uartpoc::kMaxFrameLen];
+    uint32_t herr = 0, perr = 0, drops = 0, completes = 0;
+    const uint16_t fid = 42;
+    for (uint32_t idx = 0; idx < nChunks; ++idx) {
+      const uint32_t off = idx * stride;
+      uint16_t n = stride;
+      if (off + n > total) {
+        n = static_cast<uint16_t>(total - off);
+      }
+      pocself::fillSynthetic(mode, fid, off, src, n, total);
+      uint8_t fl = pocself::synthFlags(mode);
+      if (idx + 1 >= nChunks) {
+        fl |= uartpoc::FLAG_LAST_CHUNK;
+      }
+      size_t encLen = 0;
+      TEST_ASSERT_TRUE(uartpoc::encodeFrame(uartpoc::MSG_CHUNK, fl, fid, static_cast<uint16_t>(idx), src, n, enc,
+                                            sizeof(enc), encLen));
+      size_t pos = 0;
+      while (pos < encLen) {
+        size_t sl = encLen - pos;
+        if (sl > pocself::kSelftestSlice) {
+          sl = pocself::kSelftestSlice;
+        }
+        size_t o = 0;
+        while (o < sl) {
+          size_t consumed = 0;
+          uartpoc::DecodedFrame fr;
+          const uartpoc::DecodeStatus st = dec.feed(enc + pos + o, sl - o, consumed, fr);
+          o += consumed;
+          if (st == uartpoc::DecodeStatus::OK) {
+            size_t tot = 0;
+            uartpoc::Reassembler::Push pr =
+                reasm.push(fr.frameId, fr.chunkIdx, fr.flags, fr.payload, fr.payloadLen, tot);
+            if (pr == uartpoc::Reassembler::Push::STALE) {
+              ++drops;
+              pr = reasm.push(fr.frameId, fr.chunkIdx, fr.flags, fr.payload, fr.payloadLen, tot);
+            }
+            TEST_ASSERT_TRUE(pr == uartpoc::Reassembler::Push::ACCEPTED || pr == uartpoc::Reassembler::Push::COMPLETE);
+            pocself::fillSynthetic(mode, fr.frameId, off, exp, n, total);
+            TEST_ASSERT_EQUAL_UINT16(n, fr.payloadLen);
+            TEST_ASSERT_EQUAL_UINT8_ARRAY(exp, fr.payload, n);
+            if (pr == uartpoc::Reassembler::Push::COMPLETE) {
+              TEST_ASSERT_EQUAL_UINT((unsigned)total, (unsigned)tot);
+              ++completes;
+            }
+          } else if (st == uartpoc::DecodeStatus::ERR_HDR_CRC) {
+            ++herr;
+          } else if (st == uartpoc::DecodeStatus::ERR_PAY_CRC) {
+            ++perr;
+          } else {
+            break;
+          }
+          if (consumed == 0) {
+            break;
+          }
+        }
+        pos += sl;
+      }
+    }
+    TEST_ASSERT_EQUAL_UINT32(0, herr);
+    TEST_ASSERT_EQUAL_UINT32(0, perr);
+    TEST_ASSERT_EQUAL_UINT32(0, drops);
+    TEST_ASSERT_EQUAL_UINT32(1, completes);
+  }
 }

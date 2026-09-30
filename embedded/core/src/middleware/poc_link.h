@@ -13,6 +13,11 @@
 //    HEAD GET k | HELP. Baud changes always run the deferred ACK-then-switch
 //    protocol (CMD at old baud, 2s ACK wait else abort, both switch after a
 //    delay, USB reminder to switch the monitor).
+//  - SELFTEST verbs (USB CLI, needs TX17-RX18 loopback jumper, CAM powered
+//    off): WIRE (physical loopback through silicon: synth TEXT/RAMP/JPEG TX
+//    -> RX -> regen+memcmp verify), SWEEP (WIRE matrix for the no-PC stage).
+//    USB stays 115200 throughout; only Serial1 changes baud, always restored
+//    RX-only tristated with the normal decoder reset.
 //
 // Memory: RX staging + reassembly slot + TX encode buffer are heap_caps
 // INTERNAL, never PSRAM (asserted via esp_ptr_internal where available).
@@ -27,6 +32,7 @@
 #include "common/logger.h"
 #include "config.h"
 #include "link/poc_config.h"
+#include "link/poc_synth.h"
 #include "link/uart_frame.h"
 
 #if __has_include(<esp_memory_utils.h>)
@@ -55,6 +61,8 @@ class PocLink {
       : rxBuf_(nullptr),
         slot_(nullptr),
         txBuf_(nullptr),
+        verifyChunk_(nullptr),
+        testActive_(false),
         txEnabled_(false),
         txFrameId_(0),
         framesOk_(0),
@@ -85,8 +93,11 @@ class PocLink {
     DESKY_ASSERT(slot_ != nullptr);
     txBuf_ = static_cast<uint8_t*>(heap_caps_malloc(uartpoc::kMaxFrameLen, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     DESKY_ASSERT(txBuf_ != nullptr);
+    verifyChunk_ = static_cast<uint8_t*>(heap_caps_malloc(uartpoc::kMaxPayload, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    DESKY_ASSERT(verifyChunk_ != nullptr);
 #if POC_HAVE_INTERNAL_CHECK
-    DESKY_ASSERT(esp_ptr_internal(rxBuf_) && esp_ptr_internal(slot_) && esp_ptr_internal(txBuf_));
+    DESKY_ASSERT(esp_ptr_internal(rxBuf_) && esp_ptr_internal(slot_) && esp_ptr_internal(txBuf_) &&
+                 esp_ptr_internal(verifyChunk_));
 #endif
     reasm_.attach(slot_, kSlotCap);
     // RX-only: TX pin unassigned (-1) keeps GPIO17 high-impedance so the S3
@@ -124,6 +135,9 @@ class PocLink {
   }
 
   void pollLink() {
+    if (testActive_) {
+      return;  // WIRE/SWEEP own Serial1: test bytes stay buffered for the test pump, never link traffic.
+    }
     int avail = Serial1.available();
     if (avail >= static_cast<int>(kRxOvfWarn)) {
       ++ovf_;  // At most once per poll: ring is nearly full, overflow pressure.
@@ -162,6 +176,9 @@ class PocLink {
   }
 
   void onFrame_(const uartpoc::DecodedFrame& fr) {
+    if (testActive_) {
+      return;  // Belt-and-braces: test bytes are never mistaken for link traffic.
+    }
     const uint32_t now = millis();
     lastRxMs_ = now;
     if (tFirstMs_ == 0) {
@@ -389,11 +406,414 @@ class PocLink {
     if (isWord_(line, "HELP")) {
       LOG_I("POC", "cmds: STATS | RESET | SET k v | GET k | GET all | HEAD SET k v | HEAD GET k | HELP");
       LOG_I("POC", "keys: chunk|chunk_bytes 16..1024 pace|pace_us 0..50000 baud <list incl 1M-5M> mode 0..3 fps 1..30");
+      LOG_I("POC",
+            "selftest: SELFTEST WIRE <baud> <mode 0-2> <chunk 16-1024> <pace 0-50000> <nframes 1-50> (needs "
+            "TX17-RX18 jumper, CAM off)");
+      LOG_I("POC", "selftest: SELFTEST SWEEP [QUICK|FULL] (WIRE matrix, USB stays 115200)");
+      return;
+    }
+    if (startsWith_(line, "SELFTEST ")) {
+      handleSelftest_(line + 9);
       return;
     }
     if (line[0] != '\0') {
       LOG_W("POC", "unknown cmd (try HELP)");
     }
+  }
+
+  // ── SELFTEST (S3 loopback verification, TX17-RX18 jumper, CAM powered off) ──
+  // Mirrors the Head WIRE design: settle → flush AFTER settling (never before)
+  // → throwaway-HB warmup through a junk decoder → counted frames, one
+  // per-frame retry. The S3 has no generator task (loop is single-threaded),
+  // so encode staging reuse would be race-free — but Head-style stack enc[1040]
+  // is used anyway to keep the TX path obviously disjoint from txBuf_ (CMD/HB).
+  // Verify reuses slot_ through a TEST-LOCAL Reassembler (reset per frame;
+  // the normal reasm_ is untouched). testActive_ suspends normal link
+  // processing so test bytes are never mistaken for link traffic; afterwards
+  // Serial1 is restored RX-only tristated (strapping rule: S3 TX must end
+  // tristated), flushed, with linkDec_ reset. USB (Serial) baud never changes.
+
+  struct SelfRes {
+    uint32_t ok;
+    uint32_t herr;
+    uint32_t perr;
+    uint32_t drops;
+    uint32_t mismatch;
+    uint32_t timeouts;
+    uint32_t rxbytes;
+    uint32_t ms;
+    uint32_t kbs;
+  };
+
+  void handleSelftest_(const char* args) {
+    if (startsWith_(args, "WIRE ")) {
+      char t[5][16];
+      if (splitMany_(args + 5, t, 5) != 5) {
+        LOG_W("POC", "NACK bad_value");
+        return;
+      }
+      uint32_t baud = 0, mode = 0, chunk = 0, pace = 0, nframes = 0;
+      if (!uartpoc::parseU32(t[0], baud) || !uartpoc::parseU32(t[1], mode) || !uartpoc::parseU32(t[2], chunk) ||
+          !uartpoc::parseU32(t[3], pace) || !uartpoc::parseU32(t[4], nframes)) {
+        LOG_W("POC", "NACK bad_value");
+        return;
+      }
+      if (!uartpoc::isValidBaud(baud)) {
+        LOG_W("POC", "NACK bad_baud");
+        return;
+      }
+      if (mode > uartpoc::MODE_SYNTH_JPEG) {
+        LOG_W("POC", "NACK bad_value");  // S3 has no camera: modes 0-2 only.
+        return;
+      }
+      if (nframes < 1 || nframes > 50) {
+        LOG_W("POC", "NACK bad_value");
+        return;
+      }
+      const SelfRes r =
+          runSelfWireRes_(baud, static_cast<uint8_t>(mode),
+                          static_cast<uint16_t>(uartpoc::clampU32(chunk, uartpoc::kChunkMin, uartpoc::kChunkMax)),
+                          uartpoc::clampU32(pace, uartpoc::kPaceMin, uartpoc::kPaceMax), nframes);
+      logWireRes_(r, 0, 0, 0, 0, false);
+      return;
+    }
+    if (isWord_(args, "SWEEP")) {
+      runSelfSweep_(false);
+      return;
+    }
+    if (startsWith_(args, "SWEEP ")) {
+      char t[1][16];
+      if (splitMany_(args + 6, t, 1) != 1) {
+        LOG_W("POC", "NACK bad_value");
+        return;
+      }
+      if (uartpoc::keyEq(t[0], "QUICK")) {
+        runSelfSweep_(false);
+        return;
+      }
+      if (uartpoc::keyEq(t[0], "FULL")) {
+        runSelfSweep_(true);
+        return;
+      }
+      LOG_W("POC", "NACK bad_value");
+      return;
+    }
+    LOG_W("POC", "NACK unknown_cmd");
+  }
+
+  // Split s into at most maxToks whitespace tokens (each <16 chars, silently
+  // truncated); returns the count, or -1 on trailing garbage / empty token.
+  static int splitMany_(const char* s, char toks[][16], int maxToks) {
+    int n = 0;
+    while (*s != '\0' && n < maxToks) {
+      while (*s == ' ' || *s == '\t') {
+        ++s;
+      }
+      if (*s == '\0') {
+        break;
+      }
+      size_t i = 0;
+      while (*s != '\0' && *s != ' ' && *s != '\t') {
+        if (i + 1 < 16) {
+          toks[n][i++] = *s;
+        }
+        ++s;
+      }
+      toks[n][i] = '\0';
+      ++n;
+    }
+    while (*s == ' ' || *s == '\t') {
+      ++s;
+    }
+    if (*s != '\0' || (n > 0 && toks[n - 1][0] == '\0')) {
+      return -1;  // Trailing garbage / empty token.
+    }
+    return n;
+  }
+
+  // One synthetic test frame through silicon: per-chunk encode -> TX -> drain
+  // -> regen+memcmp verify, with a post-TX drain until deadline. Returns true
+  // on COMPLETE with the expected total (else the caller counts drop/timeout).
+  bool testFrameSynth_(uint8_t mode, uint16_t fid, uint16_t chunk, uint32_t pace, uartpoc::Decoder& dec,
+                       uartpoc::Reassembler& verifyReasm, uint8_t* enc, SelfRes& r, uint32_t deadline) {
+    verifyReasm.reset();
+    const uint32_t total = pocself::synthTotal(mode);
+    const uint8_t flags = pocself::synthFlags(mode);
+    const uint32_t nChunks = (total + chunk - 1) / chunk;
+    bool done = false;
+    size_t outTotal = 0;
+    for (uint32_t idx = 0; idx < nChunks && !done; ++idx) {
+      if ((int32_t)(millis() - deadline) >= 0) {
+        break;
+      }
+      const uint32_t off = idx * chunk;
+      uint16_t n = chunk;
+      if (off + n > total) {
+        n = static_cast<uint16_t>(total - off);
+      }
+      pocself::fillSynthetic(mode, fid, off, verifyChunk_, n, total);
+      uint8_t fl = flags;
+      if (idx + 1 >= nChunks) {
+        fl |= uartpoc::FLAG_LAST_CHUNK;
+      }
+      size_t encLen = 0;
+      const bool encOk = uartpoc::encodeFrame(uartpoc::MSG_CHUNK, fl, fid, static_cast<uint16_t>(idx), verifyChunk_, n,
+                                              enc, uartpoc::kMaxFrameLen, encLen);
+      if (!encOk) {
+        ++r.drops;
+        continue;
+      }
+      Serial1.write(enc, encLen);
+      wireDrain_(dec, verifyReasm, mode, chunk, total, r, done, outTotal);
+      if (pace > 0 && idx + 1 < nChunks) {
+        delayMicroseconds(pace);
+      }
+      FaultManager::watchdogFeed();
+    }
+    if (!done) {
+      while (!done && (int32_t)(deadline - millis()) > 0) {
+        wireDrain_(dec, verifyReasm, mode, chunk, total, r, done, outTotal);
+        if (!done) {
+          delay(1);
+          FaultManager::watchdogFeed();
+        }
+      }
+    }
+    if (done && outTotal != total) {  // COMPLETE but short: firmware bug, demote.
+      ++r.mismatch;
+      done = false;
+    }
+    return done;
+  }
+
+  // Handle one decoded test CHUNK: reassemble with Head-identical STALE
+  // handling, then regenerate expected bytes and memcmp. Sets done/outTotal
+  // on COMPLETE.
+  void onTestChunk_(uint8_t mode, uint16_t stride, uint32_t total, uartpoc::Reassembler& verifyReasm,
+                    const uartpoc::DecodedFrame& fr, SelfRes& r, bool& done, size_t& outTotal) {
+    size_t tot = 0;
+    uartpoc::Reassembler::Push pr = verifyReasm.push(fr.frameId, fr.chunkIdx, fr.flags, fr.payload, fr.payloadLen, tot);
+    if (pr == uartpoc::Reassembler::Push::STALE) {
+      ++r.drops;
+      pr = verifyReasm.push(fr.frameId, fr.chunkIdx, fr.flags, fr.payload, fr.payloadLen, tot);
+    }
+    if (pr == uartpoc::Reassembler::Push::DROPPED) {
+      ++r.drops;
+      return;
+    }
+    const uint32_t off = static_cast<uint32_t>(fr.chunkIdx) * stride;
+    uint16_t want = 0;
+    bool lenOk = false;
+    if (off < total) {
+      want = stride;
+      if (off + want > total) {
+        want = static_cast<uint16_t>(total - off);
+      }
+      lenOk = (fr.payloadLen == want);
+    }
+    if (!lenOk) {
+      ++r.mismatch;
+    } else {
+      pocself::fillSynthetic(mode, fr.frameId, off, verifyChunk_, want, total);
+      for (uint16_t i = 0; i < want; ++i) {
+        if (verifyChunk_[i] != fr.payload[i]) {
+          ++r.mismatch;
+          break;
+        }
+      }
+    }
+    if (pr == uartpoc::Reassembler::Push::COMPLETE) {
+      outTotal = tot;
+      done = true;
+    }
+  }
+
+  // Drain all currently-available Serial1 bytes through the test decoder.
+  void wireDrain_(uartpoc::Decoder& dec, uartpoc::Reassembler& verifyReasm, uint8_t mode, uint16_t stride,
+                  uint32_t total, SelfRes& r, bool& done, size_t& outTotal) {
+    FaultManager::watchdogFeed();
+    while (Serial1.available() > 0 && !done) {
+      const int c = Serial1.read();
+      if (c < 0) {
+        break;
+      }
+      ++r.rxbytes;
+      const uint8_t b = static_cast<uint8_t>(c);
+      size_t consumed = 0;
+      uartpoc::DecodedFrame fr;
+      const uartpoc::DecodeStatus st = dec.feed(&b, 1, consumed, fr);
+      if (st == uartpoc::DecodeStatus::OK) {
+        onTestChunk_(mode, stride, total, verifyReasm, fr, r, done, outTotal);
+      } else if (st == uartpoc::DecodeStatus::ERR_HDR_CRC) {
+        ++r.herr;
+      } else if (st == uartpoc::DecodeStatus::ERR_PAY_CRC) {
+        ++r.perr;
+      }
+    }
+  }
+
+  void flushSerial1_() {
+    while (Serial1.available() > 0) {
+      Serial1.read();
+    }
+  }
+
+  // Throwaway HB round-trip on the live Serial1 rate: any residual settle glitch lands here,
+  // decoded by a junk decoder, never touching test state. Bounded (~200ms), WDT-fed.
+  void wireWarmup_() {
+    uint8_t hb[uartpoc::kHeaderLen + uartpoc::kTailLen];
+    size_t hbLen = 0;
+    if (!uartpoc::encodeFrame(uartpoc::MSG_HB, 0, 0xFFFF, 0, nullptr, 0, hb, sizeof(hb), hbLen)) {
+      return;
+    }
+    Serial1.write(hb, hbLen);
+    uartpoc::Decoder junk;
+    const uint32_t end = millis() + 200;
+    while ((int32_t)(end - millis()) > 0) {
+      while (Serial1.available() > 0) {
+        const int c = Serial1.read();
+        if (c < 0) {
+          break;
+        }
+        const uint8_t b = static_cast<uint8_t>(c);
+        size_t consumed = 0;
+        uartpoc::DecodedFrame fr;
+        junk.feed(&b, 1, consumed, fr);
+      }
+      delay(1);
+      FaultManager::watchdogFeed();
+    }
+    flushSerial1_();
+  }
+
+  // Physical loopback core: suspends normal link processing, owns Serial1 at
+  // <baud> with an enlarged RX buffer (self-echo of a full-size chunk must not
+  // overrun the 256B Arduino default), restores everything. USB (Serial) baud
+  // never changes; cfg_ is untouched (only the live UART rate moves).
+  SelfRes runSelfWireRes_(uint32_t baud, uint8_t mode, uint16_t chunk, uint32_t pace, uint32_t nframes) {
+    SelfRes r = {};
+    const uint32_t t0 = millis();
+    testActive_ = true;  // pollLink/onFrame_ hand off: test bytes are never link traffic.
+    Serial1.end();
+    Serial1.setRxBufferSize(kRxRing);
+    Serial1.begin(baud, SERIAL_8N1, MCU_LINK_UART_RX, MCU_LINK_UART_TX);
+    delay(50);                         // Let the new baud settle: reconfig can spit a framing glitch that would
+    flushSerial1_();                   // otherwise eat frame 0's magic (silent resync, fatal). Flush AFTER settling.
+    uartpoc::Decoder dec;              // Test-local: the shared linkDec_ is never touched.
+    uartpoc::Reassembler verifyReasm;  // Test-local state on the shared slot_; normal reasm_ untouched.
+    verifyReasm.attach(slot_, kSlotCap);
+    wireWarmup_();                       // Throwaway HB round-trip: proves the path clean before frame 0 counts.
+    uint8_t enc[uartpoc::kMaxFrameLen];  // Stack staging: txBuf_ stays with the CMD/HB path.
+    for (uint32_t f = 0; f < nframes; ++f) {
+      const uint16_t fid = static_cast<uint16_t>(f);
+      bool done = false;
+      for (int att = 0; att < 2 && !done; ++att) {  // One retry: a settle-glitch casualty
+        if (att > 0) {                              // must not doom the whole test.
+          flushSerial1_();                          // (Retry-attempt wire errors still count: real events.)
+          dec.reset();
+        }
+        const uint32_t deadline = millis() + 2000;
+        done = testFrameSynth_(mode, fid, chunk, pace, dec, verifyReasm, enc, r, deadline);
+      }
+      if (done) {
+        ++r.ok;
+      } else {
+        ++r.timeouts;  // Abort remaining frames on timeout.
+        break;
+      }
+    }
+    Serial1.end();
+    Serial1.setRxBufferSize(kRxRing);
+    Serial1.begin(cfg_.baud, SERIAL_8N1, MCU_LINK_UART_RX, -1);  // RX-only tristate: S3 TX ends detached.
+    flushSerial1_();
+    linkDec_.reset();
+    testActive_ = false;
+    r.ms = millis() - t0;
+    r.kbs = (r.ms < 1000) ? 0 : static_cast<uint32_t>(r.rxbytes / r.ms);
+    return r;
+  }
+
+  void logWireRes_(const SelfRes& r, uint32_t baud, uint16_t chunk, uint32_t pace, uint8_t mode, bool combo) {
+    const size_t intFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    if (combo) {
+      LOG_I("POC",
+            "SELFTEST WIRE ok=%lu herr=%lu perr=%lu drops=%lu mismatch=%lu timeouts=%lu rxbytes=%lu intfree=%u ms=%lu "
+            "kbs=%lu baud=%lu chunk=%u pace=%lu mode=%u",
+            static_cast<unsigned long>(r.ok), static_cast<unsigned long>(r.herr), static_cast<unsigned long>(r.perr),
+            static_cast<unsigned long>(r.drops), static_cast<unsigned long>(r.mismatch),
+            static_cast<unsigned long>(r.timeouts), static_cast<unsigned long>(r.rxbytes),
+            static_cast<unsigned>(intFree), static_cast<unsigned long>(r.ms), static_cast<unsigned long>(r.kbs),
+            static_cast<unsigned long>(baud), chunk, static_cast<unsigned long>(pace), mode);
+      return;
+    }
+    LOG_I("POC",
+          "SELFTEST WIRE ok=%lu herr=%lu perr=%lu drops=%lu mismatch=%lu timeouts=%lu rxbytes=%lu intfree=%u ms=%lu "
+          "kbs=%lu",
+          static_cast<unsigned long>(r.ok), static_cast<unsigned long>(r.herr), static_cast<unsigned long>(r.perr),
+          static_cast<unsigned long>(r.drops), static_cast<unsigned long>(r.mismatch),
+          static_cast<unsigned long>(r.timeouts), static_cast<unsigned long>(r.rxbytes), static_cast<unsigned>(intFree),
+          static_cast<unsigned long>(r.ms), static_cast<unsigned long>(r.kbs));
+  }
+
+  // On-device WIRE matrix for the no-PC stage. QUICK (default): 4 baud x 3
+  // chunk x 2 pace x mode 1 x 3 frames = 24 combos. FULL adds chunks 16/1024,
+  // pace 5000, mode 0 (120 base combos), plus the HIGH tier
+  // (1M-5M x {64,128,512} x {0,1000} x mode 1 x 3 frames = 36 combos).
+  // No mode-3 on the S3 (no camera). USB stays 115200 throughout.
+  void runSelfSweep_(bool full) {
+    static const uint32_t kBauds[] = {115200, 230400, 460800, 921600};
+    static const uint32_t kBaudsH[] = {1000000, 1500000, 2000000, 3000000, 4000000, 5000000};
+    static const uint16_t kChunksQ[] = {64, 128, 512};
+    static const uint16_t kChunksF[] = {16, 64, 128, 512, 1024};
+    static const uint32_t kPacesQ[] = {0, 1000};
+    static const uint32_t kPacesF[] = {0, 1000, 5000};
+    static const uint8_t kModesQ[] = {1};
+    static const uint8_t kModesF[] = {0, 1};
+    const uint16_t* chunks = full ? kChunksF : kChunksQ;
+    const size_t nChunks = full ? 5 : 3;
+    const uint32_t* paces = full ? kPacesF : kPacesQ;
+    const size_t nPaces = full ? 3 : 2;
+    const uint8_t* modes = full ? kModesF : kModesQ;
+    const size_t nModes = full ? 2 : 1;
+    const size_t nBauds = sizeof(kBauds) / sizeof(kBauds[0]);
+    uint32_t combos = 0;
+    uint32_t bad = 0;
+    for (size_t bi = 0; bi < nBauds; ++bi) {
+      for (size_t ci = 0; ci < nChunks; ++ci) {
+        for (size_t pi = 0; pi < nPaces; ++pi) {
+          for (size_t mi = 0; mi < nModes; ++mi) {
+            const SelfRes r = runSelfWireRes_(kBauds[bi], modes[mi], chunks[ci], paces[pi], 3);
+            ++combos;
+            if (r.ok != 3 || r.timeouts > 0 || r.mismatch > 0 || r.herr > 0 || r.perr > 0 || r.drops > 0) {
+              ++bad;
+            }
+            logWireRes_(r, kBauds[bi], chunks[ci], paces[pi], modes[mi], true);
+            FaultManager::watchdogFeed();
+          }
+        }
+      }
+    }
+    if (full) {
+      // HIGH tier: base-subset sweep per high baud (mode 1 only, no mode-3 on S3).
+      static const uint16_t kChunksH[] = {64, 128, 512};
+      static const uint32_t kPacesH[] = {0, 1000};
+      const size_t nBaudsH = sizeof(kBaudsH) / sizeof(kBaudsH[0]);
+      for (size_t bi = 0; bi < nBaudsH; ++bi) {
+        for (size_t ci = 0; ci < 3; ++ci) {
+          for (size_t pi = 0; pi < 2; ++pi) {
+            const SelfRes r = runSelfWireRes_(kBaudsH[bi], uartpoc::MODE_SYNTH_RAMP, kChunksH[ci], kPacesH[pi], 3);
+            ++combos;
+            if (r.ok != 3 || r.timeouts > 0 || r.mismatch > 0 || r.herr > 0 || r.perr > 0 || r.drops > 0) {
+              ++bad;
+            }
+            logWireRes_(r, kBaudsH[bi], kChunksH[ci], kPacesH[pi], uartpoc::MODE_SYNTH_RAMP, true);
+            FaultManager::watchdogFeed();
+          }
+        }
+      }
+    }
+    LOG_I("POC", "SELFTEST SWEEP done combos=%lu bad=%lu", static_cast<unsigned long>(combos),
+          static_cast<unsigned long>(bad));
   }
 
   void buildStats_(char* out, size_t cap) {
@@ -489,9 +909,11 @@ class PocLink {
   uartpoc::PocConfig cfg_;
   uartpoc::Decoder linkDec_;
   uartpoc::Reassembler reasm_;
-  uint8_t* rxBuf_;  // INTERNAL UART read staging (kRxBuf).
-  uint8_t* slot_;   // INTERNAL one-frame reassembly slot (kSlotCap).
-  uint8_t* txBuf_;  // INTERNAL CMD/HB encode staging (kMaxFrameLen).
+  uint8_t* rxBuf_;        // INTERNAL UART read staging (kRxBuf).
+  uint8_t* slot_;         // INTERNAL one-frame reassembly slot (kSlotCap).
+  uint8_t* txBuf_;        // INTERNAL CMD/HB encode staging (kMaxFrameLen).
+  uint8_t* verifyChunk_;  // INTERNAL selftest chunk staging + regen scratch (kMaxPayload).
+  bool testActive_;       // WIRE/SWEEP own Serial1 while set (pollLink hands off).
   bool txEnabled_;
   uint16_t txFrameId_;
   uint32_t framesOk_;

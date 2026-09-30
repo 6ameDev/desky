@@ -8,8 +8,8 @@
 #include <string.h>
 #include <unity.h>
 
-#include "../src/services/poc_synth.h"
 #include "link/poc_config.h"
+#include "link/poc_synth.h"
 #include "link/uart_frame.h"
 
 void test_uart_crc_known_vectors() {

@@ -1,9 +1,10 @@
 #pragma once
-// Head POC synthetic payloads — Arduino-free, header-only.
+// UART POC synthetic payloads — Arduino-free, header-only, single source of
+// truth (embedded/shared/link, used by both Head and S3 firmwares + host tests).
 //
 // Deterministic generator payloads shared by the streaming generator and the
-// SELFTEST verifier (services/poc_manager.h): the verifier regenerates EXACTLY
-// what the generator emits from (mode, fid, off, n, total) and memcmps.
+// SELFTEST verifier: the verifier regenerates EXACTLY what the generator emits
+// from (mode, fid, off, n, total) and memcmps.
 // Modes: 0 TEXT (512B of 32B "TXT fid:off" lines), 1 RAMP (1024B incrementing
 // bytes), 2 SYNTH_JPEG (2048B xorshift32 + SOI/EOI markers only — NOT
 // decodable JPEG by design). Mode 3 is real camera data (no synthetic).

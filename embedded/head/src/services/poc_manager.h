@@ -33,8 +33,8 @@
 #include "common/logger.h"
 #include "config.h"
 #include "link/poc_config.h"
+#include "link/poc_synth.h"
 #include "link/uart_frame.h"
-#include "poc_synth.h"
 
 #if __has_include(<esp_memory_utils.h>)
 #include <esp_memory_utils.h>
