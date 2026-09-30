@@ -52,6 +52,7 @@ void test_uart_reasm_basic();
 void test_uart_reasm_ooo_and_duplicate();
 void test_uart_reasm_loss_then_stale();
 void test_uart_reasm_cap_drop();
+void test_uart_reasm_stale_due();
 void test_uart_config_set_clamp();
 void test_uart_config_reject();
 void test_uart_config_get();
@@ -108,6 +109,7 @@ int main() {
   RUN_TEST(test_uart_reasm_ooo_and_duplicate);
   RUN_TEST(test_uart_reasm_loss_then_stale);
   RUN_TEST(test_uart_reasm_cap_drop);
+  RUN_TEST(test_uart_reasm_stale_due);
   RUN_TEST(test_uart_config_set_clamp);
   RUN_TEST(test_uart_config_reject);
   RUN_TEST(test_uart_config_get);

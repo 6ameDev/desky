@@ -390,4 +390,14 @@ class Reassembler {
   bool pend_;
 };
 
+// Stale-partial decision (wrap-safe via signed subtraction): an ACTIVE reassembly whose
+// newest chunk is older than timeoutMs is dead — flush it, count a drop. Pure so host
+// Unity tests pin the edge cases; firmware feeds millis().
+inline bool reasmStaleDue(bool active, uint32_t lastMs, uint32_t nowMs, uint32_t timeoutMs) {
+  if (!active) {
+    return false;
+  }
+  return (int32_t)(nowMs - lastMs) >= (int32_t)timeoutMs;
+}
+
 }  // namespace uartpoc

@@ -47,6 +47,9 @@ class PocLink {
  public:
   static constexpr size_t kSlotCap = 65536;  // One frame slot; bigger frames drop.
   static constexpr size_t kRxBuf = 2048;
+  static constexpr size_t kRxRing = 4096;         // UART driver ring (INTERNAL); margin for pace-0 bursts at 2M+.
+  static constexpr size_t kRxOvfWarn = 3584;      // available() at/above this counts an overflow-pressure event.
+  static constexpr uint32_t kStaleChunkMs = 100;  // Partial frame idle this long => flush slot, count a drop.
 
   PocLink()
       : rxBuf_(nullptr),
@@ -61,10 +64,12 @@ class PocLink {
         drops_(0),
         ooo_(0),
         dups_(0),
+        ovf_(0),
         hbRx_(0),
         bytesRx_(0),
         tFirstMs_(0),
         lastRxMs_(0),
+        lastChunkMs_(0),
         oooFrame_(0xFFFF),
         nextExpected_(0),
         waitingResp_(false),
@@ -86,27 +91,43 @@ class PocLink {
     reasm_.attach(slot_, kSlotCap);
     // RX-only: TX pin unassigned (-1) keeps GPIO17 high-impedance so the S3
     // never drives CAM GPIO12 during CAM reset (strapping requirement).
+    Serial1.setRxBufferSize(kRxRing);  // 4KB INTERNAL ring: margin for pace-0 bursts at 2M+.
     Serial1.begin(cfg_.baud, SERIAL_8N1, MCU_LINK_UART_RX, -1);
     LOG_I("POC", "s3 up link rx=%d tx=tristated(until first head frame) baud=%u slot=%uKB", MCU_LINK_UART_RX,
           static_cast<unsigned>(cfg_.baud), static_cast<unsigned>(kSlotCap / 1024));
   }
 
-  // Called from loop(): link RX pump + USB CLI.
+  // Called from loop(): link RX pump + stale-partial flush + USB CLI.
   void poll() {
     pollLink();
+    staleFlush_();
     pollUsb();
+  }
+
+  // A partial frame idle >kStaleChunkMs is dead (sender moved on): flush the slot,
+  // count one drop. Without this a stalled partial squats reassembly until STALE.
+  void staleFlush_() {
+    if (uartpoc::reasmStaleDue(reasm_.active(), lastChunkMs_, millis(), kStaleChunkMs)) {
+      reasm_.reset();
+      ++drops_;
+      lastChunkMs_ = millis();
+    }
   }
 
  private:
   void enableTx_() {
     txEnabled_ = true;
     Serial1.end();
+    Serial1.setRxBufferSize(kRxRing);
     Serial1.begin(cfg_.baud, SERIAL_8N1, MCU_LINK_UART_RX, MCU_LINK_UART_TX);
     LOG_I("POC", "first head frame heard, tx attached on gpio%d", MCU_LINK_UART_TX);
   }
 
   void pollLink() {
     int avail = Serial1.available();
+    if (avail >= static_cast<int>(kRxOvfWarn)) {
+      ++ovf_;  // At most once per poll: ring is nearly full, overflow pressure.
+    }
     while (avail > 0) {
       size_t n = static_cast<size_t>(avail > 256 ? 256 : avail);
       if (n > kRxBuf) {
@@ -151,6 +172,7 @@ class PocLink {
     }
     if (fr.type == uartpoc::MSG_CHUNK) {
       ++chunksRx_;
+      lastChunkMs_ = now;
       size_t total = 0;
       uartpoc::Reassembler::Push res = reasm_.push(fr.frameId, fr.chunkIdx, fr.flags, fr.payload, fr.payloadLen, total);
       if (res == uartpoc::Reassembler::Push::STALE) {
@@ -349,14 +371,15 @@ class PocLink {
       return;
     }
     if (isWord_(line, "STATS")) {
-      char msg[192];
+      char msg[224];
       buildStats_(msg, sizeof(msg));
       LOG_I("POC", "%s", msg);
       return;
     }
     if (isWord_(line, "RESET")) {
-      framesOk_ = chunksRx_ = hdrErr_ = payErr_ = drops_ = ooo_ = dups_ = hbRx_ = bytesRx_ = 0;
+      framesOk_ = chunksRx_ = hdrErr_ = payErr_ = drops_ = ooo_ = dups_ = ovf_ = hbRx_ = bytesRx_ = 0;
       tFirstMs_ = 0;
+      lastChunkMs_ = 0;
       oooFrame_ = 0xFFFF;
       reasm_.reset();
       linkDec_.reset();
@@ -382,13 +405,13 @@ class PocLink {
     // Single machine-parseable line (sweep script scrapes k=v tokens).
     // kbps = kilobits/s, kbs = KB/s per spec (bytes/elapsed).
     snprintf(out, cap,
-             "STATS ok=%lu chunks=%lu herr=%lu perr=%lu drops=%lu ooo=%lu dups=%lu hb=%lu bytes=%lu kbps=%lu kbs=%lu "
-             "intfree=%u up=%lu",
+             "STATS ok=%lu chunks=%lu herr=%lu perr=%lu drops=%lu ooo=%lu dups=%lu ovf=%lu hb=%lu bytes=%lu kbps=%lu "
+             "kbs=%lu intfree=%u up=%lu",
              static_cast<unsigned long>(framesOk_), static_cast<unsigned long>(chunksRx_),
              static_cast<unsigned long>(hdrErr_), static_cast<unsigned long>(payErr_),
              static_cast<unsigned long>(drops_), static_cast<unsigned long>(ooo_), static_cast<unsigned long>(dups_),
-             static_cast<unsigned long>(hbRx_), static_cast<unsigned long>(bytesRx_), kbps, kbs,
-             static_cast<unsigned>(intFree), static_cast<unsigned long>(elapsed));
+             static_cast<unsigned long>(ovf_), static_cast<unsigned long>(hbRx_), static_cast<unsigned long>(bytesRx_),
+             kbps, kbs, static_cast<unsigned>(intFree), static_cast<unsigned long>(elapsed));
   }
 
   static const char* skipSpaces_(const char* s) {
@@ -478,10 +501,12 @@ class PocLink {
   uint32_t drops_;
   uint32_t ooo_;
   uint32_t dups_;
+  uint32_t ovf_;  // RX overflow-pressure events (available() >= kRxOvfWarn at poll entry).
   uint32_t hbRx_;
   uint32_t bytesRx_;
   uint32_t tFirstMs_;
   uint32_t lastRxMs_;
+  uint32_t lastChunkMs_;  // Last CHUNK arrival; drives the stale-partial flush.
   uint16_t oooFrame_;
   uint16_t nextExpected_;
   bool waitingResp_;

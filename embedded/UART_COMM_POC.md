@@ -4,6 +4,31 @@ Handoff doc for future agents (and humans). Read this + `AGENTS.md` before touch
 anything here. POC scope: barebones bi-directional UART verification ONLY —
 peripherals (IMU, ToF, OLED, Wi-Fi) stripped, only the physical UART link + clocks run.
 
+## 0. SEQUENCE & TODO — READ FIRST, DO NOT DRIFT
+
+Frozen stage definitions (a stage is done only when its exit criteria pass):
+
+- [x] **Stage 1 — Head standalone.** Exit: generator + USB CLI verified on hardware.
+- [x] **Option A — Head in-memory loopback.** Exit: 45/45 MEM combos + mode-3 CRC match.
+- [x] **Option B — Head physical loopback** (Nano bridge + TX12–RX13 jumper).
+  Exit: envelope mapped (locked §4), 230400 quarantined (§5), HIGH tier swept.
+- [x] **Stage-1 final suite (CAM regression on current image).** PASS 2026-09-30:
+  45/45 MEM + QUICK 18/24 (6 known-230400 only) + mode-3 fb_count=2 points clean,
+  intfree 182744 stable. Constraints observed: jumper stayed ON, no reflash/rewire.
+- [ ] **Stage 2 — S3 isolation (Path A: S3 loopback self-test).** Exit: S3 proves
+  its own receiver engine (decode/CRC/reassembly/counters/stale-flush/ovf) with
+  the CAM powered off — TX17↔RX18 jumper, S3's own USB port. S3-side SELFTEST
+  verbs required (generate synthetic RAMP/TEXT → TX → RX → verify). MUST NOT
+  interleave with CAM-side hardware runs sharing the breadboard; parallel with
+  CAM-suite is OK (fully independent setups).
+- [ ] **Stage 3 — Integration.** Exit: linked boards prove Head→S3 streaming,
+  CMD bridge, deferred-baud switch, 230400 localization (§5), cross-clock 2M.
+  Requires: loopback jumpers OFF both boards, CAM-TX12→S3-RX18 /
+  CAM-RX13←S3-TX17 / common GND. NOTHING else may drive either console during runs.
+
+Current position: Stage-1 final suite + Stage-2 firmware may proceed in parallel.
+Stage 3 starts only after both are green. Never rewire a board mid-suite.
+
 ## 1. Where things stand (2026-09-30)
 
 - **Branch:** `poc-comm-link`. Base checkpoint `fcf14a4 "Comms test base"` (tracked);
@@ -16,8 +41,12 @@ peripherals (IMU, ToF, OLED, Wi-Fi) stripped, only the physical UART link + cloc
   incl. HIGH tier.** `SELFTEST SWEEP FULL`: **135/166 clean**. Envelope locked
   (see §4); 230400 quarantined (see §5). HIGH tier (1M–5M, 42 combos) **all
   clean**, incl. mode-3 JPEG points (2026-09-30 run).
-- **Stage 2 (S3 link) / Stage 3 (integration): NOT STARTED.** Needs S3 on USB +
-  CAM-TX12→S3-RX18 / CAM-RX13←S3-TX17 / common GND (remove loopback jumper first).
+- **Stage 2 (S3 link): firmware READY (S3 ring/flush/ovf + Head fb_count=2, all
+  gates green 2026-09-30), flashing PENDING — CAM first, S3 after.** Needs S3 on
+  USB + CAM-TX12→S3-RX18 / CAM-RX13←S3-TX17 / common GND (remove loopback jumper
+  first).
+- **Stage 3 (integration): NOT STARTED.** `uart_poc.py sweep` via S3 CLI, lock
+  final defaults for v2 task 3.
 
 ## 2. Architecture (what was built)
 
@@ -41,7 +70,9 @@ peripherals (IMU, ToF, OLED, Wi-Fi) stripped, only the physical UART link + cloc
 - **Head firmware** (`embedded/head/src/services/poc_manager.h` + `poc_synth.h`,
   `src/main.cpp` stripped to Serial+Serial2 only): generator task (Core 0, modes
   0 TEXT 512B / 1 RAMP 1024B / 2 SYNTH_JPEG 2048B xorshift + SOI/EOI markers only,
-  NOT decodable / 3 HW_CAM lazy-init QVGA JPEG), 1Hz HB when held, CMD→RESP,
+  NOT decodable / 3 HW_CAM lazy-init QVGA JPEG, double-buffered `fb_count=2`
+  (DMA fills Frame B while Frame A chunks out), PSRAM→INTERNAL per-chunk staging
+  (NOT zero-copy — staged path proven to 5M, kept deliberately), 1Hz HB when held, CMD→RESP,
   deferred-baud protocol (RESP@old → Head +100ms / S3 +250ms switch → 2×HB at new
   rate, 3s rollback to 115200). Self-test verbs (single image serves MB +
   breadboard stages, USB console fixed 115200 — only Serial2 changes rate):
@@ -52,11 +83,15 @@ peripherals (IMU, ToF, OLED, Wi-Fi) stripped, only the physical UART link + cloc
   settling (never before) → throwaway-HB warmup through a junk decoder →
   counted frames, one per-frame retry, `txHold_` + `testActive_`-owned Serial2.
 - **S3 firmware** (`embedded/core/src/middleware/poc_link.h`, `core/src/main.cpp`
-  stripped): RX-only Serial1 until first valid Head frame (protects CAM GPIO12
-  strapping), INTERNAL 64KB slot, counters
-  `ok/chunks/herr/perr/drops/ooo/dups/hb/bytes/kbps/kbs`, `STATS/RESET/SET/GET/
-  HEAD SET/HEAD GET/HELP`, deferred-baud protocol. **Built + host-tested,
-  never flashed.**
+  stripped): RX-only Serial1 (4KB ring) until first valid Head frame (protects
+  CAM GPIO12 strapping), INTERNAL 64KB slot, stale-partial flush (100ms idle →
+  drop), counters
+  `ok/chunks/herr/perr/drops/ooo/dups/ovf/hb/bytes/kbps/kbs` (`ovf` = RX
+  overflow-pressure events), `STATS/RESET/SET/GET/ HEAD SET/HEAD GET/HELP`,
+  deferred-baud protocol. **Built + host-tested, never flashed.**
+  Deliberately no HW glitch filter: `uart_set_filter_value` does not exist in
+  this IDF (review-agent suggestion rejected after verification); zero `herr`
+  at all approved bauds makes register-poking unjustified.
 - **Sweep tool** (`embedded/scripts/uart_poc.py`, UNTRACKED owner-managed, never
   `git add`): explicit-baud open, DTR/RTS pulse + settle-discard, `capture` + `sweep`.
 

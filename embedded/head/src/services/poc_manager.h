@@ -267,7 +267,7 @@ class PocManager {
     cc.pixel_format = PIXFORMAT_JPEG;
     cc.frame_size = FRAMESIZE_QVGA;
     cc.jpeg_quality = CFG_CAMERA_JPEG_QUALITY;
-    cc.fb_count = 1;
+    cc.fb_count = 2;  // Double-buffered: DMA fills Frame B in PSRAM while Frame A chunks out over UART.
     if (esp_camera_init(&cc) == ESP_OK) {
       camOk_ = true;
       LOG_I("POC", "camera lazy-init ok (qvga jpeg)");

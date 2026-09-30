@@ -319,3 +319,21 @@ void test_uart_config_get() {
   uartpoc::formatGet(cfg, "nope", out, sizeof(out));
   TEST_ASSERT_EQUAL_STRING("NACK unknown_key", out);
 }
+
+void test_uart_reasm_stale_due() {
+  // Inactive never due, regardless of clock values.
+  TEST_ASSERT_FALSE(uartpoc::reasmStaleDue(false, 0, 100000, 100));
+  TEST_ASSERT_FALSE(uartpoc::reasmStaleDue(false, 5000, 5000, 100));
+  // Fresh partial: elapsed < timeout.
+  TEST_ASSERT_FALSE(uartpoc::reasmStaleDue(true, 1000, 1050, 100));
+  TEST_ASSERT_FALSE(uartpoc::reasmStaleDue(true, 1000, 1099, 100));
+  // Boundary is due (>=).
+  TEST_ASSERT_TRUE(uartpoc::reasmStaleDue(true, 1000, 1100, 100));
+  TEST_ASSERT_TRUE(uartpoc::reasmStaleDue(true, 1000, 5000, 100));
+  // Zero timeout: any active partial is immediately due.
+  TEST_ASSERT_TRUE(uartpoc::reasmStaleDue(true, 1000, 1000, 0));
+  // millis() wrap: last=0xFFFFFFF0, now=0x0000000F (31ms later) < 100ms.
+  TEST_ASSERT_FALSE(uartpoc::reasmStaleDue(true, 0xFFFFFFF0UL, 0x0000000FUL, 100));
+  // Same wrap, 131ms later > 100ms: due.
+  TEST_ASSERT_TRUE(uartpoc::reasmStaleDue(true, 0xFFFFFFF0UL, 0x00000073UL, 100));
+}
