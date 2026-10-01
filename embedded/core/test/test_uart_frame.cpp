@@ -254,8 +254,36 @@ void test_uart_reasm_cap_drop() {
   const uint8_t c0[] = {0, 1, 2, 3};
   const uint8_t c1[] = {4, 5, 6, 7};
   pushChunk(r, 9, 0, false, c0, sizeof(c0), uartpoc::Reassembler::Push::ACCEPTED);
-  pushChunk(r, 9, 1, true, c1, sizeof(c1), uartpoc::Reassembler::Push::DROPPED);
+  // Cap overflow is OVERSIZE, not DROPPED (S3 64KB-slot honesty: big, not silent loss).
+  pushChunk(r, 9, 1, true, c1, sizeof(c1), uartpoc::Reassembler::Push::OVERSIZE);
   TEST_ASSERT_FALSE(r.active());
+}
+
+void test_uart_reasm_oversize_vs_dropped() {
+  uint8_t slot[6];
+  uartpoc::Reassembler r;
+  r.attach(slot, sizeof(slot));
+  const uint8_t c0[] = {0, 1, 2, 3};
+  const uint8_t c1[] = {4, 5, 6, 7};
+  // LAST-first stash that can never resolve inside the cap -> OVERSIZE on stride resolve.
+  pushChunk(r, 20, 1, true, c1, sizeof(c1), uartpoc::Reassembler::Push::ACCEPTED);
+  pushChunk(r, 20, 0, false, c0, sizeof(c0), uartpoc::Reassembler::Push::OVERSIZE);
+  TEST_ASSERT_FALSE(r.active());
+  // Every other drop reason stays DROPPED.
+  uint8_t big[512];
+  uartpoc::Reassembler r2;
+  r2.attach(big, sizeof(big));
+  size_t total = 0;
+  TEST_ASSERT_TRUE(r2.push(21, uartpoc::Reassembler::kMaxChunks, 0, c0, sizeof(c0), total) ==
+                   uartpoc::Reassembler::Push::DROPPED);                                          // Bad chunkIdx.
+  TEST_ASSERT_TRUE(r2.push(21, 0, 0, nullptr, 4, total) == uartpoc::Reassembler::Push::DROPPED);  // Null buffer.
+  TEST_ASSERT_TRUE(r2.push(21, 0, 0, c0, 0, total) == uartpoc::Reassembler::Push::DROPPED);       // Zero-len non-LAST.
+  // Post-LAST excess: LAST at idx 2 recorded (chunk 1 missing, frame open),
+  // then idx 3 arrives past it -> DROPPED.
+  pushChunk(r2, 21, 0, false, c0, sizeof(c0), uartpoc::Reassembler::Push::ACCEPTED);
+  pushChunk(r2, 21, 2, true, c1, sizeof(c1), uartpoc::Reassembler::Push::ACCEPTED);
+  size_t dummy = 0;
+  TEST_ASSERT_TRUE(r2.push(21, 3, 0, c0, sizeof(c0), dummy) == uartpoc::Reassembler::Push::DROPPED);
 }
 
 void test_uart_config_set_clamp() {
@@ -274,9 +302,9 @@ void test_uart_config_set_clamp() {
   TEST_ASSERT_EQUAL_UINT16(1, cfg.fps);
   TEST_ASSERT_TRUE(uartpoc::parseSet("fps", "99", cfg, msg, sizeof(msg)));
   TEST_ASSERT_EQUAL_UINT16(30, cfg.fps);
-  TEST_ASSERT_TRUE(uartpoc::parseSet("baud", "230400", cfg, msg, sizeof(msg)));
-  TEST_ASSERT_EQUAL_UINT32(230400, cfg.baud);
-  TEST_ASSERT_EQUAL_STRING("ACK baud 230400", msg);
+  TEST_ASSERT_TRUE(uartpoc::parseSet("baud", "460800", cfg, msg, sizeof(msg)));
+  TEST_ASSERT_EQUAL_UINT32(460800, cfg.baud);
+  TEST_ASSERT_EQUAL_STRING("ACK baud 460800", msg);
   const uint32_t hiBauds[] = {1000000, 1500000, 2000000, 3000000, 4000000, 5000000};
   for (size_t i = 0; i < sizeof(hiBauds) / sizeof(hiBauds[0]); ++i) {
     char val[12];
@@ -293,6 +321,8 @@ void test_uart_config_reject() {
   char msg[64];
   TEST_ASSERT_FALSE(uartpoc::parseSet("baud", "12345", cfg, msg, sizeof(msg)));
   TEST_ASSERT_EQUAL_STRING("NACK bad_baud", msg);
+  TEST_ASSERT_FALSE(uartpoc::parseSet("baud", "230400", cfg, msg, sizeof(msg)));  // BANNED, §3.
+  TEST_ASSERT_EQUAL_STRING("NACK bad_baud", msg);
   TEST_ASSERT_EQUAL_UINT32(115200, cfg.baud);  // Rejected SET leaves config untouched.
   TEST_ASSERT_FALSE(uartpoc::parseSet("nope", "1", cfg, msg, sizeof(msg)));
   TEST_ASSERT_EQUAL_STRING("NACK unknown_key", msg);
@@ -308,18 +338,74 @@ void test_uart_config_get() {
   uartpoc::PocConfig cfg;
   cfg.chunk_bytes = 64;
   cfg.pace_us = 500;
-  cfg.baud = 230400;
+  cfg.baud = 460800;
   cfg.mode = 2;
   cfg.fps = 5;
   char out[128];
   uartpoc::formatGet(cfg, "chunk", out, sizeof(out));
   TEST_ASSERT_EQUAL_STRING("chunk 64", out);
   uartpoc::formatGet(cfg, "baud", out, sizeof(out));
-  TEST_ASSERT_EQUAL_STRING("baud 230400", out);
+  TEST_ASSERT_EQUAL_STRING("baud 460800", out);
+  uartpoc::formatGet(cfg, "framesize", out, sizeof(out));
+  TEST_ASSERT_EQUAL_STRING("framesize qvga", out);
   uartpoc::formatGet(cfg, "all", out, sizeof(out));
-  TEST_ASSERT_EQUAL_STRING("chunk 64 pace 500 baud 230400 mode 2 fps 5", out);
+  TEST_ASSERT_EQUAL_STRING("chunk 64 pace 500 baud 460800 mode 2 fps 5 framesize qvga", out);
+  cfg.framesize = 5;
+  uartpoc::formatGet(cfg, "framesize", out, sizeof(out));
+  TEST_ASSERT_EQUAL_STRING("framesize uxga", out);
+  uartpoc::formatGet(cfg, "all", out, sizeof(out));
+  TEST_ASSERT_EQUAL_STRING("chunk 64 pace 500 baud 460800 mode 2 fps 5 framesize uxga", out);
   uartpoc::formatGet(cfg, "nope", out, sizeof(out));
   TEST_ASSERT_EQUAL_STRING("NACK unknown_key", out);
+}
+
+void test_uart_framesize_parse() {
+  TEST_ASSERT_EQUAL_INT(0, uartpoc::parseFramesize("qvga"));
+  TEST_ASSERT_EQUAL_INT(1, uartpoc::parseFramesize("vga"));
+  TEST_ASSERT_EQUAL_INT(2, uartpoc::parseFramesize("svga"));
+  TEST_ASSERT_EQUAL_INT(3, uartpoc::parseFramesize("xga"));
+  TEST_ASSERT_EQUAL_INT(4, uartpoc::parseFramesize("sxga"));
+  TEST_ASSERT_EQUAL_INT(5, uartpoc::parseFramesize("uxga"));
+  TEST_ASSERT_EQUAL_INT(6, uartpoc::parseFramesize("qxga"));
+  TEST_ASSERT_EQUAL_INT(-1, uartpoc::parseFramesize("QVGA"));  // Case-sensitive: lowercase only.
+  TEST_ASSERT_EQUAL_INT(-1, uartpoc::parseFramesize("1080p"));
+  TEST_ASSERT_EQUAL_INT(-1, uartpoc::parseFramesize(""));
+  TEST_ASSERT_EQUAL_INT(-1, uartpoc::parseFramesize(nullptr));
+  TEST_ASSERT_EQUAL_INT(-1, uartpoc::parseFramesize("qvga "));
+  // Clamp-equivalent: out-of-range indices pin to the ends.
+  TEST_ASSERT_EQUAL_UINT8(0, uartpoc::clampFramesize(-1));
+  TEST_ASSERT_EQUAL_UINT8(0, uartpoc::clampFramesize(-9999));
+  TEST_ASSERT_EQUAL_UINT8(6, uartpoc::clampFramesize(7));
+  TEST_ASSERT_EQUAL_UINT8(6, uartpoc::clampFramesize(9999));
+  TEST_ASSERT_EQUAL_UINT8(0, uartpoc::clampFramesize(0));
+  TEST_ASSERT_EQUAL_UINT8(3, uartpoc::clampFramesize(3));
+  TEST_ASSERT_EQUAL_UINT8(6, uartpoc::clampFramesize(6));
+}
+
+void test_uart_framesize_name() {
+  const char* names[7] = {"qvga", "vga", "svga", "xga", "sxga", "uxga", "qxga"};
+  for (uint8_t i = 0; i < 7; ++i) {
+    TEST_ASSERT_EQUAL_STRING(names[i], uartpoc::framesizeName(i));
+    TEST_ASSERT_EQUAL_INT(i, uartpoc::parseFramesize(uartpoc::framesizeName(i)));  // Round-trip.
+  }
+  TEST_ASSERT_EQUAL_STRING("unknown", uartpoc::framesizeName(7));
+  TEST_ASSERT_EQUAL_STRING("unknown", uartpoc::framesizeName(255));
+}
+
+void test_uart_config_set_framesize() {
+  uartpoc::PocConfig cfg;
+  char msg[64];
+  TEST_ASSERT_TRUE(uartpoc::parseSet("framesize", "vga", cfg, msg, sizeof(msg)));
+  TEST_ASSERT_EQUAL_UINT8(1, cfg.framesize);
+  TEST_ASSERT_EQUAL_STRING("ACK framesize vga", msg);
+  TEST_ASSERT_TRUE(uartpoc::parseSet("framesize", "qxga", cfg, msg, sizeof(msg)));
+  TEST_ASSERT_EQUAL_UINT8(6, cfg.framesize);
+  TEST_ASSERT_EQUAL_STRING("ACK framesize qxga", msg);
+  TEST_ASSERT_FALSE(uartpoc::parseSet("framesize", "bogus", cfg, msg, sizeof(msg)));
+  TEST_ASSERT_EQUAL_STRING("NACK bad_framesize qvga|vga|svga|xga|sxga|uxga|qxga", msg);
+  TEST_ASSERT_EQUAL_UINT8(6, cfg.framesize);  // Rejected SET leaves config untouched.
+  TEST_ASSERT_FALSE(uartpoc::parseSet("framesize", "", cfg, msg, sizeof(msg)));
+  TEST_ASSERT_FALSE(uartpoc::parseSet("framesize", "1080p", cfg, msg, sizeof(msg)));
 }
 
 void test_uart_reasm_stale_due() {

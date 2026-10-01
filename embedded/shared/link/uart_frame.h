@@ -251,7 +251,12 @@ class Decoder {
 // chunk to start the new frame.
 class Reassembler {
  public:
-  enum class Push : uint8_t { ACCEPTED, DUPLICATE, COMPLETE, DROPPED, STALE };
+  // OVERSIZE is a distinct cap-overflow signal: the frame's computed total
+  // exceeds the attached slot, so it can never fit (S3 64KB-slot honesty:
+  // counted as `big`, not silent loss). DROPPED covers every other drop
+  // reason (null buffer, bad chunkIdx, post-LAST excess, zero-len non-LAST,
+  // oversize chunk that is not a slot-cap overflow).
+  enum class Push : uint8_t { ACCEPTED, DUPLICATE, COMPLETE, DROPPED, STALE, OVERSIZE };
 
   static constexpr size_t kMaxChunks = 1024;
   static constexpr size_t kBitmapWords = kMaxChunks / 32;
@@ -334,8 +339,8 @@ class Reassembler {
     }
     const size_t off = static_cast<size_t>(chunkIdx) * stride_;
     if (off + len > cap_) {
-      reset();  // Over the one-frame-slot cap: drop the whole frame.
-      return Push::DROPPED;
+      reset();  // Over the one-frame-slot cap: drop the whole frame, flag oversize.
+      return Push::OVERSIZE;
     }
     place_(chunkIdx, off, data, len);
     if (last) {
@@ -346,7 +351,7 @@ class Reassembler {
       const size_t poff = static_cast<size_t>(pendIdx_) * stride_;
       if (poff + pendLen_ > cap_) {
         reset();
-        return Push::DROPPED;
+        return Push::OVERSIZE;
       }
       place_(pendIdx_, poff, pendBuf_, pendLen_);
       pend_ = false;

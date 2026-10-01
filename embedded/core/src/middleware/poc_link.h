@@ -6,7 +6,8 @@
 //    TRISTATED (RX-only begin, TX pin unassigned) until the first valid Head
 //    frame — the S3 must never drive the CAM's GPIO12 strapping pin during
 //    CAM reset. First valid frame attaches TX.
-//  - Reassembly in one INTERNAL frame slot (~64KB cap, else drop).
+//  - Reassembly in one INTERNAL frame slot (~64KB cap, else OVERSIZE drop
+//    counted as `big`).
 //    Out-of-order tolerated, duplicates ignored, missing-at-LAST drops.
 //  - Counters + machine-parseable single-line STATS for the sweep script.
 //  - USB CLI: STATS | RESET | SET k v | GET k | GET all | HEAD SET k v |
@@ -70,6 +71,7 @@ class PocLink {
         hdrErr_(0),
         payErr_(0),
         drops_(0),
+        big_(0),
         ooo_(0),
         dups_(0),
         ovf_(0),
@@ -142,7 +144,13 @@ class PocLink {
     if (avail >= static_cast<int>(kRxOvfWarn)) {
       ++ovf_;  // At most once per poll: ring is nearly full, overflow pressure.
     }
-    while (avail > 0) {
+    int passes = 0;
+    // Bounded: an undistinguishable drain (wedged UART, ever-failing read) would
+    // otherwise pin loopTask until the task watchdog panics (observed in Stage 3).
+    // 64 passes ≈ 128KB, far beyond any legitimate backlog; rest waits for next poll().
+    while (avail > 0 && passes < 64) {
+      ++passes;
+      FaultManager::watchdogFeed();
       size_t n = static_cast<size_t>(avail > 256 ? 256 : avail);
       if (n > kRxBuf) {
         n = kRxBuf;
@@ -200,6 +208,12 @@ class PocLink {
         ++framesOk_;
         bytesRx_ += total;
         oooFrame_ = 0xFFFF;  // Fresh frame resets the OOO heuristic.
+      } else if (res == uartpoc::Reassembler::Push::OVERSIZE) {
+        // 64KB-slot honesty: the frame can never fit, so it is dropped — but
+        // flagged separately (big ⊆ drops) instead of vanishing silently.
+        ++drops_;
+        ++big_;
+        oooFrame_ = 0xFFFF;
       } else if (res == uartpoc::Reassembler::Push::DROPPED) {
         ++drops_;
         oooFrame_ = 0xFFFF;
@@ -266,6 +280,7 @@ class PocLink {
       while (!respGot_ && (int32_t)(deadline - millis()) > 0) {
         pollLink();
         delay(1);
+        FaultManager::watchdogFeed();  // 2s+ waits must never starve the watchdog.
       }
       waitingResp_ = false;
       if (respGot_) {
@@ -303,7 +318,14 @@ class PocLink {
     }
     delay(250);  // Head switched at ACK+100ms; we switch at ACK+250ms, no garbage window.
     cfg_.baud = target;
-    Serial1.updateBaudRate(target);
+    // Drain + end/begin (NEVER updateBaudRate mid-stream: reconfiguring with a live
+    // FIFO intermittently wedges UART TX silent with zero counters. end/begin has
+    // 200+ clean runs across all loopback sweeps).
+    Serial1.flush();  // Blocks until TX drains at the OLD rate.
+    Serial1.end();
+    Serial1.setRxBufferSize(kRxRing);
+    Serial1.begin(target, SERIAL_8N1, MCU_LINK_UART_RX, MCU_LINK_UART_TX);
+    linkDec_.reset();  // Old-rate bytes must not seed new-rate decodes.
     // Announce at the new baud so a freshly-switched head resumes streaming.
     sendHb_();
     sendHb_();
@@ -404,7 +426,7 @@ class PocLink {
       return;
     }
     if (isWord_(line, "RESET")) {
-      framesOk_ = chunksRx_ = hdrErr_ = payErr_ = drops_ = ooo_ = dups_ = ovf_ = hbRx_ = bytesRx_ = 0;
+      framesOk_ = chunksRx_ = hdrErr_ = payErr_ = drops_ = big_ = ooo_ = dups_ = ovf_ = hbRx_ = bytesRx_ = 0;
       tFirstMs_ = 0;
       lastChunkMs_ = 0;
       oooFrame_ = 0xFFFF;
@@ -416,6 +438,7 @@ class PocLink {
     if (isWord_(line, "HELP")) {
       LOG_I("POC", "cmds: STATS | RESET | SET k v | GET k | GET all | HEAD SET k v | HEAD GET k | HELP");
       LOG_I("POC", "keys: chunk|chunk_bytes 16..1024 pace|pace_us 0..50000 baud <list incl 1M-5M> mode 0..3 fps 1..30");
+      LOG_I("POC", "keys (Head-side via HEAD SET): framesize qvga|vga|svga|xga|sxga|uxga|qxga (mode-3 re-init)");
       LOG_I("POC",
             "selftest: SELFTEST WIRE <baud> <mode 0-2> <chunk 16-1024> <pace 0-50000> <nframes 1-50> (needs "
             "TX17-RX18 jumper, CAM off)");
@@ -607,7 +630,7 @@ class PocLink {
       ++r.drops;
       pr = verifyReasm.push(fr.frameId, fr.chunkIdx, fr.flags, fr.payload, fr.payloadLen, tot);
     }
-    if (pr == uartpoc::Reassembler::Push::DROPPED) {
+    if (pr == uartpoc::Reassembler::Push::DROPPED || pr == uartpoc::Reassembler::Push::OVERSIZE) {
       ++r.drops;
       return;
     }
@@ -765,20 +788,20 @@ class PocLink {
           static_cast<unsigned long>(r.ms), static_cast<unsigned long>(r.kbs));
   }
 
-  // On-device WIRE matrix for the no-PC stage. QUICK (default): 4 baud x 3
-  // chunk x 2 pace x mode 1 x 3 frames = 24 combos. FULL adds chunks 16/1024,
-  // pace 5000, mode 0 (120 base combos), plus the HIGH tier
-  // (1M-5M x {64,128,512} x {0,1000} x mode 1 x 3 frames = 36 combos).
+  // On-device WIRE matrix for the no-PC stage. QUICK (default): 3 baud x 3
+  // chunk x 2 pace x mode 1 x 3 frames = 18 combos (230400 BANNED, §3).
+  // FULL adds chunks 16/1024, pace 5000, mode 0 (90 base combos), plus the
+  // HIGH tier (1M-5M x {64,128,512} x {0,1000} x mode 1 x 3 frames = 36 combos).
   // No mode-3 on the S3 (no camera). USB stays 115200 throughout.
   void runSelfSweep_(bool full) {
-    static const uint32_t kBauds[] = {115200, 230400, 460800, 921600};
+    static const uint32_t kBauds[] = {115200, 460800, 921600};
     static const uint32_t kBaudsH[] = {1000000, 1500000, 2000000, 3000000, 4000000, 5000000};
     static const uint16_t kChunksQ[] = {64, 128, 512};
     static const uint16_t kChunksF[] = {16, 64, 128, 512, 1024};
     static const uint32_t kPacesQ[] = {0, 1000};
     static const uint32_t kPacesF[] = {0, 1000, 5000};
     static const uint8_t kModesQ[] = {1};
-    static const uint8_t kModesF[] = {0, 1};
+    static const uint8_t kModesF[] = {0, 1};  // S3 has no camera: TEXT-heavy {0,1}; Head sweeps JPEG-heavy {1,2}.
     const uint16_t* chunks = full ? kChunksF : kChunksQ;
     const size_t nChunks = full ? 5 : 3;
     const uint32_t* paces = full ? kPacesF : kPacesQ;
@@ -835,13 +858,15 @@ class PocLink {
     // Single machine-parseable line (sweep script scrapes k=v tokens).
     // kbps = kilobits/s, kbs = KB/s per spec (bytes/elapsed).
     snprintf(out, cap,
-             "STATS ok=%lu chunks=%lu herr=%lu perr=%lu drops=%lu ooo=%lu dups=%lu ovf=%lu hb=%lu bytes=%lu kbps=%lu "
+             "STATS ok=%lu chunks=%lu herr=%lu perr=%lu drops=%lu big=%lu ooo=%lu dups=%lu ovf=%lu hb=%lu bytes=%lu "
+             "kbps=%lu "
              "kbs=%lu intfree=%u up=%lu",
              static_cast<unsigned long>(framesOk_), static_cast<unsigned long>(chunksRx_),
              static_cast<unsigned long>(hdrErr_), static_cast<unsigned long>(payErr_),
-             static_cast<unsigned long>(drops_), static_cast<unsigned long>(ooo_), static_cast<unsigned long>(dups_),
-             static_cast<unsigned long>(ovf_), static_cast<unsigned long>(hbRx_), static_cast<unsigned long>(bytesRx_),
-             kbps, kbs, static_cast<unsigned>(intFree), static_cast<unsigned long>(elapsed));
+             static_cast<unsigned long>(drops_), static_cast<unsigned long>(big_), static_cast<unsigned long>(ooo_),
+             static_cast<unsigned long>(dups_), static_cast<unsigned long>(ovf_), static_cast<unsigned long>(hbRx_),
+             static_cast<unsigned long>(bytesRx_), kbps, kbs, static_cast<unsigned>(intFree),
+             static_cast<unsigned long>(elapsed));
   }
 
   static const char* skipSpaces_(const char* s) {
@@ -931,6 +956,7 @@ class PocLink {
   uint32_t hdrErr_;
   uint32_t payErr_;
   uint32_t drops_;
+  uint32_t big_;  // Oversize-frame drops (frame total > 64KB slot); subset of drops_.
   uint32_t ooo_;
   uint32_t dups_;
   uint32_t ovf_;  // RX overflow-pressure events (available() >= kRxOvfWarn at poll entry).

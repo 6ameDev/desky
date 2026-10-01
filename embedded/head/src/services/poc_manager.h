@@ -121,7 +121,13 @@ class PocManager {
     const uint32_t now = millis();
     if (baudSwitchAtMs_ != 0 && (int32_t)(now - baudSwitchAtMs_) >= 0) {
       baudSwitchAtMs_ = 0;
-      Serial2.updateBaudRate(pendingBaud_);
+      // Drain + end/begin (NEVER updateBaudRate mid-stream: reconfiguring with a
+      // live FIFO intermittently wedges UART TX silent with zero counters and
+      // climbing txf — measured repeatedly. end/begin has 200+ clean runs).
+      Serial2.flush();  // Blocks until TX FIFO+ring drain at the OLD rate (~25ms max).
+      Serial2.end();
+      Serial2.begin(pendingBaud_, SERIAL_8N1, MCU_LINK_UART_RX, MCU_LINK_UART_TX);
+      linkDec_.reset();  // Old-rate bytes must not seed new-rate decodes.
       cfg_.baud = pendingBaud_;
       lastAppliedBaud_ = pendingBaud_;
       waitingForLink_ = true;
@@ -133,7 +139,10 @@ class PocManager {
       txHold_ = false;
       cfg_.baud = 115200;
       lastAppliedBaud_ = 115200;
-      Serial2.updateBaudRate(115200);
+      Serial2.flush();
+      Serial2.end();
+      Serial2.begin(115200, SERIAL_8N1, MCU_LINK_UART_RX, MCU_LINK_UART_TX);
+      linkDec_.reset();
       LOG_W("POC", "no link at new baud, rolled back to 115200");
       sendHb();
       sendHb();
@@ -235,6 +244,26 @@ class PocManager {
     esp_camera_fb_return(fb);
   }
 
+  // Resolution index (cfg_.framesize, 0..6) -> ESP framesize_t (OV3660 order).
+  static framesize_t framesizeEsp_(uint8_t idx) {
+    switch (idx) {
+      case 1:
+        return FRAMESIZE_VGA;
+      case 2:
+        return FRAMESIZE_SVGA;
+      case 3:
+        return FRAMESIZE_XGA;
+      case 4:
+        return FRAMESIZE_SXGA;
+      case 5:
+        return FRAMESIZE_UXGA;
+      case 6:
+        return FRAMESIZE_QXGA;
+      default:
+        return FRAMESIZE_QVGA;
+    }
+  }
+
   bool ensureCamera() {
     if (camInit_) {
       if (!camOk_) {
@@ -247,6 +276,18 @@ class PocManager {
       return camOk_;
     }
     camInit_ = true;
+    if (initCamera_(framesizeEsp_(uartpoc::clampFramesize(cfg_.framesize)))) {
+      camOk_ = true;
+      LOG_I("POC", "camera lazy-init ok (%s jpeg)", uartpoc::framesizeName(cfg_.framesize));
+    } else {
+      LOG_W("POC", "camera lazy-init failed, mode 3 frames skipped");
+    }
+    return camOk_;
+  }
+
+  // Raw camera (re-)init at one resolution. Keeps fb_count=2 + jpeg_quality 12
+  // (no quality knob: scope control). Returns esp_camera_init's verdict.
+  bool initCamera_(framesize_t fs) {
     camera_config_t cc = {};
     cc.ledc_channel = LEDC_CHANNEL_0;
     cc.ledc_timer = LEDC_TIMER_0;
@@ -268,16 +309,70 @@ class PocManager {
     cc.pin_reset = MCU_CAM_PIN_RESET;
     cc.xclk_freq_hz = 20000000;
     cc.pixel_format = PIXFORMAT_JPEG;
-    cc.frame_size = FRAMESIZE_QVGA;
+    cc.frame_size = fs;
     cc.jpeg_quality = CFG_CAMERA_JPEG_QUALITY;
     cc.fb_count = 2;  // Double-buffered: DMA fills Frame B in PSRAM while Frame A chunks out over UART.
-    if (esp_camera_init(&cc) == ESP_OK) {
-      camOk_ = true;
-      LOG_I("POC", "camera lazy-init ok (qvga jpeg)");
-    } else {
-      LOG_W("POC", "camera lazy-init failed, mode 3 frames skipped");
+    return esp_camera_init(&cc) == ESP_OK;
+  }
+
+  // Runtime resolution switch: deinit + re-init at the new size. The generator
+  // task is suspended across the switch so no fb grab races the deinit; the
+  // prior txHold_ is saved/restored (a baud switch may own it). On new-size
+  // failure the old size is re-inited (best effort) and cfg_ is left untouched,
+  // so the camera path is never bricked — caller NACKs.
+  bool switchFramesize_(uint8_t idx) {
+    const uint8_t prev = cfg_.framesize;
+    const bool holdSave = txHold_;
+    if (genTask_ != nullptr) {
+      vTaskSuspend(genTask_);
     }
-    return camOk_;
+    txHold_ = true;
+    if (camInit_) {
+      esp_camera_deinit();
+    }
+    camInit_ = true;
+    bool ok = false;
+    if (initCamera_(framesizeEsp_(idx))) {
+      cfg_.framesize = idx;
+      camOk_ = true;
+      ok = true;
+      LOG_I("POC", "framesize now %s", uartpoc::framesizeName(idx));
+    } else {
+      if (initCamera_(framesizeEsp_(prev))) {
+        camOk_ = true;
+        LOG_W("POC", "framesize re-init failed, kept %s", uartpoc::framesizeName(prev));
+      } else {
+        camOk_ = false;
+        LOG_W("POC", "framesize re-init failed, camera unavailable");
+      }
+    }
+    txHold_ = holdSave;
+    if (genTask_ != nullptr) {
+      vTaskResume(genTask_);
+    }
+    return ok;
+  }
+
+  // SET framesize plumbing shared by USB CLI and link CMD: validate the name,
+  // no-op ACK when already there and healthy, else switch. msg carries the
+  // ACK/NACK line; returns the switch verdict.
+  bool applyFramesizeCmd_(const char* val, char* msg, size_t cap) {
+    const int8_t fi = uartpoc::parseFramesize(val);
+    if (fi < 0) {
+      uartpoc::writeStr(msg, cap, "NACK bad_framesize qvga|vga|svga|xga|sxga|uxga|qxga");
+      return false;
+    }
+    const uint8_t idx = static_cast<uint8_t>(fi);
+    if (idx == cfg_.framesize && camOk_) {
+      snprintf(msg, cap, "ACK framesize %s", uartpoc::framesizeName(idx));
+      return true;
+    }
+    if (switchFramesize_(idx)) {
+      snprintf(msg, cap, "ACK framesize %s", uartpoc::framesizeName(idx));
+      return true;
+    }
+    uartpoc::writeStr(msg, cap, "NACK camera_reinit_failed");
+    return false;
   }
 
   // ALL Serial2 TX funnels through here. The generator task (streaming chunks) and
@@ -369,6 +464,14 @@ class PocManager {
       const int ntok = splitTokens_(p + 4, key, sizeof(key), val, sizeof(val), extra, sizeof(extra));
       if (ntok < 2) {
         sendResp(fr.frameId, "NACK bad_value");
+        return;
+      }
+      if (uartpoc::keyEq(key, "framesize")) {
+        // Resolution switch needs the camera re-init side effect: parseSet
+        // alone must never apply it (it would store without re-initing).
+        char msg[64];
+        applyFramesizeCmd_(val, msg, sizeof(msg));
+        sendResp(fr.frameId, msg);
         return;
       }
       const bool isBaud = uartpoc::keyEq(key, "baud");
@@ -464,6 +567,16 @@ class PocManager {
         LOG_W("POC", "NACK bad_value");
         return;
       }
+      if (uartpoc::keyEq(key, "framesize")) {
+        // Same re-init path as the link CMD: never store without re-initing.
+        char msg[64];
+        if (applyFramesizeCmd_(val, msg, sizeof(msg))) {
+          LOG_I("POC", "%s", msg);
+        } else {
+          LOG_W("POC", "%s", msg);
+        }
+        return;
+      }
       char msg[64];
       if (!parseLocalSet(key, val)) {
         uartpoc::PocConfig probe = cfg_;
@@ -511,8 +624,8 @@ class PocManager {
       LOG_I("POC", "cmds: SET k v | GET k | GET all | STATS | START | STOP | HELP");
       LOG_I("POC",
             "keys: chunk|chunk_bytes 16..1024 pace|pace_us 0..50000 baud "
-            "9600|57600|115200|230400|460800|921600|1M|1.5M|2M|3M|4M|5M mode "
-            "0..3 fps 1..30");
+            "9600|57600|115200|460800|921600|1M|1.5M|2M|3M|4M|5M (230400 BANNED) mode "
+            "0..3 fps 1..30 framesize qvga|vga|svga|xga|sxga|uxga|qxga (mode-3 re-init)");
       LOG_I("POC", "selftest: SELFTEST MEM <mode 0-3> <chunk 16-1024> <pace 0-50000> <nframes 1-50>");
       LOG_I("POC", "selftest: SELFTEST WIRE <baud> <mode> <chunk> <pace> <nframes 1-50> (needs TX12-RX13 jumper)");
       LOG_I("POC", "selftest: SELFTEST SWEEP [QUICK|FULL] (WIRE matrix, USB stays 115200)");
@@ -528,7 +641,12 @@ class PocManager {
   }
 
   // Local SET: baud switches the UART immediately (operator-owned); rest apply.
+  // framesize is REFUSED here by design: it must go through applyFramesizeCmd_
+  // (camera re-init), never a bare store.
   bool parseLocalSet(const char* key, const char* val) {
+    if (uartpoc::keyEq(key, "framesize")) {
+      return false;
+    }
     uartpoc::PocConfig probe = cfg_;
     char msg[64];
     if (!uartpoc::parseSet(key, val, probe, msg, sizeof(msg))) {
@@ -536,7 +654,10 @@ class PocManager {
     }
     cfg_ = probe;
     if (uartpoc::keyEq(key, "baud")) {
-      Serial2.updateBaudRate(cfg_.baud);
+      Serial2.flush();
+      Serial2.end();
+      Serial2.begin(cfg_.baud, SERIAL_8N1, MCU_LINK_UART_RX, MCU_LINK_UART_TX);
+      linkDec_.reset();
       lastAppliedBaud_ = cfg_.baud;
     }
     return true;
@@ -564,6 +685,8 @@ class PocManager {
     uint32_t maxEncUs;
     uint32_t ms;
     uint32_t kbs;
+    uint32_t skipped;   // Big-frame skips (fb->len > verify slot): neither ok nor bad.
+    uint32_t skipSize;  // Last skipped frame's byte size (for the SKIP line).
     bool camUnavail;
   };
 
@@ -681,6 +804,7 @@ class PocManager {
     for (uint32_t f = 0; f < nframes; ++f) {
       const uint16_t fid = static_cast<uint16_t>(f);
       bool done = false;
+      const uint32_t sk0 = r.skipped;
       if (mode == uartpoc::MODE_HW_CAM) {
         if (!testFrameCam_(fid, chunk, pace, dec, enc, r, false, 0, done)) {
           break;  // CAMUNAVAIL: r.camUnavail set, stop.
@@ -693,14 +817,20 @@ class PocManager {
       }
       if (done) {
         ++r.ok;
-      } else {
-        ++r.drops;
+      } else if (r.skipped == sk0) {
+        ++r.drops;  // A big-frame skip is counted in r.skipped, never as a drop.
       }
     }
     txHold_ = holdSave;
     r.ms = millis() - t0;
     if (r.camUnavail) {
       LOG_W("POC", "SELFTEST MEM CAMUNAVAIL");
+      return;
+    }
+    // Resolution is fixed for the whole run, so skips are all-or-nothing in
+    // practice: any skip with zero completions reports SKIP, not failure.
+    if (r.skipped > 0 && r.ok == 0) {
+      LOG_W("POC", "SELFTEST MEM SKIP_BIGFRAME size=%lu", static_cast<unsigned long>(r.skipSize));
       return;
     }
     const size_t intFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
@@ -793,6 +923,15 @@ class PocManager {
     }
     const uint32_t total = static_cast<uint32_t>(fb->len);
     const uint32_t srcCrc = uartpoc::crc32Ieee(fb->buf, total);
+    if (total > kVerifySlotCap) {
+      // Honesty rule: a frame that cannot fit the 64KB verify slot (== S3
+      // kSlotCap) is SKIPPED, never half-verified. Counted separately (neither
+      // ok nor bad); callers report SKIP_BIGFRAME with the size.
+      ++r.skipped;
+      r.skipSize = total;
+      esp_camera_fb_return(fb);
+      return true;
+    }
     verifyReasm_.reset();
     size_t outTotal = 0;
     const uint32_t nChunks = (total + chunk - 1) / chunk;
@@ -870,7 +1009,7 @@ class PocManager {
       ++r.drops;
       pr = verifyReasm_.push(fr.frameId, fr.chunkIdx, fr.flags, fr.payload, fr.payloadLen, tot);
     }
-    if (pr == uartpoc::Reassembler::Push::DROPPED) {
+    if (pr == uartpoc::Reassembler::Push::DROPPED || pr == uartpoc::Reassembler::Push::OVERSIZE) {
       ++r.drops;
       return;
     }
@@ -1017,9 +1156,11 @@ class PocManager {
     for (uint32_t f = 0; f < nframes; ++f) {
       const uint16_t fid = static_cast<uint16_t>(f);
       bool done = false;
-      for (int att = 0; att < 2 && !done; ++att) {  // One retry: a settle-glitch casualty
-        if (att > 0) {                              // must not doom the whole test.
-          flushSerial2_();                          // (Retry-attempt wire errors still count: real events.)
+      const uint32_t sk0 = r.skipped;
+      bool frameSkipped = false;
+      for (int att = 0; att < 2 && !done && !frameSkipped; ++att) {  // One retry: a settle-glitch casualty
+        if (att > 0) {                                               // must not doom the whole test.
+          flushSerial2_();  // (Retry-attempt wire errors still count: real events.)
           dec.reset();
         }
         const uint32_t deadline = millis() + 2000;
@@ -1033,16 +1174,17 @@ class PocManager {
         if (r.camUnavail) {
           break;
         }
+        frameSkipped = (r.skipped != sk0);  // Big frame: nothing went on the wire, retry is pointless.
       }
       if (r.camUnavail) {
         break;
       }
       if (done) {
         ++r.ok;
-      } else {
+      } else if (!frameSkipped) {
         ++r.timeouts;  // Abort remaining frames on timeout.
         break;
-      }
+      }  // Skipped frames are counted in r.skipped: neither ok nor timeout.
     }
     Serial2.end();
     Serial2.setRxBufferSize(256);  // Back to the Arduino default.
@@ -1060,6 +1202,18 @@ class PocManager {
   void logWireRes_(const SelfRes& r, uint32_t baud, uint16_t chunk, uint32_t pace, uint8_t mode, bool combo) {
     if (r.camUnavail) {
       LOG_W("POC", "SELFTEST WIRE CAMUNAVAIL");
+      return;
+    }
+    // Big-frame skips report SKIP_BIGFRAME, never ok/timeout lines. Resolution
+    // is fixed per run, so this is all-or-nothing in practice.
+    if (r.skipped > 0 && r.ok == 0) {
+      if (combo) {
+        LOG_W("POC", "SELFTEST WIRE SKIP_BIGFRAME size=%lu baud=%lu chunk=%u pace=%lu mode=%u",
+              static_cast<unsigned long>(r.skipSize), static_cast<unsigned long>(baud), chunk,
+              static_cast<unsigned long>(pace), mode);
+        return;
+      }
+      LOG_W("POC", "SELFTEST WIRE SKIP_BIGFRAME size=%lu", static_cast<unsigned long>(r.skipSize));
       return;
     }
     const size_t intFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
@@ -1083,21 +1237,23 @@ class PocManager {
           static_cast<unsigned long>(r.ms), static_cast<unsigned long>(r.kbs));
   }
 
-  // On-device WIRE matrix for the no-PC stage. QUICK (default): 4 baud x 3
-  // chunk x 2 pace x mode 1 x 3 frames = 24 combos. FULL adds chunks 16/1024,
-  // pace 5000, mode 2, plus a mode-3 1-frame single-point per baud (skipped
-  // with a note when the camera is unavailable), plus the HIGH tier
+  // On-device WIRE matrix for the no-PC stage. QUICK (default): 3 baud x 3
+  // chunk x 2 pace x mode 1 x 3 frames = 18 combos (230400 BANNED, §3).
+  // FULL adds chunks 16/1024, pace 5000, mode 2 (90 combos), plus a mode-3
+  // 1-frame single-point per baud (skipped
+  // with a note when the camera is unavailable, SKIP_BIGFRAME when the frame
+  // exceeds the 64KB verify slot — counted as neither ok nor bad), plus the HIGH tier
   // (1M-5M x {64,128,512} x {0,1000} x mode 1 + mode-3 point per HIGH baud).
   // Expect 3M+ to fail (beyond practical UART scope) — record, move on.
   void runSelfSweep_(bool full) {
-    static const uint32_t kBauds[] = {115200, 230400, 460800, 921600};
+    static const uint32_t kBauds[] = {115200, 460800, 921600};
     static const uint32_t kBaudsH[] = {1000000, 1500000, 2000000, 3000000, 4000000, 5000000};
     static const uint16_t kChunksQ[] = {64, 128, 512};
     static const uint16_t kChunksF[] = {16, 64, 128, 512, 1024};
     static const uint32_t kPacesQ[] = {0, 1000};
     static const uint32_t kPacesF[] = {0, 1000, 5000};
     static const uint8_t kModesQ[] = {1};
-    static const uint8_t kModesF[] = {1, 2};
+    static const uint8_t kModesF[] = {1, 2};  // Head sweeps JPEG-heavy {1,2}; S3 (no camera) sweeps TEXT-heavy {0,1}.
     const uint16_t* chunks = full ? kChunksF : kChunksQ;
     const size_t nChunks = full ? 5 : 3;
     const uint32_t* paces = full ? kPacesF : kPacesQ;
@@ -1131,8 +1287,11 @@ class PocManager {
         for (size_t bi = 0; bi < nBauds; ++bi) {
           const SelfRes r = runSelfWireRes_(kBauds[bi], uartpoc::MODE_HW_CAM, 128, 1000, 1);
           ++combos;
-          if (r.camUnavail || r.ok != 1 || r.timeouts > 0 || r.mismatch > 0 || r.herr > 0 || r.perr > 0 ||
-              r.drops > 0) {
+          // SKIP_BIGFRAME counts as NEITHER ok NOR bad (no bad++): the frame
+          // cannot fit the 64KB slot at this resolution, so there is nothing
+          // to verify. The SKIP line above carries the size.
+          if (!(r.skipped > 0 && r.ok == 0) && (r.camUnavail || r.ok != 1 || r.timeouts > 0 || r.mismatch > 0 ||
+                                                r.herr > 0 || r.perr > 0 || r.drops > 0)) {
             ++bad;
           }
           logWireRes_(r, kBauds[bi], 128, 1000, uartpoc::MODE_HW_CAM, true);
@@ -1159,8 +1318,9 @@ class PocManager {
         if (camAvail) {
           const SelfRes r = runSelfWireRes_(kBaudsH[bi], uartpoc::MODE_HW_CAM, 128, 1000, 1);
           ++combos;
-          if (r.camUnavail || r.ok != 1 || r.timeouts > 0 || r.mismatch > 0 || r.herr > 0 || r.perr > 0 ||
-              r.drops > 0) {
+          // Same SKIP rule as the base-tier mode-3 points: neither ok nor bad.
+          if (!(r.skipped > 0 && r.ok == 0) && (r.camUnavail || r.ok != 1 || r.timeouts > 0 || r.mismatch > 0 ||
+                                                r.herr > 0 || r.perr > 0 || r.drops > 0)) {
             ++bad;
           }
           logWireRes_(r, kBaudsH[bi], 128, 1000, uartpoc::MODE_HW_CAM, true);

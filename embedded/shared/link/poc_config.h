@@ -22,6 +22,7 @@ struct PocConfig {
   uint32_t baud = 115200;
   uint8_t mode = 0;
   uint16_t fps = 10;
+  uint8_t framesize = 0;  // Camera resolution index 0..6 (qvga default); mode-3 source only.
 };
 
 enum PocMode : uint8_t { MODE_TEXT = 0, MODE_SYNTH_RAMP = 1, MODE_SYNTH_JPEG = 2, MODE_HW_CAM = 3, MODE_COUNT = 4 };
@@ -34,9 +35,13 @@ constexpr uint8_t kModeMin = 0;
 constexpr uint8_t kModeMax = 3;
 constexpr uint16_t kFpsMin = 1;
 constexpr uint16_t kFpsMax = 30;
+constexpr uint8_t kFramesizeMin = 0;  // qvga
+constexpr uint8_t kFramesizeMax = 6;  // qxga
 
 inline bool isValidBaud(uint32_t b) {
-  return b == 9600 || b == 57600 || b == 115200 || b == 230400 || b == 460800 || b == 921600 || b == 1000000 ||
+  // NOTE: 230400 is BANNED (see UART_COMM_POC.md §3) — rejected here so every
+  // SET path NACKs it with bad_baud. Do not re-add.
+  return b == 9600 || b == 57600 || b == 115200 || b == 460800 || b == 921600 || b == 1000000 ||
          b == 1500000 || b == 2000000 || b == 3000000 || b == 4000000 || b == 5000000;
 }
 
@@ -73,6 +78,69 @@ inline bool parseU32(const char* s, uint32_t& out) {
 
 inline uint32_t clampU32(uint32_t v, uint32_t lo, uint32_t hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
+// Camera resolution names, OV3660 order: qvga 320x240 .. qxga 2048x1536.
+// Exact lowercase match; returns 0..6 or -1 when unknown.
+inline int8_t parseFramesize(const char* s) {
+  if (s == nullptr) {
+    return -1;
+  }
+  if (keyEq(s, "qvga")) {
+    return 0;
+  }
+  if (keyEq(s, "vga")) {
+    return 1;
+  }
+  if (keyEq(s, "svga")) {
+    return 2;
+  }
+  if (keyEq(s, "xga")) {
+    return 3;
+  }
+  if (keyEq(s, "sxga")) {
+    return 4;
+  }
+  if (keyEq(s, "uxga")) {
+    return 5;
+  }
+  if (keyEq(s, "qxga")) {
+    return 6;
+  }
+  return -1;
+}
+
+// Index -> canonical name; out-of-range renders "unknown" (never nullptr).
+inline const char* framesizeName(uint8_t idx) {
+  switch (idx) {
+    case 0:
+      return "qvga";
+    case 1:
+      return "vga";
+    case 2:
+      return "svga";
+    case 3:
+      return "xga";
+    case 4:
+      return "sxga";
+    case 5:
+      return "uxga";
+    case 6:
+      return "qxga";
+    default:
+      return "unknown";
+  }
+}
+
+// Clamp any integer to the 0..6 framesize index range.
+inline uint8_t clampFramesize(int32_t v) {
+  if (v < static_cast<int32_t>(kFramesizeMin)) {
+    return kFramesizeMin;
+  }
+  if (v > static_cast<int32_t>(kFramesizeMax)) {
+    return kFramesizeMax;
+  }
+  return static_cast<uint8_t>(v);
+}
+
 inline void writeStr(char* msg, size_t cap, const char* s) {
   if (msg == nullptr || cap == 0) {
     return;
@@ -104,6 +172,22 @@ inline void appendU32(char* msg, size_t cap, uint32_t v) {
   }
   while (r > 0 && pos + 1 < cap) {
     msg[pos++] = rev[--r];
+  }
+  msg[pos < cap ? pos : cap - 1] = '\0';
+}
+
+// Append a NUL-terminated suffix to msg (always NUL-terminated when cap > 0).
+inline void appendStr(char* msg, size_t cap, const char* s) {
+  if (msg == nullptr || cap == 0 || s == nullptr) {
+    return;
+  }
+  size_t pos = 0;
+  while (pos < cap && msg[pos] != '\0') {
+    ++pos;
+  }
+  size_t i = 0;
+  while (pos + 1 < cap && s[i] != '\0') {
+    msg[pos++] = s[i++];
   }
   msg[pos < cap ? pos : cap - 1] = '\0';
 }
@@ -149,7 +233,20 @@ inline void writeKV(char* msg, size_t cap, const char* key, uint32_t val) {
 
 // Apply "SET <key> <val>". True -> msg holds "ACK k v" (possibly clamped);
 // false -> msg holds "NACK <reason>". msg always NUL-terminated (cap > 0).
+// Note: "framesize" takes a resolution NAME (qvga..qxga), so it is matched
+// before the numeric gate below; unknown names NACK with the valid list.
 inline bool parseSet(const char* key, const char* val, PocConfig& cfg, char* msg, size_t msgLen) {
+  if (keyEq(key, "framesize")) {
+    const int8_t fi = parseFramesize(val);
+    if (fi < 0) {
+      writeStr(msg, msgLen, "NACK bad_framesize qvga|vga|svga|xga|sxga|uxga|qxga");
+      return false;
+    }
+    cfg.framesize = static_cast<uint8_t>(fi);
+    writeStr(msg, msgLen, "ACK framesize ");
+    appendStr(msg, msgLen, framesizeName(cfg.framesize));
+    return true;
+  }
   uint32_t v = 0;
   if (key == nullptr || !parseU32(val, v)) {
     writeStr(msg, msgLen, "NACK bad_value");
@@ -193,7 +290,7 @@ inline bool parseSet(const char* key, const char* val, PocConfig& cfg, char* msg
 }
 
 // Render one knob ("chunk 128") or all ("chunk 128 pace 1000 baud 115200 mode
-// 0 fps 10"); unknown key -> "NACK unknown_key".
+// 0 fps 10 framesize qvga"); unknown key -> "NACK unknown_key".
 inline void formatGet(const PocConfig& cfg, const char* key, char* out, size_t outLen) {
   if (keyEq(key, "chunk") || keyEq(key, "chunk_bytes")) {
     writeKV(out, outLen, "chunk", cfg.chunk_bytes);
@@ -213,6 +310,11 @@ inline void formatGet(const PocConfig& cfg, const char* key, char* out, size_t o
   }
   if (keyEq(key, "fps")) {
     writeKV(out, outLen, "fps", cfg.fps);
+    return;
+  }
+  if (keyEq(key, "framesize")) {
+    writeStr(out, outLen, "framesize ");
+    appendStr(out, outLen, framesizeName(clampFramesize(cfg.framesize)));
     return;
   }
   if (keyEq(key, "all")) {
@@ -235,6 +337,9 @@ inline void formatGet(const PocConfig& cfg, const char* key, char* out, size_t o
       out[pos < outLen ? pos : outLen - 1] = '\0';
       appendU32(out, outLen, vals[k]);
     }
+    // Framesize token stays LAST so older parsers keep working.
+    appendStr(out, outLen, " framesize ");
+    appendStr(out, outLen, framesizeName(clampFramesize(cfg.framesize)));
     return;
   }
   writeStr(out, outLen, "NACK unknown_key");
