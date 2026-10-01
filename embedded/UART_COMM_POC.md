@@ -151,7 +151,11 @@ on UART (TRM max 5M, practical ≤2M); needs SPI or scope cut. Robot need
   - [x] RS-style FEC shared core (Arduino-free, no-heap) + Unity recovery vectors.
     DONE: `shared/link/uart_fec.h` (GF(2^8)/0x11D, kMaxParity=4, never-corrupt
     recover) + mirrored `test_uart_fec.cpp` (12 tests); gates 70/70 + 111/111.
-  - [ ] Head parity emit (N+K shape, IS_PARITY flag, stride padding).
+  - [x] Head parity emit (N+K shape, IS_PARITY flag, stride padding). DONE:
+    `fec_k` knob (default 0 = wire-identical passthrough), K parity chunks
+    (idx N..N+K−1, flags 0x04, LAST stays on N−1), 16KB skip cap, `txp=`
+    counter; gates 74/74 + 115/115. S3 decode pending (task 3) — keep K=0
+    until then.
   - [ ] S3 recover-before-reset + recovered-vs-clean counters.
   - [ ] Sparse-2M then saturated-1.5M/2M frame-completion measures.
   - [ ] Auto-pace (fps-derived, manual `pace_us` override kept).

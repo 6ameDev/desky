@@ -291,5 +291,40 @@ inline Recover recover(uint8_t* const* data_io, const bool* missing, uint8_t n, 
   return Recover::OK;
 }
 
+// Head parity-emit shape (POC task 2) — pure policy, Arduino-free, so host
+// Unity tests pin it without hardware. planEmit() decides per frame whether
+// K parity chunks follow the N data chunks; parityChunkFlags/Idx() pin the
+// parity header contract (flags exactly kFlagParity — never LAST_CHUNK, which
+// stays on data chunk N-1; payloadLen is always the full stride because
+// encode() zero-pads short tails internally).
+constexpr size_t kEmitDataCap = 16384;  // Max N*stride staged for parity (INTERNAL sizing lives at the call site).
+
+struct EmitPlan {
+  uint8_t k = 0;      // Parity chunks to emit.
+  bool emit = false;  // False -> skip; the wire stays byte-identical to K=0.
+};
+
+inline EmitPlan planEmit(uint8_t cfgK, uint32_t nChunks, uint16_t stride) {
+  EmitPlan p;
+  if (cfgK == 0 || nChunks == 0 || nChunks > kMaxData) {
+    return p;
+  }
+  if (stride == 0 || stride > kMaxStride) {
+    return p;
+  }
+  if (static_cast<uint64_t>(nChunks) * stride > kEmitDataCap) {
+    return p;
+  }
+  p.k = (cfgK > kMaxParity) ? kMaxParity : cfgK;
+  p.emit = true;
+  return p;
+}
+
+// Parity chunk header contract: flags are exactly IS_PARITY (never
+// LAST_CHUNK or SYNTHETIC), chunkIdx runs N..N+K-1, payloadLen is stride.
+inline uint8_t parityChunkFlags() { return kFlagParity; }
+
+inline uint16_t parityChunkIdx(uint32_t nChunks, uint8_t j) { return static_cast<uint16_t>(nChunks + j); }
+
 }  // namespace fec
 }  // namespace uartpoc

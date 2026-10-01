@@ -5,7 +5,10 @@
 //  - Serial2 link (TX=MCU_LINK_UART_TX=12, RX=MCU_LINK_UART_RX=13) + USB CLI.
 //  - Generator task (Core 0): one source frame per fps tick, fragmented into
 //    chunk_bytes CHUNK frames (LAST_CHUNK on final, SYNTHETIC for modes 1/2),
-//    pace_us gap between chunks. Modes: 0 TEXT, 1 RAMP, 2 SYNTH_JPEG
+//    pace_us gap between chunks. When fec_k>0 and the frame passes the
+//    FEC-skip policy (see kFecDataCap), K parity CHUNKs follow the N data
+//    chunks (IS_PARITY flag, never LAST_CHUNK, full-stride payloads, same
+//    pacing). Modes: 0 TEXT, 1 RAMP, 2 SYNTH_JPEG
 //    (pseudorandom + SOI/EOI markers only, NOT decodable), 3 HW_CAM (lazy
 //    camera init on first mode-3 tick; PSRAM fb slices copied into INTERNAL
 //    staging before Serial2.write).
@@ -19,7 +22,8 @@
 // Memory: TX encode + chunk staging buffers are heap_caps INTERNAL, never
 // PSRAM (asserted via esp_ptr_internal where available), plus one 64KB
 // verify slot (matches the S3 kSlotCap so Head loopback predicts S3 1:1) +
-// one verify chunk buffer for the selftests. No String/heap in
+// one verify chunk buffer for the selftests + one 20KB FEC scratch (16KB
+// data staging + 4KB parity, allocated once, no per-frame heap). No String/heap in
 // the loop path. Idle HB at 1Hz when streaming is stopped or held.
 
 #ifdef ARDUINO
@@ -34,6 +38,7 @@
 #include "config.h"
 #include "link/poc_config.h"
 #include "link/poc_synth.h"
+#include "link/uart_fec.h"
 #include "link/uart_frame.h"
 
 #if __has_include(<esp_memory_utils.h>)
@@ -60,6 +65,7 @@ class PocManager {
         chunkBuf_(nullptr),
         verifySlot_(nullptr),
         verifyChunk_(nullptr),
+        fecBuf_(nullptr),
         streaming_(true),
         txHold_(false),
         testActive_(false),
@@ -76,6 +82,7 @@ class PocManager {
         lastHbMs_(0),
         txFrames_(0),
         txChunks_(0),
+        txParity_(0),
         txBytes_(0),
         rxCmds_(0),
         rxInvalid_(0),
@@ -96,9 +103,11 @@ class PocManager {
     DESKY_ASSERT(verifySlot_ != nullptr);
     verifyChunk_ = static_cast<uint8_t*>(heap_caps_malloc(uartpoc::kMaxPayload, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     DESKY_ASSERT(verifyChunk_ != nullptr);
+    fecBuf_ = static_cast<uint8_t*>(heap_caps_malloc(kFecScratchBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    DESKY_ASSERT(fecBuf_ != nullptr);
 #if POC_HAVE_INTERNAL_CHECK
     DESKY_ASSERT(esp_ptr_internal(txBuf_) && esp_ptr_internal(chunkBuf_) && esp_ptr_internal(verifySlot_) &&
-                 esp_ptr_internal(verifyChunk_));
+                 esp_ptr_internal(verifyChunk_) && esp_ptr_internal(fecBuf_));
 #endif
     verifyReasm_.attach(verifySlot_, kVerifySlotCap);
     Serial2.begin(cfg_.baud, SERIAL_8N1, MCU_LINK_UART_RX, MCU_LINK_UART_TX);
@@ -156,6 +165,19 @@ class PocManager {
  private:
   static constexpr size_t kVerifySlotCap = 65536;  // Matches the S3 kSlotCap: Head loopback predicts S3 1:1.
 
+  // FEC-skip policy (INTERNAL pressure): parity stages N*stride data bytes +
+  // up to K*stride parity bytes in one INTERNAL scratch buffer allocated once
+  // in begin(). kFecDataCap = fec::kEmitDataCap = 16KB: every synth total
+  // (max 2048B) always qualifies, QVGA-class camera JPEGs (~10-15KB, POC §5)
+  // qualify at any stride, and anything bigger SKIPS (wire stays
+  // byte-identical to K=0, zero behavior change). Sizing: scratch = 16KB +
+  // 4*1KB = 20KB; existing INTERNAL is ~67KB (64KB verify slot + tx/chunk
+  // staging) against intfree 182-267KB observed -> worst case ~87KB used,
+  // ~95KB headroom. K=0 default keeps the wire identical; S3-side decode is
+  // task 3 (today's S3 would mis-reassemble parity chunks as data).
+  static constexpr size_t kFecDataCap = uartpoc::fec::kEmitDataCap;
+  static constexpr size_t kFecScratchBytes = kFecDataCap + uartpoc::fec::kMaxParity * uartpoc::kMaxPayload;
+
   static void genTaskThunk(void* arg) { static_cast<PocManager*>(arg)->runGen(); }
 
   // Generator body (Core 0, never WDT-subscribed, never returns).
@@ -190,6 +212,7 @@ class PocManager {
     const uint8_t flags = pocself::synthFlags(mode);
     const uint16_t stride = (chunk < uartpoc::kChunkMin) ? uartpoc::kChunkMin : chunk;
     const uint32_t nChunks = (total + stride - 1) / stride;
+    const uartpoc::fec::EmitPlan fec = uartpoc::fec::planEmit(cfg_.fec_k, nChunks, stride);
     for (uint32_t idx = 0; idx < nChunks; ++idx) {
       const uint32_t off = idx * stride;
       uint16_t n = stride;
@@ -202,11 +225,57 @@ class PocManager {
         fl |= uartpoc::FLAG_LAST_CHUNK;
       }
       writeChunk(uartpoc::MSG_CHUNK, fl, fid, static_cast<uint16_t>(idx), chunkBuf_, n);
-      if (idx + 1 < nChunks && pace > 0) {
+      if (pace > 0 && (idx + 1 < nChunks || fec.emit)) {
+        delayMicroseconds(pace);  // Parity continues the uniform inter-chunk gap; skipped plans pace as before.
+      }
+    }
+    if (fec.emit && stageSynthParity_(mode, fid, stride, nChunks, total, fec.k)) {
+      sendParityChunks_(fid, nChunks, stride, fec.k, pace);
+    }
+    ++txFrames_;
+  }
+
+  // Regenerate all N synth data chunks into the fecBuf_ staging area and solve
+  // K parity blocks in place. No heap in the loop path: pointer/lens tables
+  // are members, the scratch was allocated once in begin(). Returns
+  // encode()'s verdict (false -> caller sends data-only, wire unchanged).
+  bool stageSynthParity_(uint8_t mode, uint16_t fid, uint16_t stride, uint32_t nChunks, uint32_t total, uint8_t k) {
+    for (uint32_t i = 0; i < nChunks; ++i) {
+      const uint32_t off = i * stride;
+      uint16_t n = stride;
+      if (off + n > total) {
+        n = static_cast<uint16_t>(total - off);
+      }
+      uint8_t* dst = fecBuf_ + i * stride;
+      pocself::fillSynthetic(mode, fid, off, dst, n, total);
+      fecDataPtrs_[i] = dst;
+      fecLens_[i] = n;
+    }
+    return stageParity_(nChunks, stride, k);
+  }
+
+  // Solve K parity blocks from the staged fecDataPtrs_/fecLens_ tables into
+  // the fecBuf_ parity area (past kFecDataCap). Called with a held fb for
+  // camera frames, with regenerated synth bytes otherwise.
+  bool stageParity_(uint32_t nChunks, uint16_t stride, uint8_t k) {
+    for (uint8_t j = 0; j < k; ++j) {
+      fecParPtrs_[j] = fecBuf_ + kFecDataCap + static_cast<size_t>(j) * stride;
+    }
+    return uartpoc::fec::encode(fecDataPtrs_, static_cast<uint8_t>(nChunks), k, stride, fecLens_, fecParPtrs_);
+  }
+
+  // Emit K parity chunks after the N data chunks: chunkIdx N..N+K-1, flags
+  // exactly IS_PARITY (never LAST_CHUNK — LAST stays on data chunk N-1),
+  // payloadLen the full stride, paced like data chunks through the existing
+  // txWriteRaw_() mutex funnel.
+  void sendParityChunks_(uint16_t fid, uint32_t nChunks, uint16_t stride, uint8_t k, uint32_t pace) {
+    for (uint8_t j = 0; j < k; ++j) {
+      writeParityChunk_(uartpoc::MSG_CHUNK, uartpoc::fec::parityChunkFlags(), fid,
+                        uartpoc::fec::parityChunkIdx(nChunks, j), fecParPtrs_[j], stride);
+      if (j + 1 < k && pace > 0) {
         delayMicroseconds(pace);
       }
     }
-    ++txFrames_;
   }
 
   void sendCameraFrame(uint16_t fid, uint16_t chunk, uint32_t pace) {
@@ -221,6 +290,7 @@ class PocManager {
     const uint32_t total = static_cast<uint32_t>(fb->len);
     const uint32_t nChunks = (total + stride - 1) / stride;
     if (nChunks <= uartpoc::Reassembler::kMaxChunks) {
+      const uartpoc::fec::EmitPlan fec = uartpoc::fec::planEmit(cfg_.fec_k, nChunks, stride);
       for (uint32_t idx = 0; idx < nChunks; ++idx) {
         const uint32_t off = idx * stride;
         uint16_t n = stride;
@@ -235,8 +305,25 @@ class PocManager {
           fl |= uartpoc::FLAG_LAST_CHUNK;
         }
         writeChunk(uartpoc::MSG_CHUNK, fl, fid, static_cast<uint16_t>(idx), chunkBuf_, n);
-        if (idx + 1 < nChunks && pace > 0) {
-          delayMicroseconds(pace);
+        if (pace > 0 && (idx + 1 < nChunks || fec.emit)) {
+          delayMicroseconds(pace);  // Parity continues the uniform inter-chunk gap; skipped plans pace as before.
+        }
+      }
+      if (fec.emit) {
+        // Parity straight from the fb slices (true lens[]; encode() owns the
+        // short-LAST padding). fb is still held: returned after the last
+        // write below, as today.
+        for (uint32_t i = 0; i < nChunks; ++i) {
+          const uint32_t off = i * stride;
+          uint16_t n = stride;
+          if (off + n > total) {
+            n = static_cast<uint16_t>(total - off);
+          }
+          fecDataPtrs_[i] = fb->buf + off;
+          fecLens_[i] = n;
+        }
+        if (stageParity_(nChunks, stride, fec.k)) {
+          sendParityChunks_(fid, nChunks, stride, fec.k, pace);
         }
       }
       ++txFrames_;
@@ -402,6 +489,18 @@ class PocManager {
     ++txChunks_;
   }
 
+  // Parity-chunk twin of writeChunk: same encode + txWriteRaw_() mutex funnel,
+  // but counted separately in txParity_ (txChunks_ keeps counting data chunks
+  // only, so K=0 STATS lines are unchanged).
+  void writeParityChunk_(uint8_t type, uint8_t flags, uint16_t fid, uint16_t idx, const uint8_t* payload, uint16_t n) {
+    size_t outLen = 0;
+    if (!uartpoc::encodeFrame(type, flags, fid, idx, payload, n, txBuf_, uartpoc::kMaxFrameLen, outLen)) {
+      return;
+    }
+    txBytes_ += txWriteRaw_(txBuf_, outLen);
+    ++txParity_;
+  }
+
   void sendHb() {
     size_t outLen = 0;
     if (uartpoc::encodeFrame(uartpoc::MSG_HB, 0, txFrameId_++, 0, nullptr, 0, txBuf_, uartpoc::kMaxFrameLen, outLen)) {
@@ -527,7 +626,7 @@ class PocManager {
       return;
     }
     if (isWord_(p, "STATS")) {
-      char msg[160];
+      char msg[192];
       buildStats_(msg, sizeof(msg));
       sendResp(fr.frameId, msg);
       return;
@@ -605,7 +704,7 @@ class PocManager {
       return;
     }
     if (isWord_(line, "STATS")) {
-      char msg[160];
+      char msg[192];
       buildStats_(msg, sizeof(msg));
       LOG_I("POC", "%s", msg);
       return;
@@ -625,7 +724,7 @@ class PocManager {
       LOG_I("POC",
             "keys: chunk|chunk_bytes 16..1024 pace|pace_us 0..50000 baud "
             "9600|57600|115200|460800|921600|1M|1.5M|2M|3M|4M|5M (230400 BANNED) mode "
-            "0..3 fps 1..30 framesize qvga|vga|svga|xga|sxga|uxga|qxga (mode-3 re-init)");
+            "0..3 fps 1..30 fec|fec_k 0..4 framesize qvga|vga|svga|xga|sxga|uxga|qxga (mode-3 re-init)");
       LOG_I("POC", "selftest: SELFTEST MEM <mode 0-3> <chunk 16-1024> <pace 0-50000> <nframes 1-50>");
       LOG_I("POC", "selftest: SELFTEST WIRE <baud> <mode> <chunk> <pace> <nframes 1-50> (needs TX12-RX13 jumper)");
       LOG_I("POC", "selftest: SELFTEST SWEEP [QUICK|FULL] (WIRE matrix, USB stays 115200)");
@@ -1334,13 +1433,15 @@ class PocManager {
 
   void buildStats_(char* out, size_t cap) {
     const size_t intFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    // txp (parity chunks) is appended LAST: the existing field order never moves.
     snprintf(out, cap,
-             "STATS txf=%lu txc=%lu txb=%lu rxcmd=%lu rxe=%lu mode=%u chunk=%u pace=%lu baud=%lu fps=%u intfree=%u",
+             "STATS txf=%lu txc=%lu txb=%lu rxcmd=%lu rxe=%lu mode=%u chunk=%u pace=%lu baud=%lu fps=%u intfree=%u "
+             "txp=%lu",
              static_cast<unsigned long>(txFrames_), static_cast<unsigned long>(txChunks_),
              static_cast<unsigned long>(txBytes_), static_cast<unsigned long>(rxCmds_),
              static_cast<unsigned long>(rxInvalid_), cfg_.mode, cfg_.chunk_bytes,
              static_cast<unsigned long>(cfg_.pace_us), static_cast<unsigned long>(currentBaud_()), cfg_.fps,
-             static_cast<unsigned>(intFree));
+             static_cast<unsigned>(intFree), static_cast<unsigned long>(txParity_));
   }
 
   static bool startsWith_(const char* s, const char* prefix) {
@@ -1402,6 +1503,10 @@ class PocManager {
   uint8_t* chunkBuf_;                 // INTERNAL raw chunk staging (kMaxPayload).
   uint8_t* verifySlot_;               // INTERNAL verify reassembly slot (kVerifySlotCap).
   uint8_t* verifyChunk_;              // INTERNAL verify chunk staging (kMaxPayload).
+  uint8_t* fecBuf_;  // INTERNAL FEC scratch: N*stride data staging + K*stride parity (kFecScratchBytes).
+  const uint8_t* fecDataPtrs_[uartpoc::fec::kMaxData];  // Per-frame data pointers into fecBuf_/fb (no heap).
+  uint8_t* fecParPtrs_[uartpoc::fec::kMaxParity];       // Per-frame parity pointers into the fecBuf_ parity area.
+  size_t fecLens_[uartpoc::fec::kMaxData];              // Per-frame true data lengths (LAST may be short).
   bool streaming_;
   bool txHold_;      // Silent window across baud switches.
   bool testActive_;  // WIRE/SWEEP own Serial2 while set (pollLink hands off).
@@ -1419,6 +1524,7 @@ class PocManager {
   uint32_t lastHbMs_;
   uint32_t txFrames_;
   uint32_t txChunks_;
+  uint32_t txParity_;  // Parity CHUNKs only (txChunks_ stays data-only; txp is appended LAST in STATS).
   uint32_t txBytes_;
   uint32_t rxCmds_;
   uint32_t rxInvalid_;

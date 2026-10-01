@@ -10,6 +10,7 @@
 
 #include "link/poc_config.h"
 #include "link/poc_synth.h"
+#include "link/uart_fec.h"
 #include "link/uart_frame.h"
 
 void test_uart_crc_known_vectors() {
@@ -341,20 +342,24 @@ void test_uart_config_get() {
   cfg.baud = 460800;
   cfg.mode = 2;
   cfg.fps = 5;
+  TEST_ASSERT_EQUAL_UINT8(0, cfg.fec_k);  // Default: passthrough.
   char out[128];
   uartpoc::formatGet(cfg, "chunk", out, sizeof(out));
   TEST_ASSERT_EQUAL_STRING("chunk 64", out);
   uartpoc::formatGet(cfg, "baud", out, sizeof(out));
   TEST_ASSERT_EQUAL_STRING("baud 460800", out);
+  uartpoc::formatGet(cfg, "fec", out, sizeof(out));
+  TEST_ASSERT_EQUAL_STRING("fec 0", out);
   uartpoc::formatGet(cfg, "framesize", out, sizeof(out));
   TEST_ASSERT_EQUAL_STRING("framesize qvga", out);
   uartpoc::formatGet(cfg, "all", out, sizeof(out));
-  TEST_ASSERT_EQUAL_STRING("chunk 64 pace 500 baud 460800 mode 2 fps 5 framesize qvga", out);
+  TEST_ASSERT_EQUAL_STRING("chunk 64 pace 500 baud 460800 mode 2 fps 5 fec 0 framesize qvga", out);
   cfg.framesize = 5;
+  cfg.fec_k = 2;
   uartpoc::formatGet(cfg, "framesize", out, sizeof(out));
   TEST_ASSERT_EQUAL_STRING("framesize uxga", out);
   uartpoc::formatGet(cfg, "all", out, sizeof(out));
-  TEST_ASSERT_EQUAL_STRING("chunk 64 pace 500 baud 460800 mode 2 fps 5 framesize uxga", out);
+  TEST_ASSERT_EQUAL_STRING("chunk 64 pace 500 baud 460800 mode 2 fps 5 fec 2 framesize uxga", out);
   uartpoc::formatGet(cfg, "nope", out, sizeof(out));
   TEST_ASSERT_EQUAL_STRING("NACK unknown_key", out);
 }
@@ -406,6 +411,113 @@ void test_uart_config_set_framesize() {
   TEST_ASSERT_EQUAL_UINT8(6, cfg.framesize);  // Rejected SET leaves config untouched.
   TEST_ASSERT_FALSE(uartpoc::parseSet("framesize", "", cfg, msg, sizeof(msg)));
   TEST_ASSERT_FALSE(uartpoc::parseSet("framesize", "1080p", cfg, msg, sizeof(msg)));
+}
+
+void test_uart_config_set_fec() {
+  uartpoc::PocConfig cfg;
+  TEST_ASSERT_EQUAL_UINT8(0, cfg.fec_k);  // Default: passthrough, wire-identical to task-1.
+  char msg[64];
+  TEST_ASSERT_TRUE(uartpoc::parseSet("fec", "2", cfg, msg, sizeof(msg)));
+  TEST_ASSERT_EQUAL_UINT8(2, cfg.fec_k);
+  TEST_ASSERT_EQUAL_STRING("ACK fec 2", msg);
+  TEST_ASSERT_TRUE(uartpoc::parseSet("fec_k", "9", cfg, msg, sizeof(msg)));  // Clamp 0..4.
+  TEST_ASSERT_EQUAL_UINT8(4, cfg.fec_k);
+  TEST_ASSERT_EQUAL_STRING("ACK fec 4", msg);
+  TEST_ASSERT_TRUE(uartpoc::parseSet("fec", "0", cfg, msg, sizeof(msg)));
+  TEST_ASSERT_EQUAL_UINT8(0, cfg.fec_k);
+  TEST_ASSERT_EQUAL_STRING("ACK fec 0", msg);
+  TEST_ASSERT_FALSE(uartpoc::parseSet("fec", "x", cfg, msg, sizeof(msg)));  // Non-numeric rejects.
+  TEST_ASSERT_EQUAL_STRING("NACK bad_value", msg);
+  TEST_ASSERT_EQUAL_UINT8(0, cfg.fec_k);  // Rejected SET leaves config untouched.
+  TEST_ASSERT_FALSE(uartpoc::parseSet("fec", "", cfg, msg, sizeof(msg)));
+  TEST_ASSERT_FALSE(uartpoc::parseSet("fec", "-1", cfg, msg, sizeof(msg)));
+  TEST_ASSERT_FALSE(uartpoc::parseSet("fec", "42949672960", cfg, msg, sizeof(msg)));  // u32 overflow.
+  char out[32];
+  uartpoc::formatGet(cfg, "fec", out, sizeof(out));
+  TEST_ASSERT_EQUAL_STRING("fec 0", out);
+  uartpoc::formatGet(cfg, "fec_k", out, sizeof(out));
+  TEST_ASSERT_EQUAL_STRING("fec 0", out);
+}
+
+void test_fec_emit_plan() {
+  uartpoc::fec::EmitPlan p = uartpoc::fec::planEmit(0, 8, 128);  // K=0 default: passthrough.
+  TEST_ASSERT_FALSE(p.emit);
+  TEST_ASSERT_EQUAL_UINT8(0, p.k);
+  p = uartpoc::fec::planEmit(2, 8, 128);  // Normal synth-sized frame emits.
+  TEST_ASSERT_TRUE(p.emit);
+  TEST_ASSERT_EQUAL_UINT8(2, p.k);
+  p = uartpoc::fec::planEmit(9, 8, 128);  // Defensive clamp at the emit edge (SET already clamps).
+  TEST_ASSERT_TRUE(p.emit);
+  TEST_ASSERT_EQUAL_UINT8(4, p.k);
+  TEST_ASSERT_FALSE(uartpoc::fec::planEmit(2, 0, 128).emit);    // Empty frame.
+  TEST_ASSERT_FALSE(uartpoc::fec::planEmit(2, 65, 128).emit);   // N > kMaxData.
+  TEST_ASSERT_TRUE(uartpoc::fec::planEmit(2, 64, 128).emit);    // N == kMaxData edge.
+  TEST_ASSERT_FALSE(uartpoc::fec::planEmit(2, 8, 0).emit);      // Bad stride.
+  TEST_ASSERT_FALSE(uartpoc::fec::planEmit(2, 8, 1025).emit);   // Over the codec ceiling.
+  TEST_ASSERT_TRUE(uartpoc::fec::planEmit(2, 16, 1024).emit);   // 16*1024 = cap: emits.
+  TEST_ASSERT_FALSE(uartpoc::fec::planEmit(2, 17, 1024).emit);  // 17*1024 > cap: skips.
+}
+
+void test_fec_parity_headers() {
+  // Parity header contract: flags exactly IS_PARITY (never LAST_CHUNK),
+  // chunkIdx N..N+K-1, payloadLen the full stride.
+  TEST_ASSERT_EQUAL_UINT8(0x04, uartpoc::fec::kFlagParity);
+  TEST_ASSERT_EQUAL_UINT8(0x04, uartpoc::fec::parityChunkFlags());
+  TEST_ASSERT_EQUAL_UINT8(0, uartpoc::fec::parityChunkFlags() & uartpoc::FLAG_LAST_CHUNK);
+  TEST_ASSERT_EQUAL_UINT16(8, uartpoc::fec::parityChunkIdx(8, 0));
+  TEST_ASSERT_EQUAL_UINT16(10, uartpoc::fec::parityChunkIdx(8, 2));
+  TEST_ASSERT_EQUAL_UINT16(66, uartpoc::fec::parityChunkIdx(64, 2));
+}
+
+void test_fec_emit_shape_roundtrip() {
+  // Mirrors the Head emit path policy: N data chunks (LAST short) -> K
+  // full-stride parity chunks via the emit plan -> lose one data chunk ->
+  // recover (LAST truncates; encode() owned the padding).
+  const uint8_t mode = 1;
+  const uint16_t stride = 64;
+  const uint32_t total = pocself::synthTotal(mode);  // 1024.
+  const uint32_t n = (total + stride - 1) / stride;  // 16.
+  TEST_ASSERT_EQUAL_UINT32(16, n);
+  const uartpoc::fec::EmitPlan plan = uartpoc::fec::planEmit(2, n, stride);
+  TEST_ASSERT_TRUE(plan.emit);
+  TEST_ASSERT_EQUAL_UINT8(2, plan.k);
+  uint8_t data[16][64];
+  uint8_t par[2][64];
+  const uint8_t* dptr[16];
+  uint8_t* pptr[2] = {par[0], par[1]};
+  size_t lens[16];
+  const uint16_t fid = 7;
+  for (uint32_t i = 0; i < n; ++i) {
+    const uint32_t off = i * stride;
+    uint16_t ln = stride;
+    if (off + ln > total) {
+      ln = static_cast<uint16_t>(total - off);
+    }
+    pocself::fillSynthetic(mode, fid, off, data[i], ln, total);
+    dptr[i] = data[i];
+    lens[i] = ln;
+  }
+  TEST_ASSERT_TRUE(uartpoc::fec::encode(dptr, static_cast<uint8_t>(n), plan.k, stride, lens, pptr));
+  for (uint8_t j = 0; j < plan.k; ++j) {
+    TEST_ASSERT_EQUAL_UINT8(uartpoc::fec::kFlagParity, uartpoc::fec::parityChunkFlags());
+    TEST_ASSERT_EQUAL_UINT16(static_cast<uint16_t>(n + j), uartpoc::fec::parityChunkIdx(n, j));
+  }
+  uint8_t keep[64];
+  memcpy(keep, data[3], stride);
+  memset(data[3], 0, stride);  // Lose data chunk 3.
+  uint8_t* ioptr[16];
+  for (uint32_t i = 0; i < n; ++i) {
+    ioptr[i] = data[i];
+  }
+  const uint8_t* pcptr[2] = {par[0], par[1]};
+  bool missing[16] = {};
+  missing[3] = true;
+  const bool pok[2] = {true, true};
+  uint8_t scratch[uartpoc::fec::kRecoverScratchMin] = {};
+  TEST_ASSERT_TRUE(uartpoc::fec::recover(ioptr, missing, static_cast<uint8_t>(n), pcptr, pok, plan.k, stride,
+                                         total - (n - 1) * stride, scratch,
+                                         sizeof(scratch)) == uartpoc::fec::Recover::OK);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(keep, data[3], stride);
 }
 
 void test_synth_totals_and_flags() {
