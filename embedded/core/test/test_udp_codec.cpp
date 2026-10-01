@@ -177,6 +177,20 @@ void test_synth_text_shape();
 void test_synth_null_safe();
 void test_synth_mem_loopback_modes01();
 
+// UART POC FEC core, defined in test_uart_fec.cpp.
+void test_fec_k0_passthrough();
+void test_fec_single_erasure_random();
+void test_fec_burst_adjacent_erasures();
+void test_fec_last_chunk_missing_truncation();
+void test_fec_kplus1_unrecoverable();
+void test_fec_allzero_allff();
+void test_fec_stride_padding_agreement();
+void test_fec_corrupted_parity();
+void test_fec_determinism_idempotence();
+void test_fec_rejects_bad_args();
+void test_fec_edge_n1_k1();
+void test_fec_max_n64_k4();
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_control_golden_vector);
@@ -278,5 +292,17 @@ int main() {
   RUN_TEST(test_synth_text_shape);
   RUN_TEST(test_synth_null_safe);
   RUN_TEST(test_synth_mem_loopback_modes01);
+  RUN_TEST(test_fec_k0_passthrough);
+  RUN_TEST(test_fec_single_erasure_random);
+  RUN_TEST(test_fec_burst_adjacent_erasures);
+  RUN_TEST(test_fec_last_chunk_missing_truncation);
+  RUN_TEST(test_fec_kplus1_unrecoverable);
+  RUN_TEST(test_fec_allzero_allff);
+  RUN_TEST(test_fec_stride_padding_agreement);
+  RUN_TEST(test_fec_corrupted_parity);
+  RUN_TEST(test_fec_determinism_idempotence);
+  RUN_TEST(test_fec_rejects_bad_args);
+  RUN_TEST(test_fec_edge_n1_k1);
+  RUN_TEST(test_fec_max_n64_k4);
   return UNITY_END();
 }

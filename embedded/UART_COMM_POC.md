@@ -117,7 +117,11 @@ step-up; every 230400 probe is wasted time.
   session start).
 - Nano-bridge flashing/console is SUSPECT (owner CAM flash failed via Nano;
   Nano↔CAM-UART0 path later went fully silent) — MB USB is normative until
-  re-verified. Nano-5V rail as reboot suspect is unconfirmed (single occurrence).
+  re-verified. Proven 2026-10-01 (twice): flashing the CAM with the S3 link
+  attached fails (`flash-chip comms` / `serial stream stopped` — GPIO12
+  strapping pulled high by the attached link); detached-link flashing is clean
+  (`Hash of data verified`). Flash with the link detached, then reattach.
+  Nano-5V rail as reboot suspect is unconfirmed (single occurrence).
 
 ## 5. Bandwidth reference (verdicts)
 
@@ -139,8 +143,21 @@ on UART (TRM max 5M, practical ≤2M); needs SPI or scope cut. Robot need
   `HEAD SET`. 64KB-slot rule: oversize frames are explicit `OVERSIZE` drops
   (S3 `big ⊆ drops`; Head `SKIP_BIGFRAME`, counted as neither ok nor bad).
   Measured: QVGA fits, VGA fits (`big=0`); SVGA/XGA still to settle via the
-  `big` counter; SXGA+ expected `big` drops. Head reflash (MB USB) required
-  once for the knob image; a reboot alone does not add it.
+  `big` counter; SXGA+ expected `big` drops. Head image (ban + knob) flashed
+  2026-10-01 via MB USB with the S3 link detached (link-attached flashing fails
+  on GPIO12 strapping — see §4; `SET baud 230400` → `NACK bad_baud` verified
+  live on Head); a reboot alone does not add it.
+- **Reliability batch (task list, in order — source of truth):**
+  - [x] RS-style FEC shared core (Arduino-free, no-heap) + Unity recovery vectors.
+    DONE: `shared/link/uart_fec.h` (GF(2^8)/0x11D, kMaxParity=4, never-corrupt
+    recover) + mirrored `test_uart_fec.cpp` (12 tests); gates 70/70 + 111/111.
+  - [ ] Head parity emit (N+K shape, IS_PARITY flag, stride padding).
+  - [ ] S3 recover-before-reset + recovered-vs-clean counters.
+  - [ ] Sparse-2M then saturated-1.5M/2M frame-completion measures.
+  - [ ] Auto-pace (fps-derived, manual `pace_us` override kept).
+  - [ ] Head progressive-drop (overrun check + mid-frame abort).
+  - [ ] AQC: quality knob + S3 window + hysteresis/dwell + re-init guard.
+  - [ ] Zero-copy A/B experiment (parked until 1–7 measured).
 - * DEFERRED — Head-TX soak bracketing (onset bounds + re-init/health-check
   root-cause). Parked; do not raise until owner asks.
 - * DEFERRED — 10cm vs 30cm wire A/B at saturated 1M/2M. Parked; do not raise
