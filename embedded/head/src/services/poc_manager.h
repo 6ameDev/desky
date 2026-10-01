@@ -9,9 +9,11 @@
 //    FEC-skip policy (see kFecDataCap), K parity CHUNKs follow the N data
 //    chunks (IS_PARITY flag, never LAST_CHUNK, full-stride payloads, same
 //    pacing). Modes: 0 TEXT, 1 RAMP, 2 SYNTH_JPEG
-//    (pseudorandom + SOI/EOI markers only, NOT decodable), 3 HW_CAM (lazy
-//    camera init on first mode-3 tick; PSRAM fb slices copied into INTERNAL
-//    staging before Serial2.write).
+//    (pseudorandom + SOI/EOI markers only, NOT decodable), 3 HW_CAM (one
+//    pending fb across ticks: tick N pumps frame N while the driver
+//    compresses frame N+1 into the second fb slot; behind -> the stale frame
+//    is dropped and counted in STATS txdrop=; PSRAM fb slices copied into
+//    INTERNAL staging before Serial2.write).
 //  - CMD RX on Serial2 -> apply -> RESP ACK/NACK; deferred baud switch
 //    (RESP at old baud, both switch after delay, 3s rollback to 115200).
 //  - SELFTEST verbs (USB CLI): MEM (in-memory codec round-trip, zero Serial2
@@ -33,6 +35,8 @@
 #include <esp_heap_caps.h>
 #include <stdio.h>
 
+#include <atomic>
+
 #include "common/fault_manager.h"
 #include "common/logger.h"
 #include "config.h"
@@ -53,9 +57,6 @@
 #endif
 #ifndef MCU_LINK_UART_RX
 #define MCU_LINK_UART_RX 13
-#endif
-#ifndef CFG_CAMERA_JPEG_QUALITY
-#define CFG_CAMERA_JPEG_QUALITY 12
 #endif
 
 class PocManager {
@@ -83,11 +84,14 @@ class PocManager {
         txFrames_(0),
         txChunks_(0),
         txParity_(0),
+        txDropStale_(0),
         txBytes_(0),
         rxCmds_(0),
         rxInvalid_(0),
         usbLen_(0),
-        genTask_(nullptr),
+        pendingFb_(nullptr),
+        camBusy_(false),
+        pendingFid_(0),
         txMutex_(nullptr) {}
 
   void begin() {
@@ -117,7 +121,7 @@ class PocManager {
     lastHbMs_ = now;
     lastValidRxMs_ = now;
     const BaseType_t ok =
-        xTaskCreatePinnedToCore(&PocManager::genTaskThunk, "pocgen", 4096, this, tskIDLE_PRIORITY + 2, &genTask_, 0);
+        xTaskCreatePinnedToCore(&PocManager::genTaskThunk, "pocgen", 4096, this, tskIDLE_PRIORITY + 2, nullptr, 0);
     DESKY_ASSERT(ok == pdPASS);
     LOG_I("POC", "head up link tx=%d rx=%d baud=%u chunk=%u pace=%u mode=%u fps=%u", MCU_LINK_UART_TX, MCU_LINK_UART_RX,
           static_cast<unsigned>(cfg_.baud), cfg_.chunk_bytes, static_cast<unsigned>(cfg_.pace_us), cfg_.mode, cfg_.fps);
@@ -180,7 +184,9 @@ class PocManager {
 
   static void genTaskThunk(void* arg) { static_cast<PocManager*>(arg)->runGen(); }
 
-  // Generator body (Core 0, never WDT-subscribed, never returns).
+  // Generator body (Core 0, never WDT-subscribed, never returns). Hold entry
+  // returns-and-drops any pending camera fb (never held across a baud
+  // switch/selftest window); STOP (!streaming_, no hold) keeps it for resume.
   void runGen() {
     for (;;) {
       const bool hold = txHold_ || waitingForLink_;
@@ -195,6 +201,8 @@ class PocManager {
           const uint16_t fid = txFrameId_++;
           sendSourceFrame(mode, fid, chunk, pace);
         }
+      } else if (hold) {
+        dropPending_();
       }
       delay(2);
     }
@@ -205,6 +213,7 @@ class PocManager {
       sendCameraFrame(fid, chunk, pace);
       return;
     }
+    dropPending_();  // Mode switch away from camera must not pin a grabbed fb.
     if (mode > uartpoc::MODE_SYNTH_JPEG) {
       mode = uartpoc::MODE_TEXT;  // Unreachable via clamped knobs; preserves the TEXT fallback.
     }
@@ -278,60 +287,177 @@ class PocManager {
     }
   }
 
-  void sendCameraFrame(uint16_t fid, uint16_t chunk, uint32_t pace) {
+  // ── Pending-fb overlap (Head pipelined grab<->send) ──
+  // The generator holds at most ONE camera fb across ticks (pendingFb_): tick
+  // N pumps frame N (grabbed at the tail of tick N-1, already JPEG-compressed
+  // during tick N-1's UART pump via fb_count=2 double-buffering) and grabs
+  // frame N+1 at its own tail. fb lifetime rules (load-bearing):
+  //  - returned ONLY after its last data chunk + parity are staged (or on a
+  //    drop path below); every esp_camera_fb_get has exactly one
+  //    esp_camera_fb_return (ownership re-checks + asserts pin this).
+  //  - drop-stale IS progressive-drop (one mechanism, no queue): grabNext_
+  //    double-grabs; a second queued frame means the sender is behind, so the
+  //    OLDER (stale) frame is returned immediately, counted in txDropStale_
+  //    (STATS txdrop=, appended LAST), and the NEWER ships.
+  //  - return-and-drop on txHold_/baud-switch entry (runGen tick head +
+  //    per-chunk pump abort) and in switchFramesize_ before deinit (a held fb
+  //    across esp_camera_deinit dangles). Drops are uncounted: never shipped.
+  //  - the pointer exchange is std::atomic (gen task vs loop task); deinit
+  //    safety comes from the switch handshake (hold + wait for !camBusy_),
+  //    never from suspending the generator mid-pump.
+  // q16/pace/chunk stay knob-driven: quality via initCamera_ (default 16),
+  // pace/chunk read fresh per pump from cfg_ (defaults untouched).
+
+  // RAII: clears camBusy_ on every pump exit (return-on-all-paths, one clearing point).
+  struct BusyGuard {
+    explicit BusyGuard(std::atomic<bool>& b) : b_(b) {}
+    ~BusyGuard() { b_.store(false); }
+    std::atomic<bool>& b_;
+  };
+
+  // Return-and-drop whatever is pending (null-safe; uncounted — the frame
+  // never shipped). Gen task (hold entry, pump abort, oversize, mode switch)
+  // and loop task (switchFramesize_ handshake) converge here.
+  void dropPending_() {
+    camera_fb_t* fb = pendingFb_.exchange(nullptr);
+    if (fb != nullptr) {
+      esp_camera_fb_return(fb);
+    }
+    DESKY_ASSERT(pendingFb_.load() == nullptr);
+  }
+
+  // Tick tail: grab next tick's frame into the pending slot. Skips while held
+  // (baud/selftest windows hold nothing across a UART switch) or when the
+  // camera is down. Behind check: fb_count=2 bounds the driver queue, so at
+  // most one extra frame can wait; a second grab success means behind.
+  void grabNext_(uint16_t fid) {
+    if (txHold_ || waitingForLink_) {
+      return;
+    }
     if (!ensureCamera()) {
       return;
     }
-    camera_fb_t* fb = esp_camera_fb_get();
+    camera_fb_t* first = esp_camera_fb_get();
+    if (first == nullptr) {
+      return;
+    }
+    camera_fb_t* second = esp_camera_fb_get();
+    if (second != nullptr) {
+      esp_camera_fb_return(first);  // Stale: waited longest while the previous frame pumped.
+      ++txDropStale_;
+      first = second;
+    }
+    DESKY_ASSERT(pendingFb_.load() == nullptr);  // Pumped (or dropped) at tick head; never overwritten live.
+    pendingFid_ = fid;
+    pendingFb_.store(first);
+  }
+
+  // Tick head: pump last tick's grab to completion (paced data chunks + K
+  // parity), then return it and count the frame. Aborts (returns, uncounted)
+  // when held mid-frame; exits WITHOUT touching the fb when
+  // switchFramesize_ reclaimed it (no double-return, no use-after-return).
+  void pumpPending_(uint16_t chunk, uint32_t pace) {
+    camera_fb_t* fb = pendingFb_.load();
     if (fb == nullptr) {
       return;
     }
+    camBusy_.store(true);
+    const BusyGuard guard(camBusy_);
+    const uint16_t fid = pendingFid_;
     const uint16_t stride = (chunk < uartpoc::kChunkMin) ? uartpoc::kChunkMin : chunk;
     const uint32_t total = static_cast<uint32_t>(fb->len);
     const uint32_t nChunks = (total + stride - 1) / stride;
-    if (nChunks <= uartpoc::Reassembler::kMaxChunks) {
-      const uartpoc::fec::EmitPlan fec = uartpoc::fec::planEmit(cfg_.fec_k, nChunks, stride);
-      for (uint32_t idx = 0; idx < nChunks; ++idx) {
-        const uint32_t off = idx * stride;
+    if (nChunks > uartpoc::Reassembler::kMaxChunks) {
+      dropPending_();  // Oversize: returned, never sent (mirrors the old skip).
+      return;
+    }
+    const uartpoc::fec::EmitPlan fec = uartpoc::fec::planEmit(cfg_.fec_k, nChunks, stride);
+    for (uint32_t idx = 0; idx < nChunks; ++idx) {
+      if (pendingFb_.load() != fb) {
+        return;  // Switch reclaimed + returned it; never touch again.
+      }
+      if (txHold_ || waitingForLink_) {
+        dropPending_();  // Hold/baud abort: still ours, return exactly once.
+        return;
+      }
+      const uint32_t off = idx * stride;
+      uint16_t n = stride;
+      if (off + n > total) {
+        n = static_cast<uint16_t>(total - off);
+      }
+      for (uint16_t i = 0; i < n; ++i) {
+        chunkBuf_[i] = fb->buf[off + i];  // PSRAM fb -> INTERNAL staging.
+      }
+      uint8_t fl = 0;
+      if (idx + 1 >= nChunks) {
+        fl |= uartpoc::FLAG_LAST_CHUNK;
+      }
+      writeChunk(uartpoc::MSG_CHUNK, fl, fid, static_cast<uint16_t>(idx), chunkBuf_, n);
+      if (pace > 0 && (idx + 1 < nChunks || fec.emit)) {
+        delayMicroseconds(pace);  // Parity continues the uniform inter-chunk gap; skipped plans pace as before.
+      }
+    }
+    if (fec.emit) {
+      if (pendingFb_.load() != fb) {
+        return;  // Switch reclaimed mid-frame; parity never staged off a dead fb.
+      }
+      // Parity straight from the fb slices (true lens[]; encode() owns the
+      // short-LAST padding). fb is still held: returned after the last
+      // write below, as before.
+      for (uint32_t i = 0; i < nChunks; ++i) {
+        const uint32_t off = i * stride;
         uint16_t n = stride;
         if (off + n > total) {
           n = static_cast<uint16_t>(total - off);
         }
-        for (uint16_t i = 0; i < n; ++i) {
-          chunkBuf_[i] = fb->buf[off + i];  // PSRAM fb -> INTERNAL staging.
-        }
-        uint8_t fl = 0;
-        if (idx + 1 >= nChunks) {
-          fl |= uartpoc::FLAG_LAST_CHUNK;
-        }
-        writeChunk(uartpoc::MSG_CHUNK, fl, fid, static_cast<uint16_t>(idx), chunkBuf_, n);
-        if (pace > 0 && (idx + 1 < nChunks || fec.emit)) {
-          delayMicroseconds(pace);  // Parity continues the uniform inter-chunk gap; skipped plans pace as before.
-        }
+        fecDataPtrs_[i] = fb->buf + off;
+        fecLens_[i] = n;
       }
-      if (fec.emit) {
-        // Parity straight from the fb slices (true lens[]; encode() owns the
-        // short-LAST padding). fb is still held: returned after the last
-        // write below, as today.
-        for (uint32_t i = 0; i < nChunks; ++i) {
-          const uint32_t off = i * stride;
-          uint16_t n = stride;
-          if (off + n > total) {
-            n = static_cast<uint16_t>(total - off);
+      if (stageParity_(nChunks, stride, fec.k)) {
+        // Checked twin of sendParityChunks_ (same flags/idx/pace): per-chunk
+        // ownership + hold checks, since a switch/hold can land mid-parity.
+        for (uint8_t j = 0; j < fec.k; ++j) {
+          if (pendingFb_.load() != fb) {
+            return;  // Switch reclaimed mid-parity (returned there); data stands, frame uncounted.
           }
-          fecDataPtrs_[i] = fb->buf + off;
-          fecLens_[i] = n;
-        }
-        if (stageParity_(nChunks, stride, fec.k)) {
-          sendParityChunks_(fid, nChunks, stride, fec.k, pace);
+          if (txHold_ || waitingForLink_) {
+            dropPending_();
+            return;
+          }
+          writeParityChunk_(uartpoc::MSG_CHUNK, uartpoc::fec::parityChunkFlags(), fid,
+                            uartpoc::fec::parityChunkIdx(nChunks, j), fecParPtrs_[j], stride);
+          if (j + 1 < fec.k && pace > 0) {
+            delayMicroseconds(pace);
+          }
         }
       }
+    }
+    // Release exactly once, ONLY after the last data chunk + parity staged.
+    camera_fb_t* rel = pendingFb_.exchange(nullptr);
+    if (rel != nullptr) {
+      DESKY_ASSERT(rel == fb);  // Only grabNext_ stores (same task, done for this tick); switch only nulls.
+      esp_camera_fb_return(rel);
       ++txFrames_;
     }
-    esp_camera_fb_return(fb);
+    // else: switchFramesize_ reclaimed + returned it concurrently; nothing to do (no double-return).
+  }
+
+  void sendCameraFrame(uint16_t fid, uint16_t chunk, uint32_t pace) {
+    // Overlap: pump last tick's grab first (it compressed during the previous
+    // pump), then grab next tick's frame at the tail.
+    if (pendingFb_.load() != nullptr) {
+      pumpPending_(chunk, pace);
+    }
+    grabNext_(fid);
   }
 
   // Resolution index (cfg_.framesize, 0..6) -> ESP framesize_t (OV3660 order).
+  // Framing note: the size goes straight to the framework sensor driver
+  // (esp_camera_init programs the OV3660 for 320x240 at QVGA — the hardware
+  // path; no in-firmware crop/windowing exists on this route, the chunker
+  // only slices the JPEG stream). Whether QVGA is sensor-subsample vs
+  // DSP-scale lives in the bundled ov3660 register tables, which are NOT in
+  // this repo (precompiled framework) — unverifiable here.
   static framesize_t framesizeEsp_(uint8_t idx) {
     switch (idx) {
       case 1:
@@ -372,8 +498,13 @@ class PocManager {
     return camOk_;
   }
 
-  // Raw camera (re-)init at one resolution. Keeps fb_count=2 + jpeg_quality 12
-  // (no quality knob: scope control). Returns esp_camera_init's verdict.
+  // Raw camera (re-)init at one resolution. Keeps fb_count=2 (double-buffered:
+  // DMA fills Frame B in PSRAM while Frame A chunks out over UART). jpeg_quality comes from the
+  // cfg_.jpeg_quality knob (default 16, sane 10..30 of the driver 0..63, lower = higher quality; AQC will own
+  // this knob later) — CFG_CAMERA_JPEG_QUALITY is intentionally not read here (it stays the non-POC
+  // CameraDriver default; fully superseded on this POC path). Exposure: cfg_.exposure==0 (default) writes
+  // nothing, keeping today's auto-AEC behavior byte-identical; nonzero re-asserts the manual value live below
+  // so a framesize/quality re-init never silently drops it. Returns esp_camera_init's verdict.
   bool initCamera_(framesize_t fs) {
     camera_config_t cc = {};
     cc.ledc_channel = LEDC_CHANNEL_0;
@@ -397,23 +528,43 @@ class PocManager {
     cc.xclk_freq_hz = 20000000;
     cc.pixel_format = PIXFORMAT_JPEG;
     cc.frame_size = fs;
-    cc.jpeg_quality = CFG_CAMERA_JPEG_QUALITY;
+    cc.jpeg_quality =
+        static_cast<int>(uartpoc::clampU32(cfg_.jpeg_quality, uartpoc::kQualityMin, uartpoc::kQualityMax));
     cc.fb_count = 2;  // Double-buffered: DMA fills Frame B in PSRAM while Frame A chunks out over UART.
-    return esp_camera_init(&cc) == ESP_OK;
+    if (esp_camera_init(&cc) != ESP_OK) {
+      return false;
+    }
+    if (cfg_.exposure != 0) {
+      // Re-assert the manual AEC value after every (re-)init (best effort: the camera itself is up; a failed
+      // live write is retried on the next SET).
+      if (!applyExposureLive_(cfg_.exposure)) {
+        LOG_W("POC", "exposure %u stored, live re-assert after init failed", cfg_.exposure);
+      }
+    }
+    return true;
   }
 
-  // Runtime resolution switch: deinit + re-init at the new size. The generator
-  // task is suspended across the switch so no fb grab races the deinit; the
-  // prior txHold_ is saved/restored (a baud switch may own it). On new-size
-  // failure the old size is re-inited (best effort) and cfg_ is left untouched,
-  // so the camera path is never bricked — caller NACKs.
+  // Runtime resolution switch: hold + idle handshake + deinit + re-init at the
+  // new size. The generator is NOT suspended (suspension can land mid-pump,
+  // stranding a live fb across deinit); instead txHold_ freezes it
+  // (tick-head drops pending, grabs skip, pumps abort per chunk) and the
+  // handshake waits for no-pump-in-flight before deinit. The prior txHold_
+  // is saved/restored (a baud switch may own it). On new-size failure the
+  // old size is re-inited (best effort) and cfg_ is left untouched, so the
+  // camera path is never bricked — caller NACKs.
   bool switchFramesize_(uint8_t idx) {
     const uint8_t prev = cfg_.framesize;
     const bool holdSave = txHold_;
-    if (genTask_ != nullptr) {
-      vTaskSuspend(genTask_);
-    }
     txHold_ = true;
+    // Bounded idle handshake (~one chunk time: pumps abort promptly on
+    // txHold_). Never hangs the loop task on a wedged generator.
+    for (uint32_t i = 0; i < 500 && (camBusy_.load() || pendingFb_.load() != nullptr); ++i) {
+      delay(1);
+    }
+    if (camBusy_.load()) {
+      LOG_W("POC", "framesize switch: generator still busy, proceeding anyway");
+    }
+    dropPending_();  // Return-and-drop before deinit: a held fb across deinit dangles. Null-safe.
     if (camInit_) {
       esp_camera_deinit();
     }
@@ -434,9 +585,6 @@ class PocManager {
       }
     }
     txHold_ = holdSave;
-    if (genTask_ != nullptr) {
-      vTaskResume(genTask_);
-    }
     return ok;
   }
 
@@ -456,6 +604,82 @@ class PocManager {
     }
     if (switchFramesize_(idx)) {
       snprintf(msg, cap, "ACK framesize %s", uartpoc::framesizeName(idx));
+      return true;
+    }
+    uartpoc::writeStr(msg, cap, "NACK camera_reinit_failed");
+    return false;
+  }
+
+  // Live exposure write (chosen over re-init): the OV3660 AEC/gain registers apply immediately through the
+  // sensor driver with no frame-buffer realloc and no streaming glitch, so a runtime tweak never pays the
+  // suspend/deinit/re-init cost or its watchdog pressure. 0 = auto (gain_ctrl on + exposure_ctrl on, the reset
+  // default — initCamera_ issues no sensor calls in that case, keeping default behavior byte-identical);
+  // >0 = manual (gain_ctrl on + exposure_ctrl off + aec_value in sensor register lines, 1..1200). False when
+  // no live sensor exists (camera never/lazily inited or de-inited): callers still store the value and ACK —
+  // initCamera_ re-asserts it on the next (re-)init, so nothing is lost.
+  bool applyExposureLive_(uint16_t exposure) {
+    sensor_t* s = esp_camera_sensor_get();
+    if (s == nullptr) {
+      return false;
+    }
+    if (exposure == 0) {
+      bool ok = true;
+      if (s->set_gain_ctrl != nullptr) {
+        ok = (s->set_gain_ctrl(s, 1) == 0) && ok;
+      }
+      if (s->set_exposure_ctrl != nullptr) {
+        ok = (s->set_exposure_ctrl(s, 1) == 0) && ok;
+      }
+      return ok;
+    }
+    bool ok = true;
+    if (s->set_gain_ctrl != nullptr) {
+      ok = (s->set_gain_ctrl(s, 1) == 0) && ok;
+    }
+    if (s->set_exposure_ctrl != nullptr) {
+      ok = (s->set_exposure_ctrl(s, 0) == 0) && ok;
+    }
+    if (s->set_aec_value != nullptr) {
+      ok = (s->set_aec_value(s, static_cast<int>(exposure)) == 0) && ok;
+    }
+    return ok;
+  }
+
+  // SET exposure plumbing shared by USB CLI and link CMD: clamp-store via the shared poc_config discipline,
+  // then apply live. Stored unconditionally — a not-yet-init camera picks it up in initCamera_. msg carries
+  // the ACK/NACK line; live-apply failure still ACKs (value stored, retried on next SET/init).
+  bool applyExposureCmd_(const char* val, char* msg, size_t cap) {
+    uartpoc::PocConfig probe = cfg_;
+    if (!uartpoc::parseSet("exposure", val, probe, msg, cap)) {
+      return false;
+    }
+    cfg_.exposure = probe.exposure;
+    if (camInit_ && camOk_ && !applyExposureLive_(cfg_.exposure)) {
+      LOG_W("POC", "exposure stored %u, live apply failed (retry on next SET/init)", cfg_.exposure);
+    }
+    return true;
+  }
+
+  // SET jpeg_quality plumbing shared by USB CLI and link CMD: clamp-store via the shared poc_config
+  // discipline, then re-init through switchFramesize_ — the ONE shared suspend/deinit/re-init path (no second
+  // copy of that discipline: quality re-inits at the current size so initCamera_ picks up the new value).
+  // Not-yet-init camera: store only, the lazy first mode-3 init applies it. Never bricks: switchFramesize_
+  // best-effort restores the old size on failure. msg carries the ACK/NACK line.
+  bool applyQualityCmd_(const char* val, char* msg, size_t cap) {
+    uartpoc::PocConfig probe = cfg_;
+    if (!uartpoc::parseSet("jpeg_quality", val, probe, msg, cap)) {
+      return false;
+    }
+    const uint8_t nq = probe.jpeg_quality;
+    if (nq == cfg_.jpeg_quality && camOk_) {
+      return true;  // Already there and healthy: msg already ACKs, no re-init glitch.
+    }
+    cfg_.jpeg_quality = nq;  // initCamera_ reads it: the re-init below applies it.
+    if (!camInit_) {
+      return true;  // Lazy init (first mode-3 tick) picks it up; ACK the stored value.
+    }
+    if (switchFramesize_(cfg_.framesize)) {
+      LOG_I("POC", "jpeg_quality now %u", nq);
       return true;
     }
     uartpoc::writeStr(msg, cap, "NACK camera_reinit_failed");
@@ -573,6 +797,21 @@ class PocManager {
         sendResp(fr.frameId, msg);
         return;
       }
+      if (uartpoc::keyEq(key, "exposure")) {
+        // Live AEC register write: parseSet alone must never apply it (it would store without applying).
+        char msg[64];
+        applyExposureCmd_(val, msg, sizeof(msg));
+        sendResp(fr.frameId, msg);
+        return;
+      }
+      if (uartpoc::keyEq(key, "jpeg_quality")) {
+        // Quality needs the camera re-init side effect: parseSet alone must never apply it (it would store
+        // without re-initing).
+        char msg[64];
+        applyQualityCmd_(val, msg, sizeof(msg));
+        sendResp(fr.frameId, msg);
+        return;
+      }
       const bool isBaud = uartpoc::keyEq(key, "baud");
       char msg[64];
       // Validate first WITHOUT applying (baud needs the deferred switch).
@@ -614,19 +853,19 @@ class PocManager {
         sendResp(fr.frameId, "NACK bad_value");
         return;
       }
-      char kv[96];
+      char kv[128];  // GET-all line grew with the exposure/jpeg_quality tokens (~98 worst case).
       uartpoc::formatGet(cfg_, key, kv, sizeof(kv));
       if (startsWith_(kv, "NACK")) {
         sendResp(fr.frameId, kv);
         return;
       }
-      char msg[112];
+      char msg[144];  // "ACK " + worst-case GET-all line + NUL (~103); sized so snprintf never truncates (-Werror).
       snprintf(msg, sizeof(msg), "ACK %s", kv);
       sendResp(fr.frameId, msg);
       return;
     }
     if (isWord_(p, "STATS")) {
-      char msg[192];
+      char msg[224];  // Worst-case line grew with the txdrop token (~175); sized so snprintf never truncates.
       buildStats_(msg, sizeof(msg));
       sendResp(fr.frameId, msg);
       return;
@@ -676,6 +915,26 @@ class PocManager {
         }
         return;
       }
+      if (uartpoc::keyEq(key, "exposure")) {
+        // Same live path as the link CMD: never store without applying.
+        char msg[64];
+        if (applyExposureCmd_(val, msg, sizeof(msg))) {
+          LOG_I("POC", "%s", msg);
+        } else {
+          LOG_W("POC", "%s", msg);
+        }
+        return;
+      }
+      if (uartpoc::keyEq(key, "jpeg_quality")) {
+        // Same re-init path as the link CMD: never store without re-initing.
+        char msg[64];
+        if (applyQualityCmd_(val, msg, sizeof(msg))) {
+          LOG_I("POC", "%s", msg);
+        } else {
+          LOG_W("POC", "%s", msg);
+        }
+        return;
+      }
       char msg[64];
       if (!parseLocalSet(key, val)) {
         uartpoc::PocConfig probe = cfg_;
@@ -698,13 +957,13 @@ class PocManager {
         LOG_W("POC", "NACK bad_value");
         return;
       }
-      char kv[96];
+      char kv[128];  // GET-all line grew with the exposure/jpeg_quality tokens (~98 worst case).
       uartpoc::formatGet(cfg_, key, kv, sizeof(kv));
       LOG_I("POC", "%s", kv);
       return;
     }
     if (isWord_(line, "STATS")) {
-      char msg[192];
+      char msg[224];  // Worst-case line grew with the txdrop token (~175); sized so snprintf never truncates.
       buildStats_(msg, sizeof(msg));
       LOG_I("POC", "%s", msg);
       return;
@@ -724,7 +983,8 @@ class PocManager {
       LOG_I("POC",
             "keys: chunk|chunk_bytes 16..1024 pace|pace_us 0..50000 baud "
             "9600|57600|115200|460800|921600|1M|1.5M|2M|3M|4M|5M (230400 BANNED) mode "
-            "0..3 fps 1..30 fec|fec_k 0..4 framesize qvga|vga|svga|xga|sxga|uxga|qxga (mode-3 re-init)");
+            "0..3 fps 1..30 fec|fec_k 0..4 exposure 0..1200 jpeg_quality 10..30 "
+            "framesize qvga|vga|svga|xga|sxga|uxga|qxga (mode-3: framesize/quality re-init, exposure live)");
       LOG_I("POC", "selftest: SELFTEST MEM <mode 0-3> <chunk 16-1024> <pace 0-50000> <nframes 1-50>");
       LOG_I("POC", "selftest: SELFTEST WIRE <baud> <mode> <chunk> <pace> <nframes 1-50> (needs TX12-RX13 jumper)");
       LOG_I("POC", "selftest: SELFTEST SWEEP [QUICK|FULL] (WIRE matrix, USB stays 115200)");
@@ -740,10 +1000,11 @@ class PocManager {
   }
 
   // Local SET: baud switches the UART immediately (operator-owned); rest apply.
-  // framesize is REFUSED here by design: it must go through applyFramesizeCmd_
-  // (camera re-init), never a bare store.
+  // framesize/jpeg_quality/exposure are REFUSED here by design: framesize + jpeg_quality must go through
+  // their shared re-init path (applyFramesizeCmd_/applyQualityCmd_), exposure through its live-apply path
+  // (applyExposureCmd_) — never a bare store.
   bool parseLocalSet(const char* key, const char* val) {
-    if (uartpoc::keyEq(key, "framesize")) {
+    if (uartpoc::keyEq(key, "framesize") || uartpoc::keyEq(key, "exposure") || uartpoc::keyEq(key, "jpeg_quality")) {
       return false;
     }
     uartpoc::PocConfig probe = cfg_;
@@ -1433,15 +1694,17 @@ class PocManager {
 
   void buildStats_(char* out, size_t cap) {
     const size_t intFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-    // txp (parity chunks) is appended LAST: the existing field order never moves.
+    // txp (parity chunks) then txdrop (stale-frame drops) are appended LAST:
+    // the existing field order never moves.
     snprintf(out, cap,
              "STATS txf=%lu txc=%lu txb=%lu rxcmd=%lu rxe=%lu mode=%u chunk=%u pace=%lu baud=%lu fps=%u intfree=%u "
-             "txp=%lu",
+             "txp=%lu txdrop=%lu",
              static_cast<unsigned long>(txFrames_), static_cast<unsigned long>(txChunks_),
              static_cast<unsigned long>(txBytes_), static_cast<unsigned long>(rxCmds_),
              static_cast<unsigned long>(rxInvalid_), cfg_.mode, cfg_.chunk_bytes,
              static_cast<unsigned long>(cfg_.pace_us), static_cast<unsigned long>(currentBaud_()), cfg_.fps,
-             static_cast<unsigned>(intFree), static_cast<unsigned long>(txParity_));
+             static_cast<unsigned>(intFree), static_cast<unsigned long>(txParity_),
+             static_cast<unsigned long>(txDropStale_));
   }
 
   static bool startsWith_(const char* s, const char* prefix) {
@@ -1524,15 +1787,18 @@ class PocManager {
   uint32_t lastHbMs_;
   uint32_t txFrames_;
   uint32_t txChunks_;
-  uint32_t txParity_;  // Parity CHUNKs only (txChunks_ stays data-only; txp is appended LAST in STATS).
+  uint32_t txParity_;     // Parity CHUNKs only (txChunks_ stays data-only; txp sits before txdrop in STATS).
+  uint32_t txDropStale_;  // Behind-drops: stale fb returned unshipped (STATS txdrop= appended LAST).
   uint32_t txBytes_;
   uint32_t rxCmds_;
   uint32_t rxInvalid_;
   char usbBuf_[96];
   size_t usbLen_;
   char cmdBuf_[160];
-  TaskHandle_t genTask_;
-  SemaphoreHandle_t txMutex_;  // Serializes ALL Serial2 TX (generator task vs loop task).
+  std::atomic<camera_fb_t*> pendingFb_;  // Single pending camera fb across gen ticks (PSRAM, driver-owned).
+  std::atomic<bool> camBusy_;            // True while pumpPending_ owns the fb (switch handshake reads it).
+  uint16_t pendingFid_;                  // FrameId stored at grab, shipped at pump (gen-task-confined).
+  SemaphoreHandle_t txMutex_;            // Serializes ALL Serial2 TX (generator task vs loop task).
 };
 
 #endif  // ARDUINO

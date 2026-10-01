@@ -698,7 +698,8 @@ class PocLink {
       uartpoc::PocConfig probe = cfg_;
       // Note: fec_k is accepted-but-inert on S3 (parseSet stores it, but S3
       // never emits parity — S3 is the FEC-RX side only; recovery consumes
-      // Head parity regardless of this knob).
+      // Head parity regardless of this knob). exposure/jpeg_quality are likewise
+      // accepted-but-inert here (camera lives on Head; set them via HEAD SET).
       if (uartpoc::parseSet(key, val, probe, msg, sizeof(msg))) {
         cfg_ = probe;
       }
@@ -711,7 +712,7 @@ class PocLink {
         LOG_W("POC", "NACK bad_value");
         return;
       }
-      char kv[96];
+      char kv[128];  // GET-all line grew with the exposure/jpeg_quality tokens (~98 worst case).
       uartpoc::formatGet(cfg_, key, kv, sizeof(kv));
       LOG_I("POC", "%s", kv);
       return;
@@ -740,7 +741,9 @@ class PocLink {
       LOG_I("POC",
             "keys: chunk|chunk_bytes 16..1024 pace|pace_us 0..50000 baud <list incl 1M-5M> mode 0..3 fps 1..30 "
             "fec|fec_k 0..4");
-      LOG_I("POC", "keys (Head-side via HEAD SET): framesize qvga|vga|svga|xga|sxga|uxga|qxga (mode-3 re-init)");
+      LOG_I("POC",
+            "keys (Head-side via HEAD SET): framesize qvga|vga|svga|xga|sxga|uxga|qxga (mode-3 re-init) "
+            "exposure 0..1200 (live) jpeg_quality 10..30 (re-init)");
       LOG_I("POC",
             "selftest: SELFTEST WIRE <baud> <mode 0-2> <chunk 16-1024> <pace 0-50000> <nframes 1-50> (needs "
             "TX17-RX18 jumper, CAM off)");

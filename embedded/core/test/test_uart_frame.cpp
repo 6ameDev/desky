@@ -342,7 +342,9 @@ void test_uart_config_get() {
   cfg.baud = 460800;
   cfg.mode = 2;
   cfg.fps = 5;
-  TEST_ASSERT_EQUAL_UINT8(0, cfg.fec_k);  // Default: passthrough.
+  TEST_ASSERT_EQUAL_UINT8(0, cfg.fec_k);          // Default: passthrough.
+  TEST_ASSERT_EQUAL_UINT16(0, cfg.exposure);      // Default: auto AEC.
+  TEST_ASSERT_EQUAL_UINT8(16, cfg.jpeg_quality);  // Default: sane mid quality.
   char out[128];
   uartpoc::formatGet(cfg, "chunk", out, sizeof(out));
   TEST_ASSERT_EQUAL_STRING("chunk 64", out);
@@ -350,16 +352,32 @@ void test_uart_config_get() {
   TEST_ASSERT_EQUAL_STRING("baud 460800", out);
   uartpoc::formatGet(cfg, "fec", out, sizeof(out));
   TEST_ASSERT_EQUAL_STRING("fec 0", out);
+  uartpoc::formatGet(cfg, "exposure", out, sizeof(out));
+  TEST_ASSERT_EQUAL_STRING("exposure 0", out);
+  uartpoc::formatGet(cfg, "jpeg_quality", out, sizeof(out));
+  TEST_ASSERT_EQUAL_STRING("jpeg_quality 16", out);
   uartpoc::formatGet(cfg, "framesize", out, sizeof(out));
   TEST_ASSERT_EQUAL_STRING("framesize qvga", out);
   uartpoc::formatGet(cfg, "all", out, sizeof(out));
-  TEST_ASSERT_EQUAL_STRING("chunk 64 pace 500 baud 460800 mode 2 fps 5 fec 0 framesize qvga", out);
+  TEST_ASSERT_EQUAL_STRING("chunk 64 pace 500 baud 460800 mode 2 fps 5 fec 0 exposure 0 jpeg_quality 16 framesize qvga",
+                           out);
+  const char* tail = strstr(out, "framesize ");
+  TEST_ASSERT_NOT_NULL(tail);  // framesize stays LAST for older parsers.
+  TEST_ASSERT_EQUAL_STRING("framesize qvga", tail);
   cfg.framesize = 5;
   cfg.fec_k = 2;
+  cfg.exposure = 1200;
+  cfg.jpeg_quality = 10;
   uartpoc::formatGet(cfg, "framesize", out, sizeof(out));
   TEST_ASSERT_EQUAL_STRING("framesize uxga", out);
   uartpoc::formatGet(cfg, "all", out, sizeof(out));
-  TEST_ASSERT_EQUAL_STRING("chunk 64 pace 500 baud 460800 mode 2 fps 5 fec 2 framesize uxga", out);
+  TEST_ASSERT_EQUAL_STRING(
+      "chunk 64 pace 500 baud 460800 mode 2 fps 5 fec 2 exposure 1200 jpeg_quality 10 framesize "
+      "uxga",
+      out);
+  tail = strstr(out, "framesize ");
+  TEST_ASSERT_NOT_NULL(tail);
+  TEST_ASSERT_EQUAL_STRING("framesize uxga", tail);
   uartpoc::formatGet(cfg, "nope", out, sizeof(out));
   TEST_ASSERT_EQUAL_STRING("NACK unknown_key", out);
 }
@@ -437,6 +455,54 @@ void test_uart_config_set_fec() {
   TEST_ASSERT_EQUAL_STRING("fec 0", out);
   uartpoc::formatGet(cfg, "fec_k", out, sizeof(out));
   TEST_ASSERT_EQUAL_STRING("fec 0", out);
+}
+
+void test_uart_config_set_exposure() {
+  uartpoc::PocConfig cfg;
+  TEST_ASSERT_EQUAL_UINT16(0, cfg.exposure);  // Default: auto AEC (today's behavior).
+  char msg[64];
+  TEST_ASSERT_TRUE(uartpoc::parseSet("exposure", "0", cfg, msg, sizeof(msg)));  // 0 stays 0 (auto).
+  TEST_ASSERT_EQUAL_UINT16(0, cfg.exposure);
+  TEST_ASSERT_EQUAL_STRING("ACK exposure 0", msg);
+  TEST_ASSERT_TRUE(uartpoc::parseSet("exposure", "300", cfg, msg, sizeof(msg)));
+  TEST_ASSERT_EQUAL_UINT16(300, cfg.exposure);
+  TEST_ASSERT_EQUAL_STRING("ACK exposure 300", msg);
+  TEST_ASSERT_TRUE(uartpoc::parseSet("exposure", "99999", cfg, msg, sizeof(msg)));  // Clamp to the 1200-line ceiling.
+  TEST_ASSERT_EQUAL_UINT16(1200, cfg.exposure);
+  TEST_ASSERT_EQUAL_STRING("ACK exposure 1200", msg);
+  TEST_ASSERT_FALSE(uartpoc::parseSet("exposure", "x", cfg, msg, sizeof(msg)));  // Non-numeric rejects.
+  TEST_ASSERT_EQUAL_STRING("NACK bad_value", msg);
+  TEST_ASSERT_EQUAL_UINT16(1200, cfg.exposure);  // Rejected SET leaves config untouched.
+  TEST_ASSERT_FALSE(uartpoc::parseSet("exposure", "", cfg, msg, sizeof(msg)));
+  TEST_ASSERT_FALSE(uartpoc::parseSet("exposure", "-1", cfg, msg, sizeof(msg)));
+  TEST_ASSERT_FALSE(uartpoc::parseSet("exposure", "42949672960", cfg, msg, sizeof(msg)));  // u32 overflow.
+  char out[32];
+  uartpoc::formatGet(cfg, "exposure", out, sizeof(out));
+  TEST_ASSERT_EQUAL_STRING("exposure 1200", out);
+}
+
+void test_uart_config_set_quality() {
+  uartpoc::PocConfig cfg;
+  TEST_ASSERT_EQUAL_UINT8(16, cfg.jpeg_quality);  // Default: sane mid quality.
+  char msg[64];
+  TEST_ASSERT_TRUE(uartpoc::parseSet("jpeg_quality", "16", cfg, msg, sizeof(msg)));
+  TEST_ASSERT_EQUAL_UINT8(16, cfg.jpeg_quality);
+  TEST_ASSERT_EQUAL_STRING("ACK jpeg_quality 16", msg);
+  TEST_ASSERT_TRUE(uartpoc::parseSet("jpeg_quality", "9", cfg, msg, sizeof(msg)));  // Clamp 10..30.
+  TEST_ASSERT_EQUAL_UINT8(10, cfg.jpeg_quality);
+  TEST_ASSERT_EQUAL_STRING("ACK jpeg_quality 10", msg);
+  TEST_ASSERT_TRUE(uartpoc::parseSet("jpeg_quality", "99", cfg, msg, sizeof(msg)));
+  TEST_ASSERT_EQUAL_UINT8(30, cfg.jpeg_quality);
+  TEST_ASSERT_EQUAL_STRING("ACK jpeg_quality 30", msg);
+  TEST_ASSERT_FALSE(uartpoc::parseSet("jpeg_quality", "x", cfg, msg, sizeof(msg)));  // Non-numeric rejects.
+  TEST_ASSERT_EQUAL_STRING("NACK bad_value", msg);
+  TEST_ASSERT_EQUAL_UINT8(30, cfg.jpeg_quality);  // Rejected SET leaves config untouched.
+  TEST_ASSERT_FALSE(uartpoc::parseSet("jpeg_quality", "", cfg, msg, sizeof(msg)));
+  TEST_ASSERT_FALSE(uartpoc::parseSet("jpeg_quality", "-1", cfg, msg, sizeof(msg)));
+  TEST_ASSERT_FALSE(uartpoc::parseSet("jpeg_quality", "42949672960", cfg, msg, sizeof(msg)));  // u32 overflow.
+  char out[32];
+  uartpoc::formatGet(cfg, "jpeg_quality", out, sizeof(out));
+  TEST_ASSERT_EQUAL_STRING("jpeg_quality 30", out);
 }
 
 void test_fec_emit_plan() {
@@ -1027,7 +1093,7 @@ void makeParity(uint8_t n, size_t stride, size_t lastLen, uint8_t data[8][64], u
 // order here — these helpers must stay byte-identical to the firmware format
 // strings, and any firmware reorder must update them (and the tests below):
 //   S3:   "... up=<ms> rec=<n> par=<n>" — rec then par appended LAST.
-//   Head: "... intfree=<n> txp=<n>" — txp appended LAST.
+//   Head: "... intfree=<n> txp=<n> txdrop=<n>" — txdrop appended LAST.
 void formatS3Stats(char* out, size_t cap, uint32_t ok, uint32_t chunks, uint32_t herr, uint32_t perr, uint32_t drops,
                    uint32_t big, uint32_t ooo, uint32_t dups, uint32_t ovf, uint32_t hb, uint32_t bytes, uint32_t kbps,
                    uint32_t kbs, uint32_t intfree, uint32_t up, uint32_t rec, uint32_t prx) {
@@ -1044,14 +1110,15 @@ void formatS3Stats(char* out, size_t cap, uint32_t ok, uint32_t chunks, uint32_t
 
 void formatHeadStats(char* out, size_t cap, uint32_t txf, uint32_t txc, uint32_t txb, uint32_t rxcmd, uint32_t rxe,
                      uint32_t mode, uint32_t chunk, uint32_t pace, uint32_t baud, uint32_t fps, uint32_t intfree,
-                     uint32_t txp) {
+                     uint32_t txp, uint32_t txdrop) {
   snprintf(out, cap,
            "STATS txf=%lu txc=%lu txb=%lu rxcmd=%lu rxe=%lu mode=%u chunk=%u pace=%lu baud=%lu fps=%u intfree=%u "
-           "txp=%lu",
+           "txp=%lu txdrop=%lu",
            static_cast<unsigned long>(txf), static_cast<unsigned long>(txc), static_cast<unsigned long>(txb),
            static_cast<unsigned long>(rxcmd), static_cast<unsigned long>(rxe), static_cast<unsigned>(mode),
            static_cast<unsigned>(chunk), static_cast<unsigned long>(pace), static_cast<unsigned long>(baud),
-           static_cast<unsigned>(fps), static_cast<unsigned>(intfree), static_cast<unsigned long>(txp));
+           static_cast<unsigned>(fps), static_cast<unsigned>(intfree), static_cast<unsigned long>(txp),
+           static_cast<unsigned long>(txdrop));
 }
 
 }  // namespace s3fec
@@ -1425,7 +1492,7 @@ void test_s3fec_parrx_counts_accepted_stores() {
 
 void test_s3fec_stats_order_appended_last() {
   // STATS field order: S3 appends rec= then par= LAST (existing order
-  // undisturbed); Head appends txp= LAST. See the formatS3Stats /
+  // undisturbed); Head appends txp= then txdrop= LAST. See the formatS3Stats /
   // formatHeadStats contract mirrors above for the firmware sites.
   char s3[288];
   s3fec::formatS3Stats(s3, sizeof(s3), 1, 4, 0, 1, 0, 0, 0, 0, 0, 2, 128, 1, 0, 50000, 1000, 1, 2);
@@ -1442,16 +1509,19 @@ void test_s3fec_stats_order_appended_last() {
   TEST_ASSERT_TRUE(up < rec && rec < par);  // rec/par trail every older field; par trails rec.
   TEST_ASSERT_NULL(strchr(par + 1, ' '));   // par= is the final token.
   char head[192];
-  s3fec::formatHeadStats(head, sizeof(head), 7, 64, 4096, 3, 0, 1, 128, 1000, 115200, 10, 49000, 8);
+  s3fec::formatHeadStats(head, sizeof(head), 7, 64, 4096, 3, 0, 1, 128, 1000, 115200, 10, 49000, 8, 1);
   TEST_ASSERT_EQUAL_STRING(
-      "STATS txf=7 txc=64 txb=4096 rxcmd=3 rxe=0 mode=1 chunk=128 pace=1000 baud=115200 fps=10 intfree=49000 txp=8",
+      "STATS txf=7 txc=64 txb=4096 rxcmd=3 rxe=0 mode=1 chunk=128 pace=1000 baud=115200 fps=10 intfree=49000 txp=8 "
+      "txdrop=1",
       head);
   const char* intfree = strstr(head, " intfree=");
   const char* txp = strstr(head, " txp=");
+  const char* txdrop = strstr(head, " txdrop=");
   TEST_ASSERT_NOT_NULL(intfree);
   TEST_ASSERT_NOT_NULL(txp);
-  TEST_ASSERT_TRUE(intfree < txp);         // txp trails every older field.
-  TEST_ASSERT_NULL(strchr(txp + 1, ' '));  // txp= is the final token.
+  TEST_ASSERT_NOT_NULL(txdrop);
+  TEST_ASSERT_TRUE(intfree < txp && txp < txdrop);  // txp/txdrop trail every older field; txdrop trails txp.
+  TEST_ASSERT_NULL(strchr(txdrop + 1, ' '));        // txdrop= is the final token.
 }
 
 void test_s3fec_reset_clears_rec() {
@@ -1490,4 +1560,138 @@ void test_s3fec_reset_clears_rec() {
   TEST_ASSERT_EQUAL_UINT32(0, rx.drops);
   TEST_ASSERT_EQUAL_UINT32(0, rx.big);
   TEST_ASSERT_EQUAL_UINT8(0, rx.pn);
+}
+
+// ── Pending-fb overlap mirror (Head poc_manager.h slot state machine) ──
+// Arduino-free model of the single pendingFb_ slot: fake fb ids stand in for
+// camera_fb_t*; the driver queue (cap 2 = fb_count=2) feeds grabNext_; pump,
+// hold-entry, and switch-entry mirror the firmware paths 1:1 (grab-two
+// behind check, return-on-all-paths, txdrop appended LAST in STATS). Any
+// firmware lifetime change must update this mirror (both suites share it, so
+// this block is identical core<->head; both runners keep symmetric counts).
+namespace pendfb {
+
+struct Slot {
+  static const int kEmpty = -1;
+  static const int kMaxIds = 8;
+  int pending = kEmpty;  // Fake fb id held across ticks (kEmpty = none).
+  uint32_t frames = 0;   // Completed pumps (txFrames_ mirror).
+  uint32_t drops = 0;    // Stale drops (txDropStale_ mirror).
+  int ret[kMaxIds];      // Return-count per fake id (double-return detector).
+
+  Slot() {
+    for (int i = 0; i < kMaxIds; ++i) {
+      ret[i] = 0;
+    }
+  }
+};
+
+inline void release(Slot& s, int id) { ++s.ret[id]; }  // esp_camera_fb_return stand-in.
+
+// Mirrors PocManager::grabNext_: adopt the oldest queued frame; a second
+// queued frame means behind -> return the stale older one, count it.
+inline void grabNext(Slot& s, int first, int second) {  // -1 = none queued.
+  if (first < 0) {
+    return;
+  }
+  TEST_ASSERT_EQUAL_INT(Slot::kEmpty, s.pending);  // Pump-then-grab: slot empty here.
+  if (second >= 0) {
+    release(s, first);
+    ++s.drops;
+    first = second;
+  }
+  s.pending = first;
+}
+
+// Mirrors pumpPending_ completion: last chunk staged -> return, count frame.
+inline void pump(Slot& s) {
+  if (s.pending < 0) {
+    return;
+  }
+  const int id = s.pending;
+  s.pending = Slot::kEmpty;
+  release(s, id);
+  ++s.frames;
+}
+
+// Mirrors the tick-head hold drop and switchFramesize_ return-and-drop:
+// return pending, counted nowhere (never shipped).
+inline void holdEntry(Slot& s) {
+  if (s.pending >= 0) {
+    const int id = s.pending;
+    s.pending = Slot::kEmpty;
+    release(s, id);
+  }
+}
+
+inline void switchEntry(Slot& s) { holdEntry(s); }
+
+}  // namespace pendfb
+
+void test_pendingfb_send_completes_returns() {
+  // Steady state: grab one (driver kept up) -> pump completes -> the fb is
+  // returned exactly once, the frame counted, nothing dropped.
+  pendfb::Slot s;
+  pendfb::grabNext(s, 3, -1);
+  TEST_ASSERT_EQUAL_INT(3, s.pending);
+  pendfb::pump(s);
+  TEST_ASSERT_EQUAL_INT(pendfb::Slot::kEmpty, s.pending);
+  TEST_ASSERT_EQUAL_UINT32(1, s.frames);
+  TEST_ASSERT_EQUAL_UINT32(0, s.drops);
+  TEST_ASSERT_EQUAL_INT(1, s.ret[3]);
+}
+
+void test_pendingfb_stale_dropped_counted() {
+  // Behind: while frame 1 pumped, the driver queued 2 AND 3 -> the stale
+  // older frame (2) is returned + counted, the newer (3) ships.
+  pendfb::Slot s;
+  pendfb::grabNext(s, 1, -1);
+  pendfb::pump(s);  // Tick 1 completes: frames=1, fb 1 returned.
+  TEST_ASSERT_EQUAL_UINT32(1, s.frames);
+  pendfb::grabNext(s, 2, 3);  // Tick 2 grab: behind.
+  TEST_ASSERT_EQUAL_UINT32(1, s.drops);
+  TEST_ASSERT_EQUAL_INT(1, s.ret[2]);  // Stale returned...
+  TEST_ASSERT_EQUAL_INT(0, s.ret[3]);  // ...newer not yet.
+  TEST_ASSERT_EQUAL_INT(3, s.pending);
+  pendfb::pump(s);
+  TEST_ASSERT_EQUAL_UINT32(2, s.frames);
+  TEST_ASSERT_EQUAL_INT(1, s.ret[1]);
+  TEST_ASSERT_EQUAL_INT(1, s.ret[2]);
+  TEST_ASSERT_EQUAL_INT(1, s.ret[3]);
+  TEST_ASSERT_EQUAL_INT(pendfb::Slot::kEmpty, s.pending);
+}
+
+void test_pendingfb_switch_entry_returns_pending() {
+  // A fb held across the tick boundary (grabbed, not yet pumped) is returned
+  // by the switch entry before any deinit — uncounted either way.
+  pendfb::Slot s;
+  pendfb::grabNext(s, 4, -1);
+  pendfb::switchEntry(s);
+  TEST_ASSERT_EQUAL_INT(pendfb::Slot::kEmpty, s.pending);
+  TEST_ASSERT_EQUAL_INT(1, s.ret[4]);
+  TEST_ASSERT_EQUAL_UINT32(0, s.frames);
+  TEST_ASSERT_EQUAL_UINT32(0, s.drops);
+}
+
+void test_pendingfb_no_double_return() {
+  // Mixed journey over ids 0..5 (completes + stale + hold + switch drops):
+  // every touched fb is returned EXACTLY once, the slot ends empty.
+  pendfb::Slot s;
+  pendfb::grabNext(s, 0, -1);
+  pendfb::pump(s);            // Complete: frames=1.
+  pendfb::grabNext(s, 1, 2);  // Behind: fb 1 stale (drops=1), fb 2 pending.
+  pendfb::holdEntry(s);       // Hold entry: fb 2 returned, uncounted.
+  pendfb::grabNext(s, 3, 4);  // Behind again: fb 3 stale (drops=2), fb 4 pending.
+  pendfb::switchEntry(s);     // Switch entry: fb 4 returned, uncounted.
+  pendfb::grabNext(s, 5, -1);
+  pendfb::pump(s);  // Complete: frames=2.
+  TEST_ASSERT_EQUAL_UINT32(2, s.frames);
+  TEST_ASSERT_EQUAL_UINT32(2, s.drops);
+  TEST_ASSERT_EQUAL_INT(pendfb::Slot::kEmpty, s.pending);
+  for (int i = 0; i <= 5; ++i) {
+    TEST_ASSERT_EQUAL_INT(1, s.ret[i]);
+  }
+  for (int i = 6; i < pendfb::Slot::kMaxIds; ++i) {
+    TEST_ASSERT_EQUAL_INT(0, s.ret[i]);
+  }
 }

@@ -167,8 +167,13 @@ on UART (TRM max 5M, practical ≤2M); needs SPI or scope cut. Robot need
     saturated @2M (pace 0 and pace 500) beyond-K. Rules: quiet-switch-then-
     saturate (never switch saturated); power-cycle Head on
     ok=0/drops-climbing/herr=perr=0. Payload-integrity beyond counters
-    unevaluated. (Transcripts `/tmp/poc_fec_meas_cells_*.log`,
-    `/tmp/poc_fec_gentle2_20261001_165621.log`.)
+    unevaluated. CAUTION 2026-10-01: saturated-1.5M is RUN-VARIABLE — chunk-1024
+    delivered 98 drops=0 one run, stormed (5.66fps, drops 55) the next with
+    only quality/exposure/fps confounds changed; small-chunk ladder best 6fps.
+    20fps NOT demonstrated; needs controlled A/B before any operating-point
+    claim. (Transcripts `/tmp/poc_fec_meas_cells_*.log`,
+    `/tmp/poc_fec_gentle2_20261001_165621.log`,
+    `/tmp/poc_fps_bigchunk_20261001_182935.log`.)
   - [ ] Auto-pace (fps-derived, manual `pace_us` override kept).
   - [ ] Head progressive-drop (overrun check + mid-frame abort).
   - [ ] AQC: quality knob + S3 window + hysteresis/dwell + re-init guard.
@@ -183,3 +188,8 @@ on UART (TRM max 5M, practical ≤2M); needs SPI or scope cut. Robot need
 - V2 shells: `git checkout v2 -- embedded/head/src/main.cpp embedded/core/src/main.cpp`.
 - Self-test entry: `SELFTEST SWEEP QUICK` (18 combos) then `FULL` (93 base + HIGH tier).
 - V2 consoles must document the S3-reboot-on-open trap and the bridge-park rule.
+- FLASH RULE (standing): flashing Head OR Core requires the owner's explicit
+  go-ahead each time — never flash on assumed permission, and every subagent
+  brief must carry this rule. Head flashes need the link detached (GPIO12
+  strapping); S3 flashes need explicit `--upload-port` (auto-detect picks the
+  wrong node).

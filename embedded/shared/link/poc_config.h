@@ -2,7 +2,7 @@
 // UART POC knobs — Arduino-free, header-only, namespace uartpoc.
 //
 // Runtime tuning for the poc-comm-link spike (fragment size, pacing, baud,
-// generator mode, frame rate). ASCII wire convention for CMD/RESP payloads:
+// generator mode, frame rate, camera exposure/quality). ASCII wire convention for CMD/RESP payloads:
 //   CMD:  "SET <k> <v>" / "GET <k>" / "GET all" / "STATS"
 //   RESP: "ACK <k> <v>" / "NACK <reason>"
 //
@@ -23,8 +23,10 @@ struct PocConfig {
   uint32_t baud = 115200;
   uint8_t mode = 0;
   uint16_t fps = 10;
-  uint8_t framesize = 0;  // Camera resolution index 0..6 (qvga default); mode-3 source only.
-  uint8_t fec_k = 0;      // Parity chunks per frame 0..kMaxParity (0 = passthrough, wire-identical to task-1).
+  uint8_t framesize = 0;      // Camera resolution index 0..6 (qvga default); mode-3 source only.
+  uint8_t fec_k = 0;          // Parity chunks per frame 0..kMaxParity (0 = passthrough, wire-identical to task-1).
+  uint16_t exposure = 0;      // Manual AEC value in sensor register lines (0 = auto default); mode-3 source only.
+  uint8_t jpeg_quality = 16;  // JPEG quality, sane 10..30 (driver 0..63, lower = higher quality); AQC owns this later.
 };
 
 enum PocMode : uint8_t { MODE_TEXT = 0, MODE_SYNTH_RAMP = 1, MODE_SYNTH_JPEG = 2, MODE_HW_CAM = 3, MODE_COUNT = 4 };
@@ -41,6 +43,10 @@ constexpr uint8_t kFramesizeMin = 0;          // qvga
 constexpr uint8_t kFramesizeMax = 6;          // qxga
 constexpr uint8_t kFecMin = 0;                // passthrough
 constexpr uint8_t kFecMax = fec::kMaxParity;  // 4: clamped at the SET edge, re-clamped in fec::planEmit.
+constexpr uint16_t kExposureMin = 0;          // 0 = auto AEC (default, today's behavior byte-identical).
+constexpr uint16_t kExposureMax = 1200;       // OV3660 aec_value ceiling, sensor register lines (see sensor.h).
+constexpr uint8_t kQualityMin = 10;           // Sane floor (driver allows 0..63, lower = higher quality).
+constexpr uint8_t kQualityMax = 30;           // Sane ceiling; AQC will own this knob later (no AQC logic now).
 
 inline bool isValidBaud(uint32_t b) {
   // NOTE: 230400 is BANNED (see UART_COMM_POC.md §3) — rejected here so every
@@ -295,13 +301,26 @@ inline bool parseSet(const char* key, const char* val, PocConfig& cfg, char* msg
     writeAck(msg, msgLen, "fec", f);
     return true;
   }
+  if (keyEq(key, "exposure")) {
+    const uint32_t e = clampU32(v, kExposureMin, kExposureMax);
+    cfg.exposure = static_cast<uint16_t>(e);
+    writeAck(msg, msgLen, "exposure", e);
+    return true;
+  }
+  if (keyEq(key, "jpeg_quality")) {
+    const uint32_t q = clampU32(v, kQualityMin, kQualityMax);
+    cfg.jpeg_quality = static_cast<uint8_t>(q);
+    writeAck(msg, msgLen, "jpeg_quality", q);
+    return true;
+  }
   writeStr(msg, msgLen, "NACK unknown_key");
   return false;
 }
 
 // Render one knob ("chunk 128") or all ("chunk 128 pace 1000 baud 115200 mode
-// 0 fps 10 fec 0 framesize qvga"); unknown key -> "NACK unknown_key". The fec
-// token sits BEFORE framesize; framesize stays LAST so older parsers keep working.
+// 0 fps 10 fec 0 exposure 0 jpeg_quality 16 framesize qvga"); unknown key ->
+// "NACK unknown_key". The fec/exposure/jpeg_quality tokens sit BEFORE framesize;
+// framesize stays LAST so older parsers keep working.
 inline void formatGet(const PocConfig& cfg, const char* key, char* out, size_t outLen) {
   if (keyEq(key, "chunk") || keyEq(key, "chunk_bytes")) {
     writeKV(out, outLen, "chunk", cfg.chunk_bytes);
@@ -327,6 +346,14 @@ inline void formatGet(const PocConfig& cfg, const char* key, char* out, size_t o
     writeKV(out, outLen, "fec", cfg.fec_k);
     return;
   }
+  if (keyEq(key, "exposure")) {
+    writeKV(out, outLen, "exposure", cfg.exposure);
+    return;
+  }
+  if (keyEq(key, "jpeg_quality")) {
+    writeKV(out, outLen, "jpeg_quality", cfg.jpeg_quality);
+    return;
+  }
   if (keyEq(key, "framesize")) {
     writeStr(out, outLen, "framesize ");
     appendStr(out, outLen, framesizeName(clampFramesize(cfg.framesize)));
@@ -334,10 +361,10 @@ inline void formatGet(const PocConfig& cfg, const char* key, char* out, size_t o
   }
   if (keyEq(key, "all")) {
     writeKV(out, outLen, "chunk", cfg.chunk_bytes);
-    // Append " pace P baud B mode M fps F fec K" via small local writer.
-    const char* keys[5] = {" pace ", " baud ", " mode ", " fps ", " fec "};
-    const uint32_t vals[5] = {cfg.pace_us, cfg.baud, cfg.mode, cfg.fps, cfg.fec_k};
-    for (int k = 0; k < 5; ++k) {
+    // Append " pace P baud B mode M fps F fec K exposure E jpeg_quality Q" via small local writer.
+    const char* keys[7] = {" pace ", " baud ", " mode ", " fps ", " fec ", " exposure ", " jpeg_quality "};
+    const uint32_t vals[7] = {cfg.pace_us, cfg.baud, cfg.mode, cfg.fps, cfg.fec_k, cfg.exposure, cfg.jpeg_quality};
+    for (int k = 0; k < 7; ++k) {
       if (out == nullptr || outLen == 0) {
         return;
       }
