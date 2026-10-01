@@ -160,7 +160,15 @@ on UART (TRM max 5M, practical ≤2M); needs SPI or scope cut. Robot need
     intercept (4x1KB INTERNAL slots, never in reassembly accounting),
     recover-before-reset through normal push (COMPLETE honesty), `rec` counter
     (ok stays clean-only); gates 125/125 + 84/84.
-  - [ ] Sparse-2M then saturated-1.5M/2M frame-completion measures.
+  - [x] Sparse-2M then saturated-1.5M/2M frame-completion measures. DONE
+    2026-10-01: sparse K=2 @460800/@2M clean; Head mode-3 emit PROVEN direct
+    (txp=56 over ~28 K=2 frames); saturated K=2 @1.5M/pace-0: **ok+rec=98,
+    drops=0 vs K=0 control ok=0, drops=289** (same perr ~460) — FEC working;
+    saturated @2M (pace 0 and pace 500) beyond-K. Rules: quiet-switch-then-
+    saturate (never switch saturated); power-cycle Head on
+    ok=0/drops-climbing/herr=perr=0. Payload-integrity beyond counters
+    unevaluated. (Transcripts `/tmp/poc_fec_meas_cells_*.log`,
+    `/tmp/poc_fec_gentle2_20261001_165621.log`.)
   - [ ] Auto-pace (fps-derived, manual `pace_us` override kept).
   - [ ] Head progressive-drop (overrun check + mid-frame abort).
   - [ ] AQC: quality knob + S3 window + hysteresis/dwell + re-init guard.
