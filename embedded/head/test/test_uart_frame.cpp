@@ -682,3 +682,811 @@ void test_uart_reasm_stale_due() {
   // Same wrap, 131ms later > 100ms: due.
   TEST_ASSERT_TRUE(uartpoc::reasmStaleDue(true, 0xFFFFFFF0UL, 0x00000073UL, 100));
 }
+
+// ── S3 FEC-RX policy mirror (recover-before-reset) ──
+// Host mirror of the PocLink FEC-RX policy in core/src/middleware/poc_link.h:
+// parity intercepted before Reassembler (keyed by the active frameId, never
+// in reassembly accounting); recovery when LAST is known with
+// 1<=missing<=good parity, reconstructions re-pushed through the normal path
+// (COMPLETE fires honestly with the right total); rec-vs-clean counters;
+// STALE flushes parity (no cross-frame leakage). Stack storage stands in for
+// the firmware INTERNAL buffers; test strides never exceed kPRow.
+namespace s3fec {
+
+struct Rx {
+  static const size_t kPRow = 64;  // Parity staging row width (test stride cap).
+  uint8_t* slot;
+  size_t cap;
+  uint8_t* pbuf;  // 4 x kPRow parity staging (caller storage).
+  uartpoc::Reassembler r;
+  bool act;
+  uint16_t fid;
+  size_t stride;
+  bool haveLast;
+  uint16_t lastIdx;
+  uint16_t lastLen;
+  bool pend;
+  uint16_t pendIdx;
+  uint32_t bits[32];
+  bool phave;
+  uint16_t pfid;
+  uint8_t pn;
+  uint16_t pidx[4];
+  uint16_t plen[4];
+  uint32_t ok;      // Clean completions (framesOk_).
+  uint32_t rec;     // Recovery completions (recFec_).
+  uint32_t drops;   // STALE/DROPPED/ageout path.
+  uint32_t big;     // OVERSIZE subset of drops.
+  uint32_t bytes;   // Payload totals, clean + recovered identically.
+  uint32_t chunks;  // DATA chunks only (mirrors chunksRx_); parity never touches it.
+  uint32_t prx;     // Accepted parity stores (mirrors parRx_); ignored parity stays silent.
+
+  void attach(uint8_t* s, size_t c, uint8_t* pb) {
+    slot = s;
+    cap = c;
+    pbuf = pb;
+    r.attach(s, c);
+    reset();
+  }
+
+  void reset() {
+    act = false;
+    fid = 0;
+    stride = 0;
+    haveLast = false;
+    lastIdx = 0;
+    lastLen = 0;
+    pend = false;
+    pendIdx = 0;
+    for (size_t i = 0; i < uartpoc::Reassembler::kBitmapWords; ++i) {
+      bits[i] = 0;
+    }
+    phave = false;
+    pfid = 0;
+    pn = 0;
+    for (uint8_t i = 0; i < 4; ++i) {
+      pidx[i] = 0;
+      plen[i] = 0;
+    }
+    ok = rec = drops = big = bytes = chunks = prx = 0;
+    r.reset();
+  }
+
+  void parReset() {
+    phave = false;
+    pfid = 0;
+    pn = 0;
+    for (uint8_t i = 0; i < 4; ++i) {
+      pidx[i] = 0;
+      plen[i] = 0;
+    }
+  }
+
+  void dReset() {
+    act = false;
+    fid = 0;
+    stride = 0;
+    haveLast = false;
+    lastIdx = 0;
+    lastLen = 0;
+    pend = false;
+    pendIdx = 0;
+    for (size_t i = 0; i < uartpoc::Reassembler::kBitmapWords; ++i) {
+      bits[i] = 0;
+    }
+  }
+
+  void setBit(uint16_t idx) { bits[idx / 32] |= (1UL << (idx % 32)); }
+
+  bool isSet(uint16_t idx) const { return (bits[idx / 32] & (1UL << (idx % 32))) != 0; }
+
+  // Single entry mirroring PocLink::onFrame_ routing: IS_PARITY chunks
+  // intercept before reassembly, data flows to the Reassembler.
+  void feed(uint16_t f, uint16_t idx, uint8_t flags, const uint8_t* p, uint16_t len) {
+    if ((flags & uartpoc::fec::kFlagParity) != 0) {
+      feedParity(f, idx, p, len);
+      return;
+    }
+    ++chunks;  // DATA only (mirrors S3 chunksRx_): parity intercepts above, never counts.
+    size_t total = 0;
+    uartpoc::Reassembler::Push res = r.push(f, idx, flags, p, len, total);
+    if (res == uartpoc::Reassembler::Push::STALE) {
+      ++drops;
+      parReset();
+      dReset();
+      res = r.push(f, idx, flags, p, len, total);
+    }
+    sync(f);
+    if (res == uartpoc::Reassembler::Push::COMPLETE) {
+      ++ok;
+      bytes += static_cast<uint32_t>(total);
+      parReset();
+    } else if (res == uartpoc::Reassembler::Push::OVERSIZE) {
+      ++drops;
+      ++big;
+      parReset();
+    } else if (res == uartpoc::Reassembler::Push::DROPPED) {
+      ++drops;
+    } else if (res != uartpoc::Reassembler::Push::DUPLICATE) {  // ACCEPTED.
+      note(idx, flags, len);
+      recover();
+    }
+  }
+
+  void feedParity(uint16_t f, uint16_t idx, const uint8_t* p, uint16_t len) {
+    if (!act || f != fid) {
+      return;  // Non-active/older/post-done frame: ignore, no counter.
+    }
+    if (len == 0 || len > kPRow || p == nullptr) {
+      return;
+    }
+    if (!phave || pfid != f) {
+      parReset();
+      pfid = f;
+      phave = true;
+    }
+    if (pn >= 4) {
+      return;
+    }
+    for (uint8_t i = 0; i < pn; ++i) {
+      if (pidx[i] == idx) {
+        return;
+      }
+    }
+    for (uint16_t i = 0; i < len; ++i) {
+      pbuf[static_cast<size_t>(pn) * kPRow + i] = p[i];
+    }
+    pidx[pn] = idx;
+    plen[pn] = len;
+    ++pn;
+    ++prx;  // Accepted store only (mirrors S3 parRx_): duplicates/foreign/empty return above.
+    recover();
+  }
+
+  void stale() {  // Mirrors staleFlush_ firing.
+    if (!r.active()) {
+      return;
+    }
+    parReset();
+    dReset();
+    r.reset();
+    ++drops;
+  }
+
+  void sync(uint16_t f) {
+    if (!r.active()) {
+      dReset();
+      return;
+    }
+    if (!act || f != fid) {
+      if (phave && pfid != f) {
+        parReset();
+      }
+      dReset();
+      act = true;
+      fid = f;
+    }
+  }
+
+  void note(uint16_t idx, uint8_t flags, uint16_t len) {
+    const bool last = (flags & uartpoc::FLAG_LAST_CHUNK) != 0;
+    if (!last && stride == 0 && len > 0) {
+      stride = len;
+      if (pend) {
+        setBit(pendIdx);
+        pend = false;
+      }
+    }
+    if (last && idx == 0 && stride == 0) {
+      stride = (len > 0) ? len : 1;
+    }
+    if (last && stride == 0 && idx != 0) {
+      haveLast = true;
+      lastIdx = idx;
+      lastLen = len;
+      pend = true;
+      pendIdx = idx;
+      return;
+    }
+    setBit(idx);
+    if (last) {
+      haveLast = true;
+      lastIdx = idx;
+      lastLen = len;
+    }
+  }
+
+  void recover() {
+    if (!act || !haveLast || pend || stride == 0) {
+      return;
+    }
+    if (!phave || pfid != fid || pn == 0) {
+      return;
+    }
+    if (slot == nullptr) {
+      return;
+    }
+    const uint32_t n = static_cast<uint32_t>(lastIdx) + 1;
+    if (n > uartpoc::fec::kMaxData) {
+      return;
+    }
+    if (stride == 0 || stride > uartpoc::kMaxPayload) {
+      return;
+    }
+    if (n * stride > cap) {
+      return;  // Would OVERSIZE: the normal path flags big.
+    }
+    if (lastLen > stride) {
+      return;
+    }
+    uint8_t missIdx[uartpoc::fec::kMaxData];
+    uint8_t nMiss = 0;
+    for (uint32_t i = 0; i < n; ++i) {
+      if (!isSet(static_cast<uint16_t>(i))) {
+        missIdx[nMiss++] = static_cast<uint8_t>(i);
+      }
+    }
+    if (nMiss == 0) {
+      return;
+    }
+    const uint8_t* parPtr[uartpoc::fec::kMaxParity] = {nullptr, nullptr, nullptr, nullptr};
+    bool parOk[uartpoc::fec::kMaxParity] = {false, false, false, false};
+    uint8_t nGood = 0;
+    for (uint8_t s = 0; s < pn; ++s) {
+      if (plen[s] != stride) {
+        continue;
+      }
+      if (static_cast<uint32_t>(pidx[s]) < n) {
+        continue;
+      }
+      const uint32_t j = static_cast<uint32_t>(pidx[s]) - n;
+      if (j >= uartpoc::fec::kMaxParity || parOk[j]) {
+        continue;
+      }
+      parPtr[j] = pbuf + static_cast<size_t>(s) * kPRow;
+      parOk[j] = true;
+      ++nGood;
+    }
+    if (nMiss > nGood) {
+      return;  // NEED_MORE: wait for the remaining parity.
+    }
+    uint8_t* dataIo[uartpoc::fec::kMaxData];
+    bool missing[uartpoc::fec::kMaxData];
+    for (uint32_t i = 0; i < n; ++i) {
+      dataIo[i] = slot + i * stride;
+      missing[i] = !isSet(static_cast<uint16_t>(i));
+    }
+    for (size_t b = lastLen; b < stride; ++b) {
+      dataIo[n - 1][b] = 0;  // Stride-padding rule: normalize the short-LAST tail.
+    }
+    uint8_t scratch[uartpoc::fec::kRecoverScratchMin] = {};
+    const uartpoc::fec::Recover rc =
+        uartpoc::fec::recover(dataIo, missing, static_cast<uint8_t>(n), parPtr, parOk, uartpoc::fec::kMaxParity, stride,
+                              lastLen, scratch, sizeof(scratch));
+    if (rc != uartpoc::fec::Recover::OK) {
+      return;  // UNRECOVERABLE: never emit, the drop path owns it.
+    }
+    for (uint8_t m = 0; m < nMiss; ++m) {
+      const uint8_t idx = missIdx[m];
+      const bool isLast = (idx == lastIdx);
+      const uint16_t ln = isLast ? lastLen : static_cast<uint16_t>(stride);
+      const uint8_t fl = isLast ? uartpoc::FLAG_LAST_CHUNK : 0;
+      size_t t2 = 0;
+      const uartpoc::Reassembler::Push r2 = r.push(fid, idx, fl, slot + static_cast<size_t>(idx) * stride, ln, t2);
+      if (r2 == uartpoc::Reassembler::Push::COMPLETE) {
+        ++rec;
+        bytes += static_cast<uint32_t>(t2);
+        parReset();
+        dReset();
+        return;
+      }
+      if (r2 == uartpoc::Reassembler::Push::ACCEPTED) {
+        setBit(idx);
+        continue;
+      }
+      if (r2 == uartpoc::Reassembler::Push::DUPLICATE) {
+        continue;
+      }
+      act = r.active();
+      if (!act) {
+        dReset();
+      }
+      return;
+    }
+  }
+};
+
+void fillData(uint8_t n, size_t stride, size_t lastLen, uint8_t data[8][64], uint32_t seed) {
+  for (uint8_t i = 0; i < n; ++i) {
+    const size_t ln = (i + 1 == n) ? lastLen : stride;
+    for (size_t b = 0; b < ln; ++b) {
+      const uint32_t x = seed + static_cast<uint32_t>(i) * 1315423911U + static_cast<uint32_t>(b) * 97U;
+      data[i][b] = static_cast<uint8_t>(((x ^ (x >> 13) ^ (x << 7)) & 0xFFU));
+    }
+  }
+}
+
+void makeParity(uint8_t n, size_t stride, size_t lastLen, uint8_t data[8][64], uint8_t k, uint8_t par[4][64]) {
+  const uint8_t* dptr[8];
+  uint8_t* pptr[4];
+  size_t lens[8];
+  for (uint8_t i = 0; i < n; ++i) {
+    dptr[i] = data[i];
+    lens[i] = (i + 1 == n) ? lastLen : stride;
+  }
+  for (uint8_t j = 0; j < k; ++j) {
+    pptr[j] = par[j];
+  }
+  TEST_ASSERT_TRUE(uartpoc::fec::encode(dptr, n, k, stride, lens, pptr));
+}
+
+// STATS order contract mirrors: the firmware builders are ARDUINO-guarded
+// (S3: core/src/middleware/poc_link.h buildStats_; Head:
+// head/src/services/poc_manager.h buildStats_), so host tests pin the token
+// order here — these helpers must stay byte-identical to the firmware format
+// strings, and any firmware reorder must update them (and the tests below):
+//   S3:   "... up=<ms> rec=<n> par=<n>" — rec then par appended LAST.
+//   Head: "... intfree=<n> txp=<n>" — txp appended LAST.
+void formatS3Stats(char* out, size_t cap, uint32_t ok, uint32_t chunks, uint32_t herr, uint32_t perr, uint32_t drops,
+                   uint32_t big, uint32_t ooo, uint32_t dups, uint32_t ovf, uint32_t hb, uint32_t bytes, uint32_t kbps,
+                   uint32_t kbs, uint32_t intfree, uint32_t up, uint32_t rec, uint32_t prx) {
+  snprintf(out, cap,
+           "STATS ok=%lu chunks=%lu herr=%lu perr=%lu drops=%lu big=%lu ooo=%lu dups=%lu ovf=%lu hb=%lu bytes=%lu "
+           "kbps=%lu kbs=%lu intfree=%u up=%lu rec=%lu par=%lu",
+           static_cast<unsigned long>(ok), static_cast<unsigned long>(chunks), static_cast<unsigned long>(herr),
+           static_cast<unsigned long>(perr), static_cast<unsigned long>(drops), static_cast<unsigned long>(big),
+           static_cast<unsigned long>(ooo), static_cast<unsigned long>(dups), static_cast<unsigned long>(ovf),
+           static_cast<unsigned long>(hb), static_cast<unsigned long>(bytes), static_cast<unsigned long>(kbps),
+           static_cast<unsigned long>(kbs), static_cast<unsigned>(intfree), static_cast<unsigned long>(up),
+           static_cast<unsigned long>(rec), static_cast<unsigned long>(prx));
+}
+
+void formatHeadStats(char* out, size_t cap, uint32_t txf, uint32_t txc, uint32_t txb, uint32_t rxcmd, uint32_t rxe,
+                     uint32_t mode, uint32_t chunk, uint32_t pace, uint32_t baud, uint32_t fps, uint32_t intfree,
+                     uint32_t txp) {
+  snprintf(out, cap,
+           "STATS txf=%lu txc=%lu txb=%lu rxcmd=%lu rxe=%lu mode=%u chunk=%u pace=%lu baud=%lu fps=%u intfree=%u "
+           "txp=%lu",
+           static_cast<unsigned long>(txf), static_cast<unsigned long>(txc), static_cast<unsigned long>(txb),
+           static_cast<unsigned long>(rxcmd), static_cast<unsigned long>(rxe), static_cast<unsigned>(mode),
+           static_cast<unsigned>(chunk), static_cast<unsigned long>(pace), static_cast<unsigned long>(baud),
+           static_cast<unsigned>(fps), static_cast<unsigned>(intfree), static_cast<unsigned long>(txp));
+}
+
+}  // namespace s3fec
+
+void test_s3fec_recover_one_missing() {
+  // N=5, short LAST present, middle chunk lost, dirty slot: recover-1
+  // completes via rec (not ok) with exact total/bytes and exact payloads.
+  uint8_t slot[512];
+  uint8_t pbuf[4][64];
+  for (size_t i = 0; i < sizeof(slot); ++i) {
+    slot[i] = 0xA5;  // Stale bytes: the padding rule must still hold.
+  }
+  s3fec::Rx rx;
+  rx.attach(slot, sizeof(slot), &pbuf[0][0]);
+  const uint8_t kN = 5;
+  const size_t kS = 32;
+  const size_t kLast = 12;
+  const uint16_t kFid = 41;
+  uint8_t data[8][64];
+  uint8_t par[4][64];
+  s3fec::fillData(kN, kS, kLast, data, 0x51);
+  s3fec::makeParity(kN, kS, kLast, data, 2, par);
+  for (uint8_t i = 0; i < kN; ++i) {
+    if (i == 2) {
+      continue;  // Lost on the wire.
+    }
+    const bool last = (i + 1 == kN);
+    rx.feed(kFid, i, last ? uartpoc::FLAG_LAST_CHUNK : 0, data[i], static_cast<uint16_t>(last ? kLast : kS));
+  }
+  TEST_ASSERT_EQUAL_UINT32(0, rx.ok);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);  // No parity yet: nothing solved.
+  rx.feed(kFid, kN, uartpoc::fec::kFlagParity, par[0], static_cast<uint16_t>(kS));
+  TEST_ASSERT_EQUAL_UINT32(0, rx.ok);  // Recovered, not clean.
+  TEST_ASSERT_EQUAL_UINT32(1, rx.rec);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>((kN - 1) * kS + kLast), rx.bytes);
+  for (uint8_t i = 0; i < kN; ++i) {
+    const size_t ln = (i + 1 == kN) ? kLast : kS;
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(data[i], slot + static_cast<size_t>(i) * kS, ln);
+  }
+  TEST_ASSERT_EQUAL_UINT8(0, slot[(kN - 1) * kS + kLast]);  // Padding solves to encode-time zeros.
+  rx.feed(kFid, static_cast<uint16_t>(kN + 1), uartpoc::fec::kFlagParity, par[1],
+          static_cast<uint16_t>(kS));  // Late: ignored.
+  TEST_ASSERT_EQUAL_UINT32(1, rx.rec);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.drops);
+}
+
+void test_s3fec_recover_two_missing_k2() {
+  // 2 missing with K=2: first parity waits (NEED_MORE), second completes.
+  uint8_t slot[512];
+  uint8_t pbuf[4][64];
+  s3fec::Rx rx;
+  rx.attach(slot, sizeof(slot), &pbuf[0][0]);
+  const uint8_t kN = 6;
+  const size_t kS = 16;
+  const uint16_t kFid = 42;
+  uint8_t data[8][64];
+  uint8_t par[4][64];
+  s3fec::fillData(kN, kS, kS, data, 0x77);
+  s3fec::makeParity(kN, kS, kS, data, 2, par);
+  for (uint8_t i = 0; i < kN; ++i) {
+    if (i == 1 || i == 4) {
+      continue;  // Lost burst.
+    }
+    const bool last = (i + 1 == kN);
+    rx.feed(kFid, i, last ? uartpoc::FLAG_LAST_CHUNK : 0, data[i], static_cast<uint16_t>(kS));
+  }
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);
+  rx.feed(kFid, kN, uartpoc::fec::kFlagParity, par[0], static_cast<uint16_t>(kS));
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);  // 2 missing > 1 good: waits.
+  rx.feed(kFid, static_cast<uint16_t>(kN + 1), uartpoc::fec::kFlagParity, par[1], static_cast<uint16_t>(kS));
+  TEST_ASSERT_EQUAL_UINT32(0, rx.ok);
+  TEST_ASSERT_EQUAL_UINT32(1, rx.rec);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(kN * kS), rx.bytes);
+  for (uint8_t i = 0; i < kN; ++i) {
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(data[i], slot + static_cast<size_t>(i) * kS, kS);
+  }
+}
+
+void test_s3fec_kplus1_missing_drops() {
+  // K+1 missing: no recovery attempted; the partial dies the existing drop path.
+  uint8_t slot[512];
+  uint8_t pbuf[4][64];
+  s3fec::Rx rx;
+  rx.attach(slot, sizeof(slot), &pbuf[0][0]);
+  const uint8_t kN = 5;
+  const size_t kS = 32;
+  const uint16_t kFid = 43;
+  uint8_t data[8][64];
+  uint8_t par[4][64];
+  s3fec::fillData(kN, kS, kS, data, 0x99);
+  s3fec::makeParity(kN, kS, kS, data, 2, par);
+  for (uint8_t i = 3; i < kN; ++i) {
+    const bool last = (i + 1 == kN);
+    rx.feed(kFid, i, last ? uartpoc::FLAG_LAST_CHUNK : 0, data[i], static_cast<uint16_t>(kS));
+  }
+  rx.feed(kFid, kN, uartpoc::fec::kFlagParity, par[0], static_cast<uint16_t>(kS));
+  rx.feed(kFid, static_cast<uint16_t>(kN + 1), uartpoc::fec::kFlagParity, par[1], static_cast<uint16_t>(kS));
+  TEST_ASSERT_EQUAL_UINT32(0, rx.ok);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);  // 3 missing > K=2: untouched.
+  rx.stale();
+  TEST_ASSERT_EQUAL_UINT32(1, rx.drops);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.ok);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);
+}
+
+void test_s3fec_parity_unknown_frame_ignored() {
+  // Parity for a non-active/older frameId is ignored with no counter.
+  uint8_t slot[512];
+  uint8_t pbuf[4][64];
+  s3fec::Rx rx;
+  rx.attach(slot, sizeof(slot), &pbuf[0][0]);
+  uint8_t junk[16] = {};
+  rx.feed(9, 3, uartpoc::fec::kFlagParity, junk, sizeof(junk));  // No active frame.
+  TEST_ASSERT_EQUAL_UINT8(0, rx.pn);
+  const uint8_t kN = 3;
+  const size_t kS = 16;
+  uint8_t data[8][64];
+  uint8_t par[4][64];
+  s3fec::fillData(kN, kS, kS, data, 0xAB);
+  s3fec::makeParity(kN, kS, kS, data, 2, par);
+  rx.feed(7, 0, 0, data[0], static_cast<uint16_t>(kS));
+  rx.feed(9, 3, uartpoc::fec::kFlagParity, junk, sizeof(junk));  // Older frameId while 7 active.
+  TEST_ASSERT_EQUAL_UINT8(0, rx.pn);
+  rx.feed(7, kN, uartpoc::fec::kFlagParity, par[0], static_cast<uint16_t>(kS));  // Live frame: buffered.
+  TEST_ASSERT_EQUAL_UINT8(1, rx.pn);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.ok);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.drops);
+}
+
+void test_s3fec_clean_complete_discards_parity() {
+  // Zero missing with parity buffered: COMPLETE clean, parity dropped silently.
+  uint8_t slot[512];
+  uint8_t pbuf[4][64];
+  s3fec::Rx rx;
+  rx.attach(slot, sizeof(slot), &pbuf[0][0]);
+  const uint8_t kN = 4;
+  const size_t kS = 16;
+  const size_t kLast = 10;
+  const uint16_t kFid = 44;
+  uint8_t data[8][64];
+  uint8_t par[4][64];
+  s3fec::fillData(kN, kS, kLast, data, 0xCD);
+  s3fec::makeParity(kN, kS, kLast, data, 2, par);
+  rx.feed(kFid, 0, 0, data[0], static_cast<uint16_t>(kS));
+  rx.feed(kFid, 1, 0, data[1], static_cast<uint16_t>(kS));
+  rx.feed(kFid, kN, uartpoc::fec::kFlagParity, par[0], static_cast<uint16_t>(kS));
+  rx.feed(kFid, static_cast<uint16_t>(kN + 1), uartpoc::fec::kFlagParity, par[1], static_cast<uint16_t>(kS));
+  TEST_ASSERT_EQUAL_UINT32(0, rx.ok);  // LAST not yet seen.
+  rx.feed(kFid, 2, 0, data[2], static_cast<uint16_t>(kS));
+  rx.feed(kFid, 3, uartpoc::FLAG_LAST_CHUNK, data[3], static_cast<uint16_t>(kLast));
+  TEST_ASSERT_EQUAL_UINT32(1, rx.ok);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);  // Clean, not recovered.
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>((kN - 1) * kS + kLast), rx.bytes);
+  TEST_ASSERT_EQUAL_UINT8(0, rx.pn);  // Buffered parity discarded silently.
+  rx.feed(kFid, kN, uartpoc::fec::kFlagParity, par[0], static_cast<uint16_t>(kS));  // Late: ignored.
+  TEST_ASSERT_EQUAL_UINT8(0, rx.pn);
+  TEST_ASSERT_EQUAL_UINT32(1, rx.ok);
+}
+
+void test_s3fec_last_missing_truncation() {
+  // A never-arriving LAST leaves N unknowable: no recovery attempted. With
+  // LAST present and a middle chunk lost, recovery solves full-stride and the
+  // re-push of N-1 truncates to last_len exactly.
+  uint8_t slot[1024];
+  uint8_t pbuf[4][64];
+  s3fec::Rx rx;
+  rx.attach(slot, sizeof(slot), &pbuf[0][0]);
+  const uint8_t kN = 4;
+  const size_t kS = 48;
+  const size_t kLast = 17;
+  const uint16_t kFid = 45;
+  uint8_t data[8][64];
+  uint8_t par[4][64];
+  s3fec::fillData(kN, kS, kLast, data, 0xEF);
+  s3fec::makeParity(kN, kS, kLast, data, 2, par);
+  for (uint8_t i = 0; i + 1 < kN; ++i) {
+    rx.feed(kFid, i, 0, data[i], static_cast<uint16_t>(kS));
+  }
+  rx.feed(kFid, kN, uartpoc::fec::kFlagParity, par[0], static_cast<uint16_t>(kS));
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);  // LAST missing: N unknown, no attempt.
+  rx.reset();
+  rx.attach(slot, sizeof(slot), &pbuf[0][0]);
+  rx.feed(kFid, 0, 0, data[0], static_cast<uint16_t>(kS));
+  rx.feed(kFid, 2, 0, data[2], static_cast<uint16_t>(kS));
+  rx.feed(kFid, 3, uartpoc::FLAG_LAST_CHUNK, data[3], static_cast<uint16_t>(kLast));
+  rx.feed(kFid, kN, uartpoc::fec::kFlagParity, par[0], static_cast<uint16_t>(kS));
+  TEST_ASSERT_EQUAL_UINT32(0, rx.ok);
+  TEST_ASSERT_EQUAL_UINT32(1, rx.rec);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>((kN - 1) * kS + kLast), rx.bytes);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(data[1], slot + kS, kS);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(data[3], slot + 3 * kS, kLast);
+  TEST_ASSERT_EQUAL_UINT8(0, slot[3 * kS + kLast]);
+  TEST_ASSERT_EQUAL_UINT8(0, slot[4 * kS - 1]);
+}
+
+void test_s3fec_corrupt_parity_drops() {
+  // Corrupted parity: both rows buffered before LAST, so the solve sees a
+  // redundant good row and the corrupt one trips UNRECOVERABLE — never
+  // emitted; the existing drop path owns the frame.
+  uint8_t slot[512];
+  uint8_t pbuf[4][64];
+  s3fec::Rx rx;
+  rx.attach(slot, sizeof(slot), &pbuf[0][0]);
+  const uint8_t kN = 4;
+  const size_t kS = 32;
+  const uint16_t kFid = 46;
+  uint8_t data[8][64];
+  uint8_t par[4][64];
+  s3fec::fillData(kN, kS, kS, data, 0x12);
+  s3fec::makeParity(kN, kS, kS, data, 2, par);
+  for (size_t b = 0; b < kS; ++b) {
+    par[1][b] = static_cast<uint8_t>(par[1][b] ^ 0xFF);  // Needed row corrupted.
+  }
+  rx.feed(kFid, 0, 0, data[0], static_cast<uint16_t>(kS));
+  rx.feed(kFid, 2, 0, data[2], static_cast<uint16_t>(kS));
+  rx.feed(kFid, kN, uartpoc::fec::kFlagParity, par[0], static_cast<uint16_t>(kS));
+  rx.feed(kFid, static_cast<uint16_t>(kN + 1), uartpoc::fec::kFlagParity, par[1], static_cast<uint16_t>(kS));
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);  // No LAST yet: buffered, no attempt.
+  rx.feed(kFid, 3, uartpoc::FLAG_LAST_CHUNK, data[3], static_cast<uint16_t>(kS));
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);  // Redundant cross-check fails: UNRECOVERABLE.
+  TEST_ASSERT_EQUAL_UINT32(0, rx.ok);
+  rx.stale();
+  TEST_ASSERT_EQUAL_UINT32(1, rx.drops);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);
+}
+
+void test_s3fec_stale_flushes_parity() {
+  // STALE flushes parity slots: the re-push starts clean, recovers nothing spuriously.
+  uint8_t slot[512];
+  uint8_t pbuf[4][64];
+  s3fec::Rx rx;
+  rx.attach(slot, sizeof(slot), &pbuf[0][0]);
+  const uint8_t kN = 4;
+  const size_t kS = 32;
+  const uint16_t kFid = 47;
+  uint8_t data[8][64];
+  uint8_t par[4][64];
+  s3fec::fillData(kN, kS, kS, data, 0x34);
+  s3fec::makeParity(kN, kS, kS, data, 2, par);
+  rx.feed(kFid, 0, 0, data[0], static_cast<uint16_t>(kS));
+  rx.feed(kFid, 1, 0, data[1], static_cast<uint16_t>(kS));
+  rx.feed(kFid, kN, uartpoc::fec::kFlagParity, par[0], static_cast<uint16_t>(kS));
+  TEST_ASSERT_EQUAL_UINT8(1, rx.pn);
+  rx.stale();
+  TEST_ASSERT_EQUAL_UINT32(1, rx.drops);
+  TEST_ASSERT_EQUAL_UINT8(0, rx.pn);  // Parity flushed with the frame.
+  for (uint8_t i = 0; i < kN; ++i) {
+    const bool last = (i + 1 == kN);
+    rx.feed(kFid, i, last ? uartpoc::FLAG_LAST_CHUNK : 0, data[i], static_cast<uint16_t>(kS));
+  }
+  TEST_ASSERT_EQUAL_UINT32(1, rx.ok);   // Fresh complete is clean...
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);  // ...never spuriously recovered.
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(kN * kS), rx.bytes);
+}
+
+void test_s3fec_oversize_never_recovers() {
+  // Cap overflow is not an erasure: OVERSIZE path, big counted, rec untouched.
+  uint8_t slot[48];  // Smaller than one full frame.
+  uint8_t pbuf[4][64];
+  s3fec::Rx rx;
+  rx.attach(slot, sizeof(slot), &pbuf[0][0]);
+  const uint8_t kN = 3;
+  const size_t kS = 32;
+  const uint16_t kFid = 48;
+  uint8_t data[8][64];
+  uint8_t par[4][64];
+  s3fec::fillData(kN, kS, kS, data, 0x56);
+  s3fec::makeParity(kN, kS, kS, data, 2, par);
+  rx.feed(kFid, 0, 0, data[0], static_cast<uint16_t>(kS));
+  rx.feed(kFid, kN, uartpoc::fec::kFlagParity, par[0], static_cast<uint16_t>(kS));
+  rx.feed(kFid, static_cast<uint16_t>(kN + 1), uartpoc::fec::kFlagParity, par[1], static_cast<uint16_t>(kS));
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);                      // No LAST yet: no attempt.
+  rx.feed(kFid, 1, 0, data[1], static_cast<uint16_t>(kS));  // off 32 + 32 > 48: OVERSIZE.
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.ok);
+  TEST_ASSERT_EQUAL_UINT32(1, rx.drops);
+  TEST_ASSERT_EQUAL_UINT32(1, rx.big);
+  TEST_ASSERT_EQUAL_UINT8(0, rx.pn);
+}
+
+void test_s3fec_k0_parity_ignored() {
+  // K=0: parity-bearing input is ignored safely; data path byte-identical.
+  uint8_t slot[512];
+  uint8_t pbuf[4][64];
+  s3fec::Rx rx;
+  rx.attach(slot, sizeof(slot), &pbuf[0][0]);
+  uint8_t junk[16] = {};
+  rx.feed(20, 3, uartpoc::fec::kFlagParity, junk, sizeof(junk));
+  TEST_ASSERT_EQUAL_UINT32(0, rx.ok);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.drops);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.bytes);
+  const uint8_t kN = 3;
+  const size_t kS = 16;
+  const uint16_t kFid = 20;
+  uint8_t data[8][64];
+  s3fec::fillData(kN, kS, kS, data, 0x78);
+  for (uint8_t i = 0; i < kN; ++i) {
+    const bool last = (i + 1 == kN);
+    rx.feed(kFid, i, last ? uartpoc::FLAG_LAST_CHUNK : 0, data[i], static_cast<uint16_t>(kS));
+  }
+  TEST_ASSERT_EQUAL_UINT32(1, rx.ok);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.drops);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(kN * kS), rx.bytes);
+}
+
+void test_s3fec_chunks_data_only_parity_silent() {
+  // S3 chunksRx_ counts DATA chunks only; parity never touches it (Head twin:
+  // txChunks_ data-only with txParity_/txp separate). Pinned via the S3-side
+  // mirror counter chunks — both suites share this S3-policy harness, so the
+  // test is identical core<->head; there is no Head-side chunk counter to
+  // mirror, hence no Head-specific variant.
+  uint8_t slot[512];
+  uint8_t pbuf[4][64];
+  s3fec::Rx rx;
+  rx.attach(slot, sizeof(slot), &pbuf[0][0]);
+  const uint8_t kN = 3;
+  const size_t kS = 16;
+  const uint16_t kFid = 51;
+  uint8_t data[8][64];
+  uint8_t par[4][64];
+  s3fec::fillData(kN, kS, kS, data, 0xA1);
+  s3fec::makeParity(kN, kS, kS, data, 1, par);
+  rx.feed(kFid, 0, 0, data[0], static_cast<uint16_t>(kS));
+  rx.feed(kFid, 1, 0, data[1], static_cast<uint16_t>(kS));
+  TEST_ASSERT_EQUAL_UINT32(2, rx.chunks);
+  rx.feed(kFid, kN, uartpoc::fec::kFlagParity, par[0], static_cast<uint16_t>(kS));
+  rx.feed(kFid, kN, uartpoc::fec::kFlagParity, par[0], static_cast<uint16_t>(kS));  // Duplicate: still silent.
+  TEST_ASSERT_EQUAL_UINT32(2, rx.chunks);                                           // Parity never counts as chunks...
+  TEST_ASSERT_EQUAL_UINT32(1, rx.prx);  // ...but the accepted store counts once.
+  rx.feed(kFid, 2, uartpoc::FLAG_LAST_CHUNK, data[2], static_cast<uint16_t>(kS));
+  TEST_ASSERT_EQUAL_UINT32(3, rx.chunks);
+  TEST_ASSERT_EQUAL_UINT32(1, rx.ok);  // Clean complete (nothing was lost).
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);
+  TEST_ASSERT_EQUAL_UINT32(1, rx.prx);  // COMPLETE flush drops slots, never the cumulative counter.
+}
+
+void test_s3fec_parrx_counts_accepted_stores() {
+  // S3 parRx_ (firmware poc_link.h onParity_) increments on every ACCEPTED
+  // parity store; foreign-frame / duplicate / empty / oversize parity stays
+  // silent with no counter. Mirror pins it via prx.
+  uint8_t slot[512];
+  uint8_t pbuf[4][64];
+  s3fec::Rx rx;
+  rx.attach(slot, sizeof(slot), &pbuf[0][0]);
+  const size_t kS = 16;
+  uint8_t data[8][64];
+  uint8_t par[4][64];
+  s3fec::fillData(3, kS, kS, data, 0xB2);
+  s3fec::makeParity(3, kS, kS, data, 2, par);
+  uint8_t junk[16] = {};
+  rx.feed(60, 3, uartpoc::fec::kFlagParity, junk, sizeof(junk));  // No active frame: silent.
+  TEST_ASSERT_EQUAL_UINT32(0, rx.prx);
+  rx.feed(52, 0, 0, data[0], static_cast<uint16_t>(kS));                         // Activates frame 52.
+  rx.feed(53, 3, uartpoc::fec::kFlagParity, par[0], static_cast<uint16_t>(kS));  // Foreign frameId: silent.
+  TEST_ASSERT_EQUAL_UINT32(0, rx.prx);
+  rx.feed(52, 3, uartpoc::fec::kFlagParity, par[0], static_cast<uint16_t>(kS));
+  TEST_ASSERT_EQUAL_UINT32(1, rx.prx);
+  rx.feed(52, 3, uartpoc::fec::kFlagParity, par[0], static_cast<uint16_t>(kS));  // Duplicate: silent.
+  TEST_ASSERT_EQUAL_UINT32(1, rx.prx);
+  rx.feed(52, 4, uartpoc::fec::kFlagParity, nullptr, 0);  // Empty: silent.
+  TEST_ASSERT_EQUAL_UINT32(1, rx.prx);
+  uint8_t big[65] = {};
+  rx.feed(52, 5, uartpoc::fec::kFlagParity, big, sizeof(big));  // Oversize row: silent.
+  TEST_ASSERT_EQUAL_UINT32(1, rx.prx);
+  rx.feed(52, 4, uartpoc::fec::kFlagParity, par[1], static_cast<uint16_t>(kS));
+  TEST_ASSERT_EQUAL_UINT32(2, rx.prx);
+}
+
+void test_s3fec_stats_order_appended_last() {
+  // STATS field order: S3 appends rec= then par= LAST (existing order
+  // undisturbed); Head appends txp= LAST. See the formatS3Stats /
+  // formatHeadStats contract mirrors above for the firmware sites.
+  char s3[288];
+  s3fec::formatS3Stats(s3, sizeof(s3), 1, 4, 0, 1, 0, 0, 0, 0, 0, 2, 128, 1, 0, 50000, 1000, 1, 2);
+  TEST_ASSERT_EQUAL_STRING(
+      "STATS ok=1 chunks=4 herr=0 perr=1 drops=0 big=0 ooo=0 dups=0 ovf=0 hb=2 bytes=128 kbps=1 kbs=0 intfree=50000 "
+      "up=1000 rec=1 par=2",
+      s3);
+  const char* up = strstr(s3, " up=");
+  const char* rec = strstr(s3, " rec=");
+  const char* par = strstr(s3, " par=");
+  TEST_ASSERT_NOT_NULL(up);
+  TEST_ASSERT_NOT_NULL(rec);
+  TEST_ASSERT_NOT_NULL(par);
+  TEST_ASSERT_TRUE(up < rec && rec < par);  // rec/par trail every older field; par trails rec.
+  TEST_ASSERT_NULL(strchr(par + 1, ' '));   // par= is the final token.
+  char head[192];
+  s3fec::formatHeadStats(head, sizeof(head), 7, 64, 4096, 3, 0, 1, 128, 1000, 115200, 10, 49000, 8);
+  TEST_ASSERT_EQUAL_STRING(
+      "STATS txf=7 txc=64 txb=4096 rxcmd=3 rxe=0 mode=1 chunk=128 pace=1000 baud=115200 fps=10 intfree=49000 txp=8",
+      head);
+  const char* intfree = strstr(head, " intfree=");
+  const char* txp = strstr(head, " txp=");
+  TEST_ASSERT_NOT_NULL(intfree);
+  TEST_ASSERT_NOT_NULL(txp);
+  TEST_ASSERT_TRUE(intfree < txp);         // txp trails every older field.
+  TEST_ASSERT_NULL(strchr(txp + 1, ' '));  // txp= is the final token.
+}
+
+void test_s3fec_reset_clears_rec() {
+  // RESET clears recFec_ (and parRx_) alongside every other counter; slots and
+  // shadow reset with it, so no cross-frame leakage survives a RESET. Mirror
+  // pins it via Rx::reset (firmware RESET additionally resets the decoder,
+  // which has no mirror state here).
+  uint8_t slot[512];
+  uint8_t pbuf[4][64];
+  s3fec::Rx rx;
+  rx.attach(slot, sizeof(slot), &pbuf[0][0]);
+  const uint8_t kN = 4;
+  const size_t kS = 32;
+  const uint16_t kFid = 54;
+  uint8_t data[8][64];
+  uint8_t par[4][64];
+  s3fec::fillData(kN, kS, kS, data, 0xC3);
+  s3fec::makeParity(kN, kS, kS, data, 2, par);
+  rx.feed(kFid, 0, 0, data[0], static_cast<uint16_t>(kS));
+  rx.feed(kFid, 2, 0, data[2], static_cast<uint16_t>(kS));
+  rx.feed(kFid, kN, uartpoc::fec::kFlagParity, par[0], static_cast<uint16_t>(kS));
+  rx.feed(kFid, static_cast<uint16_t>(kN + 1), uartpoc::fec::kFlagParity, par[1], static_cast<uint16_t>(kS));
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);  // LAST unknown yet: buffered, no attempt.
+  TEST_ASSERT_EQUAL_UINT32(2, rx.prx);
+  rx.feed(kFid, 3, uartpoc::FLAG_LAST_CHUNK, data[3], static_cast<uint16_t>(kS));  // idx1 still missing: recovers.
+  TEST_ASSERT_EQUAL_UINT32(1, rx.rec);
+  TEST_ASSERT_EQUAL_UINT32(2, rx.prx);
+  TEST_ASSERT_EQUAL_UINT32(3, rx.chunks);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(kN * kS), rx.bytes);
+  rx.reset();  // Mirrors firmware RESET.
+  TEST_ASSERT_EQUAL_UINT32(0, rx.rec);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.prx);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.ok);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.chunks);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.bytes);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.drops);
+  TEST_ASSERT_EQUAL_UINT32(0, rx.big);
+  TEST_ASSERT_EQUAL_UINT8(0, rx.pn);
+}

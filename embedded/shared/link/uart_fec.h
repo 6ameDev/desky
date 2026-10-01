@@ -4,7 +4,13 @@
 //
 // Systematic Vandermonde erasure code over GF(2^8) (poly 0x11D):
 //   parity p_j[b] = sum_i V[j][i] * d_i[b],  V[j][i] = (i+1)^(j+1)
-// (1-based data index, j = 0-based parity row). Row 0 is a plain XOR.
+// (1-based data index x_i = i+1, j = 0-based parity row). Row 0 is NOT a
+// plain XOR: its coefficients are 1,2,3,... (V[0][i] = x_i), i.e. a weighted
+// sum. MDS still holds: any t-erasure / t-parity square submatrix factors as
+// a Vandermonde matrix on the distinct nonzero nodes x_c times diag(x_c),
+// both nonsingular, so every solvable system has a unique solution (and
+// recover() still returns UNRECOVERABLE rather than guessing on any singular
+// or check-mismatched input).
 //
 // Guarantees: no heap, no Arduino, no String, no static state. encode() is a
 // pure function of its inputs; recover() solves into caller buffers using only

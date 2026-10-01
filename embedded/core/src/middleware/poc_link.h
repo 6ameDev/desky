@@ -34,6 +34,7 @@
 #include "config.h"
 #include "link/poc_config.h"
 #include "link/poc_synth.h"
+#include "link/uart_fec.h"
 #include "link/uart_frame.h"
 
 #if __has_include(<esp_memory_utils.h>)
@@ -63,6 +64,7 @@ class PocLink {
         slot_(nullptr),
         txBuf_(nullptr),
         verifyChunk_(nullptr),
+        parBuf_(nullptr),
         testActive_(false),
         txEnabled_(false),
         txFrameId_(0),
@@ -84,8 +86,23 @@ class PocLink {
         nextExpected_(0),
         waitingResp_(false),
         respGot_(false),
-        usbLen_(0) {
+        usbLen_(0),
+        recFec_(0),
+        parRx_(0),
+        parCount_(0),
+        parHave_(false),
+        parFid_(0),
+        dActive_(false),
+        dFid_(0),
+        dStride_(0),
+        dHaveLast_(false),
+        dLastIdx_(0),
+        dLastLen_(0),
+        dPend_(false),
+        dPendIdx_(0) {
     respBuf_[0] = '\0';
+    parReset_();
+    dReset_();
   }
 
   void begin() {
@@ -97,10 +114,14 @@ class PocLink {
     DESKY_ASSERT(txBuf_ != nullptr);
     verifyChunk_ = static_cast<uint8_t*>(heap_caps_malloc(uartpoc::kMaxPayload, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     DESKY_ASSERT(verifyChunk_ != nullptr);
+    parBuf_ = static_cast<uint8_t*>(heap_caps_malloc(kParityBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    DESKY_ASSERT(parBuf_ != nullptr);
 #if POC_HAVE_INTERNAL_CHECK
     DESKY_ASSERT(esp_ptr_internal(rxBuf_) && esp_ptr_internal(slot_) && esp_ptr_internal(txBuf_) &&
-                 esp_ptr_internal(verifyChunk_));
+                 esp_ptr_internal(verifyChunk_) && esp_ptr_internal(parBuf_));
 #endif
+    parReset_();
+    dReset_();
     reasm_.attach(slot_, kSlotCap);
     // RX-only: TX pin unassigned (-1) keeps GPIO17 high-impedance so the S3
     // never drives CAM GPIO12 during CAM reset (strapping requirement).
@@ -121,6 +142,8 @@ class PocLink {
   // count one drop. Without this a stalled partial squats reassembly until STALE.
   void staleFlush_() {
     if (uartpoc::reasmStaleDue(reasm_.active(), lastChunkMs_, millis(), kStaleChunkMs)) {
+      parReset_();  // The partial's parity dies with it: no cross-frame leakage.
+      dReset_();
       reasm_.reset();
       ++drops_;
       lastChunkMs_ = millis();
@@ -196,39 +219,59 @@ class PocLink {
       enableTx_();
     }
     if (fr.type == uartpoc::MSG_CHUNK) {
-      ++chunksRx_;
-      lastChunkMs_ = now;
-      size_t total = 0;
-      uartpoc::Reassembler::Push res = reasm_.push(fr.frameId, fr.chunkIdx, fr.flags, fr.payload, fr.payloadLen, total);
-      if (res == uartpoc::Reassembler::Push::STALE) {
-        ++drops_;  // Previous partial abandoned; re-push starts the new frame.
-        res = reasm_.push(fr.frameId, fr.chunkIdx, fr.flags, fr.payload, fr.payloadLen, total);
-      }
-      if (res == uartpoc::Reassembler::Push::COMPLETE) {
-        ++framesOk_;
-        bytesRx_ += total;
-        oooFrame_ = 0xFFFF;  // Fresh frame resets the OOO heuristic.
-      } else if (res == uartpoc::Reassembler::Push::OVERSIZE) {
-        // 64KB-slot honesty: the frame can never fit, so it is dropped — but
-        // flagged separately (big ⊆ drops) instead of vanishing silently.
-        ++drops_;
-        ++big_;
-        oooFrame_ = 0xFFFF;
-      } else if (res == uartpoc::Reassembler::Push::DROPPED) {
-        ++drops_;
-        oooFrame_ = 0xFFFF;
-      } else if (res == uartpoc::Reassembler::Push::DUPLICATE) {
-        ++dups_;
-      } else {  // ACCEPTED: out-of-order heuristic (first chunk of a frame is free).
-        if (fr.frameId != oooFrame_) {
-          oooFrame_ = fr.frameId;
-          nextExpected_ = 0;
+      // FEC parity intercept BEFORE reassembly: parity rides the same CHUNK
+      // type with IS_PARITY set (never LAST_CHUNK — LAST stays on data N-1).
+      // It stages into the small INTERNAL parity slots keyed by frameId and
+      // NEVER enters place_/seen_/total_ accounting or OVERSIZE math.
+      // Ignored parity is silent by design (no counter); accepted stores
+      // count parRx_ in onParity_ below.
+      if ((fr.flags & uartpoc::fec::kFlagParity) != 0) {
+        onParity_(fr);
+      } else {
+        ++chunksRx_;
+        lastChunkMs_ = now;
+        size_t total = 0;
+        uartpoc::Reassembler::Push res =
+            reasm_.push(fr.frameId, fr.chunkIdx, fr.flags, fr.payload, fr.payloadLen, total);
+        if (res == uartpoc::Reassembler::Push::STALE) {
+          ++drops_;     // Previous partial abandoned; re-push starts the new frame.
+          parReset_();  // That frame's parity dies with it: no cross-frame leakage.
+          dReset_();    // Shadow re-adopts below via syncShadow_.
+          res = reasm_.push(fr.frameId, fr.chunkIdx, fr.flags, fr.payload, fr.payloadLen, total);
         }
-        if (fr.chunkIdx != nextExpected_) {
-          ++ooo_;
-        }
-        if (fr.chunkIdx >= nextExpected_) {
-          nextExpected_ = static_cast<uint16_t>(fr.chunkIdx + 1);
+        syncShadow_(fr);
+        if (res == uartpoc::Reassembler::Push::COMPLETE) {
+          // Clean-only: recovery completions count recFec_ instead (see tryRecover_).
+          ++framesOk_;
+          bytesRx_ += total;
+          oooFrame_ = 0xFFFF;  // Fresh frame resets the OOO heuristic.
+          parReset_();         // Buffered parity for a done frame is stale; late parity is ignored.
+        } else if (res == uartpoc::Reassembler::Push::OVERSIZE) {
+          // 64KB-slot honesty: the frame can never fit, so it is dropped — but
+          // flagged separately (big ⊆ drops) instead of vanishing silently.
+          // Cap overflow is not an erasure: OVERSIZE frames never recover.
+          ++drops_;
+          ++big_;
+          oooFrame_ = 0xFFFF;
+          parReset_();
+        } else if (res == uartpoc::Reassembler::Push::DROPPED) {
+          ++drops_;
+          oooFrame_ = 0xFFFF;
+        } else if (res == uartpoc::Reassembler::Push::DUPLICATE) {
+          ++dups_;
+        } else {  // ACCEPTED: out-of-order heuristic (first chunk of a frame is free).
+          if (fr.frameId != oooFrame_) {
+            oooFrame_ = fr.frameId;
+            nextExpected_ = 0;
+          }
+          if (fr.chunkIdx != nextExpected_) {
+            ++ooo_;
+          }
+          if (fr.chunkIdx >= nextExpected_) {
+            nextExpected_ = static_cast<uint16_t>(fr.chunkIdx + 1);
+          }
+          noteAccepted_(fr);  // Shadow stride/haveLast/seen mirror (data only).
+          tryRecover_();      // Recover-before-reset: missing<=good-parity completes via recFec_.
         }
       }
     } else if (fr.type == uartpoc::MSG_HB) {
@@ -245,6 +288,257 @@ class PocLink {
       }
     }
     // MSG_CMD is unexpected on the S3 side: counted as traffic, otherwise ignored.
+  }
+
+  // ── FEC-RX (S3 recover-before-reset) ──
+  // Parity slots hold K<=4 full-stride blocks for exactly one frameId; the
+  // data shadow mirrors Reassembler stride/haveLast/seen (which exposes no
+  // accessors) so recovery can name the exact erasure set. Both are INTERNAL-
+  // only, flushed on STALE/reset/COMPLETE/OVERSIZE — never across frames.
+
+  void parReset_() {
+    parHave_ = false;
+    parFid_ = 0;
+    parCount_ = 0;
+    for (uint8_t i = 0; i < kParitySlots; ++i) {
+      parIdx_[i] = 0;
+      parLen_[i] = 0;
+    }
+  }
+
+  void dReset_() {
+    dActive_ = false;
+    dFid_ = 0;
+    dStride_ = 0;
+    dHaveLast_ = false;
+    dLastIdx_ = 0;
+    dLastLen_ = 0;
+    dPend_ = false;
+    dPendIdx_ = 0;
+    for (size_t i = 0; i < uartpoc::Reassembler::kBitmapWords; ++i) {
+      dBits_[i] = 0;
+    }
+  }
+
+  void dSet_(uint16_t idx) { dBits_[idx / 32] |= (1UL << (idx % 32)); }
+
+  bool dSeen_(uint16_t idx) const { return (dBits_[idx / 32] & (1UL << (idx % 32))) != 0; }
+
+  // Shadow sync after a data push: adopt silently (re)started frames, drop
+  // dead ones. STALE/COMPLETE/OVERSIZE callers manage parity explicitly; here
+  // only the quiet cases need work.
+  void syncShadow_(const uartpoc::DecodedFrame& fr) {
+    if (!reasm_.active()) {
+      dActive_ = false;
+      dReset_();
+      return;
+    }
+    if (!dActive_ || fr.frameId != dFid_) {
+      // Silent (re)start — reasm_ had nothing to abandon (no STALE fired).
+      // Any other frame's parity is stale: drop it silently, no counter.
+      if (parHave_ && parFid_ != fr.frameId) {
+        parReset_();
+      }
+      dReset_();
+      dActive_ = true;
+      dFid_ = fr.frameId;
+    }
+  }
+
+  // Shadow mirror of the Reassembler stride/stash bookkeeping, DATA chunks
+  // only (parity never reaches here): first non-LAST length wins as stride; a
+  // LAST arriving before any stride is stashed (pend), not placed.
+  void noteAccepted_(const uartpoc::DecodedFrame& fr) {
+    const bool last = (fr.flags & uartpoc::FLAG_LAST_CHUNK) != 0;
+    if (!last && dStride_ == 0 && fr.payloadLen > 0) {
+      dStride_ = fr.payloadLen;
+      if (dPend_) {
+        dSet_(dPendIdx_);
+        dPend_ = false;
+      }
+    }
+    if (last && fr.chunkIdx == 0 && dStride_ == 0) {
+      dStride_ = (fr.payloadLen > 0) ? fr.payloadLen : 1;
+    }
+    if (last && dStride_ == 0 && fr.chunkIdx != 0) {
+      dHaveLast_ = true;
+      dLastIdx_ = fr.chunkIdx;
+      dLastLen_ = fr.payloadLen;
+      dPend_ = true;
+      dPendIdx_ = fr.chunkIdx;
+      return;
+    }
+    dSet_(fr.chunkIdx);
+    if (last) {
+      dHaveLast_ = true;
+      dLastIdx_ = fr.chunkIdx;
+      dLastLen_ = fr.payloadLen;
+    }
+  }
+
+  // Parity intercept: buffer only for the live data frame. Parity for a
+  // non-active/older frame, or arriving after its data COMPLETE/STALE
+  // (slots already flushed), is ignored with no counter.
+  void onParity_(const uartpoc::DecodedFrame& fr) {
+    if (!dActive_ || fr.frameId != dFid_) {
+      return;
+    }
+    if (fr.payloadLen == 0 || fr.payloadLen > uartpoc::kMaxPayload) {
+      return;
+    }
+    if (fr.payloadLen > 0 && fr.payload == nullptr) {
+      return;
+    }
+    if (parBuf_ == nullptr) {
+      return;
+    }
+    if (!parHave_ || parFid_ != fr.frameId) {
+      parReset_();
+      parFid_ = fr.frameId;
+      parHave_ = true;
+    }
+    if (parCount_ >= kParitySlots) {
+      return;
+    }
+    for (uint8_t i = 0; i < parCount_; ++i) {
+      if (parIdx_[i] == fr.chunkIdx) {
+        return;  // Duplicate parity: silent.
+      }
+    }
+    uint8_t* dst = parBuf_ + static_cast<size_t>(parCount_) * uartpoc::kMaxPayload;
+    for (uint16_t i = 0; i < fr.payloadLen; ++i) {
+      dst[i] = fr.payload[i];
+    }
+    parIdx_[parCount_] = fr.chunkIdx;
+    parLen_[parCount_] = fr.payloadLen;
+    ++parCount_;
+    ++parRx_;       // Every accepted parity store counts (duplicates/foreign-frame
+                    // stays silent above): task-4 separates wire-loss of parity
+                    // (Head txp vs parRx_) from staged-but-unused parity.
+    tryRecover_();  // Fresh parity may complete a waiting partial.
+  }
+
+  // Recover-before-reset: a data frame with LAST known, stride known, no
+  // pending stash, exactly n_missing short with 1<=n_missing<=K_good (good
+  // parity buffered for this frameId) is solved via fec::recover and each
+  // reconstruction is fed through the NORMAL reasm_.push path, so COMPLETE
+  // fires honestly with the right total. The frame then counts recFec_
+  // (recovered), never framesOk_ (clean); bytesRx_ counts it identically.
+  // Anything short of a solving COMPLETE falls through untouched: the live
+  // partial ages out through the existing STALE/DROPPED paths with identical
+  // counting. OVERSIZE frames never reach here (cap overflow is not erasure).
+  void tryRecover_() {
+    if (!dActive_ || !dHaveLast_ || dPend_ || dStride_ == 0) {
+      return;
+    }
+    if (!parHave_ || parFid_ != dFid_ || parCount_ == 0) {
+      return;
+    }
+    if (slot_ == nullptr) {
+      return;
+    }
+    const uint32_t n = static_cast<uint32_t>(dLastIdx_) + 1;
+    if (n > uartpoc::fec::kMaxData) {
+      return;  // Beyond the erasure code: the normal drop path owns it.
+    }
+    if (dStride_ == 0 || dStride_ > uartpoc::kMaxPayload) {
+      return;
+    }
+    if (n * dStride_ > kSlotCap) {
+      return;  // Would OVERSIZE: let the normal path flag big.
+    }
+    if (dLastLen_ > dStride_) {
+      return;
+    }
+    uint8_t missIdx[uartpoc::fec::kMaxData];
+    uint8_t nMiss = 0;
+    for (uint32_t i = 0; i < n; ++i) {
+      if (!dSeen_(static_cast<uint16_t>(i))) {
+        missIdx[nMiss++] = static_cast<uint8_t>(i);
+      }
+    }
+    if (nMiss == 0) {
+      return;  // Nothing to repair; live pushes COMPLETE clean.
+    }
+    const uint8_t* parPtr[uartpoc::fec::kMaxParity] = {nullptr, nullptr, nullptr, nullptr};
+    bool parOk[uartpoc::fec::kMaxParity] = {false, false, false, false};
+    uint8_t nGood = 0;
+    for (uint8_t s = 0; s < parCount_; ++s) {
+      if (parLen_[s] != dStride_) {
+        continue;  // Stride mismatch: not usable for this frame.
+      }
+      if (static_cast<uint32_t>(parIdx_[s]) < n) {
+        continue;  // Data-range idx, not parity N..N+K-1.
+      }
+      const uint32_t j = static_cast<uint32_t>(parIdx_[s]) - n;
+      if (j >= uartpoc::fec::kMaxParity || parOk[j]) {
+        continue;
+      }
+      parPtr[j] = parBuf_ + static_cast<size_t>(s) * uartpoc::kMaxPayload;
+      parOk[j] = true;
+      ++nGood;
+    }
+    if (nMiss > nGood) {
+      return;  // NEED_MORE: wait for the remaining parity.
+    }
+    // Present blocks read straight from the reassembly slot at their placed
+    // offsets; missing blocks are solved back full-stride into the same slot
+    // (recover owns the stride padding — the caller truncates N-1 below).
+    uint8_t* dataIo[uartpoc::fec::kMaxData];
+    bool missing[uartpoc::fec::kMaxData];
+    for (uint32_t i = 0; i < n; ++i) {
+      dataIo[i] = slot_ + i * dStride_;
+      missing[i] = !dSeen_(static_cast<uint16_t>(i));
+    }
+    // Stride-padding rule (see uart_fec.h): encode() zero-pads short tails
+    // internally, so a PRESENT short LAST must carry zero padding past
+    // last_len for the solve to verify. That slot region holds stale bytes
+    // from older frames — normalize it now (outside the frame total, so a
+    // failed recovery leaves reassembly untouched).
+    for (size_t b = dLastLen_; b < dStride_; ++b) {
+      dataIo[n - 1][b] = 0;
+    }
+    const uartpoc::fec::Recover rc =
+        uartpoc::fec::recover(dataIo, missing, static_cast<uint8_t>(n), parPtr, parOk, uartpoc::fec::kMaxParity,
+                              dStride_, dLastLen_, fecScratch_, sizeof(fecScratch_));
+    if (rc != uartpoc::fec::Recover::OK) {
+      return;  // UNRECOVERABLE (e.g. corrupt parity): never emit, drop path owns it.
+    }
+    for (uint8_t m = 0; m < nMiss; ++m) {
+      const uint8_t idx = missIdx[m];
+      const bool isLast = (idx == dLastIdx_);
+      const uint16_t ln = isLast ? dLastLen_ : static_cast<uint16_t>(dStride_);
+      const uint8_t fl = isLast ? uartpoc::FLAG_LAST_CHUNK : 0;
+      size_t t2 = 0;
+      const uartpoc::Reassembler::Push r2 =
+          reasm_.push(dFid_, idx, fl, slot_ + static_cast<size_t>(idx) * dStride_, ln, t2);
+      if (r2 == uartpoc::Reassembler::Push::COMPLETE) {
+        ++recFec_;
+        bytesRx_ += t2;
+        oooFrame_ = 0xFFFF;
+        parReset_();
+        dActive_ = false;
+        dReset_();
+        return;
+      }
+      if (r2 == uartpoc::Reassembler::Push::ACCEPTED) {
+        dSet_(idx);
+        continue;
+      }
+      if (r2 == uartpoc::Reassembler::Push::DUPLICATE) {
+        continue;  // Shadow over-marked a present chunk: harmless.
+      }
+      // Defensive: bounds pre-checked and same fid, so OVERSIZE/DROPPED/STALE
+      // cannot fire here. Stop feeding; the live partial ages out normally.
+      dActive_ = reasm_.active();
+      if (!dActive_) {
+        dReset_();
+      }
+      return;
+    }
+    // All reconstructions placed but COMPLETE did not fire (shadow
+    // over-marked): leave the partial live; later chunks/parity still complete
+    // it or age it out through the existing paths.
   }
 
   // Send a CMD frame and wait ≤2s per attempt for its RESP (up to 3 attempts).
@@ -402,6 +696,9 @@ class PocLink {
       }
       char msg[64];
       uartpoc::PocConfig probe = cfg_;
+      // Note: fec_k is accepted-but-inert on S3 (parseSet stores it, but S3
+      // never emits parity — S3 is the FEC-RX side only; recovery consumes
+      // Head parity regardless of this knob).
       if (uartpoc::parseSet(key, val, probe, msg, sizeof(msg))) {
         cfg_ = probe;
       }
@@ -420,16 +717,19 @@ class PocLink {
       return;
     }
     if (isWord_(line, "STATS")) {
-      char msg[224];
+      char msg[288];  // Worst-case all-counters-max line with rec+par needs ~267+NUL.
       buildStats_(msg, sizeof(msg));
       LOG_I("POC", "%s", msg);
       return;
     }
     if (isWord_(line, "RESET")) {
-      framesOk_ = chunksRx_ = hdrErr_ = payErr_ = drops_ = big_ = ooo_ = dups_ = ovf_ = hbRx_ = bytesRx_ = 0;
+      framesOk_ = chunksRx_ = hdrErr_ = payErr_ = drops_ = big_ = ooo_ = dups_ = ovf_ = hbRx_ = bytesRx_ = recFec_ =
+          parRx_ = 0;
       tFirstMs_ = 0;
       lastChunkMs_ = 0;
       oooFrame_ = 0xFFFF;
+      parReset_();
+      dReset_();
       reasm_.reset();
       linkDec_.reset();
       LOG_I("POC", "counters reset");
@@ -437,7 +737,9 @@ class PocLink {
     }
     if (isWord_(line, "HELP")) {
       LOG_I("POC", "cmds: STATS | RESET | SET k v | GET k | GET all | HEAD SET k v | HEAD GET k | HELP");
-      LOG_I("POC", "keys: chunk|chunk_bytes 16..1024 pace|pace_us 0..50000 baud <list incl 1M-5M> mode 0..3 fps 1..30");
+      LOG_I("POC",
+            "keys: chunk|chunk_bytes 16..1024 pace|pace_us 0..50000 baud <list incl 1M-5M> mode 0..3 fps 1..30 "
+            "fec|fec_k 0..4");
       LOG_I("POC", "keys (Head-side via HEAD SET): framesize qvga|vga|svga|xga|sxga|uxga|qxga (mode-3 re-init)");
       LOG_I("POC",
             "selftest: SELFTEST WIRE <baud> <mode 0-2> <chunk 16-1024> <pace 0-50000> <nframes 1-50> (needs "
@@ -856,17 +1158,21 @@ class PocLink {
     const unsigned long kbs = (elapsed < 1000) ? 0 : static_cast<unsigned long>(bytesRx_ / elapsed);
     const size_t intFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     // Single machine-parseable line (sweep script scrapes k=v tokens).
-    // kbps = kilobits/s, kbs = KB/s per spec (bytes/elapsed).
+    // kbps = kilobits/s, kbs = KB/s per spec (bytes/elapsed). rec counts
+    // frames COMPLETED via FEC recovery (ok stays clean-only); par counts
+    // accepted parity stores (wire-loss vs unused-parity split for task-4).
+    // rec/par are appended last so existing field order is undisturbed.
     snprintf(out, cap,
              "STATS ok=%lu chunks=%lu herr=%lu perr=%lu drops=%lu big=%lu ooo=%lu dups=%lu ovf=%lu hb=%lu bytes=%lu "
              "kbps=%lu "
-             "kbs=%lu intfree=%u up=%lu",
+             "kbs=%lu intfree=%u up=%lu rec=%lu par=%lu",
              static_cast<unsigned long>(framesOk_), static_cast<unsigned long>(chunksRx_),
              static_cast<unsigned long>(hdrErr_), static_cast<unsigned long>(payErr_),
              static_cast<unsigned long>(drops_), static_cast<unsigned long>(big_), static_cast<unsigned long>(ooo_),
              static_cast<unsigned long>(dups_), static_cast<unsigned long>(ovf_), static_cast<unsigned long>(hbRx_),
              static_cast<unsigned long>(bytesRx_), kbps, kbs, static_cast<unsigned>(intFree),
-             static_cast<unsigned long>(elapsed));
+             static_cast<unsigned long>(elapsed), static_cast<unsigned long>(recFec_),
+             static_cast<unsigned long>(parRx_));
   }
 
   static const char* skipSpaces_(const char* s) {
@@ -948,6 +1254,7 @@ class PocLink {
   uint8_t* slot_;         // INTERNAL one-frame reassembly slot (kSlotCap).
   uint8_t* txBuf_;        // INTERNAL CMD/HB encode staging (kMaxFrameLen).
   uint8_t* verifyChunk_;  // INTERNAL selftest chunk staging + regen scratch (kMaxPayload).
+  uint8_t* parBuf_;       // INTERNAL parity staging (kParityBytes), keyed to one frameId at a time.
   bool testActive_;       // WIRE/SWEEP own Serial1 while set (pollLink hands off).
   bool txEnabled_;
   uint16_t txFrameId_;
@@ -972,6 +1279,35 @@ class PocLink {
   char respBuf_[128];
   char usbBuf_[128];
   size_t usbLen_;
+  // ── FEC-RX state (S3 recover-before-reset) ──
+  // Parity slots: K<=4 full-stride blocks for exactly one frameId (INTERNAL
+  // kParityBytes, allocated once in begin()). Data shadow: stride/haveLast/
+  // seen mirror over Reassembler (which exposes no accessors) so recovery can
+  // name the exact erasure set. Parity never enters reassembly accounting;
+  // OVERSIZE frames never recover. recFec_ counts recovery completions
+  // (framesOk_ stays clean-only); parRx_ counts accepted parity stores
+  // (foreign-frame/duplicate/invalid parity stays silent). RESET clears both;
+  // STALE/COMPLETE/sync flushes must never clear them (cumulative counters,
+  // not slot state — parReset_ leaves them alone).
+  static constexpr size_t kParitySlots = uartpoc::fec::kMaxParity;
+  static constexpr size_t kParityBytes = kParitySlots * uartpoc::kMaxPayload;
+  uint32_t recFec_;
+  uint32_t parRx_;
+  uint8_t parCount_;
+  bool parHave_;
+  uint16_t parFid_;
+  uint16_t parIdx_[uartpoc::fec::kMaxParity];
+  uint16_t parLen_[uartpoc::fec::kMaxParity];
+  uint8_t fecScratch_[uartpoc::fec::kRecoverScratchMin];
+  bool dActive_;
+  uint16_t dFid_;
+  size_t dStride_;
+  bool dHaveLast_;
+  uint16_t dLastIdx_;
+  uint16_t dLastLen_;
+  bool dPend_;
+  uint16_t dPendIdx_;
+  uint32_t dBits_[uartpoc::Reassembler::kBitmapWords];
 };
 
 #endif  // ARDUINO

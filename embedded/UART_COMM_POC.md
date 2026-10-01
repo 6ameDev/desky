@@ -156,7 +156,10 @@ on UART (TRM max 5M, practical ≤2M); needs SPI or scope cut. Robot need
     (idx N..N+K−1, flags 0x04, LAST stays on N−1), 16KB skip cap, `txp=`
     counter; gates 74/74 + 115/115. S3 decode pending (task 3) — keep K=0
     until then.
-  - [ ] S3 recover-before-reset + recovered-vs-clean counters.
+  - [x] S3 recover-before-reset + recovered-vs-clean counters. DONE: parity
+    intercept (4x1KB INTERNAL slots, never in reassembly accounting),
+    recover-before-reset through normal push (COMPLETE honesty), `rec` counter
+    (ok stays clean-only); gates 125/125 + 84/84.
   - [ ] Sparse-2M then saturated-1.5M/2M frame-completion measures.
   - [ ] Auto-pace (fps-derived, manual `pace_us` override kept).
   - [ ] Head progressive-drop (overrun check + mid-frame abort).

@@ -431,3 +431,57 @@ void test_fec_max_n64_k4() {
     TEST_ASSERT_EQUAL_UINT8_ARRAY(orig[i], data[i], kS);
   }
 }
+
+void test_fec_reference_vector_handcomputed() {
+  // Independent GF(2^8)/0x11D reference vector — hand-computed, NEVER generated
+  // by the code under test (breaks the self-consistent-only test loop).
+  //
+  // Field: GF(2^8) mod x^8+x^4+x^3+x+1 (0x11D); doubling is <<1 with a
+  // conditional xor 0x1D when the top bit overflows:
+  //   gfMul(0x02, 0x02) = 0x04  (0b10 << 1, no overflow)
+  //   gfMul(0x80, 0x02) = 0x1D  (0x80 << 1 overflows -> 0x00 ^ 0x1D)
+  //   gfMul(0x03, 0x03) = 0x05  (poly (x+1)^2 = x^2+1, no reduction)
+  //   gfMul(0x00, 0xFF) = 0x00  (zero annihilates)
+  //   gfPow(0x02, 8) = 0x1D     (x^8 mod 0x11D = x^4+x^3+x+1 = 0b11101)
+  //   gfPow(0x03, 2) = 0x05     (matches the gfMul row above)
+  //   gfPow(0x05, 0) = 0x01 and gfPow(0x00, 3) = 0x00  (edge rules)
+  // Row 0 is weighted 1,2,3.. — NOT a plain XOR:
+  //   vandermonde(0, 0) = 1, vandermonde(0, 1) = 2,
+  //   vandermonde(1, 0) = 1, vandermonde(1, 1) = 4.
+  TEST_ASSERT_EQUAL_UINT8(0x04, uartpoc::fec::gfMul(0x02, 0x02));
+  TEST_ASSERT_EQUAL_UINT8(0x1D, uartpoc::fec::gfMul(0x80, 0x02));
+  TEST_ASSERT_EQUAL_UINT8(0x05, uartpoc::fec::gfMul(0x03, 0x03));
+  TEST_ASSERT_EQUAL_UINT8(0x00, uartpoc::fec::gfMul(0x00, 0xFF));
+  TEST_ASSERT_EQUAL_UINT8(0x1D, uartpoc::fec::gfPow(0x02, 8));
+  TEST_ASSERT_EQUAL_UINT8(0x05, uartpoc::fec::gfPow(0x03, 2));
+  TEST_ASSERT_EQUAL_UINT8(0x01, uartpoc::fec::gfPow(0x05, 0));
+  TEST_ASSERT_EQUAL_UINT8(0x00, uartpoc::fec::gfPow(0x00, 3));
+  TEST_ASSERT_EQUAL_UINT8(1, uartpoc::fec::vandermonde(0, 0));
+  TEST_ASSERT_EQUAL_UINT8(2, uartpoc::fec::vandermonde(0, 1));
+  TEST_ASSERT_EQUAL_UINT8(1, uartpoc::fec::vandermonde(1, 0));
+  TEST_ASSERT_EQUAL_UINT8(4, uartpoc::fec::vandermonde(1, 1));
+  // N=2, K=1 encode: p = 1*d0 ^ 2*d1.
+  //   d0 = {0x01, 0x53}, d1 = {0x02, 0x80}, stride 2:
+  //   b0: 0x01 ^ (2*0x02 = 0x04) = 0x05
+  //   b1: 0x53 ^ (2*0x80 = 0x1D) = 0x4E   (0x53=01010011 ^ 0x1D=00011101)
+  const uint8_t d0[2] = {0x01, 0x53};
+  const uint8_t d1[2] = {0x02, 0x80};
+  const uint8_t* dptr[2] = {d0, d1};
+  size_t lens[2] = {2, 2};
+  uint8_t p[2] = {0xAA, 0xAA};
+  uint8_t* pptr[1] = {p};
+  TEST_ASSERT_TRUE(uartpoc::fec::encode(dptr, 2, 1, 2, lens, pptr));
+  TEST_ASSERT_EQUAL_UINT8(0x05, p[0]);
+  TEST_ASSERT_EQUAL_UINT8(0x4E, p[1]);
+  // The hand vector also solves: lose d0, recover against the hand parity.
+  uint8_t w0[2] = {0, 0};
+  uint8_t w1[2] = {0x02, 0x80};
+  uint8_t* ioptr[2] = {w0, w1};
+  const uint8_t* pcptr[1] = {p};
+  const bool missing[2] = {true, false};
+  const bool pok[1] = {true};
+  uint8_t scratch[uartpoc::fec::kRecoverScratchMin] = {};
+  TEST_ASSERT_TRUE(uartpoc::fec::recover(ioptr, missing, 2, pcptr, pok, 1, 2, 2, scratch, sizeof(scratch)) ==
+                   uartpoc::fec::Recover::OK);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(d0, w0, 2);
+}

@@ -64,6 +64,20 @@ void test_uart_config_set_fec();
 void test_fec_emit_plan();
 void test_fec_parity_headers();
 void test_fec_emit_shape_roundtrip();
+void test_s3fec_recover_one_missing();
+void test_s3fec_recover_two_missing_k2();
+void test_s3fec_kplus1_missing_drops();
+void test_s3fec_parity_unknown_frame_ignored();
+void test_s3fec_clean_complete_discards_parity();
+void test_s3fec_last_missing_truncation();
+void test_s3fec_corrupt_parity_drops();
+void test_s3fec_stale_flushes_parity();
+void test_s3fec_oversize_never_recovers();
+void test_s3fec_k0_parity_ignored();
+void test_s3fec_chunks_data_only_parity_silent();
+void test_s3fec_parrx_counts_accepted_stores();
+void test_s3fec_stats_order_appended_last();
+void test_s3fec_reset_clears_rec();
 void test_synth_totals_and_flags();
 void test_synth_ramp_pattern();
 void test_synth_jpeg_markers_and_determinism();
@@ -83,6 +97,7 @@ void test_fec_determinism_idempotence();
 void test_fec_rejects_bad_args();
 void test_fec_edge_n1_k1();
 void test_fec_max_n64_k4();
+void test_fec_reference_vector_handcomputed();
 
 int main() {
   UNITY_BEGIN();
@@ -142,6 +157,20 @@ int main() {
   RUN_TEST(test_fec_emit_plan);
   RUN_TEST(test_fec_parity_headers);
   RUN_TEST(test_fec_emit_shape_roundtrip);
+  RUN_TEST(test_s3fec_recover_one_missing);
+  RUN_TEST(test_s3fec_recover_two_missing_k2);
+  RUN_TEST(test_s3fec_kplus1_missing_drops);
+  RUN_TEST(test_s3fec_parity_unknown_frame_ignored);
+  RUN_TEST(test_s3fec_clean_complete_discards_parity);
+  RUN_TEST(test_s3fec_last_missing_truncation);
+  RUN_TEST(test_s3fec_corrupt_parity_drops);
+  RUN_TEST(test_s3fec_stale_flushes_parity);
+  RUN_TEST(test_s3fec_oversize_never_recovers);
+  RUN_TEST(test_s3fec_k0_parity_ignored);
+  RUN_TEST(test_s3fec_chunks_data_only_parity_silent);
+  RUN_TEST(test_s3fec_parrx_counts_accepted_stores);
+  RUN_TEST(test_s3fec_stats_order_appended_last);
+  RUN_TEST(test_s3fec_reset_clears_rec);
   RUN_TEST(test_synth_totals_and_flags);
   RUN_TEST(test_synth_ramp_pattern);
   RUN_TEST(test_synth_jpeg_markers_and_determinism);
@@ -160,5 +189,6 @@ int main() {
   RUN_TEST(test_fec_rejects_bad_args);
   RUN_TEST(test_fec_edge_n1_k1);
   RUN_TEST(test_fec_max_n64_k4);
+  RUN_TEST(test_fec_reference_vector_handcomputed);
   return UNITY_END();
 }
