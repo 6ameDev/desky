@@ -47,7 +47,11 @@ class SerialSink : public LogSink {
 class Logger {
  public:
   static constexpr int kMaxSinks = 4;
-  static constexpr size_t kBufSize = 192;
+  // 288B: the 192B cap display-truncated long STATS lines (Head's full
+  // STATS + "HEAD RESP: " + log prefix ≈ 190-264 chars), hiding trailing
+  // fields. Worst case now fits whole (216 + 12 + 36 = 264 < 288). Stack
+  // cost +192B transient per log call; all logging tasks have >=4KB stacks.
+  static constexpr size_t kBufSize = 288;
 
   static void begin() {
     ensureMutex();

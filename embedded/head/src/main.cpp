@@ -13,6 +13,7 @@
 #include "middleware/link_stub.h"
 #include "services/cli_manager.h"
 #include "services/event_bus.h"
+#include "services/link_manager.h"
 #include "services/power_manager.h"
 
 // desky-head (face-unit: OV3660 eyes + face OLED + talk-wire).
@@ -47,6 +48,13 @@ FaceRenderer g_display(g_panel);
 PowerManager g_power;
 LinkStub g_link;
 CliManager g_cli;
+// UART link to core (v2 carry-over from poc-comm-link): stage-and-release
+// camera pipeline (grabNext_/pumpStaged_/CAMBENCH) + framed CHUNK/HB TX on
+// Serial2. SINGLE OWNER of Serial2 while active — LinkStub's plain
+// AWAKE/HB poll is parked below (its bytes are decoder noise to the framed
+// S3 receiver). To restore stub-only bring-up: drop g_linkMgr lines, re-add
+// g_link.poll() + g_link.heartbeatTick().
+LinkManager g_linkMgr;
 EventBus::Subscription g_sub;
 uint32_t g_lastCamMs = 0;
 uint32_t g_lastAliveMs = 0;
@@ -75,8 +83,11 @@ void setup() {
   const bool oledOk = g_display.init();
   (void)oledOk;  // NEVER asserted: absent OLED is the normal on-MB state.
   g_power.begin(&g_cam, &g_display);
-  g_link.begin(&g_power);  // Sends plain AWAKE (task-3 S3 side hears this line).
+  g_link.begin(&g_power);  // Retained for the verb table; wire parked (see loop).
   g_cli.begin(&g_power);
+  g_linkMgr.begin();  // Serial2 framed transport + generator task; owns the wire from here.
+  LOG_I("BOOT", "link tx=%d rx=%d baud=%u(default) chunk=128 pace=1000 fps=20 q18 k0", MCU_LINK_UART_TX,
+        MCU_LINK_UART_RX, 1500000u);
   g_sub = EventBus::subscribe();  // Settles before any publish (loop only).
   g_lastCamMs = millis();
   g_lastAliveMs = millis();
@@ -89,9 +100,8 @@ void setup() {
 
 void loop() {
   FaultManager::watchdogFeed();
-  g_cli.poll();   // USB door (human).
-  g_link.poll();  // UART door (S3 verbs into the same command table).
-  g_link.heartbeatTick();
+  g_cli.poll();      // USB door (human).
+  g_linkMgr.poll();  // Framed UART door (owns Serial2; LinkStub poll/heartbeat parked — see above).
   const uint32_t now = millis();
   if (now - g_lastCamMs >= CFG_CAMERA_POLL_MS) {  // Wrap-safe elapsed gate.
     g_lastCamMs = now;
