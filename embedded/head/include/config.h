@@ -36,6 +36,7 @@
 #define CFG_FACE_CORE 0
 
 // Camera: QVGA JPEG stills, grab-and-drop at the poll rate (no streaming —
-// WiFi stays OFF on head).
+// WiFi stays OFF on head). Quality 18 = frozen v2 operating point (QVGA
+// ~3-7KB, chain-proven §5b with short-exposure+gain-12; sane range 10-30).
 #define CFG_CAMERA_POLL_MS 500
-#define CFG_CAMERA_JPEG_QUALITY 12
+#define CFG_CAMERA_JPEG_QUALITY 18

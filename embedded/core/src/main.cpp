@@ -10,6 +10,7 @@
 #include "hal/motor_driver.h"
 #include "hal/mpu6500_driver.h"
 #include "hal/vl53l0x_driver.h"
+#include "middleware/link_manager.h"
 #include "middleware/sensor_task.h"
 #include "middleware/udp_server.h"
 #include "services/config_store.h"
@@ -21,6 +22,11 @@ MotionController g_motion;
 Coordinator g_coordinator;
 SensorTask g_sensor;
 UdpServer g_udp;
+// UART link to head (v2 carry-over from poc-comm-link): RX-only Serial1
+// (RX=18, TX tristated until the first valid Head frame protects CAM GPIO12
+// strapping), 16KB RX ring, 64KB reassembly slot. Background service —
+// polled every loop tick alongside the brain tasks.
+LinkManager g_link;
 I2CManager g_i2c;
 Mpu6500Driver g_mpu(g_i2c);
 Vl53l0xDriver g_tof(g_i2c);
@@ -50,6 +56,9 @@ void setup() {
   DESKY_ASSERT(sensorOk);
   const bool udpOk = g_udp.begin(&g_coordinator, &g_tof, &g_mpu);
   DESKY_ASSERT(udpOk);
+  g_link.begin();  // RX-only Serial1 + INTERNAL buffers; never drives CAM GPIO12 until head frames validate.
+  LOG_I("BOOT", "link rx=%d tx=%d(tristated until first head frame) ring=16K slot=64K", MCU_LINK_UART_RX,
+        MCU_LINK_UART_TX);
   LOG_I("BOOT", "sensors ready tof=%dmm mpu=0x%02X", g_tof.distanceMm(), g_mpu.address());
   LOG_I("BOOT", "motor L0+L1 ready pins=%d,%d,%d,%d fault=%d", MCU_MOTOR_IN1, MCU_MOTOR_IN2, MCU_MOTOR_IN3,
         MCU_MOTOR_IN4, MCU_MOTOR_FAULT);
@@ -61,7 +70,13 @@ void setup() {
 
 void loop() {
   FaultManager::watchdogFeed();
-  LOG_I("MAIN", "desky v2 skeleton alive");
-  Diagnostics::logWatermarks();
-  delay(2000);
+  g_link.poll();  // Link RX pump (bounded 64-pass drain) + USB CLI; needs ms-scale ticks.
+  static uint32_t s_lastAliveMs = 0;
+  const uint32_t now = millis();
+  if (now - s_lastAliveMs >= 2000) {  // Wrap-safe elapsed gate (was blocking delay).
+    s_lastAliveMs = now;
+    LOG_I("MAIN", "desky v2 skeleton alive");
+    Diagnostics::logWatermarks();
+  }
+  delay(1);
 }
