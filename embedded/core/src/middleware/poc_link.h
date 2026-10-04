@@ -11,7 +11,7 @@
 //    Out-of-order tolerated, duplicates ignored, missing-at-LAST drops.
 //  - Counters + machine-parseable single-line STATS for the sweep script.
 //  - USB CLI: STATS | RESET | SET k v | GET k | GET all | HEAD SET k v |
-//    HEAD GET k | HELP. Baud changes always run the deferred ACK-then-switch
+//    HEAD GET k | HEAD STATS | HELP. Baud changes always run the deferred ACK-then-switch
 //    protocol (CMD at old baud, 2s ACK wait else abort, both switch after a
 //    delay, USB reminder to switch the monitor).
 //  - SELFTEST verbs (USB CLI, needs TX17-RX18 loopback jumper, CAM powered
@@ -55,8 +55,15 @@ class PocLink {
  public:
   static constexpr size_t kSlotCap = 65536;  // One frame slot; bigger frames drop.
   static constexpr size_t kRxBuf = 2048;
-  static constexpr size_t kRxRing = 4096;         // UART driver ring (INTERNAL); margin for pace-0 bursts at 2M+.
-  static constexpr size_t kRxOvfWarn = 3584;      // available() at/above this counts an overflow-pressure event.
+  // 16KB ring (was 4KB): E2 proved the K=2 storm is burst-continuity, not
+  // BER — 6.2KB pace-0 bursts at 1.5M overflowed the 4KB ring mid-burst,
+  // dropping burst tails (parity annihilated, payloads spanning holes fail
+  // CRC while resync lands on real headers, hence perr≫0 with herr≈0).
+  // 16KB absorbs ~100ms of loop stall at full 1.5M rate; S3 intfree 262KB
+  // keeps ~170KB headroom after all INTERNAL arenas (slot 64KB + ring 16KB
+  // + parity 4KB + rx/tx staging). Warn threshold keeps the old 87.5% ratio.
+  static constexpr size_t kRxRing = 16384;        // UART driver ring (INTERNAL).
+  static constexpr size_t kRxOvfWarn = 14336;     // available() at/above this counts an overflow-pressure event.
   static constexpr uint32_t kStaleChunkMs = 100;  // Partial frame idle this long => flush slot, count a drop.
 
   PocLink()
@@ -125,7 +132,7 @@ class PocLink {
     reasm_.attach(slot_, kSlotCap);
     // RX-only: TX pin unassigned (-1) keeps GPIO17 high-impedance so the S3
     // never drives CAM GPIO12 during CAM reset (strapping requirement).
-    Serial1.setRxBufferSize(kRxRing);  // 4KB INTERNAL ring: margin for pace-0 bursts at 2M+.
+    Serial1.setRxBufferSize(kRxRing);  // 16KB INTERNAL ring (see kRxRing: absorbs K=2 pace-0 bursts).
     Serial1.begin(cfg_.baud, SERIAL_8N1, MCU_LINK_UART_RX, -1);
     LOG_I("POC", "s3 up link rx=%d tx=tristated(until first head frame) baud=%u slot=%uKB", MCU_LINK_UART_RX,
           static_cast<unsigned>(cfg_.baud), static_cast<unsigned>(kSlotCap / 1024));
@@ -655,7 +662,10 @@ class PocLink {
   void handleUsbLine_(const char* line) {
     if (startsWith_(line, "HEAD ")) {
       const char* rest = line + 5;
-      if (startsWith_(rest, "SET ") || startsWith_(rest, "GET ")) {
+      // STATS forwards like SET/GET (Head answers STATS CMDs with its
+      // txf/txc/txp/txdrop line — the pacing-hunt read; idempotent, so the
+      // sendCmdAndWait_ retry below is safe). Anything else prints usage.
+      if (startsWith_(rest, "SET ") || startsWith_(rest, "GET ") || isWord_(rest, "STATS")) {
         // Baud bridges always carry the deferred-switch apply delay.
         if (startsWith_(rest, "SET baud ")) {
           uint32_t target = 0;
@@ -666,15 +676,31 @@ class PocLink {
           }
           return;
         }
-        char resp[128];
+        // 256B: Head's STATS line runs ~175+ chars with the txdrop token
+        // (firmware buildStats_ caps at 224); 128 would truncate exactly the
+        // pacing-hunt fields. SET/GET ACKs stay far shorter — same buffer.
+        char resp[256];
         if (sendCmdAndWait_(rest, resp, sizeof(resp))) {
-          LOG_I("POC", "HEAD RESP: %s", resp);
+          // A1: long RESP payloads print split (Logger display caps at 288B
+          // shared/common/logger.h kBufSize — worse, the old 192B cap cut
+          // trailing fields at display time). Halves rejoin byte-identical
+          // (pinned in host tests). Short ACKs print as one.
+          size_t rlen = 0;
+          while (rlen < sizeof(resp) && resp[rlen] != '\0') {
+            ++rlen;
+          }
+          if (rlen > 200) {
+            LOG_I("POC", "HEAD RESP [1/2]: %.*s", 200, resp);
+            LOG_I("POC", "HEAD RESP [2/2]: %s", resp + 200);
+          } else {
+            LOG_I("POC", "HEAD RESP: %s", resp);
+          }
         } else {
           LOG_W("POC", "HEAD RESP: TIMEOUT");
         }
         return;
       }
-      LOG_W("POC", "usage: HEAD SET k v | HEAD GET k");
+      LOG_W("POC", "usage: HEAD SET k v | HEAD GET k | HEAD STATS");
       return;
     }
     if (startsWith_(line, "SET ")) {
@@ -737,7 +763,7 @@ class PocLink {
       return;
     }
     if (isWord_(line, "HELP")) {
-      LOG_I("POC", "cmds: STATS | RESET | SET k v | GET k | GET all | HEAD SET k v | HEAD GET k | HELP");
+      LOG_I("POC", "cmds: STATS | RESET | SET k v | GET k | GET all | HEAD SET k v | HEAD GET k | HEAD STATS | HELP");
       LOG_I("POC",
             "keys: chunk|chunk_bytes 16..1024 pace|pace_us 0..50000 baud <list incl 1M-5M> mode 0..3 fps 1..30 "
             "fec|fec_k 0..4");
@@ -1279,7 +1305,10 @@ class PocLink {
   uint16_t nextExpected_;
   bool waitingResp_;
   bool respGot_;
-  char respBuf_[128];
+  // 256B: Head's STATS RESP runs ~175+ chars (txdrop token); the RESP copy
+  // loop in onFrame_ sizes itself with sizeof(respBuf_), so this one number
+  // carries the whole bridge path. Wire cap (kMaxPayload 1024) is uninvolved.
+  char respBuf_[256];
   char usbBuf_[128];
   size_t usbLen_;
   // ── FEC-RX state (S3 recover-before-reset) ──

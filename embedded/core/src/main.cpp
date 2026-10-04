@@ -25,11 +25,14 @@ void setup() {
   FaultManager::watchdogInit();
   FaultManager::registerAllocFailureHook();
   g_poc.begin();  // Config defaults + RX-only Serial1 + INTERNAL buffers.
-  LOG_I("BOOT", "desky-core uart-poc | MCU=%s cores=%d flash=%dMB psram=%d", MCU_NAME, MCU_NUM_CORES, MCU_FLASH_SIZE_MB,
-        MCU_HAS_PSRAM);
+  // fw= marker: manual firmware identity (bump on every firmware change so a
+  // console banner proves which image runs — hash verifies bytes-written, not
+  // source-identity). Pinned in host tests (test_uart_frame.cpp fwmarker).
+  LOG_I("BOOT", "desky-core uart-poc fw=s3-006-ring16+split | MCU=%s cores=%d flash=%dMB psram=%d", MCU_NAME,
+        MCU_NUM_CORES, MCU_FLASH_SIZE_MB, MCU_HAS_PSRAM);
   LOG_I("BOOT", "pins link_rx=%d link_tx=%d(tristated until first head frame)", MCU_LINK_UART_RX, MCU_LINK_UART_TX);
   LOG_I("BOOT", "reset=%s sdk=%s rev=%d", FaultManager::resetReasonStr(), ESP.getSdkVersion(), ESP.getChipRevision());
-  LOG_I("BOOT", "usb: STATS | RESET | SET k v | GET k | GET all | HEAD SET k v | HEAD GET k | HELP");
+  LOG_I("BOOT", "usb: STATS | RESET | SET k v | GET k | GET all | HEAD SET k v | HEAD GET k | HEAD STATS | HELP");
 }
 
 void loop() {

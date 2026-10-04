@@ -84,6 +84,8 @@ void test_pendingfb_send_completes_returns();
 void test_pendingfb_stale_dropped_counted();
 void test_pendingfb_switch_entry_returns_pending();
 void test_pendingfb_no_double_return();
+void test_pendingfb_staged_collision_counts_drop();
+void test_fw_markers_pinned();
 void test_synth_totals_and_flags();
 void test_synth_ramp_pattern();
 void test_synth_jpeg_markers_and_determinism();
@@ -183,6 +185,8 @@ int main() {
   RUN_TEST(test_pendingfb_stale_dropped_counted);
   RUN_TEST(test_pendingfb_switch_entry_returns_pending);
   RUN_TEST(test_pendingfb_no_double_return);
+  RUN_TEST(test_pendingfb_staged_collision_counts_drop);
+  RUN_TEST(test_fw_markers_pinned);
   RUN_TEST(test_synth_totals_and_flags);
   RUN_TEST(test_synth_ramp_pattern);
   RUN_TEST(test_synth_jpeg_markers_and_determinism);

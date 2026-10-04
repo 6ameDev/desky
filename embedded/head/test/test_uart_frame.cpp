@@ -1092,7 +1092,7 @@ void makeParity(uint8_t n, size_t stride, size_t lastLen, uint8_t data[8][64], u
 // order here — these helpers must stay byte-identical to the firmware format
 // strings, and any firmware reorder must update them (and the tests below):
 //   S3:   "... up=<ms> rec=<n> par=<n>" — rec then par appended LAST.
-//   Head: "... intfree=<n> txp=<n> txdrop=<n>" — txdrop appended LAST.
+//   Head: "... intfree=<n> txp=<n> txdrop=<n> pumpMs=<n> grabMs=<n>" — grabMs appended LAST.
 void formatS3Stats(char* out, size_t cap, uint32_t ok, uint32_t chunks, uint32_t herr, uint32_t perr, uint32_t drops,
                    uint32_t big, uint32_t ooo, uint32_t dups, uint32_t ovf, uint32_t hb, uint32_t bytes, uint32_t kbps,
                    uint32_t kbs, uint32_t intfree, uint32_t up, uint32_t rec, uint32_t prx) {
@@ -1109,15 +1109,15 @@ void formatS3Stats(char* out, size_t cap, uint32_t ok, uint32_t chunks, uint32_t
 
 void formatHeadStats(char* out, size_t cap, uint32_t txf, uint32_t txc, uint32_t txb, uint32_t rxcmd, uint32_t rxe,
                      uint32_t mode, uint32_t chunk, uint32_t pace, uint32_t baud, uint32_t fps, uint32_t intfree,
-                     uint32_t txp, uint32_t txdrop) {
+                     uint32_t txp, uint32_t txdrop, uint32_t pumpMs, uint32_t grabMs) {
   snprintf(out, cap,
            "STATS txf=%lu txc=%lu txb=%lu rxcmd=%lu rxe=%lu mode=%u chunk=%u pace=%lu baud=%lu fps=%u intfree=%u "
-           "txp=%lu txdrop=%lu",
+           "txp=%lu txdrop=%lu pumpMs=%lu grabMs=%lu",
            static_cast<unsigned long>(txf), static_cast<unsigned long>(txc), static_cast<unsigned long>(txb),
            static_cast<unsigned long>(rxcmd), static_cast<unsigned long>(rxe), static_cast<unsigned>(mode),
            static_cast<unsigned>(chunk), static_cast<unsigned long>(pace), static_cast<unsigned long>(baud),
            static_cast<unsigned>(fps), static_cast<unsigned>(intfree), static_cast<unsigned long>(txp),
-           static_cast<unsigned long>(txdrop));
+           static_cast<unsigned long>(txdrop), static_cast<unsigned long>(pumpMs), static_cast<unsigned long>(grabMs));
 }
 
 }  // namespace s3fec
@@ -1491,8 +1491,9 @@ void test_s3fec_parrx_counts_accepted_stores() {
 
 void test_s3fec_stats_order_appended_last() {
   // STATS field order: S3 appends rec= then par= LAST (existing order
-  // undisturbed); Head appends txp= then txdrop= LAST. See the formatS3Stats /
-  // formatHeadStats contract mirrors above for the firmware sites.
+  // undisturbed); Head appends txp= then txdrop= then pumpMs= then grabMs=
+  // LAST. See the formatS3Stats / formatHeadStats contract mirrors above for
+  // the firmware sites.
   char s3[288];
   s3fec::formatS3Stats(s3, sizeof(s3), 1, 4, 0, 1, 0, 0, 0, 0, 0, 2, 128, 1, 0, 50000, 1000, 1, 2);
   TEST_ASSERT_EQUAL_STRING(
@@ -1507,20 +1508,25 @@ void test_s3fec_stats_order_appended_last() {
   TEST_ASSERT_NOT_NULL(par);
   TEST_ASSERT_TRUE(up < rec && rec < par);  // rec/par trail every older field; par trails rec.
   TEST_ASSERT_NULL(strchr(par + 1, ' '));   // par= is the final token.
-  char head[192];
-  s3fec::formatHeadStats(head, sizeof(head), 7, 64, 4096, 3, 0, 1, 128, 1000, 115200, 10, 49000, 8, 1);
+  char head[224];
+  s3fec::formatHeadStats(head, sizeof(head), 7, 64, 4096, 3, 0, 1, 128, 1000, 115200, 10, 49000, 8, 1, 35, 2);
   TEST_ASSERT_EQUAL_STRING(
       "STATS txf=7 txc=64 txb=4096 rxcmd=3 rxe=0 mode=1 chunk=128 pace=1000 baud=115200 fps=10 intfree=49000 txp=8 "
-      "txdrop=1",
+      "txdrop=1 pumpMs=35 grabMs=2",
       head);
   const char* intfree = strstr(head, " intfree=");
   const char* txp = strstr(head, " txp=");
   const char* txdrop = strstr(head, " txdrop=");
+  const char* pumpMs = strstr(head, " pumpMs=");
+  const char* grabMs = strstr(head, " grabMs=");
   TEST_ASSERT_NOT_NULL(intfree);
   TEST_ASSERT_NOT_NULL(txp);
   TEST_ASSERT_NOT_NULL(txdrop);
-  TEST_ASSERT_TRUE(intfree < txp && txp < txdrop);  // txp/txdrop trail every older field; txdrop trails txp.
-  TEST_ASSERT_NULL(strchr(txdrop + 1, ' '));        // txdrop= is the final token.
+  TEST_ASSERT_NOT_NULL(pumpMs);
+  TEST_ASSERT_NOT_NULL(grabMs);
+  TEST_ASSERT_TRUE(intfree < txp && txp < txdrop && txdrop < pumpMs &&
+                   pumpMs < grabMs);          // txp/txdrop/pumpMs/grabMs trail every older field, in that order.
+  TEST_ASSERT_NULL(strchr(grabMs + 1, ' '));  // grabMs= is the final token.
 }
 
 void test_s3fec_reset_clears_rec() {
@@ -1562,21 +1568,26 @@ void test_s3fec_reset_clears_rec() {
 }
 
 // ── Pending-fb overlap mirror (Head poc_manager.h slot state machine) ──
-// Arduino-free model of the single pendingFb_ slot: fake fb ids stand in for
-// camera_fb_t*; the driver queue (cap 2 = fb_count=2) feeds grabNext_; pump,
-// hold-entry, and switch-entry mirror the firmware paths 1:1 (grab-two
-// behind check, return-on-all-paths, txdrop appended LAST in STATS). Any
-// firmware lifetime change must update this mirror (both suites share it, so
-// this block is identical core<->head; both runners keep symmetric counts).
+// Arduino-free model of the staging + pendingFb_ slots: fake fb ids stand in
+// for camera_fb_t*. Fast path (stage-and-release): grabNext_ copies into
+// INTERNAL staging and returns the fb immediately (staged_ set, no fb held);
+// pumpStaged_ ships the copy. Legacy path (oversize): the driver queue (cap
+// 2 = fb_count=2) feeds grabNext_; pump, hold-entry, and switch-entry mirror
+// the firmware paths 1:1 (grab-two behind check, return-on-all-paths, txdrop
+// ordering in STATS with pumpMs=/grabMs= trailing it). Any firmware lifetime
+// change must update this mirror (both suites share it, so this block is
+// identical core<->head; runners differ by suite-specific tests — S3-only
+// bridge/ring mirrors live in core only).
 namespace pendfb {
 
 struct Slot {
   static const int kEmpty = -1;
   static const int kMaxIds = 8;
-  int pending = kEmpty;  // Fake fb id held across ticks (kEmpty = none).
+  int pending = kEmpty;  // Fake fb id held across ticks, legacy path (kEmpty = none).
+  int staged = kEmpty;   // Fake fb id staged in INTERNAL copy, fast path (kEmpty = none).
   uint32_t frames = 0;   // Completed pumps (txFrames_ mirror).
   uint32_t drops = 0;    // Stale drops (txDropStale_ mirror).
-  int ret[kMaxIds];      // Return-count per fake id (double-return detector).
+  int ret[kMaxIds];      // Return-count per fake id (double-return detector, legacy path).
 
   Slot() {
     for (int i = 0; i < kMaxIds; ++i) {
@@ -1586,6 +1597,27 @@ struct Slot {
 };
 
 inline void release(Slot& s, int id) { ++s.ret[id]; }  // esp_camera_fb_return stand-in.
+
+// Mirrors grabNext_ fast path: stage the copy (+1 implicit immediate return,
+// so no ret[] entry); a still-staged previous frame means behind -> drop the
+// older staged frame, count it, stage the newer.
+inline void stageGrab(Slot& s, int id) {
+  if (s.staged != Slot::kEmpty) {
+    s.staged = Slot::kEmpty;
+    ++s.drops;
+  }
+  s.staged = id;
+}
+
+// Mirrors pumpStaged_ completion: staged copy shipped -> clear, count frame.
+// No fb_return by construction (the live fb left at stage time).
+inline void pumpStaged(Slot& s) {
+  if (s.staged < 0) {
+    return;
+  }
+  s.staged = Slot::kEmpty;
+  ++s.frames;
+}
 
 // Mirrors PocManager::grabNext_: adopt the oldest queued frame; a second
 // queued frame means behind -> return the stale older one, count it.
@@ -1614,13 +1646,16 @@ inline void pump(Slot& s) {
 }
 
 // Mirrors the tick-head hold drop and switchFramesize_ return-and-drop:
-// return pending, counted nowhere (never shipped).
+// return pending, counted nowhere (never shipped); staging cleared alongside
+// (dropPending_ clears stagedValid_ — a stale copy must never ship after a
+// hold/switch window).
 inline void holdEntry(Slot& s) {
   if (s.pending >= 0) {
     const int id = s.pending;
     s.pending = Slot::kEmpty;
     release(s, id);
   }
+  s.staged = Slot::kEmpty;
 }
 
 inline void switchEntry(Slot& s) { holdEntry(s); }
@@ -1693,4 +1728,48 @@ void test_pendingfb_no_double_return() {
   for (int i = 6; i < pendfb::Slot::kMaxIds; ++i) {
     TEST_ASSERT_EQUAL_INT(0, s.ret[i]);
   }
+}
+
+// ── Firmware identity markers (main.cpp BOOT banners) ──
+// Manual fw= literals bumped on every firmware change (hash verifies
+// bytes-written, not source-identity — the banner proves which image runs).
+// Must stay byte-identical to head/src/main.cpp + core/src/main.cpp banners;
+// any firmware change bumps the markers here too. (Identical core<->head.)
+namespace fwmarker {
+
+inline const char* headFw() { return "fw=head-006-decouple"; }
+inline const char* s3Fw() { return "fw=s3-006-ring16+split"; }
+
+}  // namespace fwmarker
+
+void test_pendingfb_staged_collision_counts_drop() {
+  // Fast path steady state: stage A -> pump ships it (frames=1, no fb held,
+  // no return entries — the live fb left at stage time) -> stage B -> pump.
+  pendfb::Slot s;
+  pendfb::stageGrab(s, 0);
+  TEST_ASSERT_EQUAL_INT(0, s.ret[0]);  // Immediate return is implicit: no ret[] entry, nothing held.
+  pendfb::pumpStaged(s);
+  TEST_ASSERT_EQUAL_UINT32(1, s.frames);
+  TEST_ASSERT_EQUAL_UINT32(0, s.drops);
+  // Collision: stage C, then stage D without pumping (behind) -> older
+  // staged C dropped + counted, D ships on the next pump.
+  pendfb::stageGrab(s, 2);
+  pendfb::stageGrab(s, 3);
+  TEST_ASSERT_EQUAL_UINT32(1, s.drops);
+  pendfb::pumpStaged(s);
+  TEST_ASSERT_EQUAL_UINT32(2, s.frames);
+  TEST_ASSERT_EQUAL_INT(pendfb::Slot::kEmpty, s.staged);
+  // Hold entry with staging set: cleared, uncounted, never shipped.
+  pendfb::stageGrab(s, 4);
+  pendfb::holdEntry(s);
+  TEST_ASSERT_EQUAL_INT(pendfb::Slot::kEmpty, s.staged);
+  TEST_ASSERT_EQUAL_UINT32(2, s.frames);
+  TEST_ASSERT_EQUAL_UINT32(1, s.drops);
+}
+
+void test_fw_markers_pinned() {
+  // Current firmware revs (bump with every firmware change, both suites):
+  // the banner marker is the image-identity proof on console.
+  TEST_ASSERT_EQUAL_STRING("fw=head-006-decouple", fwmarker::headFw());
+  TEST_ASSERT_EQUAL_STRING("fw=s3-006-ring16+split", fwmarker::s3Fw());
 }

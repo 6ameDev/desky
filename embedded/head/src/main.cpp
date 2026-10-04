@@ -28,8 +28,11 @@ void setup() {
   FaultManager::watchdogInit();
   FaultManager::registerAllocFailureHook();
   g_poc.begin();  // Config defaults + Serial2 + INTERNAL buffers + generator task.
-  LOG_I("BOOT", "desky-head uart-poc | MCU=%s cores=%d flash=%dMB psram=%d", MCU_NAME, MCU_NUM_CORES, MCU_FLASH_SIZE_MB,
-        MCU_HAS_PSRAM);
+  // fw= marker: manual firmware identity (bump on every firmware change so a
+  // console banner proves which image runs — hash verifies bytes-written, not
+  // source-identity). Pinned in host tests (test_uart_frame.cpp fwmarker).
+  LOG_I("BOOT", "desky-head uart-poc fw=head-006-decouple | MCU=%s cores=%d flash=%dMB psram=%d", MCU_NAME,
+        MCU_NUM_CORES, MCU_FLASH_SIZE_MB, MCU_HAS_PSRAM);
   LOG_I("BOOT", "pins link_tx=%d link_rx=%d (CAM-TX output keeps GPIO12 strapping LOW)", MCU_LINK_UART_TX,
         MCU_LINK_UART_RX);
   LOG_I("BOOT", "reset=%s sdk=%s rev=%d", FaultManager::resetReasonStr(), ESP.getSdkVersion(), ESP.getChipRevision());
