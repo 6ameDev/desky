@@ -227,9 +227,8 @@ Sparse-clean ≠ saturated-clean: baud-limited clean ≤921600 (best sustained
     near-silent switching for control plane (mode 0 + fps 1); single session
     from switch-up through switch-back; power-cycle Head on
     ok=0/drops-climbing/herr=perr=0. Payload-integrity beyond counters
-    unevaluated. (Transcripts `/tmp/poc_fec_meas_cells_*.log`,
-    `/tmp/poc_fec_gentle2_20261001_165621.log`,
-    `/tmp/poc_fps_bigchunk_20261001_182935.log`.)
+    unevaluated. (Raw session transcripts retired post-campaign; all
+    measured numbers above are the record.)
    - [ ] Auto-pace (fps-derived, manual `pace_us` override kept).
    - [ ] Head progressive-drop (overrun check + mid-frame abort).
    - [ ] AQC: quality knob + S3 window + hysteresis/dwell + re-init guard.
