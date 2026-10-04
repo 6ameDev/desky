@@ -112,8 +112,10 @@ class CameraDriver : public ISensor {
   uint32_t fpsMilli() const { return fpsMilli_; }
 
  private:
-  // Board-fixed AI-Thinker bus (MCU_CAM_PIN_*), QVGA JPEG, single frame
-  // buffer (grab-and-drop needs no queue). Returns true with enabled_ set.
+  // Board-fixed AI-Thinker bus (MCU_CAM_PIN_*), QVGA JPEG, double-buffered
+  // (fb_count=2 in PSRAM so DMA never stalls a grab). XCLK is the fixed
+  // 20MHz operating point (no 24MHz experiment). Returns true with enabled_
+  // set.
   bool initSensor() {
     camera_config_t cfg = {};
     cfg.ledc_channel = LEDC_CHANNEL_0;
@@ -138,12 +140,30 @@ class CameraDriver : public ISensor {
     cfg.pixel_format = PIXFORMAT_JPEG;
     cfg.frame_size = FRAMESIZE_QVGA;
     cfg.jpeg_quality = CFG_CAMERA_JPEG_QUALITY;
-    cfg.fb_count = 1;
+    cfg.fb_count = 2;
     const esp_err_t err = esp_camera_init(&cfg);
     if (err != ESP_OK) {
       LOG_E("CAM", "esp_camera_init failed err=%d", static_cast<int>(err));
       enabled_ = false;
       return false;
+    }
+    // Sensor-level QVGA path (no software crop/scale): re-assert framesize +
+    // quality through the driver so the OV3660 register tables resolve QVGA
+    // via subsample/DSP-scale. Best effort, idempotent, null-guarded.
+    // Binning register readback (0x3814/0x3815) proves the HW path on-silicon.
+    sensor_t* sens = esp_camera_sensor_get();
+    if (sens != nullptr) {
+      if (sens->set_framesize != nullptr) {
+        sens->set_framesize(sens, FRAMESIZE_QVGA);
+      }
+      if (sens->set_quality != nullptr) {
+        sens->set_quality(sens, CFG_CAMERA_JPEG_QUALITY);
+      }
+      if (sens->get_reg != nullptr) {
+        const int b14 = sens->get_reg(sens, 0x3814, 0xFF);
+        const int b15 = sens->get_reg(sens, 0x3815, 0xFF);
+        LOG_I("CAM", "binning 3814=0x%x 3815=0x%x", b14, b15);
+      }
     }
     enabled_ = true;
     fpsWindowStart_ = millis();
