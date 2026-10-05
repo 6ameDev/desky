@@ -46,6 +46,8 @@ inline const char* deskyEventName(EventType type) {
       return "BEHAVIOR_STARTED";
     case EVENT_BEHAVIOR_DONE:
       return "BEHAVIOR_DONE";
+    case EVENT_OBSTACLE_DETECTED:
+      return "OBSTACLE_DETECTED";
     default:
       return "UNKNOWN";
   }

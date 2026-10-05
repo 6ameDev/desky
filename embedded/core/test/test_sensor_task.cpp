@@ -172,5 +172,60 @@ void test_ground_boot_into_void_publishes_once() {
   TEST_ASSERT_FALSE(sensortask::groundTransition(true, false, true, lastFwd, lastRev, payload));
 }
 
+void test_obstacle_assert_fires_once_below_band() {
+  // Assert edge fires once below (OBSTACLE - HYST) = 140 with payload = mm.
+  bool asserted = false;
+  uint32_t payload = 0;
+  TEST_ASSERT_FALSE(sensortask::obstacleTransition(true, 140, asserted, payload));  // boundary: strict <
+  TEST_ASSERT_FALSE(asserted);
+  TEST_ASSERT_TRUE(sensortask::obstacleTransition(true, 139, asserted, payload));
+  TEST_ASSERT_EQUAL_UINT32(139, payload);
+  TEST_ASSERT_TRUE(asserted);
+  TEST_ASSERT_FALSE(sensortask::obstacleTransition(true, 100, asserted, payload));  // held: silent
+  TEST_ASSERT_FALSE(sensortask::obstacleTransition(true, 50, asserted, payload));
+}
+
+void test_obstacle_rearm_needs_clear_above_band() {
+  // The latch re-arms only above (OBSTACLE + HYST) = 160; the clear edge
+  // never publishes and mid-band readings hold the latch either way.
+  bool asserted = false;
+  uint32_t payload = 0;
+  TEST_ASSERT_TRUE(sensortask::obstacleTransition(true, 120, asserted, payload));
+  TEST_ASSERT_EQUAL_UINT32(120, payload);
+  TEST_ASSERT_FALSE(sensortask::obstacleTransition(true, 150, asserted, payload));  // mid-band: still armed
+  TEST_ASSERT_TRUE(asserted);
+  TEST_ASSERT_FALSE(sensortask::obstacleTransition(true, 160, asserted, payload));  // boundary: strict >
+  TEST_ASSERT_TRUE(asserted);
+  TEST_ASSERT_FALSE(sensortask::obstacleTransition(true, 161, asserted, payload));  // silent re-arm
+  TEST_ASSERT_FALSE(asserted);
+  TEST_ASSERT_TRUE(sensortask::obstacleTransition(true, 139, asserted, payload));  // fires again
+  TEST_ASSERT_EQUAL_UINT32(139, payload);
+}
+
+void test_obstacle_far_readings_never_fire() {
+  bool asserted = false;
+  uint32_t payload = 0xDEAD;
+  TEST_ASSERT_FALSE(sensortask::obstacleTransition(true, 150, asserted, payload));
+  TEST_ASSERT_FALSE(sensortask::obstacleTransition(true, 200, asserted, payload));
+  TEST_ASSERT_FALSE(sensortask::obstacleTransition(true, 4000, asserted, payload));
+  TEST_ASSERT_FALSE(asserted);
+}
+
+void test_obstacle_dead_ticks_hold_silence() {
+  bool asserted = false;
+  uint32_t payload = 0xDEAD;
+  // Dead ticks never evaluate and never move the latch, even at assert range.
+  TEST_ASSERT_FALSE(sensortask::obstacleTransition(false, 50, asserted, payload));
+  TEST_ASSERT_FALSE(asserted);
+  // Live tick on a clear latch at assert range fires normally afterwards.
+  TEST_ASSERT_TRUE(sensortask::obstacleTransition(true, 50, asserted, payload));
+  TEST_ASSERT_EQUAL_UINT32(50, payload);
+  // A dead tick mid-latch cannot re-arm it: no clear edge is synthesized.
+  TEST_ASSERT_FALSE(sensortask::obstacleTransition(false, 3000, asserted, payload));
+  TEST_ASSERT_TRUE(asserted);
+  TEST_ASSERT_FALSE(sensortask::obstacleTransition(true, 3000, asserted, payload));
+  TEST_ASSERT_FALSE(asserted);  // live far reading re-arms (silently)
+}
+
 // Runner lives in test_udp_codec.cpp (single main for the native-test
 // binary): the sensortask tests are declared extern there.

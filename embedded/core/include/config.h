@@ -25,6 +25,9 @@
 // Sensor poll intervals (single source for ISensor::getTargetIntervalMs)
 #define CFG_MPU_TARGET_INTERVAL_MS 20
 #define CFG_TOF_TARGET_INTERVAL_MS 100
+// TCRT5000 reflectance poll: analog A0 path (D0 comparator unused, so a
+// future bare-LED swap on GND/VCC/analog needs no firmware change).
+#define CFG_TCRT_TARGET_INTERVAL_MS 20
 
 // ToF validity + recovery (ported from V1 Config.h, unchanged values)
 #define CFG_TOF_VALID_MAX_MM 4000
@@ -33,15 +36,37 @@
 #define CFG_TOF_XSHUT_BOOT_MS 50
 
 // Sensor fusion (pure logic, see src/middleware/sensor_fusion.h)
+// TCRT5000 cliff rails (pins via the MCU header, never hardcoded here).
+#define CFG_TCRT_FWD_PIN MCU_TCRT_FWD
+#define CFG_TCRT_REV_PIN MCU_TCRT_REV
+// CFG_TCRT_THRESHOLD=600 / CFG_TCRT_HYSTERESIS=200 (12-bit ADC counts at
+// 11dB attenuation), CFG_TCRT_ASSERT_HIGH=0: BENCH-MEASURED 2026-10-05 — the
+// modules sink A0 with reflection (ground = LOW). Bands: close white ~167,
+// far white / black desk ~210-220, open void ~1100. Rail rule: ground asserts
+// at <= 400, clears at >= 800 (see tcrt::railUpdate). Re-pin if the floor
+// material or ride height changes (log rawCount() over floor vs void).
+#define CFG_TCRT_THRESHOLD 600
+#define CFG_TCRT_HYSTERESIS 200
+#define CFG_TCRT_ASSERT_HIGH 0
+// CFG_OBSTACLE_MM=150: forward-facing ToF obstacle threshold in mm (no tilt
+// compensation — the beam points forward, not down). The sensor task adds a
+// +/-10mm hysteresis band and publishes EVENT_OBSTACLE_DETECTED on the
+// assert edge only (payload = distance mm); the coordinator ignores it.
+#define CFG_OBSTACLE_MM 150
+// DEPRECATED-for-removal (ToF-as-cliff derivation is deleted; fusion now
+// reads the TCRT rails and the ToF is obstacle distance only). Kept so older
+// references/tests keep compiling until the follow-up sweep removes them.
 // CFG_CLIFF_MM=100: hands-on bench 2026-09-21 reads 54-72mm VALID near and
 // 1032mm+ VALID far (open beam) — 28mm above the near band, fired live 4mm
 // past a real edge crossing (104mm).
 #define CFG_CLIFF_MM 100
-// CFG_CLIFF_MM_REV=100: mirror placeholder for the future rear beam (no rear
-// sensor exists yet; invalid-hold pins gndRev true until the driver lands).
+// CFG_CLIFF_MM_REV=100: DEPRECATED-for-removal (see above; no rear ToF ever
+// existed — the rear rail is now the TCRT on CFG_TCRT_REV_PIN).
 #define CFG_CLIFF_MM_REV 100
-// CFG_BEAM_DEPRESSION_DEG=30: single symmetric beam depression below
-// horizontal in degrees (fwd and mirrored rev share it).
+// CFG_BEAM_DEPRESSION_DEG=30: DEPRECATED-for-removal (see above; the 1/sin
+// pitch compensation for the down-looking beam is deleted with the ToF
+// cliff derivation). Single symmetric beam depression below horizontal in
+// degrees (fwd and mirrored rev share it).
 #define CFG_BEAM_DEPRESSION_DEG 30
 // CFG_LEVEL_MAX_TILT_DEG=35.0: total-tilt-magnitude gate in degrees — level
 // ⟺ (pitch²+roll²) < 35² from freshly fused pitch/roll (pose-explicit; only

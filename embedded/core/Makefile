@@ -2,7 +2,7 @@
 -include .env
 export
 
-.PHONY: clean build build-release build-sta test test-verbose check check-pins upload-monitor upload-monitor-release upload-monitor-sta upload-sta monitor-decode
+.PHONY: clean build build-release build-sta build-bench test test-verbose check check-pins upload-monitor upload-monitor-release upload-monitor-sta upload-sta upload-bench monitor-decode
 
 clean:
 	pio run -e desky -t clean
@@ -43,12 +43,22 @@ upload-monitor-sta:
 	pio run -e desky-sta -t upload > /tmp/desky-sta-upload.log 2>&1; CODE=$$?; cat /tmp/desky-sta-upload.log; test $$CODE -eq 0
 	grep -q "Hash of data verified" /tmp/desky-sta-upload.log && grep -q "Hard resetting" /tmp/desky-sta-upload.log
 	pio device monitor
-
 # Build + upload (STA), no monitor — for scripted captures (see docs/debugging.md).
 # Same blessed env handling as upload-monitor-sta; proves the flash with hashes.
 upload-sta:
 	pio run -e desky-sta -t upload > /tmp/desky-sta-upload.log 2>&1; CODE=$$?; cat /tmp/desky-sta-upload.log; test $$CODE -eq 0
 	grep -q "Hash of data verified" /tmp/desky-sta-upload.log && grep -q "Hard resetting" /tmp/desky-sta-upload.log
+
+# Verify compilation (bench env: WiFi off for the ADC2 TCRT rails).
+# Deliberately NOT part of `check` — the gate stays desky/desky-release.
+build-bench:
+	pio run -e desky-bench
+
+# Build + upload (bench), no monitor — for scripted TCRT calibration captures
+# (see docs/debugging.md). Same hash-verified upload pattern as the STA path.
+upload-bench:
+	pio run -e desky-bench -t upload > /tmp/desky-bench-upload.log 2>&1; CODE=$$?; cat /tmp/desky-bench-upload.log; test $$CODE -eq 0
+	grep -q "Hash of data verified" /tmp/desky-bench-upload.log && grep -q "Hard resetting" /tmp/desky-bench-upload.log
 
 # Serial monitor with backtrace decoding (see docs/debugging.md)
 monitor-decode:

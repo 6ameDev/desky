@@ -21,8 +21,8 @@ struct SystemState {
   bool isPickedUp = false;
   bool cliffDetected = false;
   bool isDriving = false;
-  bool gndFwd = true;  // fwd = ToF cliff derivation (compensated fwd rule)
-  bool gndRev = true;  // rev = fail-open, no rear sensor yet (invalid-hold pins true)
+  bool gndFwd = true;  // fwd = TCRT rail (firmware threshold + hysteresis)
+  bool gndRev = true;  // rev = TCRT rail (firmware threshold + hysteresis)
 
   enum RobotMode { MODE_MANUAL, MODE_AUTONOMOUS, MODE_LOW_POWER, MODE_EMERGENCY } mode = MODE_MANUAL;
 
@@ -41,7 +41,15 @@ enum EventType {
   EVENT_USER_TOUCH,
   EVENT_FACE_RECOGNIZED,
   EVENT_BEHAVIOR_STARTED,
-  EVENT_BEHAVIOR_DONE
+  EVENT_BEHAVIOR_DONE,
+  // Appended at the end: never renumber existing values (coordinator resume
+  // edges and telemetry bit maps depend on stable ordering).
+  // EVENT_OBSTACLE_DETECTED payload contract: payload = ToF distance in mm
+  // at the assert edge. Published edge-triggered by the sensor task when the
+  // forward ToF drops below CFG_OBSTACLE_MM (with hysteresis); the
+  // coordinator explicitly IGNORES it (no behavior action yet — see the
+  // default branch of its event drain; no coordinator.h change).
+  EVENT_OBSTACLE_DETECTED
 };
 
 // Unified ground event (documented once, here): EVENT_GROUND_CHANGED payload

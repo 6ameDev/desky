@@ -30,6 +30,13 @@
 #define MCU_TOF_XSHUT 9    // ToF enable, plain OUTPUT HIGH
 #define MCU_I2C_SDA 10     // Shared bus0 SDA (ToF + MPU)
 #define MCU_I2C_SCL 11     // Shared bus0 SCL (ToF + MPU)
+// TCRT5000 cliff A0 (analog path, D0 unconnected, module VCC on 3V3).
+// TEMPORARY pins on ADC2, which CONFLICTS WITH WiFi (ADC2 is unusable while
+// WiFi runs): bench them with WiFi off (desky-bench env, DESKY_NO_WIFI=1).
+// IDEAL: front -> GPIO1, rear -> GPIO2 (both ADC1, WiFi-safe) — move both on
+// the rewire, then delete this comment.
+#define MCU_TCRT_FWD 14  // TEMPORARY (ADC2): front cliff A0. IDEAL GPIO1 (ADC1, WiFi-safe).
+#define MCU_TCRT_REV 13  // TEMPORARY (ADC2): rear cliff A0. IDEAL GPIO2 (ADC1, WiFi-safe).
 
 // I2C device addresses on shared Wire bus
 #define MCU_ADDR_TOF 0x29

@@ -34,6 +34,24 @@ fusion::SensorSnapshot restSnapshot() {
   return s;
 }
 
+// Level pose (exact 0° tilt) with both TCRT rails live and grounded and the
+// forward ToF holding an obstacle reading: the ground/obstacle split means
+// distanceMM tracks the ToF while the ground bits track the rails.
+fusion::SensorSnapshot levelRailsSnapshot() {
+  fusion::SensorSnapshot s;
+  s.ax = 0.0f;
+  s.ay = 0.0f;
+  s.az = -1.0f;
+  s.tofMm = 200;
+  s.tofValid = true;
+  s.mpuHealthy = true;
+  s.tcrtFwdGround = true;
+  s.tcrtFwdValid = true;
+  s.tcrtRevGround = true;
+  s.tcrtRevValid = true;
+  return s;
+}
+
 }  // namespace
 
 void test_flat_rest_no_cliff_near_zero_tilt() {
@@ -44,6 +62,9 @@ void test_flat_rest_no_cliff_near_zero_tilt() {
   TEST_ASSERT_FALSE(st.cliffDetected);
   TEST_ASSERT_EQUAL_UINT16(50, st.distanceMM);
   TEST_ASSERT_FALSE(st.isPickedUp);
+  // No TCRT rail live in restSnapshot: ground bits hold their defaults.
+  TEST_ASSERT_TRUE(st.gndFwd);
+  TEST_ASSERT_TRUE(st.gndRev);
 }
 
 void test_nose_up_45_pitch_tracks_identity() {
@@ -133,74 +154,90 @@ void test_board_mounting_matches_bench() {
   TEST_ASSERT_FLOAT_WITHIN(3.0f, 45.0f, st.pitch);
 }
 
-void test_cliff_far_and_level_fires() {
-  // ToF looks 30deg down: the catch moment is far + level (|az| > 0.8 gate).
-  fusion::SensorSnapshot s = restSnapshot();  // level, az=-1.044g
-  s.tofMm = 150;
+void test_tcrt_fwd_void_level_drops_fwd_and_fires_cliff() {
+  // Forward TCRT rail reports void while level: gndFwd drops and
+  // cliffDetected (the raw forward-TCRT flag) fires. The ToF obstacle
+  // reading (200mm) only tracks distanceMM — it plays no part in the verdict.
+  fusion::SensorSnapshot s = levelRailsSnapshot();
+  s.tcrtFwdGround = false;
   SystemState st;
   kIdentity.evaluate(s, st);
-  TEST_ASSERT_TRUE(st.cliffDetected);
-  TEST_ASSERT_EQUAL_UINT16(150, st.distanceMM);
-}
-
-void test_cliff_near_ground_false() {
-  SystemState st;
-  kIdentity.evaluate(restSnapshot(), st);  // tof 50mm, level
-  TEST_ASSERT_FALSE(st.cliffDetected);
-  TEST_ASSERT_EQUAL_UINT16(50, st.distanceMM);
-
-  // Boundary: exactly CFG_CLIFF_MM (100) is NOT a cliff (strict >), even level.
-  // Pinned at exact level (pitch 0 → thr exactly 100); the rest pose carries
-  // ~-1.4° pitch so its compensated threshold sits just under 100.
-  fusion::SensorSnapshot s;
-  s.ax = 0.0f;
-  s.ay = 0.0f;
-  s.az = -1.0f;
-  s.tofMm = 100;
-  s.tofValid = true;
-  s.mpuHealthy = true;
-  kIdentity.evaluate(s, st);
-  TEST_ASSERT_FALSE(st.cliffDetected);
-  TEST_ASSERT_TRUE(st.gndFwd);
-}
-
-void test_cliff_tilted_far_holds() {
-  // Far ToF but tipped (|az| ~ 0.1g): not level, so no cliff.
-  fusion::SensorSnapshot s;
-  s.ax = 0.7f;
-  s.ay = 0.0f;
-  s.az = 0.1f;
-  s.tofMm = 150;
-  s.tofValid = true;
-  s.mpuHealthy = true;
-  SystemState st;
-  kIdentity.evaluate(s, st);
-  TEST_ASSERT_FALSE(st.cliffDetected);
-  TEST_ASSERT_EQUAL_UINT16(150, st.distanceMM);  // ToF path still live
-}
-
-void test_cliff_30deg_fires_45deg_holds() {
-  // Tilt gate is total-tilt-magnitude < 35°: 30° single-axis (roll, so the
-  // pitch-compensated fwd threshold stays ~100) fires, 45° holds.
-  fusion::SensorSnapshot rolled;
-  rolled.ay = 0.5f;  // sin30
-  rolled.az = -0.8660254f;
-  rolled.tofMm = 150;
-  rolled.tofValid = true;
-  rolled.mpuHealthy = true;
-  SystemState st;
-  kIdentity.evaluate(rolled, st);
-  TEST_ASSERT_TRUE(st.cliffDetected);
   TEST_ASSERT_FALSE(st.gndFwd);
+  TEST_ASSERT_TRUE(st.cliffDetected);
+  TEST_ASSERT_TRUE(st.gndRev);
+  TEST_ASSERT_EQUAL_UINT16(200, st.distanceMM);
+}
 
-  fusion::SensorSnapshot tipped45;
-  tipped45.ax = kSin45;
-  tipped45.az = -kCos45;
-  tipped45.tofMm = 150;
-  tipped45.tofValid = true;
-  tipped45.mpuHealthy = true;
-  kIdentity.evaluate(tipped45, st);
+void test_tcrt_fwd_ground_level_holds_clear() {
+  SystemState st;
+  kIdentity.evaluate(levelRailsSnapshot(), st);  // both rails grounded, level
+  TEST_ASSERT_TRUE(st.gndFwd);
+  TEST_ASSERT_TRUE(st.gndRev);
   TEST_ASSERT_FALSE(st.cliffDetected);
+  TEST_ASSERT_EQUAL_UINT16(200, st.distanceMM);
+}
+
+void test_tcrt_tilted_void_abstains() {
+  // Far past the 35° tilt gate the fusion abstains: a void rail must NOT
+  // clear the held ground bits (45° nose-up here).
+  fusion::SensorSnapshot s;
+  s.ax = kSin45;
+  s.ay = 0.0f;
+  s.az = -kCos45;
+  s.tofMm = 200;
+  s.tofValid = true;
+  s.mpuHealthy = true;
+  s.tcrtFwdGround = false;
+  s.tcrtFwdValid = true;
+  s.tcrtRevGround = false;
+  s.tcrtRevValid = true;
+  SystemState st;  // boots with ground present
+  kIdentity.evaluate(s, st);
+  TEST_ASSERT_FLOAT_WITHIN(3.0f, 45.0f, st.pitch);
+  TEST_ASSERT_TRUE(st.gndFwd);  // held, never cleared by a tilted verdict
+  TEST_ASSERT_TRUE(st.gndRev);
+  TEST_ASSERT_FALSE(st.cliffDetected);
+  TEST_ASSERT_EQUAL_UINT16(200, st.distanceMM);  // obstacle path still live
+}
+
+void test_tcrt_30deg_roll_fires() {
+  // Tilt gate is total-tilt-magnitude < 35°: 30° roll is level enough that a
+  // void forward rail fires, while the rear rail stays grounded.
+  fusion::SensorSnapshot s;
+  s.ay = 0.5f;  // sin30
+  s.az = -0.8660254f;
+  s.tofMm = 200;
+  s.tofValid = true;
+  s.mpuHealthy = true;
+  s.tcrtFwdGround = false;
+  s.tcrtFwdValid = true;
+  s.tcrtRevGround = true;
+  s.tcrtRevValid = true;
+  SystemState st;
+  kIdentity.evaluate(s, st);
+  TEST_ASSERT_FALSE(st.gndFwd);
+  TEST_ASSERT_TRUE(st.cliffDetected);
+  TEST_ASSERT_TRUE(st.gndRev);
+}
+
+void test_tcrt_level_2deg_fires() {
+  // Bench verdict pin: ~2° total tilt is level enough to fire on a void rail.
+  fusion::SensorSnapshot s;
+  s.ax = 0.0348995f;  // sin2
+  s.ay = 0.0f;
+  s.az = -0.9993908f;  // -cos2
+  s.tofMm = 200;
+  s.tofValid = true;
+  s.mpuHealthy = true;
+  s.tcrtFwdGround = false;
+  s.tcrtFwdValid = true;
+  s.tcrtRevGround = true;
+  s.tcrtRevValid = true;
+  SystemState st;
+  kIdentity.evaluate(s, st);
+  TEST_ASSERT_FALSE(st.gndFwd);
+  TEST_ASSERT_TRUE(st.cliffDetected);
+  TEST_ASSERT_TRUE(st.gndRev);
 }
 
 void test_unhealthy_mpu_freezes_tilt_and_flags() {
@@ -210,6 +247,8 @@ void test_unhealthy_mpu_freezes_tilt_and_flags() {
   st.distanceMM = 60;
   st.cliffDetected = true;
   st.isPickedUp = true;
+  st.gndFwd = false;
+  st.gndRev = false;
 
   fusion::SensorSnapshot s;
   s.ax = kSin45;
@@ -217,99 +256,65 @@ void test_unhealthy_mpu_freezes_tilt_and_flags() {
   s.tofMm = 150;
   s.tofValid = true;
   s.mpuHealthy = false;
+  s.tcrtFwdGround = true;  // live rails, but the MPU gate is dead ...
+  s.tcrtFwdValid = true;
+  s.tcrtRevGround = true;
+  s.tcrtRevValid = true;
   kIdentity.evaluate(s, st);
 
   TEST_ASSERT_EQUAL_FLOAT(10.0f, st.pitch);
   TEST_ASSERT_EQUAL_FLOAT(-7.0f, st.roll);
-  TEST_ASSERT_TRUE(st.cliffDetected);            // dead sensor never clears flags
+  TEST_ASSERT_TRUE(st.cliffDetected);  // dead sensor never clears flags
+  TEST_ASSERT_FALSE(st.gndFwd);
+  TEST_ASSERT_FALSE(st.gndRev);
   TEST_ASSERT_TRUE(st.isPickedUp);               // fusion never touches pickup
   TEST_ASSERT_EQUAL_UINT16(150, st.distanceMM);  // healthy ToF path stays live
 }
 
-void test_invalid_tof_retains_distance_no_cliff_from_stale() {
+void test_invalid_tof_retains_distance_rails_still_vote() {
   SystemState st;
   st.distanceMM = 80;
   st.cliffDetected = false;
 
-  fusion::SensorSnapshot s = restSnapshot();
+  // Stale ToF garbage: distanceMM holds, but live TCRT rails + healthy MPU
+  // still vote — a void forward rail fires the cliff while level.
+  fusion::SensorSnapshot s = levelRailsSnapshot();
   s.tofMm = 999;  // stale garbage: must be ignored
   s.tofValid = false;
+  s.tcrtFwdGround = false;
   kIdentity.evaluate(s, st);
 
   TEST_ASSERT_EQUAL_UINT16(80, st.distanceMM);
-  TEST_ASSERT_FALSE(st.cliffDetected);
-  // Healthy MPU path stays live even while ToF is invalid.
-  TEST_ASSERT_FLOAT_WITHIN(5.0f, 0.0f, st.pitch);
-  TEST_ASSERT_FLOAT_WITHIN(5.0f, 0.0f, st.roll);
-}
-
-void test_threshold_level_is_base() {
-  TEST_ASSERT_FLOAT_WITHIN(0.5f, 100.0f, fusion::cliffThresholdMm(100.0f, 0.0f, true));
-  TEST_ASSERT_FLOAT_WITHIN(0.5f, 100.0f, fusion::cliffThresholdMm(100.0f, 0.0f, false));
-}
-
-void test_threshold_nose_up_15_fwd_193() {
-  TEST_ASSERT_FLOAT_WITHIN(3.0f, 193.0f, fusion::cliffThresholdMm(100.0f, 15.0f, true));
-}
-
-void test_threshold_nose_down_15_fwd_71() {
-  TEST_ASSERT_FLOAT_WITHIN(3.0f, 71.0f, fusion::cliffThresholdMm(100.0f, -15.0f, true));
-}
-
-void test_threshold_clamp_bounds() {
-  // Nose-up +40° fwd: dep = 30−40 = −10 → clamped to 10° → ~288mm.
-  TEST_ASSERT_FLOAT_WITHIN(5.0f, 288.0f, fusion::cliffThresholdMm(100.0f, 40.0f, true));
-  // Nose-down −60° fwd: dep = 30+60 = 90 → clamped to 80° → ~51mm.
-  TEST_ASSERT_FLOAT_WITHIN(3.0f, 51.0f, fusion::cliffThresholdMm(100.0f, -60.0f, true));
-}
-
-void test_threshold_rear_mirrors_fwd() {
-  // Rear beam mirrors: fwd(+15) == rev(−15), fwd(−15) == rev(+15).
-  TEST_ASSERT_FLOAT_WITHIN(0.01f, fusion::cliffThresholdMm(100.0f, 15.0f, true),
-                           fusion::cliffThresholdMm(100.0f, -15.0f, false));
-  TEST_ASSERT_FLOAT_WITHIN(0.01f, fusion::cliffThresholdMm(100.0f, -15.0f, true),
-                           fusion::cliffThresholdMm(100.0f, 15.0f, false));
-}
-
-void test_bump_climb_120_passes_at_plus15() {
-  // Bump scenario: nose-up +15° while climbing, beam reads 120mm. The old
-  // fixed 100mm rule would fire; the compensated ~193mm threshold passes.
-  fusion::SensorSnapshot s;
-  s.ax = 0.2588190f;  // sin15
-  s.ay = 0.0f;
-  s.az = -0.9659258f;  // -cos15
-  s.tofMm = 120;
-  s.tofValid = true;
-  s.mpuHealthy = true;
-  SystemState st;
-  kIdentity.evaluate(s, st);
-  TEST_ASSERT_FLOAT_WITHIN(2.0f, 15.0f, st.pitch);
-  TEST_ASSERT_FALSE(st.cliffDetected);
-  TEST_ASSERT_TRUE(st.gndFwd);
-  TEST_ASSERT_EQUAL_UINT16(120, st.distanceMM);
-}
-
-void test_level_2deg_fires() {
-  // Bench verdict pin: ~2° total tilt is level enough to fire on far+level.
-  fusion::SensorSnapshot s;
-  s.ax = 0.0348995f;  // sin2
-  s.ay = 0.0f;
-  s.az = -0.9993908f;  // -cos2
-  s.tofMm = 150;
-  s.tofValid = true;
-  s.mpuHealthy = true;
-  SystemState st;
-  kIdentity.evaluate(s, st);
   TEST_ASSERT_TRUE(st.cliffDetected);
   TEST_ASSERT_FALSE(st.gndFwd);
+  TEST_ASSERT_TRUE(st.gndRev);
+  // Healthy MPU path stays live even while ToF is invalid.
+  TEST_ASSERT_FLOAT_WITHIN(0.5f, 0.0f, st.pitch);
+  TEST_ASSERT_FLOAT_WITHIN(0.5f, 0.0f, st.roll);
 }
 
-void test_rev_far_level_drops_rev_only() {
-  // Mirrored rev rail: rev far+level drops gndRev while fwd stays grounded
-  // and cliffDetected (raw fwd flag) stays false.
-  fusion::SensorSnapshot s = restSnapshot();  // fwd 50mm near, level
-  s.tofRevMm = 150;
-  s.tofRevValid = true;
+void test_tcrt_tof_tracks_obstacle_only() {
+  // distanceMM follows the forward ToF through near and far readings while
+  // the ground bits stay pinned by grounded rails: proximity never votes.
+  fusion::SensorSnapshot s = levelRailsSnapshot();
+  SystemState st;
+  s.tofMm = 60;
+  kIdentity.evaluate(s, st);
+  TEST_ASSERT_EQUAL_UINT16(60, st.distanceMM);
+  TEST_ASSERT_TRUE(st.gndFwd);
+  TEST_ASSERT_FALSE(st.cliffDetected);
+  s.tofMm = 3000;
+  kIdentity.evaluate(s, st);
+  TEST_ASSERT_EQUAL_UINT16(3000, st.distanceMM);
+  TEST_ASSERT_TRUE(st.gndFwd);
+  TEST_ASSERT_FALSE(st.cliffDetected);
+}
+
+void test_rev_void_level_drops_rev_only() {
+  // Rear TCRT rail void while level: gndRev drops, fwd stays grounded and
+  // cliffDetected (raw fwd flag) stays false.
+  fusion::SensorSnapshot s = levelRailsSnapshot();
+  s.tcrtRevGround = false;
   SystemState st;
   kIdentity.evaluate(s, st);
   TEST_ASSERT_TRUE(st.gndFwd);
@@ -318,11 +323,11 @@ void test_rev_far_level_drops_rev_only() {
 }
 
 void test_rev_invalid_holds_default_true() {
-  // No rear sensor yet: invalid rev holds gndRev at default-true even when
-  // the fwd rail drops.
-  fusion::SensorSnapshot s = restSnapshot();
-  s.tofMm = 500;  // far, level → fwd drops
-  s.tofRevValid = false;
+  // Disabled rear rail holds gndRev at default-true even when the fwd rail
+  // drops into a cliff.
+  fusion::SensorSnapshot s = levelRailsSnapshot();
+  s.tcrtFwdGround = false;
+  s.tcrtRevValid = false;
   SystemState st;
   kIdentity.evaluate(s, st);
   TEST_ASSERT_FALSE(st.gndFwd);
@@ -337,9 +342,10 @@ void test_dead_sources_hold_both_bits() {
   st.gndRev = false;
   st.cliffDetected = true;
   st.distanceMM = 60;
-  fusion::SensorSnapshot dead = restSnapshot();
+  fusion::SensorSnapshot dead = levelRailsSnapshot();
   dead.tofValid = false;
-  dead.tofRevValid = false;
+  dead.tcrtFwdValid = false;
+  dead.tcrtRevValid = false;
   dead.mpuHealthy = false;
   kIdentity.evaluate(dead, st);
   TEST_ASSERT_FALSE(st.gndFwd);
@@ -351,10 +357,9 @@ void test_dead_sources_hold_both_bits() {
   st2.gndFwd = true;
   st2.gndRev = true;
   st2.cliffDetected = false;
-  fusion::SensorSnapshot half = restSnapshot();
-  half.tofValid = false;  // fwd dead, rev invalid too
-  half.tofRevValid = false;
-  half.mpuHealthy = true;  // tilt still live
+  fusion::SensorSnapshot half = levelRailsSnapshot();
+  half.tcrtFwdValid = false;  // fwd dead, rev still live-but-grounded
+  half.mpuHealthy = true;     // tilt still live
   kIdentity.evaluate(half, st2);
   TEST_ASSERT_TRUE(st2.gndFwd);
   TEST_ASSERT_TRUE(st2.gndRev);
