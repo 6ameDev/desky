@@ -47,16 +47,29 @@
 #define MCU_ADDR_OLED_PRIMARY 0x3C
 #define MCU_ADDR_OLED_ALT 0x3D
 
-// ── Talk-wire UART1 (task 3 — defines only, no driver yet) ──
-// 2-wire link: S3 GPIO17/18 <-> CAM TX=GPIO12/RX=GPIO13 (UART2). CAM-TX is
-// an output (reset-silent), so the S3 never drives the CAM's GPIO12
-// strapping pin — PROVIDED the S3 keeps its own TX tristated until the CAM
-// is up (extends S3-waits-for-AWAKE to the pin level; task-3 driver owns
-// this). S3-waits-for-AWAKE boot rule, drop-stale-frames, [HEAD] log prefix
-// all land in task 3.
-// GPIO15/16 RESERVED for future RTS/CTS hardware flow control (not wired).
-#define MCU_LINK_UART_TX 17
-#define MCU_LINK_UART_RX 18
+// ── I2S audio (MAX98357A amp + 2x INMP441 mics, shared BCLK/WS) ──
+// WS=15 BCLK=16 DOUT=17 (amp DIN) DIN=18 (mics SD, L on GND-mic / R on
+// 3V3-mic by hardware tie). Single duplex port @16kHz (see config.h).
+// Amp SD_MODE floating = module-default (L+R)/2 mix; firmware sends
+// dual-mono anyway so the channel pick is moot (strap to 3V3 for left if
+// it ever goes silent). Amp VIN on 5V (8Ω 2W cavity — keep beeps quiet).
+// GPIO15/16 were RESERVED for link RTS/CTS — released to I2S (link is
+// 2-wire, flow control was never wired).
+#define MCU_I2S_WS 15
+#define MCU_I2S_BCLK 16
+#define MCU_I2S_DOUT 17
+#define MCU_I2S_DIN 18
+
+// ── Talk-wire UART1 (task 3 — defines only, no driver yet, NOTHING WIRED) ──
+// 2-wire link: S3 GPIO12/21 <-> CAM TX=GPIO12/RX=GPIO13 (UART2). (Core-side
+// pins were 17/18 — moved for I2S audio above; link unbuilt/untested, ignore
+// until task 3.) CAM-TX is an output (reset-silent), so the S3 never drives
+// the CAM's GPIO12 strapping pin — PROVIDED the S3 keeps its own TX
+// tristated until the CAM is up (extends S3-waits-for-AWAKE to the pin
+// level; task-3 driver owns this). S3-waits-for-AWAKE boot rule,
+// drop-stale-frames, [HEAD] log prefix all land in task 3.
+#define MCU_LINK_UART_TX 12
+#define MCU_LINK_UART_RX 21
 // UART0 console (GPIO43/44 via CH9102) is RESERVED — Serial only.
 
 // ── Bus / peripheral defaults ────────────────────────────────

@@ -49,7 +49,12 @@ enum EventType {
   // forward ToF drops below CFG_OBSTACLE_MM (with hysteresis); the
   // coordinator explicitly IGNORES it (no behavior action yet — see the
   // default branch of its event drain; no coordinator.h change).
-  EVENT_OBSTACLE_DETECTED
+  EVENT_OBSTACLE_DETECTED,
+  // EVENT_BEEP_DONE payload contract: payload = 0 (unused). Published once
+  // by the audio task when the beep queue drains to empty (rare, edge-only —
+  // never periodic, so no bus spam); the coordinator explicitly IGNORES it
+  // (no behavior action — see the default branch of its event drain).
+  EVENT_BEEP_DONE
 };
 
 // Unified ground event (documented once, here): EVENT_GROUND_CHANGED payload

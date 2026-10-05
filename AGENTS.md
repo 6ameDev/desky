@@ -55,6 +55,12 @@ Core envs: `desky` (dev/debug), `desky-release` (field), `native-test`
 - HAL files carry the chip name when bound to one chip's registers/lib
   (`mpu6500_*`, `ssd1306_*`), the role name when written against an
   abstraction (`motor_*`, `camera_*`) — a part swap must never force a rename.
+- Layer placement rule: peripheral lifecycle (pins, clocks, DMA,
+  init/teardown) → `hal/` (or a `shared/` bus driver if cross-firmware);
+  data transformation + protocols → `middleware/`; policy, state, sequencing
+  → `services/`. Consumers reach hardware only through HAL. One port with
+  shared clocks gets exactly one owner (`i2s_audio`); per-part format
+  knowledge splits into role-named siblings (`speaker`, `microphone`).
 - No firmware prefixes on filenames; the project path scopes them
   (`core|head/src/...`) — shared concepts live once in `shared/common/`.
 - `setup()` order: logger → fault → config → banner (nothing that can fail

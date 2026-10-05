@@ -157,6 +157,12 @@ void test_pack_command_center_edges();
 void test_telemetry_round_trip_with_flags_set();
 void test_deg_to_decideg_edges_and_clamp();
 
+// I2S audio DSP + meter policy, defined in test_audio.cpp.
+void test_audio_dual_mono32_top_justified();
+void test_audio_chime_shape_and_decay();
+void test_audio_int24_unpack_top24_in_32();
+void test_audio_rms_and_louder_side();
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_control_golden_vector);
@@ -238,5 +244,9 @@ int main() {
   RUN_TEST(test_pack_command_center_edges);
   RUN_TEST(test_telemetry_round_trip_with_flags_set);
   RUN_TEST(test_deg_to_decideg_edges_and_clamp);
+  RUN_TEST(test_audio_dual_mono32_top_justified);
+  RUN_TEST(test_audio_chime_shape_and_decay);
+  RUN_TEST(test_audio_int24_unpack_top24_in_32);
+  RUN_TEST(test_audio_rms_and_louder_side);
   return UNITY_END();
 }

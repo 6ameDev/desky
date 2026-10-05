@@ -117,3 +117,21 @@
 #define CFG_UDP_LOOP_MS 5
 // STA reconnect cadence inside the UDP task loop (non-blocking).
 #define CFG_WIFI_STA_RETRY_MS 5000
+
+// I2S audio (MAX98357A amp + 2x INMP441 mics, shared BCLK/WS @16kHz LRCLK;
+// GPIOs via the MCU header, never hardcoded here).
+// CFG_AUDIO_RATE_HZ=16000: 16kHz LRCLK is datasheet-supported by both the
+// amp and the mics and halves DMA/CPU vs 44.1k (plenty for beeps + loudness).
+#define CFG_AUDIO_RATE_HZ 16000
+// CFG_AUDIO_VOLUME=0.12: peak beep amplitude as a fraction of int16
+// full-scale (~10-15% — the 8Ω 2W cavity on the amp's 5V VIN gets LOUD;
+// raise only on the bench with the speaker exposed, never past distortion).
+#define CFG_AUDIO_VOLUME 0.12f
+// Audio task (Core 0: noisy comms-side slot alongside UDP; priority offset 2
+// sits below UDP +3 and below the Core-1 control slot, so audio never
+// preempts sensing or motion). FreeRTOS-free offsets here (firmware adds
+// tskIDLE_PRIORITY); meter cadence doubles as the serial log throttle.
+#define CFG_AUDIO_STACK_WORDS 4096
+#define CFG_AUDIO_PRIORITY_OFFSET 2
+#define CFG_AUDIO_CORE 0
+#define CFG_AUDIO_METER_MS 100

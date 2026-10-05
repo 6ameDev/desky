@@ -13,6 +13,7 @@
 #include "hal/vl53l0x_driver.h"
 #include "middleware/sensor_task.h"
 #include "middleware/udp_server.h"
+#include "services/audio_manager.h"
 #include "services/config_store.h"
 #include "services/event_bus.h"
 
@@ -27,6 +28,7 @@ MotorDriver g_motorDriver(MCU_MOTOR_IN1, MCU_MOTOR_IN2, MCU_MOTOR_IN3, MCU_MOTOR
 MotionController g_motion;
 Coordinator g_coordinator;
 SensorTask g_sensor;
+AudioManager g_audio;
 UdpServer g_udp;
 I2CManager g_i2c;
 Mpu6500Driver g_mpu(g_i2c);
@@ -61,6 +63,8 @@ void setup() {
   DESKY_ASSERT(coordOk);
   const bool sensorOk = g_sensor.begin(&g_mpu, &g_tof, &g_tcrtFwd, &g_tcrtRev);
   DESKY_ASSERT(sensorOk);
+  const bool audioOk = g_audio.begin();
+  DESKY_ASSERT(audioOk);
 #if DESKY_NO_WIFI
   // Bench mode (desky-bench env): WiFi stays off — GPIO13/14 are ADC2, which
   // conflicts with WiFi, so the TCRT rails need it off. The coordinator then
@@ -80,6 +84,10 @@ void setup() {
         MCU_HAS_PSRAM);
   LOG_I("BOOT", "reset=%s sdk=%s rev=%d", FaultManager::resetReasonStr(), ESP.getSdkVersion(), ESP.getChipRevision());
   LOG_I("BOOT", "cpu=%dMHz flash_chip=%dB", ESP.getCpuFreqMHz(), ESP.getFlashChipSize());
+  // Speaker self-test in every env (incl. bench): the jingle only queues
+  // here — the audio task synths it — so a silent bench still boots clean.
+  const bool jingleOk = g_audio.bootJingle();
+  DESKY_ASSERT(jingleOk);
 }
 
 void loop() {
