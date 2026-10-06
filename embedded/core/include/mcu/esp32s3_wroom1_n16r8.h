@@ -27,7 +27,7 @@
 #define MCU_MOTOR_IN3 6    // MotorDriver IN3
 #define MCU_MOTOR_IN4 7    // MotorDriver IN4
 #define MCU_MOTOR_FAULT 8  // Active-low fault, INPUT_PULLUP
-#define MCU_TOF_XSHUT 9    // ToF enable, plain OUTPUT HIGH
+#define MCU_TOF_XSHUT 9    // Firmware-defined, UNROUTED on carrier (sensor runs on module pull-up)
 #define MCU_I2C_SDA 10     // Shared bus0 SDA (ToF + MPU)
 #define MCU_I2C_SCL 11     // Shared bus0 SCL (ToF + MPU)
 // TCRT5000 cliff A0 (analog path, D0 unconnected, module VCC on 3V3).
@@ -60,14 +60,8 @@
 #define MCU_I2S_DOUT 17
 #define MCU_I2S_DIN 18
 
-// ── Talk-wire UART1 (task 3 — defines only, no driver yet, NOTHING WIRED) ──
-// 2-wire link: S3 GPIO12/21 <-> CAM TX=GPIO12/RX=GPIO13 (UART2). (Core-side
-// pins were 17/18 — moved for I2S audio above; link unbuilt/untested, ignore
-// until task 3.) CAM-TX is an output (reset-silent), so the S3 never drives
-// the CAM's GPIO12 strapping pin — PROVIDED the S3 keeps its own TX
-// tristated until the CAM is up (extends S3-waits-for-AWAKE to the pin
-// level; task-3 driver owns this). S3-waits-for-AWAKE boot rule,
-// drop-stale-frames, [HEAD] log prefix all land in task 3.
+// ── Link UART1 (PARKED — defines kept for switch-back, do NOT route) ──
+// Was S3 GPIO12/21 <-> CAM TX=GPIO12/RX=GPIO13 (UART2). Wireless TBD.
 #define MCU_LINK_UART_TX 12
 #define MCU_LINK_UART_RX 21
 // UART0 console (GPIO43/44 via CH9102) is RESERVED — Serial only.

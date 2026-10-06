@@ -13,3 +13,21 @@ Thumbs.db
 
 # Stale root build cache (builds now live in embedded/core/.pio/ + embedded/head/.pio/)
 .pio/
+
+# KiCad CLI verification reports (default CWD side-effects)
+*-erc.json
+*-drc.json
+
+# KiCad local/editor state — never sources
+*.kicad_prl
+*.kicad_pcb-bak
+*.kicad_sch-bak
+*.lck
+~*.lck
+*-backups/
+.mcp-backups/
+_autosave-*
+fp-info-cache
+
+# Hand-solder guides (generated via make guides, never committed)
+hardware/build/

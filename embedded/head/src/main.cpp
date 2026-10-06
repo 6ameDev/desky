@@ -15,17 +15,16 @@
 #include "services/event_bus.h"
 #include "services/power_manager.h"
 
-// desky-head (face-unit: OV3660 eyes + face OLED + talk-wire).
+// desky-head (face-unit: OV3660 eyes + face OLED + link stub, PARKED).
 // Setup order (core convention): logger -> fault -> config -> banner —
 // nothing that can fail runs before logging exists.
 //
 // Hardware map (see include/mcu/esp32cam_ov3660.h):
 // - OLED SDA=GPIO14/SCL=GPIO15 (address scanned 0x3C/0x3D, never assumed;
 //   absent on every MB USB run by design — "not found" never blocks boot).
-// - Link UART2 TX=GPIO12/RX=GPIO13 @115200 (plain AWAKE + HB in this task;
-//   framing/CRC is task 3).
-// - GPIO2 (future RTS) + GPIO4 (flash LED) untouched beyond comments.
-// - WiFi stays OFF; star 5V power assumed.
+// - Wired link PARKED (no copper; wireless TBD; stub retained for switch-back).
+// - GPIO2 + GPIO4 reserved.
+// - Star 5V power from the common rail.
 
 // Fallbacks keep main compilable if config keys ever drift; in-project
 // include/config.h always wins (same pattern as core's coordinator.h).
@@ -75,7 +74,7 @@ void setup() {
   const bool oledOk = g_display.init();
   (void)oledOk;  // NEVER asserted: absent OLED is the normal on-MB state.
   g_power.begin(&g_cam, &g_display);
-  g_link.begin(&g_power);  // Sends plain AWAKE (task-3 S3 side hears this line).
+  g_link.begin(&g_power);  // PARKED stub (retained for switch-back).
   g_cli.begin(&g_power);
   g_sub = EventBus::subscribe();  // Settles before any publish (loop only).
   g_lastCamMs = millis();

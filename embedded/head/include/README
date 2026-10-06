@@ -1,6 +1,6 @@
 # desky-head include/
 
-Head = face-unit: eyes (OV3660) + face OLED + MCU + talk-wire.
+Head = face-unit: eyes (OV3660) + face OLED + MCU + link stub (PARKED).
 Smart lives in desky-core, drawings live here.
 
 - `mcu/` — board truth (AI Thinker ESP32-CAM + OV3660 map, constraints);

@@ -4,7 +4,7 @@
 # and Makefile:
 #   core/ — desky-core, primary brain (ESP32-S3-WROOM-1-N16R8).
 #   head/ — desky-head, face-unit stub (ESP32-CAM, empty shell until task 2).
-#   shared/link/ — core<->head talk-wire codec (task 3 placeholder).
+#   shared/link/ — core<->head link codec (PARKED placeholder).
 #
 # Run per-firmware work inside its dir (e.g. `cd core && make check`).
 # This file only forwards, so `make check` from embedded/ still gates all.

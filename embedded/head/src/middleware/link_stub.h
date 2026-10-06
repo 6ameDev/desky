@@ -1,17 +1,10 @@
 #pragma once
-// desky-head talk-wire UART stub — header-only, deliberately DUMB.
+// desky-head link stub — header-only, PARKED (retained for switch-back).
 //
 // Top half (namespace linkstub) is Arduino-free line->verb mapping so host
 // Unity tests cover it; the bottom half (class LinkStub) is firmware-only
-// (#ifdef ARDUINO): UART2 @115200 on GPIO12/13, plain "AWAKE" after boot +
-// periodic "HB" heartbeat TX, byte/line RX assembly mapping face/power
-// verbs into the ONE command table (PowerManager::apply).
-//
-// Framing + CRC + the S3-waits-for-AWAKE handshake + drop-stale-frames are
-// TASK 3 (shared/link codec) — this stub sends fixed lines the task-3 S3
-// side can already hear, and accepts the same verbs the real codec will
-// frame. Two dialects on purpose: UPPERCASE here (wire), lowercase on the
-// USB CLI (human) — task 3 unifies them behind the codec.
+// (#ifdef ARDUINO): UART2 @115200 on GPIO12/13 when wired, plain "AWAKE" +
+// periodic "HB" heartbeat TX. No copper routed while parked.
 
 #include "head_context.h"
 

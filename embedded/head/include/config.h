@@ -15,8 +15,7 @@
 #define CFG_I2C_FREQ_HZ 400000
 #define CFG_I2C_TIMEOUT_MS 20
 
-// Talk-wire link UART2 (framing/CRC is task 3 — this task sends plain
-// "AWAKE" after boot plus a periodic "HB" heartbeat line).
+// Link UART2 (PARKED — retained for switch-back, no copper routed).
 #define CFG_LINK_BAUD 115200
 #define CFG_LINK_HEARTBEAT_MS 1000
 

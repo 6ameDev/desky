@@ -1,6 +1,6 @@
 #pragma once
 // MCU definition: AI Thinker ESP32-CAM (classic ESP32, desky-head face-unit).
-// Eyes OV3660 via ribbon + face OLED + talk-wire UART to desky-core.
+// Eyes OV3660 via ribbon + face OLED + link UART (PARKED, unrouted).
 // Flashed/monitored via the ESP32-CAM-MB USB board (UART0 console — Serial
 // just works). Framework: Arduino + FreeRTOS, board = esp32cam.
 // Swap back via include/mcu/active_mcu.h — no driver changes.
@@ -37,13 +37,8 @@
 #define MCU_ADDR_OLED_PRIMARY 0x3C  // Module-fixed: scan BOTH, never hardcode one
 #define MCU_ADDR_OLED_ALT 0x3D
 
-// ── Talk-wire UART2 to desky-core (S3 GPIO17/18, UART1) ──
-// Plain AWAKE + heartbeat lines in this task; framing/CRC is task 3.
-// TX=12 ON PURPOSE: CAM-TX is an output (silent at reset, internal pulldown
-// holds the LOW the GPIO12 strapping wants), so the S3 never drives the
-// strapping pin. CAM-RX=13 is non-strapping, safe for the S3's idle-HIGH.
-// The S3 must keep its TX tristated until the CAM is up (extends the
-// S3-waits-for-AWAKE rule to the pin level) — enforced in task 3's driver.
+// ── Link UART2 (PARKED — defines kept for switch-back, do NOT route) ──
+// Was TX=12/RX=13 @115200. TX=12 is an output (strapping-safe); wireless TBD.
 #define MCU_LINK_UART_NUM 2
 #define MCU_LINK_UART_TX 12
 #define MCU_LINK_UART_RX 13
@@ -68,16 +63,12 @@
 #define MCU_CAM_PIN_PCLK 22
 
 // ── Reserved (comment-only: firmware never touches these) ──
-// GPIO2: reserved-future-RTS for the talk-wire (also a strapping pin and the
-//   on-module LED — never drive it in this task).
+// GPIO2: reserved (strapping pin + on-module LED — never drive it).
 // GPIO4: flash-LED spare (leave alone in this task).
 
 // ── Hard constraints (do not violate without a new MCU file) ──
-// - GPIO12 (link TX) is a BOOT-STRAPPING pin (MTDI): it must read LOW at
-//   reset for the correct flash voltage. SAFE HERE because CAM-TX is an
-//   output: silent at reset (internal pulldown holds LOW) and driven only
-//   after boot; the S3 side (RX, high-Z input) never drives it. NEVER
-//   attach a pullup-holding peripheral (e.g. an OLED SDA) to GPIO12 —
+// - GPIO12 is a BOOT-STRAPPING pin (MTDI): must read LOW at reset. NEVER
+//   attach a pullup-holding peripheral (e.g. OLED SDA) to GPIO12 —
 //   bench-proven 2026-09-28 to brick boot ("invalid header: 0xffffffff" +
 //   RTCWDT loop). GPIO15 (OLED SCL) strapping is flash-voltage-safe.
 // - MB occupies ALL pins: OLED can NEVER be attached during USB runs;

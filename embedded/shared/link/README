@@ -1,14 +1,8 @@
-# shared/link — core<->head talk-wire codec (TASK 3, placeholder).
+# shared/link — core<->head link codec (PARKED, placeholder).
 
-Locked link map (swapped 2026-09-28 — OLED SDA pullup on GPIO12 bricked
-boot, see head/include/mcu/esp32cam_ov3660.h):
-- 2-wire UART: CAM TX=GPIO12/RX=GPIO13 <-> S3 GPIO17/18 (UART1).
-- S3-waits-for-AWAKE boot rule (extends to the pin level: S3 keeps TX
-  tristated until the CAM is up — it must never drive GPIO12 during CAM
-  reset), drop-stale-frames, `[HEAD]` log prefix.
-- OLED on CAM SDA=GPIO14/SCL=GPIO15; GPIO2/4 reserved; star 5V power.
+Wired UART is parked: no TX/RX copper on either carrier (wireless TBD).
+Firmware link code (`head/src/middleware/link_stub.h`, `CFG_LINK_*`,
+`MCU_LINK_*`) is retained for switch-back.
 
-The real codec (framing, AWAKE handshake, stale-frame drop) lands in
-task 3, shared by `core/` and `head/` from this directory.
-Normative protocol source until then: `core/src/middleware/udp_codec.h`
+Normative protocol source: `core/src/middleware/udp_codec.h`
 (core<->app UDP contract — unrelated to this link).

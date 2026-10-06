@@ -3,7 +3,7 @@
 clean:
 	pio run -e desky-head -t clean
 
-# Verify compilation (face-unit: ESP32-CAM + OV3660 + OLED + talk-wire stub)
+# Verify compilation (face-unit: ESP32-CAM + OV3660 + OLED + link stub, PARKED)
 build:
 	pio run -e desky-head
 

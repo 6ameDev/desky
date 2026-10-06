@@ -12,6 +12,9 @@
   `shared/link/` (talk-wire codec placeholder). Focused work runs inside
   one sibling; `cd embedded && make check` gates the whole robot.
 - `client/` — empty placeholder for the future KMP / Compose app.
+- `hardware/` — hand-solder carriers + contract. Conditional: only when the
+  task touches `hardware/` — read `hardware/INTERFACE.md` §0 first; it is
+  normative over anything below.
 - `shared/protocol/` — protocol contracts; normative source is
   `embedded/src/middleware/udp_codec.h`.
 - `embedded/docs/` + `embedded/scripts/` — intentionally untracked
