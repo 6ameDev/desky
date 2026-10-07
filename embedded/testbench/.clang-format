@@ -1,0 +1,7 @@
+# desky v2 formatting — Google base, 120 col. Standard LLVM tooling.
+# Shared style for core/ + head/ + testbench/ (one copy per firmware so each
+# per-firmware Makefile is self-contained).
+# Check: clang-format --dry-run --Werror <files>
+# Apply: clang-format -i <files>
+BasedOnStyle: Google
+ColumnLimit: 120
