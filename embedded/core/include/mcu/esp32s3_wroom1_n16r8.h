@@ -30,13 +30,18 @@
 #define MCU_TOF_XSHUT 9    // Firmware-defined, UNROUTED on carrier (sensor runs on module pull-up)
 #define MCU_I2C_SDA 10     // Shared bus0 SDA (ToF + MPU)
 #define MCU_I2C_SCL 11     // Shared bus0 SCL (ToF + MPU)
-// TCRT5000 cliff A0 (analog path, D0 unconnected, module VCC on 3V3).
-// TEMPORARY pins on ADC2, which CONFLICTS WITH WiFi (ADC2 is unusable while
-// WiFi runs): bench them with WiFi off (desky-bench env, DESKY_NO_WIFI=1).
-// IDEAL: front -> GPIO1, rear -> GPIO2 (both ADC1, WiFi-safe) — move both on
-// the rewire, then delete this comment.
-#define MCU_TCRT_FWD 14  // TEMPORARY (ADC2): front cliff A0. IDEAL GPIO1 (ADC1, WiFi-safe).
-#define MCU_TCRT_REV 13  // TEMPORARY (ADC2): rear cliff A0. IDEAL GPIO2 (ADC1, WiFi-safe).
+// TCRT5000 cliff A0 (discrete pairs, no modules: 220Ω emitter + 10kΩ tap,
+// 3V3 rails — see hardware/COMPONENTS.md §5). GPIO1/2 (ADC1, WiFi-safe).
+#define MCU_TCRT_FWD 1  // Front cliff ADC tap (analog, D0 unconnected)
+#define MCU_TCRT_REV 2  // Rear cliff ADC tap (analog, D0 unconnected)
+
+// MG90S servos (independent functions, not mirrored: arm + head-tilt).
+// GPIO41/42: adjacent pair extending the TCRT block, clear of strapping,
+// flash, RGB and console. Independent LEDC channels @50Hz on their own
+// timer (motors run 20kHz on a separate group). Pin↔function mapping is
+// firmware-only — swapping is a two-define change, no rewiring.
+#define MCU_SERVO_ARM 41   // Arm servo PWM (JR plug, 5V star + GND)
+#define MCU_SERVO_HEAD 42  // Head-tilt servo PWM (JR plug, 5V star + GND)
 
 // I2C device addresses on shared Wire bus
 #define MCU_ADDR_TOF 0x29
