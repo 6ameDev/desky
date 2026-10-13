@@ -17,6 +17,8 @@ Thumbs.db
 # KiCad CLI verification reports (default CWD side-effects)
 *-erc.json
 *-drc.json
+*_drc_violations.json
+*_erc_violations.json
 
 # KiCad local/editor state — never sources
 *.kicad_prl
@@ -25,6 +27,7 @@ Thumbs.db
 *.lck
 ~*.lck
 *-backups/
+.history/
 .mcp-backups/
 _autosave-*
 fp-info-cache

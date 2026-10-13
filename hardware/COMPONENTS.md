@@ -41,13 +41,13 @@ Power/signal contract: `hardware/INTERFACE.md`.
   `J1`, user's physical unit reads `J2` — dossier keys off the physical unit.
 - Pin table (6+6, back-side view as photographed, physical order):
   - Left top→bottom: `IN4, IN3, GND, VCC, IN2, IN1`
-  - Right top→bottom: `EEP (=SLEEP), OUT1, OUT2, OUT3, OUT4, ULT (=VM)`
-  - No nFAULT broken out. NOT the generic AIN/BIN/VM layout — use this table.
-- Logic voltages: 3V/5V logic compatible (seller spec); VCC fed per wiring docs.
-- VM: 2.7–10.8V, 1.2A cont / 2A peak per channel (seller spec).
+  - Right top→bottom: `EEP (=SLEEP), OUT1, OUT2, OUT3, OUT4, ULT (=FAULT — module silkscreen for FLT)`
+  - Single-supply module: lone VCC pin ← `VCC_5V` star. NOT the generic AIN/BIN/VM layout — use this table.
+- Logic voltages: S3 3V3 logic clears TI VIH=2.0V (nSLEEP 2.5V); VCC ← `VCC_5V` star.
+- VM: 2.7–10.8V, 1.2A cont / 2A peak per channel (seller spec + TI datasheet).
   Reverse-polarity protection on-module. Package includes 12x male headers.
-- Onboard parts: J2 pads OPEN (not joined) on user's unit — SLEEP strapping
-  per wiring docs, not re-derived here.
+- nFAULT (ULT) is open-drain active-low → firmware GPIO8 `INPUT_PULLUP` suffices, no extra parts.
+  SLEEP (EEP) tied to `VCC_5V` on-carrier (always enabled); module J2 strap pads left OPEN.
 - Mechanical: ~16x18mm user-measured (seller "18x8mm" disregarded as wrong).
 - Mating / wiring intent: primary = short wire links from DRV socket row to
   board-side JST-XH 2-pin headers (OUT1/2 → left motor, OUT3/4 → right);
@@ -89,11 +89,13 @@ Power/signal contract: `hardware/INTERFACE.md`.
   agent to confirm from variant docs). AD0 assumed low → addr `0x68`
   (matches firmware `MCU_ADDR_MPU_PRIMARY`; underside unverified — unit is
   breadboarded under wiring, taken as working-config truth).
+- Carrier: AD0→GND strap (deterministic 0x68 = firmware PRIMARY; replaces assumed-floating-low).
 - Mechanical: 21x16mm (conservative user measure, matches GY-521 standard).
 - Mating: 8-pin single row; shared bus0 SDA=GPIO10/SCL=GPIO11 @400kHz
   with ToF.
 
 ### 5. Cliff sensing (discrete TCRT5000, no modules) — status: locked
+- SUPERSEDES-POINTER: `hardware/tcrt/tcrt-module.kicad_sch` is now the buildable module authority (FWD+REV columns, 3V3-only); the bench data below (Vf/counts/ride-height) stays valid — only the always-on-carrier topology is superseded.
 - Identity: Robu.in `TCRT5000 Reflective IR sensor photoelectric switch —
   pack of 5` (https://robu.in/product/tcrt5000-reflective-ir-sensor-photoelectric-switch,
   SKU 31362). Bare leaded emitter + phototransistor pairs (no module PCB,
@@ -159,7 +161,7 @@ Power/signal contract: `hardware/INTERFACE.md`.
 - Electrical: rated 6V (operating 3–6V), 40mA no-load, stall 0.67A;
   torque 0.4 kg-cm rated / 1.2 kg-cm stall.
 - Driver fit: stall 0.67A vs DRV8833 1.2A cont (2A peak) — ~1.8× margin;
-  VM ← 5V star (motor runs ~5/6 speed — fine). FAULT on GPIO8.
+  VM ← 5V star via module VCC pin (motor runs ~5/6 speed — fine). FAULT on GPIO8.
 - Mechanical: 12mm can, 26mm body + 10mm axial, D-shaft 3mmx9mm,
   M3 mounts, 12g. Bare rear tabs → wires soldered direct.
 - Motor leads: 26AWG to JST-XH 2-pin wired females (15cm stock);
@@ -184,7 +186,7 @@ Power/signal contract: `hardware/INTERFACE.md`.
   locked (pot dabbed)** — ships ~9V default, never connect as-received.
   Discharge max 2A; 5V reference max 1.4A; quiescent ~0.5mA; OC protection yes.
 - Path: battery → TP4056 B+/B− → boost 5.1V → star → taps (S3 5Vin,
-  CAM 5V inlet, amp Vin, DRV ULT/VM, 2x servos).
+  CAM 5V inlet, amp Vin, DRV VCC, 2x servos).
 - Star: mixed — XY308 screw blocks as 5V/GND bus backbone (boost in + DRV +
   servos, heaviest wire first); light taps (S3, CAM, amp) as soldered rail +
   JST-XH pigtails. Specifics deferred to carrier layout pass.

@@ -35,6 +35,10 @@ One common 5V/GND rail feeds everything. The S3 does **not** power the CAM.
   for switch-back, never routed.
 - **ToF XSHUT unrouted on core.** Firmware defines `MCU_TOF_XSHUT=9` but the
   carrier leaves it open; the sensor runs on its module pull-up.
+- **Motor FAULT wired on core.** DRV module ULT = nFAULT (module silkscreen
+  for FLT) → J1/GPIO8 (J4p6 ↔ J1p12, `M_FAULT` net); open-drain active-low,
+  firmware `INPUT_PULLUP` suffices, no extra parts. SLEEP (EEP) tied to
+  `VCC_5V` on-carrier (always enabled); single-supply VCC ← `VCC_5V` star.
 
 Crucial findings kept: head OLED is SDA=GPIO14/SCL=GPIO15 (proven booting);
 SDA on GPIO12 bricks boot (pull-up vs MTDI strapping, 2026-09-28).

@@ -6,7 +6,7 @@
 # Contract and build principle: INTERFACE.md (§0 is normative).
 # Guides (netlist + BOM per board) land in build/ (git-ignored).
 
-.PHONY: check erc guides clean
+.PHONY: check erc guides clean tcrt-erc
 
 check: erc
 	@echo "principle: INTERFACE.md §0 (normative)"
@@ -21,6 +21,13 @@ guides: erc
 	kicad-cli sch export netlist --format kicadsexpr --output build/desky-head.net head/desky-head.kicad_sch
 	kicad-cli sch export bom --output build/desky-core-bom.csv core/desky-core.kicad_sch
 	kicad-cli sch export bom --output build/desky-head-bom.csv head/desky-head.kicad_sch
+	kicad-cli sch export netlist --format kicadsexpr --output build/tcrt-module.net tcrt/tcrt-module.kicad_sch
+	kicad-cli sch export bom --output build/tcrt-module-bom.csv tcrt/tcrt-module.kicad_sch
+
+tcrt-erc:
+	kicad-cli sch erc --format json --severity-all -o build/tcrt-module-erc.json tcrt/tcrt-module.kicad_sch
+
+erc: tcrt-erc
 
 clean:
 	rm -rf build
