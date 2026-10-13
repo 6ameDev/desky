@@ -45,6 +45,29 @@
 // Onboard LED (most DevKit v1 boards tie it to GPIO2)
 #define MCU_LED_PIN 2
 
+// ── I2S mic POC (INMP441 pair: shared WS/SCK/SD, stereo by L/R tie) ──
+// WS=25/SCK=26/SD=27: adjacent triple, clear of I2C (21/22), LED (GPIO2),
+// strapping (0/2/5/12/15), flash (6-11) and input-only (34-39). No DOUT:
+// the rig has no amp, so the port runs RX-only (see src/hal/mic_poc.h).
+// Wiring per hardware/COMPONENTS.md §7: SCK←BCLK, WS←WS, SD→DIN, VDD←3V3,
+// GND common; mic A L/R→GND (LEFT slot), mic B L/R→3V3 (RIGHT slot).
+#define MCU_I2S_WS 25
+#define MCU_I2S_BCLK 26
+#define MCU_I2S_DIN 27
+// DOUT=32 (amp DIN): free GPIO, clear of strapping/flash/input-only/I2C.
+// Speaker stage only — unconnected until the MAX98357A lands.
+#define MCU_I2S_DOUT 32
+
+// ── TCRT POC (discrete reflective pair, COMPONENTS.md §5 circuit) ──
+// TCRT_1=33: ADC1 (WiFi-safe analog), clear of I2C (21/22), audio
+// (25/26/27/32) and LED (GPIO2). Emitter 220Ω + detector 10k tap,
+// tap row -> this pin (see plan notes, never the rail-side row).
+#define MCU_TCRT_1 33
+// TCRT drain tap (modulated emitter): DRAIN_1=13 sinks the emitter cathode
+// (GPIO LOW = on). Plain GPIO, non-strapping, LEDC-capable for future PWM
+// brightness; digital-only use so ADC rules never apply.
+#define MCU_TCRT_DRAIN_1 13
+
 // ── Bus / peripheral defaults ────────────────────────────────
 #define MCU_I2C_FREQ_HZ 400000
 #define MCU_I2C_TIMEOUT_MS 20

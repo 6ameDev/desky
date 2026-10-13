@@ -32,7 +32,7 @@ monitor-decode:
 
 # Full gate: formatting + pin lint + firmware build (deprecation-scanned) + host tests
 check:
-	clang-format --dry-run --Werror src/main.cpp include/*.h include/mcu/*.h ../shared/common/*.h test/*.cpp
+	clang-format --dry-run --Werror src/main.cpp src/hal/*.h include/*.h include/mcu/*.h ../shared/common/*.h test/*.cpp
 	$(MAKE) check-pins
 	pio run -e desky-testbench > /tmp/check-testbench.log 2>&1; CODE=$$?; cat /tmp/check-testbench.log; test $$CODE -eq 0
 	@! grep -i "is deprecated and will be removed" /tmp/check-testbench.log
