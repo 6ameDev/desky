@@ -4,3 +4,9 @@ build/
 .kotlin/
 *.apk
 *.ipa
+
+# T8 iOS: CocoaPods integration artifacts (derived; regenerate per README).
+# Tracked: Podfile, Podfile.lock, iosApp.xcodeproj, Swift sources, Info.plist.
+iosApp/Pods/
+iosApp/*.xcworkspace
+shared/shared.podspec

@@ -1,0 +1,119 @@
+package com.desky.client.ui.pairing
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.desky.shared.domain.PairedDevice
+import com.desky.shared.presentation.PairingUiState
+import com.desky.shared.presentation.PairingViewModel
+import org.koin.androidx.compose.koinViewModel
+
+@Composable
+fun PairingScreen(
+    onPaired: () -> Unit,
+    onOpenControls: () -> Unit,
+    vm: PairingViewModel = koinViewModel(),
+) {
+    val state by vm.state.collectAsStateWithLifecycle()
+    LaunchedEffect(state.pairedDevice) {
+        if (state.pairedDevice != null) onPaired()
+    }
+    PairingContent(
+        state = state,
+        onIpChange = vm::onIpChange,
+        onPinChange = vm::onPinChange,
+        onPair = vm::onPair,
+        onUnpair = vm::onUnpair,
+        onOpenControls = onOpenControls,
+    )
+}
+
+@Composable
+fun PairingContent(
+    state: PairingUiState,
+    onIpChange: (String) -> Unit,
+    onPinChange: (String) -> Unit,
+    onPair: () -> Unit,
+    onUnpair: () -> Unit,
+    onOpenControls: () -> Unit,
+) {
+    Scaffold { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Pair with Desky", style = MaterialTheme.typography.headlineSmall)
+            OutlinedTextField(
+                value = state.ip,
+                onValueChange = onIpChange,
+                label = { Text("Robot IP") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = state.pin,
+                onValueChange = onPinChange,
+                label = { Text("PIN") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Button(
+                onClick = onPair,
+                enabled = !state.isPairing,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (state.isPairing) "Pairing…" else "Pair")
+            }
+            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            state.pairedDevice?.let { device ->
+                Text("Paired: ${device.alias}")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onOpenControls) { Text("Open Controls") }
+                    OutlinedButton(onClick = onUnpair) { Text("Unpair") }
+                }
+            }
+        }
+    }
+}
+
+@Preview
+@Composable
+private fun PairingContentPreview() {
+    MaterialTheme {
+        PairingContent(
+            state = PairingUiState(
+                ip = "192.168.1.42",
+                pin = "1234",
+                pairedDevice = PairedDevice(
+                    id = "1",
+                    ip = "192.168.1.42",
+                    authToken = "token",
+                ),
+            ),
+            onIpChange = {},
+            onPinChange = {},
+            onPair = {},
+            onUnpair = {},
+            onOpenControls = {},
+        )
+    }
+}

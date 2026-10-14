@@ -1,0 +1,11 @@
+# desky iOS app (T8): SwiftUI shell over the shared KMP module.
+platform :ios, '16.0'
+
+target 'iosApp' do
+  use_frameworks!
+
+  # Kotlin Multiplatform shared framework. Podspec is generated (not tracked):
+  #   ./gradlew :shared:podspec && ./gradlew :shared:generateDummyFramework
+  # `pod install` then wires the `shared` framework into iosApp.xcworkspace.
+  pod 'shared', :path => '../shared'
+end
