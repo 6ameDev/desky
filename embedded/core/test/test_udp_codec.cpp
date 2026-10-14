@@ -163,6 +163,14 @@ void test_audio_chime_shape_and_decay();
 void test_audio_int24_unpack_top24_in_32();
 void test_audio_rms_and_louder_side();
 
+// Pairing core (Tier 1 enrolment gate), defined in test_pairing.cpp.
+void test_pair_golden_accept_burns_once();
+void test_pair_bad_code_counts_tries();
+void test_pair_fifth_try_locks_then_expires();
+void test_pair_window_expiry_rejects();
+void test_pair_pre_window_rejects();
+void test_pair_malformed_input_is_bad_code();
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_control_golden_vector);
@@ -248,5 +256,11 @@ int main() {
   RUN_TEST(test_audio_chime_shape_and_decay);
   RUN_TEST(test_audio_int24_unpack_top24_in_32);
   RUN_TEST(test_audio_rms_and_louder_side);
+  RUN_TEST(test_pair_golden_accept_burns_once);
+  RUN_TEST(test_pair_bad_code_counts_tries);
+  RUN_TEST(test_pair_fifth_try_locks_then_expires);
+  RUN_TEST(test_pair_window_expiry_rejects);
+  RUN_TEST(test_pair_pre_window_rejects);
+  RUN_TEST(test_pair_malformed_input_is_bad_code);
   return UNITY_END();
 }

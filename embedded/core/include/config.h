@@ -118,6 +118,14 @@
 // STA reconnect cadence inside the UDP task loop (non-blocking).
 #define CFG_WIFI_STA_RETRY_MS 5000
 
+// Pairing window (Tier 1 enrolment, protocol v1): 6-digit ephemeral code,
+// single-use, 5-min window, 5 bad tries -> 30s lockout. Bond/PSK keys land
+// in Task 3 (ConfigStore cfg v2). FreeRTOS-free plain ints (same as above).
+#define CFG_PAIR_CODE_LEN 6
+#define CFG_PAIR_WINDOW_MS 300000
+#define CFG_PAIR_MAX_TRIES 5
+#define CFG_PAIR_LOCKOUT_MS 30000
+
 // I2S audio (MAX98357A amp + 2x INMP441 mics, shared BCLK/WS @16kHz LRCLK;
 // GPIOs via the MCU header, never hardcoded here).
 // CFG_AUDIO_RATE_HZ=16000: 16kHz LRCLK is datasheet-supported by both the
