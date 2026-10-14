@@ -1,0 +1,68 @@
+name: Client – iOS
+
+# Fires only when iOS-affecting files change (shared/ counts: it ships in
+# the framework). Android-only edits never spend macOS minutes here (10x).
+on:
+  push:
+    branches: [v2]
+    paths: [client/iosApp/**, client/shared/**, client/gradle/libs.versions.toml, .github/workflows/client-ios.yml]
+  pull_request:
+    branches: [v2]
+    paths: [client/iosApp/**, client/shared/**, client/gradle/libs.versions.toml, .github/workflows/client-ios.yml]
+
+# A second push cancels the stale run instead of queueing behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up JDK 17 (Temurin, matches client/.mise.toml)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Gradle cache + daemon tuning
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Select Xcode + show simulators
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          xcrun simctl list runtimes
+
+      # podspec is gitignored; pod install needs it present AND its guard
+      # needs a framework dir to exist — generateDummyFramework satisfies the
+      # guard; the real framework syncs at Xcode build time via plugin hook.
+      - name: Generate shared podspec + dummy framework
+        run: ./gradlew :shared:podspec :shared:generateDummyFramework --console=plain
+
+      - name: Cache CocoaPods (keyed by lockfile; skip on Podfile changes)
+        uses: actions/cache@v4
+        with:
+          path: |
+            client/iosApp/Pods
+            ~/Library/Caches/CocoaPods
+          key: pods-${{ hashFiles('client/iosApp/Podfile.lock') }}
+
+      # No --repo-update: the lockfile pins everything; the cache above makes
+      # stable-Podfile installs seconds instead of a CDN round-trip per run.
+      - name: CocoaPods install
+        working-directory: client/iosApp
+        run: pod install
+
+      - name: Build iosApp (simulator)
+        working-directory: client/iosApp
+        run: >
+          xcodebuild -workspace iosApp.xcworkspace -scheme iosApp
+          -configuration Debug
+          -destination 'platform=iOS Simulator,name=iPhone 16'
+          build
