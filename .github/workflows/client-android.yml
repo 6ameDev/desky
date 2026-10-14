@@ -1,0 +1,77 @@
+name: Client – Android
+
+# Fires only when Android-affecting files change (shared/ counts: it ships
+# in the APK). iOS-only edits never spend a minute here.
+on:
+  push:
+    branches: [v2]
+    paths: [client/androidApp/**, client/shared/**, client/gradle/**, client/build-logic/**, client/settings.gradle.kts, client/build.gradle.kts, client/gradle.properties, .github/workflows/client-android.yml]
+  pull_request:
+    branches: [v2]
+    paths: [client/androidApp/**, client/shared/**, client/gradle/**, client/build-logic/**, client/settings.gradle.kts, client/build.gradle.kts, client/gradle.properties, .github/workflows/client-android.yml]
+
+# A second push cancels the stale run instead of queueing behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up JDK 17 (Temurin, matches client/.mise.toml)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Gradle cache + daemon tuning
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit tests (fast gate; assemble runs only on green)
+        run: ./gradlew :shared:jvmTest --console=plain
+
+  assemble:
+    needs: test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up JDK 17 (Temurin, matches client/.mise.toml)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Gradle cache + daemon tuning
+        uses: gradle/actions/setup-gradle@v4
+
+      # NOTE: android-actions/setup-android is intentionally NOT used — v3
+      # hardcodes the long-removed `tools` SDK package, so its own sdkmanager
+      # call exits 1 on current runners. ubuntu runners preinstall the SDK at
+      # /usr/local/lib/android/sdk; we only add the platform + build-tools
+      # this project pins. (Deliberately not cached: gigabytes to restore
+      # vs ~1 min to download. Xcode/Gradle-config caches skipped likewise.)
+      - name: Set up Android SDK (preinstalled + install platform-36)
+        run: |
+          ANDROID_HOME=/usr/local/lib/android/sdk
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+          CMDLINE_BIN=$(dirname "$(find $ANDROID_HOME/cmdline-tools -maxdepth 3 -name sdkmanager | head -1)")
+          echo "$CMDLINE_BIN" >> $GITHUB_PATH
+          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
+          # NOTE: $GITHUB_PATH takes effect only in LATER steps — invoke via
+          # absolute path within this step (bare `sdkmanager` is exit 127 here).
+          yes | "$CMDLINE_BIN/sdkmanager" --licenses > /dev/null
+          "$CMDLINE_BIN/sdkmanager" "platforms;android-36" "build-tools;36.1.0" "platform-tools"
+
+      - name: Assemble shared targets + debug APK
+        run: ./gradlew :shared:assemble :androidApp:assembleDebug --console=plain
