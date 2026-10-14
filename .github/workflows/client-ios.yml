@@ -61,8 +61,13 @@ jobs:
 
       - name: Build iosApp (simulator)
         working-directory: client/iosApp
+        # CI-only flags (never in the pbxproj: index-store off would kill
+        # local Xcode intelligence): parallelize targets, all cores, skip
+        # IndexStore, arm64-only destination.
         run: >
           xcodebuild -workspace iosApp.xcworkspace -scheme iosApp
           -configuration Debug
-          -destination 'platform=iOS Simulator,name=iPhone 16'
+          -destination 'platform=iOS Simulator,name=iPhone 16,arch=arm64'
+          -parallelizeTargets -jobs $(sysctl -n hw.ncpu)
+          COMPILER_INDEX_STORE_ENABLE=NO
           build
