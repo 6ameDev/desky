@@ -156,3 +156,154 @@ class Core {
 };
 
 }  // namespace pairing
+
+#ifdef ARDUINO
+// ── Firmware: pairing crypto glue (mbedTLS, Task 4) ───────────────────────
+// Arduino-ESP32 (S3) bundles mbedTLS; headers live under the framework
+// package and are included as <mbedtls/...>. No heap, no String, and no
+// logging of key material anywhere in this section (never LOG key, nonce,
+// or code bytes) — failures surface as silent bools for the PAIR_ERR path.
+//
+// CALL-ORDER CONTRACT (store-before-send; the PAIR_OK send path must follow
+// it exactly so app-bonded/robot-unbonded is impossible):
+//   1. Core::tryCode(in, len, nowMs) == Result::kOk (code verified + burned
+//      inside Core; single-use, window/lockout enforced by the top half).
+//   2. Fresh PSK = 16 esp_random bytes into a caller-owned stack buffer.
+//   3. ConfigStore::saveBond(psk, 1) FIRST — persist before anything leaves
+//      the radio. A failed save aborts: answer PAIR_ERR, never PAIR_OK.
+//   4. deriveKek(code, clientNonce, serverNonce, kek), then
+//      wrapPsk(psk, kek, clientNonce, serverNonce, ct, tag).
+//   5. Send PAIR_OK ([0x51 | server_nonce | ct | tag | XOR]); zeroize the
+//      kek/psk stack copies after the send.
+// Layer rule: crypto glue is middleware (this header); NVS persistence is
+// services/ConfigStore; policy/state is pairing::Core above.
+
+#include <mbedtls/cipher.h>
+#include <mbedtls/constant_time.h>
+#include <mbedtls/gcm.h>
+#include <mbedtls/hkdf.h>
+#include <mbedtls/md.h>
+#include <mbedtls/platform_util.h>
+
+#include "common/fault_manager.h"  // DESKY_ASSERT (firmware side only)
+
+namespace pairing {
+
+// Sizes frozen by shared/protocol/README.md §"Pairing + authenticated drive
+// v1". Local constexprs (not ConfigStore) so this header stays includable
+// without the Arduino Preferences stack.
+constexpr size_t kPskLen = 16;
+constexpr size_t kKekLen = 16;
+constexpr size_t kPairNonceLen = 4;
+constexpr size_t kPairIvLen = 12;
+constexpr size_t kPairAadLen = 9;  // 0x51 || client_nonce(4) || server_nonce(4)
+constexpr size_t kPairTagLen = 16;
+constexpr uint8_t kPairOkHeader = 0x51;
+
+// Derives the pairing KEK: KEK = HKDF-SHA256(salt=client_nonce||server_nonce,
+// IKM=6 ASCII code digits, info="desky-pair-v1", L=16). Returns false on null
+// input or any mbedTLS error (kekOut zeroized on failure). Salt lives in a
+// fixed-size stack buffer and is zeroized on all paths.
+inline bool deriveKek(const uint8_t code6[kCodeLen], const uint8_t clientNonce[kPairNonceLen],
+                      const uint8_t serverNonce[kPairNonceLen], uint8_t kekOut[kKekLen]) {
+  DESKY_ASSERT(code6 != nullptr);
+  DESKY_ASSERT(clientNonce != nullptr);
+  DESKY_ASSERT(serverNonce != nullptr);
+  DESKY_ASSERT(kekOut != nullptr);
+  if (code6 == nullptr || clientNonce == nullptr || serverNonce == nullptr || kekOut == nullptr) {
+    return false;
+  }
+  uint8_t salt[kPairNonceLen * 2];
+  for (size_t i = 0; i < kPairNonceLen; ++i) {
+    salt[i] = clientNonce[i];
+  }
+  for (size_t i = 0; i < kPairNonceLen; ++i) {
+    salt[kPairNonceLen + i] = serverNonce[i];
+  }
+  static const char kInfo[] = "desky-pair-v1";
+  const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  int rc = -1;
+  if (md != nullptr) {
+    rc = mbedtls_hkdf(md, salt, sizeof(salt), code6, kCodeLen,
+                       reinterpret_cast<const unsigned char*>(kInfo), sizeof(kInfo) - 1, kekOut, kKekLen);
+  }
+  mbedtls_platform_zeroize(salt, sizeof(salt));
+  if (rc != 0) {
+    mbedtls_platform_zeroize(kekOut, kKekLen);
+    return false;
+  }
+  return true;
+}
+
+// Wraps the bonded PSK for PAIR_OK: ct||tag = AES-128-GCM(KEK,
+// nonce12=server_nonce||client_nonce||00 00 00 00,
+// AAD=0x51||client_nonce||server_nonce, psk). Returns false on null input
+// or any mbedTLS error; gcm_free runs on all paths, and ct/tag outputs are
+// zeroized on failure (caller still owns psk/kek — const here — and must
+// zeroize its own copies after the send per the contract above).
+inline bool wrapPsk(const uint8_t psk[kPskLen], const uint8_t kek[kKekLen],
+                    const uint8_t clientNonce[kPairNonceLen], const uint8_t serverNonce[kPairNonceLen],
+                    uint8_t ctOut[kPskLen], uint8_t tagOut[kPairTagLen]) {
+  DESKY_ASSERT(psk != nullptr);
+  DESKY_ASSERT(kek != nullptr);
+  DESKY_ASSERT(clientNonce != nullptr);
+  DESKY_ASSERT(serverNonce != nullptr);
+  DESKY_ASSERT(ctOut != nullptr);
+  DESKY_ASSERT(tagOut != nullptr);
+  if (psk == nullptr || kek == nullptr || clientNonce == nullptr || serverNonce == nullptr || ctOut == nullptr ||
+      tagOut == nullptr) {
+    return false;
+  }
+  uint8_t iv[kPairIvLen];
+  uint8_t aad[kPairAadLen];
+  for (size_t i = 0; i < kPairNonceLen; ++i) {
+    iv[i] = serverNonce[i];
+  }
+  for (size_t i = 0; i < kPairNonceLen; ++i) {
+    iv[kPairNonceLen + i] = clientNonce[i];
+  }
+  for (size_t i = 2 * kPairNonceLen; i < kPairIvLen; ++i) {
+    iv[i] = 0x00;
+  }
+  aad[0] = kPairOkHeader;
+  for (size_t i = 0; i < kPairNonceLen; ++i) {
+    aad[1 + i] = clientNonce[i];
+  }
+  for (size_t i = 0; i < kPairNonceLen; ++i) {
+    aad[1 + kPairNonceLen + i] = serverNonce[i];
+  }
+  mbedtls_gcm_context ctx;
+  mbedtls_gcm_init(&ctx);
+  int rc = mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, kek, 128);
+  if (rc == 0) {
+    rc = mbedtls_gcm_crypt_and_tag(&ctx, MBEDTLS_GCM_ENCRYPT, kPskLen, iv, sizeof(iv), aad, sizeof(aad), psk,
+                                   ctOut, kPairTagLen, tagOut);
+  }
+  mbedtls_gcm_free(&ctx);
+  mbedtls_platform_zeroize(iv, sizeof(iv));
+  mbedtls_platform_zeroize(aad, sizeof(aad));
+  if (rc != 0) {
+    mbedtls_platform_zeroize(ctOut, kPskLen);
+    mbedtls_platform_zeroize(tagOut, kPairTagLen);
+    return false;
+  }
+  return true;
+}
+
+// Constant-time buffer compare for the Task 5 DRIVE_V2 verify path
+// (HMAC tag check). Thin wrapper over mbedtls_ct_memcmp; returns false on
+// null input. Note: pairing::constantTimeEqual6 above stays the host-testable
+// semantic for the 6-byte code compare — same no-early-exit rule, Arduino-free
+// so Unity pins it; this wrapper is just the firmware call-site rule.
+inline bool ctEqual(const void* a, const void* b, size_t n) {
+  DESKY_ASSERT(a != nullptr);
+  DESKY_ASSERT(b != nullptr);
+  if (a == nullptr || b == nullptr) {
+    return false;
+  }
+  return mbedtls_ct_memcmp(a, b, n) == 0;
+}
+
+}  // namespace pairing
+
+#endif  // ARDUINO
