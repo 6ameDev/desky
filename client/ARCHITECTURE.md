@@ -114,7 +114,14 @@ every tick); IPv4 conversion is little-endian network-order (`data/Ipv4.kt`).
 | Android app | `./gradlew :androidApp:assembleDebug` | APK incl. Koin/Compose wiring (compile-level) |
 | iOS framework sync | `./gradlew :shared:syncFramework -Pkotlin.native.cocoapods.platform=iphonesimulator -Pkotlin.native.cocoapods.archs=arm64 -Pkotlin.native.cocoapods.configuration=Debug` | Exact Xcode-phase invocation; then `pod install` in `iosApp/` |
 | iOS app | `xcodebuild -workspace iosApp.xcworkspace -scheme iosApp -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 16' build` (from `iosApp/`) | Needs a simulator runtime (see README checklist) |
-| CI | `.github/workflows/client.yml` | ubuntu: tests+APK; macOS: pod install + simulator build |
+| CI | `client-android.yml` + `client-ios.yml` | per-platform paths filters; ubuntu: tests→APK; macOS: pod install + simulator build |
+
+Local pure-Swift iterations can skip the Kotlin rebuild entirely (biggest
+local win — the 5-file app compiles in seconds, the framework takes
+minutes): set `COCOAPODS_SKIP_KOTLIN_BUILD=YES` in the Xcode scheme's Run
+environment (or prefix `xcodebuild`), and **unset + rebuild after any
+`shared/` or `iosApp/Kotlin/` change** — otherwise Xcode silently links a
+stale framework. Never set it in CI.
 
 ## 6. Where to look next
 
