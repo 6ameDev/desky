@@ -4,9 +4,11 @@ import com.desky.shared.data.RoomDeviceRepository
 import com.desky.shared.data.RoomSettingsRepository
 import com.desky.shared.data.createUdpSocketManager
 import com.desky.shared.data.db.DeskyDatabase
+import com.desky.shared.domain.BondSecretStore
 import com.desky.shared.domain.DeviceRepository
 import com.desky.shared.domain.EmergencyStopUseCase
 import com.desky.shared.domain.ForgetDeviceUseCase
+import com.desky.shared.domain.GetBondPskUseCase
 import com.desky.shared.domain.ObserveDeviceConfigUseCase
 import com.desky.shared.domain.ObserveTelemetryUseCase
 import com.desky.shared.domain.PairDeviceWithCodeUseCase
@@ -28,25 +30,29 @@ import org.koin.dsl.module
 /**
  * Data-layer module. Takes the platform-built [DeskyDatabase] (Room needs a
  * platform context/builder, so the app module constructs it and passes it
- * in) and wires repositories + the UDP transport.
+ * in) and the platform-built [BondSecretStore] (Android's
+ * EncryptedSharedPreferences likewise needs a Context) and wires
+ * repositories + the UDP transport.
  */
-fun dataModule(db: DeskyDatabase): Module = module {
+fun dataModule(db: DeskyDatabase, bondSecretStore: BondSecretStore): Module = module {
     single { db }
+    single<BondSecretStore> { bondSecretStore }
     single<DeviceRepository> { RoomDeviceRepository(get<DeskyDatabase>().pairedDeviceDao()) }
     single<SettingsRepository> { RoomSettingsRepository(get<DeskyDatabase>().robotConfigDao()) }
     single(named("ioScope")) { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
     single<UdpSocketManager> { createUdpSocketManager(get(named("ioScope"))) }
 }
 
-/** Domain-layer module: all 7 use cases as factories. */
+/** Domain-layer module: all 8 use cases as factories. */
 val domainModule: Module = module {
-    factory { PairDeviceWithCodeUseCase(get(), get()) }
+    factory { PairDeviceWithCodeUseCase(get(), get(), get()) }
+    factory { GetBondPskUseCase(get(), get()) }
     factory { SendRobotControlCommandUseCase(get()) }
     factory { ObserveTelemetryUseCase(get()) }
     factory { EmergencyStopUseCase(get()) }
     factory { SaveDeviceConfigUseCase(get()) }
     factory { ObserveDeviceConfigUseCase(get()) }
-    factory { ForgetDeviceUseCase(get()) }
+    factory { ForgetDeviceUseCase(get(), get()) }
 }
 
 /**

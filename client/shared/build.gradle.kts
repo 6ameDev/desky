@@ -60,6 +60,10 @@ kotlin {
         // ktor-client-okhttp 3.6.0 pulls okhttp-android 5.5.0, which mandates
         // compileSdk 37; only platform android-36 is installed and the brief
         // pins compileSdk 36 with no toolchain installs. T3/T5 wire engines.
+        androidMain.dependencies {
+            // Bond PSK vault backend (EncryptedSharedPreferences + MasterKey).
+            implementation(libs.security.crypto)
+        }
     }
 }
 

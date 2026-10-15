@@ -22,12 +22,19 @@ private const val PAIRING_TIMEOUT_MS = 5000L
  * (`nonce12 = server||client||00^4`, `AAD = 0x51||client||server`) ->
  * persist the bond.
  *
+ * The unwrapped PSK is stored in the platform vault ([BondSecretStore]);
+ * the Room row is written with a null `pskHex` column (Task 8: Room no
+ * longer holds key material). The returned [PairedDevice] matches the
+ * persisted row (null `pskHex`); session code reads the key via
+ * [GetBondPskUseCase].
+ *
  * At most 2 `PAIR_REQ` datagrams leave the app per [invoke] by construction,
  * so our own retries can never trip the firmware 5-try lockout.
  */
 class PairDeviceWithCodeUseCase(
     private val deviceRepo: DeviceRepository,
     private val udp: UdpSocketManager,
+    private val secretStore: BondSecretStore,
 ) {
     suspend operator fun invoke(code: String): Outcome<PairedDevice> {
         val trimmed = code.trim()
@@ -115,10 +122,15 @@ class PairDeviceWithCodeUseCase(
             ip = ROBOT_HOST,
             port = DEFAULT_UDP_PORT,
             authToken = "psk-v1",
-            pskHex = psk.toHex(),
+            pskHex = null,
             alias = ROBOT_HOST,
         )
         return try {
+            // Vault first: if the Room write below throws, the key already
+            // rests encrypted and the next pairing overwrites it. (Reversing
+            // the order would risk the worse outcome — a persisted row whose
+            // key is lost.)
+            secretStore.savePsk(device.id, psk.toHex())
             deviceRepo.save(device)
             Outcome.Success(device)
         } catch (e: CancellationException) {

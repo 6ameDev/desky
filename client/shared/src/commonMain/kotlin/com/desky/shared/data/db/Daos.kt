@@ -3,6 +3,7 @@ package com.desky.shared.data.db
 import androidx.room3.Dao
 import androidx.room3.Query
 import androidx.room3.Upsert
+import com.desky.shared.domain.GetBondPskUseCase
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -22,6 +23,13 @@ interface PairedDeviceDao {
     /** Drop the pairing (all rows). */
     @Query("DELETE FROM paired_device")
     suspend fun deleteAll()
+
+    /**
+     * Null out the legacy bond-secret column after its key has been moved
+     * to the platform vault ([GetBondPskUseCase] migration). Keeps the row.
+     */
+    @Query("UPDATE paired_device SET pskHex = NULL WHERE id = :deviceId")
+    suspend fun clearPskHex(deviceId: String)
 }
 
 @Dao

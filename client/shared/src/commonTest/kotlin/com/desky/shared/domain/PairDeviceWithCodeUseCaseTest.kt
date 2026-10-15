@@ -1,5 +1,7 @@
 package com.desky.shared.domain
 
+import com.desky.shared.presentation.FakeBondSecretStore
+
 import dev.mokkery.answering.calls
 import dev.mokkery.answering.returns
 import dev.mokkery.everySuspend
@@ -79,8 +81,11 @@ class PairDeviceWithCodeUseCaseTest {
 
     private fun repo() = mock<DeviceRepository>()
 
-    private fun useCase(deviceRepo: DeviceRepository, udp: FakePairingUdp) =
-        PairDeviceWithCodeUseCase(deviceRepo, udp)
+    private fun useCase(
+        deviceRepo: DeviceRepository,
+        udp: FakePairingUdp,
+        vault: FakeBondSecretStore = FakeBondSecretStore(),
+    ) = PairDeviceWithCodeUseCase(deviceRepo, udp, vault)
 
     /** Starts pairing and pumps until the initial PAIR_REQ is on the wire. */
     private fun TestScope.startPairing(
@@ -126,7 +131,8 @@ class PairDeviceWithCodeUseCaseTest {
         val deviceRepo = repo()
         everySuspend { deviceRepo.save(any()) } returns Unit
         val udp = FakePairingUdp()
-        val deferred = startPairing(udp, useCase(deviceRepo, udp))
+        val vault = FakeBondSecretStore()
+        val deferred = startPairing(udp, useCase(deviceRepo, udp, vault))
 
         val clientNonce = clientNonceOf(udp)
         udp.inbound.emit(UdpDatagram(pairOkFor(clientNonce), ROBOT_HOST, DEFAULT_UDP_PORT))
@@ -137,7 +143,10 @@ class PairDeviceWithCodeUseCaseTest {
         assertEquals(ROBOT_HOST, outcome.data.ip)
         assertEquals(DEFAULT_UDP_PORT, outcome.data.port)
         assertEquals("psk-v1", outcome.data.authToken)
-        assertEquals(PSK_HEX, outcome.data.pskHex)
+        // Room never holds key material: the row (and the returned device
+        // mirroring it) carries a null column; the vault holds the key.
+        assertEquals(null, outcome.data.pskHex)
+        assertEquals(PSK_HEX, vault.loadPsk(outcome.data.id))
         assertEquals(ROBOT_HOST, outcome.data.alias)
         verifySuspend { deviceRepo.save(outcome.data) }
         // No re-send was needed: exactly one PAIR_REQ on the wire.
@@ -149,7 +158,8 @@ class PairDeviceWithCodeUseCaseTest {
         val deviceRepo = repo()
         everySuspend { deviceRepo.save(any()) } returns Unit
         val udp = FakePairingUdp()
-        val deferred = startPairing(udp, useCase(deviceRepo, udp))
+        val vault = FakeBondSecretStore()
+        val deferred = startPairing(udp, useCase(deviceRepo, udp, vault))
 
         val clientNonce = clientNonceOf(udp)
         // Telemetry-shaped traffic and junk share the hot flow; none match.
@@ -159,7 +169,8 @@ class PairDeviceWithCodeUseCaseTest {
         udp.inbound.emit(UdpDatagram(pairOkFor(clientNonce), ROBOT_HOST, DEFAULT_UDP_PORT))
 
         val outcome = assertIs<Outcome.Success<PairedDevice>>(deferred.await())
-        assertEquals(PSK_HEX, outcome.data.pskHex)
+        assertEquals(null, outcome.data.pskHex)
+        assertEquals(PSK_HEX, vault.loadPsk(outcome.data.id))
         assertEquals(1, udp.sent.size)
     }
 

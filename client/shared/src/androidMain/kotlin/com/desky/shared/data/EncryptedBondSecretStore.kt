@@ -1,0 +1,62 @@
+package com.desky.shared.data
+
+import android.content.Context
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKeys
+import com.desky.shared.domain.BondSecretStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+/** Value key inside each per-device preferences file. */
+private const val PSK_VALUE_KEY = "psk_hex"
+
+/**
+ * Android [BondSecretStore]: one `EncryptedSharedPreferences` file per
+ * device (`bond_<sanitized deviceId>`), `MasterKeys` AES256_GCM key with key
+ * encryption AES256_SIV + value encryption AES256_GCM
+ * (`androidx.security:security-crypto:1.0.0` API).
+ *
+ * Missing entries read back null (never throw); [clear] removes the value
+ * (no-op when absent). Key material is never logged.
+ */
+class EncryptedBondSecretStore(
+    context: Context,
+) : BondSecretStore {
+    private val appContext = context.applicationContext
+
+    private fun prefsFor(deviceId: String) =
+        EncryptedSharedPreferences.create(
+            "bond_${deviceId.sanitized()}",
+            MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC),
+            appContext,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+
+    override suspend fun savePsk(deviceId: String, pskHex: String) =
+        withContext(Dispatchers.IO) {
+            prefsFor(deviceId).edit().putString(PSK_VALUE_KEY, pskHex).apply()
+        }
+
+    override suspend fun loadPsk(deviceId: String): String? =
+        withContext(Dispatchers.IO) {
+            prefsFor(deviceId).getString(PSK_VALUE_KEY, null)
+        }
+
+    override suspend fun clear(deviceId: String) =
+        withContext(Dispatchers.IO) {
+            prefsFor(deviceId).edit().remove(PSK_VALUE_KEY).apply()
+        }
+
+    /** File-name safe: keep alphanumerics plus `._-`, fold the rest to `_`. */
+    private fun String.sanitized(): String =
+        map { c -> if (c.isLetterOrDigit() || c == '.' || c == '_' || c == '-') c else '_' }
+            .joinToString("")
+}
+
+/**
+ * Android factory: the caller (see `DeskyApp`) supplies the Context, matching
+ * the existing `createDeskyDatabase(context)` DI pattern.
+ */
+fun createBondSecretStore(context: Context): BondSecretStore =
+    EncryptedBondSecretStore(context)

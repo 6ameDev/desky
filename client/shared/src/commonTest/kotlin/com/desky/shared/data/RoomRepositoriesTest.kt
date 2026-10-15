@@ -152,6 +152,31 @@ class RoomRepositoriesTest {
         }
     }
 
+    @Test
+    fun clearPskHexBlanksColumnKeepingRow() = runTest {
+        val repo = RoomDeviceRepository(db.pairedDeviceDao())
+        repo.save(
+            PairedDevice(
+                id = "desky-192.168.4.1",
+                ip = "192.168.4.1",
+                authToken = "psk-v1",
+                pskHex = "00112233445566778899aabbccddeeff",
+                alias = "192.168.4.1",
+            ),
+        )
+
+        repo.clearPskHex("desky-192.168.4.1")
+
+        repo.observePaired().test {
+            val device = assertNotNull(awaitItem())
+            assertNull(device.pskHex)
+            assertEquals("desky-192.168.4.1", device.id)
+            assertEquals("192.168.4.1", device.ip)
+            assertEquals("psk-v1", device.authToken)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     // -- SettingsRepository against real Room --
 
     @Test

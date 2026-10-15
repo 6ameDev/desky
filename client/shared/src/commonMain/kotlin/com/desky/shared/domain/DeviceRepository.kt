@@ -12,4 +12,11 @@ interface DeviceRepository {
 
     /** Drop the pairing. */
     suspend fun clear()
+
+    /**
+     * Blank the legacy Room `pskHex` column for [deviceId] after its key
+     * has been moved to the [BondSecretStore] vault. Migration-only
+     * ([GetBondPskUseCase]); new pairings are written with a null column.
+     */
+    suspend fun clearPskHex(deviceId: String)
 }

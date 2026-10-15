@@ -1,6 +1,7 @@
 package com.desky.shared.presentation
 
 import com.desky.shared.domain.DEFAULT_UDP_PORT
+import com.desky.shared.domain.BondSecretStore
 import com.desky.shared.domain.DeviceRepository
 import com.desky.shared.domain.PairedDevice
 import com.desky.shared.domain.RobotConfig
@@ -49,8 +50,37 @@ class FakeDeviceRepository(initial: PairedDevice? = null) : DeviceRepository {
         flow.value = null
     }
 
+    override suspend fun clearPskHex(deviceId: String) {
+        val current = flow.value
+        if (current?.id == deviceId) flow.value = current.copy(pskHex = null)
+    }
+
     fun emit(device: PairedDevice?) {
         flow.value = device
+    }
+}
+
+/** Hand-written fake vault: in-memory map mirroring [BondSecretStore] semantics. */
+class FakeBondSecretStore : BondSecretStore {
+    private val vault = mutableMapOf<String, String>()
+    var saveCalls = 0
+    var clearCalls = 0
+
+    override suspend fun savePsk(deviceId: String, pskHex: String) {
+        saveCalls++
+        vault[deviceId] = pskHex
+    }
+
+    override suspend fun loadPsk(deviceId: String): String? = vault[deviceId]
+
+    override suspend fun clear(deviceId: String) {
+        clearCalls++
+        vault.remove(deviceId)
+    }
+
+    /** Pre-load an entry without counting a [savePsk] call. */
+    fun seed(deviceId: String, pskHex: String) {
+        vault[deviceId] = pskHex
     }
 }
 

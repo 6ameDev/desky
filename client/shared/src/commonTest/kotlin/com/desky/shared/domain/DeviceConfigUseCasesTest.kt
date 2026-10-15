@@ -1,6 +1,7 @@
 package com.desky.shared.domain
 
 import app.cash.turbine.test
+import com.desky.shared.presentation.FakeBondSecretStore
 import dev.mokkery.answering.calls
 import dev.mokkery.answering.returns
 import dev.mokkery.every
@@ -9,9 +10,11 @@ import dev.mokkery.matcher.any
 import dev.mokkery.mock
 import dev.mokkery.verifySuspend
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 
@@ -73,23 +76,30 @@ class DeviceConfigUseCasesTest {
 
 class ForgetDeviceUseCaseTest {
 
+    private val device = PairedDevice(id = "desky-1", ip = "192.168.4.1", authToken = "psk-v1")
+
     @Test
     fun clearSucceeds() = runTest {
         val deviceRepo = mock<DeviceRepository>()
+        every { deviceRepo.observePaired() } returns flowOf(device)
         everySuspend { deviceRepo.clear() } returns Unit
+        val vault = FakeBondSecretStore().apply { seed(device.id, "aa") }
 
-        val result = ForgetDeviceUseCase(deviceRepo)()
+        val result = ForgetDeviceUseCase(deviceRepo, vault)()
 
         assertIs<Outcome.Success<Unit>>(result)
         verifySuspend { deviceRepo.clear() }
+        assertNull(vault.loadPsk(device.id))
     }
 
     @Test
     fun clearThrowingMapsToFailure() = runTest {
         val deviceRepo = mock<DeviceRepository>()
+        every { deviceRepo.observePaired() } returns flowOf(device)
         everySuspend { deviceRepo.clear() } calls { throw IllegalStateException("db locked") }
+        val vault = FakeBondSecretStore()
 
-        val result = ForgetDeviceUseCase(deviceRepo)()
+        val result = ForgetDeviceUseCase(deviceRepo, vault)()
 
         val failure = assertIs<Outcome.Failure>(result)
         assertTrue(failure.reason.isNotBlank())

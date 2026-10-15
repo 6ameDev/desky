@@ -57,8 +57,10 @@ data class Telemetry(
 
 /**
  * A robot the app is paired with. [authToken] is a version marker (`"psk-v1"`)
- * since pairing/auth v1 — the bond secret itself lives in [pskHex] (lowercase
- * hex of the 16-byte PSK) until Task 8 moves it to the platform secure vault.
+ * since pairing/auth v1 — the bond secret itself lives in the platform vault
+ * ([BondSecretStore]) since Task 8. [pskHex] (lowercase hex of the 16-byte
+ * PSK) is legacy: always null on rows written by [PairDeviceWithCodeUseCase],
+ * non-null only on pre-Task-8 rows until [GetBondPskUseCase] migrates them.
  */
 data class PairedDevice(
     val id: String,

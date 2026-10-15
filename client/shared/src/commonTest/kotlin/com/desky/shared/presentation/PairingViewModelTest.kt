@@ -59,12 +59,15 @@ private fun pairErr(reason: Int, retryS: Int): ByteArray {
 @OptIn(ExperimentalCoroutinesApi::class)
 class PairingViewModelTest {
 
-    private fun vm(repo: DeviceRepository, udp: FakeUdpSocketManager = FakeUdpSocketManager()) =
-        PairingViewModel(
-            PairDeviceWithCodeUseCase(repo, udp),
-            ForgetDeviceUseCase(repo),
-            repo,
-        )
+    private fun vm(
+        repo: DeviceRepository,
+        udp: FakeUdpSocketManager = FakeUdpSocketManager(),
+        vault: FakeBondSecretStore = FakeBondSecretStore(),
+    ) = PairingViewModel(
+        PairDeviceWithCodeUseCase(repo, udp, vault),
+        ForgetDeviceUseCase(repo, vault),
+        repo,
+    )
 
     /** Pumps until the VM's initial PAIR_REQ is on the wire; returns its client nonce. */
     private fun clientNonceOf(udp: FakeUdpSocketManager): ByteArray {
@@ -87,7 +90,8 @@ class PairingViewModelTest {
     fun pairSuccessStoresDevice() = runVmTest { main ->
         val repo = FakeDeviceRepository()
         val udp = FakeUdpSocketManager()
-        val viewModel = vm(repo, udp)
+        val vault = FakeBondSecretStore()
+        val viewModel = vm(repo, udp, vault)
         main.runCurrent()
 
         viewModel.onPinChange("123456")
@@ -104,7 +108,9 @@ class PairingViewModelTest {
         val device = assertNotNull(state.pairedDevice)
         assertEquals("192.168.4.1", device.ip)
         assertEquals("psk-v1", device.authToken)
-        assertEquals("00112233445566778899aabbccddeeff", device.pskHex)
+        // Room row carries no key material; the vault holds the bond PSK.
+        assertNull(device.pskHex)
+        assertEquals("00112233445566778899aabbccddeeff", vault.loadPsk(device.id))
         assertEquals(1, repo.saveCalls)
     }
 

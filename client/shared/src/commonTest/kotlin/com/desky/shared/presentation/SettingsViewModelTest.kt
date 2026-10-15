@@ -21,7 +21,7 @@ class SettingsViewModelTest {
         SettingsViewModel(
             SaveDeviceConfigUseCase(repo),
             ObserveDeviceConfigUseCase(repo),
-            ForgetDeviceUseCase(forgetRepo),
+            ForgetDeviceUseCase(forgetRepo, FakeBondSecretStore()),
         )
 
     @Test

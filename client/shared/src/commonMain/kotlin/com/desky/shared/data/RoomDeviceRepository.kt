@@ -30,4 +30,8 @@ class RoomDeviceRepository(
     override suspend fun clear() {
         dao.deleteAll()
     }
+
+    override suspend fun clearPskHex(deviceId: String) {
+        dao.clearPskHex(deviceId)
+    }
 }
