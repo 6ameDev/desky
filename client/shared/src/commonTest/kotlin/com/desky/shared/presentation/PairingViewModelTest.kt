@@ -1,6 +1,7 @@
 package com.desky.shared.presentation
 
 import app.cash.turbine.test
+import com.desky.shared.domain.DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS
 import com.desky.shared.domain.DEFAULT_UDP_PORT
 import com.desky.shared.domain.DeviceRepository
 import com.desky.shared.domain.DriveCounter
@@ -65,8 +66,9 @@ class PairingViewModelTest {
         repo: DeviceRepository,
         udp: FakeUdpSocketManager = FakeUdpSocketManager(),
         vault: FakeBondSecretStore = FakeBondSecretStore(),
+        attemptTimeoutsMs: List<Long> = DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS,
     ) = PairingViewModel(
-        PairDeviceWithCodeUseCase(repo, udp, vault),
+        PairDeviceWithCodeUseCase(repo, udp, vault, attemptTimeoutsMs),
         ForgetDeviceUseCase(repo, vault, udp, GetBondPskUseCase(vault, repo), DriveCounter(repo)),
         repo,
     )
@@ -107,6 +109,7 @@ class PairingViewModelTest {
         val state = viewModel.state.value
         assertFalse(state.isPairing)
         assertNull(state.error)
+        assertEquals(1, state.pairingAttempt)
         val device = assertNotNull(state.pairedDevice)
         assertEquals("192.168.4.1", device.ip)
         assertEquals("psk-v1", device.authToken)
@@ -213,6 +216,7 @@ class PairingViewModelTest {
         val state = viewModel.state.value
         assertNull(state.pairedDevice)
         assertNull(state.error)
+        assertEquals(1, state.pairingAttempt)
         assertEquals(1, repo.clearCalls)
     }
 
@@ -242,5 +246,71 @@ class PairingViewModelTest {
         main.runCurrent()
 
         assertEquals("10.0.0.9", viewModel.state.value.pairedDevice?.ip)
+    }
+
+    @Test
+    fun silentPairingWalksAttemptsThenResets() = runVmTest { main ->
+        val udp = FakeUdpSocketManager()
+        val viewModel = vm(FakeDeviceRepository(), udp, attemptTimeoutsMs = listOf(50L, 100L, 150L))
+        main.runCurrent()
+        viewModel.onPinChange("123456")
+
+        viewModel.state.test {
+            assertEquals(PairingUiState(pin = "123456"), awaitItem())
+            viewModel.onPair()
+            var s = awaitItem()
+            assertTrue(s.isPairing)
+            assertEquals(1, s.pairingAttempt)
+            main.runCurrent()
+            assertEquals(1, udp.sent.size)
+
+            main.advanceTimeBy(50)
+            main.runCurrent()
+            s = awaitItem()
+            assertTrue(s.isPairing)
+            assertEquals(2, s.pairingAttempt)
+
+            main.advanceTimeBy(100)
+            main.runCurrent()
+            s = awaitItem()
+            assertTrue(s.isPairing)
+            assertEquals(3, s.pairingAttempt)
+
+            main.advanceTimeBy(150)
+            main.runCurrent()
+            s = awaitItem()
+            assertFalse(s.isPairing)
+            assertEquals(1, s.pairingAttempt)
+            assertNotNull(s.error)
+            assertEquals(3, udp.sent.size)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun successResetsPairingAttempt() = runVmTest { main ->
+        val udp = FakeUdpSocketManager()
+        val viewModel = vm(FakeDeviceRepository(), udp)
+        main.runCurrent()
+        viewModel.onPinChange("123456")
+
+        viewModel.state.test {
+            assertEquals(PairingUiState(pin = "123456"), awaitItem())
+            viewModel.onPair()
+            var s = awaitItem()
+            assertTrue(s.isPairing)
+            assertEquals(1, s.pairingAttempt)
+            main.runCurrent()
+            val clientNonce = clientNonceOf(udp)
+            udp.inbound.emit(UdpDatagram(pairOkFor(clientNonce), ROBOT_HOST, DEFAULT_UDP_PORT))
+            // The reply resumes the pairing coroutine via a Main dispatch.
+            main.runCurrent()
+            s = awaitItem()
+            assertFalse(s.isPairing)
+            assertEquals(1, s.pairingAttempt)
+            assertNull(s.error)
+            assertNotNull(s.pairedDevice)
+            cancelAndIgnoreRemainingEvents()
+        }
     }
 }

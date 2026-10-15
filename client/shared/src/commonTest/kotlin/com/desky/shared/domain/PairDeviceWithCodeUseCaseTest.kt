@@ -11,6 +11,7 @@ import dev.mokkery.verifySuspend
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Deferred
@@ -86,15 +87,17 @@ class PairDeviceWithCodeUseCaseTest {
         deviceRepo: DeviceRepository,
         udp: FakePairingUdp,
         vault: FakeBondSecretStore = FakeBondSecretStore(),
-    ) = PairDeviceWithCodeUseCase(deviceRepo, udp, vault)
+        attemptTimeoutsMs: List<Long> = DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS,
+    ) = PairDeviceWithCodeUseCase(deviceRepo, udp, vault, attemptTimeoutsMs)
 
     /** Starts pairing and pumps until the initial PAIR_REQ is on the wire. */
     private fun TestScope.startPairing(
         udp: FakePairingUdp,
         useCase: PairDeviceWithCodeUseCase,
         code: String = "123456",
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
     ): Deferred<Outcome<PairedDevice>> {
-        val deferred = async { useCase(code) }
+        val deferred = async { useCase(code, onProgress) }
         runCurrent()
         return deferred
     }
@@ -217,16 +220,95 @@ class PairDeviceWithCodeUseCaseTest {
     }
 
     @Test
-    fun timeoutSendsExactlyThreeTimesThenFails() = runTest {
+    fun timeoutSendsFiveTimesByDefaultThenFails() = runTest {
         val udp = FakePairingUdp()
 
         val result = useCase(repo(), udp)("123456")
 
         val failure = assertIs<Outcome.Failure>(result)
         assertEquals("No response from robot", failure.reason)
-        // Initial send + exactly two re-sends: never more, or the firmware
-        // 5-try lockout could trip on our own retries.
+        // Default schedule is 5 sends (1s+2s+4s+4s+4s = 15s total, well
+        // inside the firmware 60s redelivery window): never more, or the
+        // firmware 5-try lockout could trip on our own retries.
+        assertEquals(5, udp.sent.size)
+        for (i in 1 until udp.sent.size) {
+            assertContentEquals(udp.sent[0].bytes, udp.sent[i].bytes)
+        }
+    }
+
+    @Test
+    fun invalidSchedulesRejected() = runTest {
+        val udp = FakePairingUdp()
+        val vault = FakeBondSecretStore()
+        assertFailsWith<IllegalArgumentException> {
+            PairDeviceWithCodeUseCase(repo(), udp, vault, emptyList())
+        }
+        assertFailsWith<IllegalArgumentException> {
+            PairDeviceWithCodeUseCase(repo(), udp, vault, listOf(10, 20, 30, 40, 50, 60))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            PairDeviceWithCodeUseCase(repo(), udp, vault, listOf(10, 0))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            PairDeviceWithCodeUseCase(repo(), udp, vault, listOf(-5))
+        }
+    }
+
+    @Test
+    fun errRepliesNeverRetryAndReportProgressOnce() = runTest {
+        val malformedErr = byteArrayOf(PAIR_ERR_HEADER.toByte(), 0, 0, 0xFF.toByte())
+        val replies = listOf(
+            pairErr(0, 0),
+            pairErr(1, 30),
+            pairErr(2, 0),
+            pairErr(3, 0),
+            malformedErr,
+        )
+        for (reply in replies) {
+            val udp = FakePairingUdp()
+            val progress = mutableListOf<Pair<Int, Int>>()
+            val deferred = async {
+                useCase(repo(), udp)("123456") { a, m -> progress += a to m }
+            }
+            runCurrent()
+            assertEquals(1, udp.sent.size, "exactly one PAIR_REQ before any reply")
+            udp.inbound.emit(UdpDatagram(reply, ROBOT_HOST, DEFAULT_UDP_PORT))
+            val result = deferred.await()
+
+            assertIs<Outcome.Failure>(result, "reply=${reply.contentToString()}")
+            assertEquals(1, udp.sent.size, "no re-send on ANY reply")
+            assertEquals(listOf(1 to 5), progress, "onProgress fires exactly once (attempt 1)")
+        }
+    }
+
+    @Test
+    fun silenceRetriesShortScheduleWithByteIdenticalSends() = runTest {
+        val schedule = listOf(50L, 100L, 150L)
+        val udp = FakePairingUdp()
+        val progress = mutableListOf<Int>()
+        val uc = useCase(repo(), udp, attemptTimeoutsMs = schedule)
+
+        val result = uc("123456", onProgress = { a, _ -> progress += a })
+
+        val failure = assertIs<Outcome.Failure>(result)
+        assertEquals("No response from robot", failure.reason)
         assertEquals(3, udp.sent.size)
+        assertContentEquals(udp.sent[0].bytes, udp.sent[1].bytes)
+        assertContentEquals(udp.sent[1].bytes, udp.sent[2].bytes)
+        assertEquals(listOf(1, 2, 3), progress)
+    }
+
+    @Test
+    fun singleEntryScheduleSendsOnce() = runTest {
+        val udp = FakePairingUdp()
+        val progress = mutableListOf<Int>()
+        val uc = useCase(repo(), udp, attemptTimeoutsMs = listOf(10L))
+
+        val result = uc("123456", onProgress = { a, _ -> progress += a })
+
+        assertIs<Outcome.Failure>(result)
+        assertEquals(1, udp.sent.size, "schedule of 1 caps sends at 1")
+        assertEquals(listOf(1), progress)
     }
 
     @Test
@@ -235,11 +317,12 @@ class PairDeviceWithCodeUseCaseTest {
         everySuspend { deviceRepo.save(any()) } returns Unit
         val udp = FakePairingUdp()
         val vault = FakeBondSecretStore()
-        val deferred = startPairing(udp, useCase(deviceRepo, udp, vault))
+        val progress = mutableListOf<Int>()
+        val deferred = startPairing(udp, useCase(deviceRepo, udp, vault)) { a, _ -> progress += a }
         assertEquals(1, udp.sent.size, "exactly one PAIR_REQ before any reply")
 
-        // First 5 s window expires with no reply -> exactly one re-send.
-        advanceTimeBy(5000)
+        // First 1s window expires with no reply -> exactly one re-send.
+        advanceTimeBy(1000)
         runCurrent()
         assertEquals(2, udp.sent.size, "one re-send after the first timeout")
         // The re-send is byte-identical (same code+nonce): idempotent, so a
@@ -255,6 +338,7 @@ class PairDeviceWithCodeUseCaseTest {
         assertEquals(PSK_HEX, vault.loadPsk(outcome.data.id))
         verifySuspend { deviceRepo.save(outcome.data) }
         assertEquals(2, udp.sent.size, "no further sends after the reply")
+        assertEquals(listOf(1, 2), progress, "success on 2nd send stops the loop")
     }
 
     @Test

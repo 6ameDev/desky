@@ -92,7 +92,7 @@ void setup() {
 
 void loop() {
   FaultManager::watchdogFeed();
-  LOG_I("MAIN", "desky v2 skeleton alive");
+  LOG_D("MAIN", "desky v2 skeleton alive");
   Diagnostics::logWatermarks();
   delay(2000);
 }

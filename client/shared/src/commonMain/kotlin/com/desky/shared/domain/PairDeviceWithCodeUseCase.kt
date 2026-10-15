@@ -5,11 +5,8 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 
-/** Per-attempt wait for a pairing reply before a re-send. */
-private const val PAIRING_TIMEOUT_MS = 5000L
-
-/** Total `PAIR_REQ` sends per pairing attempt (initial + 2 resends). */
-private const val MAX_PAIR_SENDS = 3
+/** Default per-send wait schedule (ms): 1s, 2s, 4s, 4s, 4s (5 sends, 15s total). */
+val DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS: List<Long> = listOf(1000, 2000, 4000, 4000, 4000)
 
 /**
  * Pair with the fixed robot (`[ROBOT_HOST]:[DEFAULT_UDP_PORT]`) using the
@@ -18,8 +15,8 @@ private const val MAX_PAIR_SENDS = 3
  *
  * Flow: validate the code -> `client_nonce = pairingNonce()` -> send
  * `PAIR_REQ` -> await the first `PAIR_OK` (38B/`0x51`) or `PAIR_ERR`
- * (4B/`0x52`) on the shared [UdpSocketManager.incoming] flow within
- * [PAIRING_TIMEOUT_MS], re-sending `PAIR_REQ` up to twice more on timeout ->
+ * (4B/`0x52`) on the shared [UdpSocketManager.incoming] flow within the
+ * per-send budget, re-sending `PAIR_REQ` on silence only ->
  * on `PAIR_OK` derive `KEK = HKDF-SHA256(client||server, code,
  * "desky-pair-v1", 16)` and unwrap the bond PSK with AES-128-GCM
  * (`nonce12 = server||client||00^4`, `AAD = 0x51||client||server`) ->
@@ -31,18 +28,40 @@ private const val MAX_PAIR_SENDS = 3
  * The returned [PairedDevice] matches the persisted row; session code reads
  * the key via [GetBondPskUseCase].
  *
- * At most 3 `PAIR_REQ` datagrams leave the app per [invoke] by construction
- * (initial + up to 2 resends), so our own retries can never trip the
- * firmware 5-try lockout. The resends are byte-identical (same code+nonce),
- * hence idempotent: a duplicated request the robot already answered just
- * re-triggers the same reply.
+ * Retry policy: at most [attemptTimeoutsMs.size] `PAIR_REQ` datagrams leave
+ * the app per [invoke] (default 5; total 15s, well inside the firmware 60s
+ * redelivery window), so our own retries can never trip the firmware 5-try
+ * lockout — and retries fire ONLY on silence: ANY reply (`PAIR_OK` or
+ * `PAIR_ERR`) terminates the loop immediately, so same-code retries never
+ * burn an extra firmware try on their own. The resends are byte-identical
+ * (same code+nonce), hence idempotent: a duplicated request the robot
+ * already answered just re-triggers the same reply.
+ *
+ * @param attemptTimeoutsMs per-send wait schedule in ms; sends == size.
+ *   Must hold 1..5 positive entries (upper bound mirrors the firmware
+ *   5-try lockout so even an all-silent run cannot self-trip it).
+ * @param onProgress plain progress callback invoked synchronously before
+ *   each send as `(attempt 1..N, maxSends N)`.
  */
 class PairDeviceWithCodeUseCase(
     private val deviceRepo: DeviceRepository,
     private val udp: UdpSocketManager,
     private val secretStore: BondSecretStore,
+    private val attemptTimeoutsMs: List<Long> = DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS,
 ) {
-    suspend operator fun invoke(code: String): Outcome<PairedDevice> {
+    init {
+        require(attemptTimeoutsMs.size in 1..5) {
+            "attemptTimeoutsMs must hold 1..5 entries (got ${attemptTimeoutsMs.size})"
+        }
+        require(attemptTimeoutsMs.all { it > 0 }) {
+            "attemptTimeoutsMs entries must all be > 0"
+        }
+    }
+
+    suspend operator fun invoke(
+        code: String,
+        onProgress: (attempt: Int, maxSends: Int) -> Unit = { _, _ -> },
+    ): Outcome<PairedDevice> {
         val trimmed = code.trim()
         val codeFailure = validateCode(trimmed)
         if (codeFailure != null) return codeFailure
@@ -50,12 +69,14 @@ class PairDeviceWithCodeUseCase(
         val clientNonce = pairingNonce()
         val req = PairingPacketCodec.encodePairReq(codeBytes, clientNonce)
         return try {
-            // Up to 3 sends total, SAME req bytes every time: harder retries
+            // Up to N sends total, SAME req bytes every time: harder retries
             // risk the firmware lockout, and the user can tap Pair again.
+            // Retry ONLY on silence — any reply (OK or ERR) breaks immediately.
             var reply: UdpDatagram? = null
-            for (attempt in 0 until MAX_PAIR_SENDS) {
+            for (i in attemptTimeoutsMs.indices) {
+                onProgress(i + 1, attemptTimeoutsMs.size)
                 udp.send(req, ROBOT_HOST, DEFAULT_UDP_PORT)
-                reply = awaitPairingReply()
+                reply = awaitPairingReply(attemptTimeoutsMs[i])
                 if (reply != null) break
             }
             val r = reply ?: return Outcome.Failure("No response from robot")
@@ -78,9 +99,9 @@ class PairDeviceWithCodeUseCase(
     }
 
     /** First incoming datagram shaped like a pairing reply, or null on timeout. */
-    private suspend fun awaitPairingReply(): UdpDatagram? {
+    private suspend fun awaitPairingReply(timeoutMs: Long): UdpDatagram? {
         return try {
-            withTimeout(PAIRING_TIMEOUT_MS) {
+            withTimeout(timeoutMs) {
                 udp.incoming.first { isPairingReply(it.bytes) }
             }
         } catch (e: TimeoutCancellationException) {

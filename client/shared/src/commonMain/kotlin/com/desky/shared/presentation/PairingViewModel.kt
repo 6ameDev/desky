@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 data class PairingUiState(
     val pin: String = "",
     val isPairing: Boolean = false,
+    val pairingAttempt: Int = 1,
     val pairedDevice: PairedDevice? = null,
     val error: String? = null,
 )
@@ -63,13 +64,15 @@ class PairingViewModel(
      */
     fun onPair() {
         if (_state.value.isPairing) return
-        _state.update { it.copy(isPairing = true, error = null) }
+        _state.update { it.copy(isPairing = true, pairingAttempt = 1, error = null) }
         viewModelScope.launch {
-            when (val result = pairUC(_state.value.pin)) {
+            when (val result = pairUC(_state.value.pin) { a, _ ->
+                _state.update { it.copy(pairingAttempt = a) }
+            }) {
                 is Outcome.Success ->
-                    _state.update { it.copy(isPairing = false, pairedDevice = result.data) }
+                    _state.update { it.copy(isPairing = false, pairingAttempt = 1, pairedDevice = result.data) }
                 is Outcome.Failure ->
-                    _state.update { it.copy(isPairing = false, error = result.reason) }
+                    _state.update { it.copy(isPairing = false, pairingAttempt = 1, error = result.reason) }
             }
         }
     }
@@ -78,7 +81,7 @@ class PairingViewModel(
         viewModelScope.launch {
             when (val result = forgetUC()) {
                 is Outcome.Success ->
-                    _state.update { it.copy(pairedDevice = null, error = null) }
+                    _state.update { it.copy(pairedDevice = null, pairingAttempt = 1, error = null) }
                 is Outcome.Failure ->
                     _state.update { it.copy(error = result.reason) }
             }

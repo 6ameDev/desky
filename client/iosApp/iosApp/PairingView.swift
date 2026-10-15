@@ -28,6 +28,13 @@ struct PairingView: View {
     @StateObject private var state: PairingViewState
     @Binding var selection: DeskyTab
 
+    private func pairingLabel(_ snapshot: PairingUiState) -> String {
+        guard snapshot.isPairing else { return "Pair" }
+        return snapshot.pairingAttempt <= 1
+            ? "Pairing…"
+            : "Pairing… (attempt \(snapshot.pairingAttempt))"
+    }
+
     init(vm: PairingViewModel, selection: Binding<DeskyTab>) {
         _state = StateObject(wrappedValue: PairingViewState(vm: vm))
         _selection = selection
@@ -44,7 +51,7 @@ struct PairingView: View {
             .keyboardType(.numberPad)
             .autocorrectionDisabled(true)
             .textInputAutocapitalization(.never)
-            Button(state.snapshot.isPairing ? "Pairing…" : "Pair") {
+            Button(pairingLabel(state.snapshot)) {
                 state.onPair()
             }
             .buttonStyle(.borderedProminent)

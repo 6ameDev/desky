@@ -72,7 +72,11 @@ fun PairingContent(
                 enabled = !state.isPairing,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(if (state.isPairing) "Pairing…" else "Pair")
+                Text(
+                    if (state.isPairing) {
+                        if (state.pairingAttempt <= 1) "Pairing…" else "Pairing… (attempt ${state.pairingAttempt})"
+                    } else "Pair",
+                )
             }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             state.pairedDevice?.let { device ->
