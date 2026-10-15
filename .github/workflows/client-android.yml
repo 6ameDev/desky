@@ -31,7 +31,7 @@ jobs:
           java-version: "17"
 
       - name: Gradle cache + daemon tuning
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Unit tests (fast gate; assemble runs only on green)
         run: ./gradlew :shared:jvmTest --console=plain
@@ -52,7 +52,7 @@ jobs:
           java-version: "17"
 
       - name: Gradle cache + daemon tuning
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       # NOTE: android-actions/setup-android is intentionally NOT used — v3
       # hardcodes the long-removed `tools` SDK package, so its own sdkmanager
