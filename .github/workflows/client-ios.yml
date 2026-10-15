@@ -46,7 +46,7 @@ jobs:
         run: ./gradlew :shared:podspec :shared:generateDummyFramework --console=plain
 
       - name: Cache CocoaPods (keyed by lockfile; skip on Podfile changes)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             client/iosApp/Pods
