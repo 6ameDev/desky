@@ -40,7 +40,8 @@
 // 9B telemetry, 38B PAIR_OK, 8B HMAC msg), WDT fed every tick,
 // Diagnostics::logWatermarks("UDP") every ~5s, task never halts. Key, code
 // and nonce bytes are never logged (the pair-code LOG_I line is the
-// display); drops and HMAC timing use throttled LOG_EVERY_N.
+// display); drops log first-of-boot at INFO then throttled LOG_EVERY_N,
+// HMAC timing uses throttled LOG_EVERY_N.
 
 // ── Arduino-free: statusFlags bit map + fixed-point helpers ──────────────
 #include <stddef.h>
@@ -366,12 +367,14 @@ class UdpServer {
         uint8_t buf[20];  // 16B DRIVE_V2 + slack so oversize is detectable.
         const int got = udp_.read(buf, sizeof(buf));
         if (got <= 0) {
+          dropFirst(firstMalformedDrop_, "drop datagram pending=%d got=%d (first of boot)", pending, got);
           LOG_EVERY_N(20, "UDP", "drop datagram pending=%d got=%d", pending, got);
           continue;
         }
         const size_t ulen = static_cast<size_t>(got);
         const udpstatus::RxKind kind = udpstatus::classifyRx(ulen, buf[0]);
         if (kind == udpstatus::RxKind::kDrop) {
+          dropFirst(firstMalformedDrop_, "drop datagram pending=%d got=%d (first of boot)", pending, got);
           LOG_EVERY_N(20, "UDP", "drop datagram pending=%d got=%d", pending, got);
           continue;
         }
@@ -381,6 +384,7 @@ class UdpServer {
           xorSum ^= buf[i];
         }
         if (xorSum != buf[ulen - 1]) {
+          dropFirst(firstMalformedDrop_, "drop datagram pending=%d got=%d (first of boot)", pending, got);
           LOG_EVERY_N(20, "UDP", "drop datagram pending=%d got=%d", pending, got);
           continue;
         }
@@ -395,6 +399,7 @@ class UdpServer {
             handlePairReq(buf, rip, rport, nowMs);
             break;
           case udpstatus::RxKind::kDrop:
+            dropFirst(firstMalformedDrop_, "drop datagram pending=%d got=%d (first of boot)", pending, got);
             LOG_EVERY_N(20, "UDP", "drop datagram pending=%d got=%d", pending, got);
             break;
         }
@@ -414,6 +419,18 @@ class UdpServer {
     }
   }
 
+  // Security-drop logging (bench lesson, Task 10): LOG_EVERY_N alone hides
+  // the first N-1 occurrences per call site, which blinded the bench run.
+  // First occurrence per boot per class always logs at INFO; afterwards the
+  // call-site LOG_EVERY_N throttle applies. No key/code/nonce material here.
+  template <typename... Args>
+  void dropFirst(bool& first, const char* fmt, Args... args) {
+    if (first) {
+      first = false;
+      LOG_I("UDP", fmt, args...);
+    }
+  }
+
   // Pre-bond pin-only: remember the peer for unicast replies (pair + tele-
   // metry) but NEVER publish to the coordinator — nothing drives pre-bond.
   // Post-bond legacy drive datagrams are dead: silent drop. Freshness
@@ -421,6 +438,7 @@ class UdpServer {
   // the telemetry driving bit never asserts pre-bond.
   void handleLegacy(const IPAddress& rip, uint16_t rport) {
     if (bonded_) {
+      dropFirst(firstLegacyDrop_, "drop legacy post-bond (first of boot)");
       LOG_EVERY_N(20, "UDP", "drop legacy post-bond");
       return;
     }
@@ -439,6 +457,7 @@ class UdpServer {
       return;
     }
     if (!bonded_) {
+      dropFirst(firstDriveDrop_, "drop drive unbonded (first of boot)");
       LOG_EVERY_N(20, "UDP", "drop drive unbonded");
       return;
     }
@@ -448,6 +467,7 @@ class UdpServer {
     const uint32_t ctr = (static_cast<uint32_t>(buf[5]) << 24) | (static_cast<uint32_t>(buf[6]) << 16) |
                          (static_cast<uint32_t>(buf[7]) << 8) | static_cast<uint32_t>(buf[8]);
     if (!udpstatus::isFreshCounter(lastCounter_, ctr)) {
+      dropFirst(firstDriveDrop_, "drop drive replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
       LOG_EVERY_N(20, "UDP", "drop drive replay ctr=%lu", static_cast<unsigned long>(ctr));
       return;
     }
@@ -481,6 +501,7 @@ class UdpServer {
     mbedtls_platform_zeroize(msg, sizeof(msg));
     mbedtls_platform_zeroize(mac, sizeof(mac));
     if (!ok) {
+      dropFirst(firstDriveDrop_, "drop drive auth (first of boot)");
       LOG_EVERY_N(20, "UDP", "drop drive auth");
       return;
     }
@@ -511,6 +532,7 @@ class UdpServer {
     }
     if (bonded_) {
       sendPairErr(rip, rport, pairing::toWireReason(pairing::Result::kAlreadyBonded), 0);
+      dropFirst(firstPairDrop_, "pair req while bonded (first of boot)");
       LOG_EVERY_N(10, "UDP", "pair req while bonded");
       return;
     }
@@ -519,6 +541,7 @@ class UdpServer {
       const uint8_t retryS =
           (r == pairing::Result::kLocked) ? static_cast<uint8_t>(pairing::kLockoutMs / 1000u) : 0;
       sendPairErr(rip, rport, pairing::toWireReason(r), retryS);
+      dropFirst(firstPairDrop_, "pair err reason=%u (first of boot)", static_cast<unsigned>(pairing::toWireReason(r)));
       LOG_EVERY_N(10, "UDP", "pair err reason=%u", static_cast<unsigned>(pairing::toWireReason(r)));
       return;
     }
@@ -589,6 +612,7 @@ class UdpServer {
       LOG_I("UDP", "pair ok");
     } else {
       sendPairErr(rip, rport, pairing::toWireReason(pairing::Result::kNotInWindow), 0);
+      dropFirst(firstPairDrop_, "pair err internal (first of boot)");
       LOG_EVERY_N(10, "UDP", "pair err internal");
     }
     mbedtls_platform_zeroize(newPsk, sizeof(newPsk));
@@ -695,6 +719,12 @@ class UdpServer {
   bool bonded_;
   uint32_t validCount_;
   uint32_t maxVerifyUs_;
+  // First-drop flags for dropFirst() (bench lesson: first occurrence per
+  // boot per class always logs). Reset only by reboot — never per window.
+  bool firstMalformedDrop_ = true;
+  bool firstLegacyDrop_ = true;
+  bool firstDriveDrop_ = true;
+  bool firstPairDrop_ = true;
 };
 
 #endif  // ARDUINO

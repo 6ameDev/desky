@@ -18,8 +18,9 @@
 // by construction: peak = CFG_AUDIO_VOLUME of int16 full-scale (~12%
 // default — the 8Ω 2W cavity on 5V gets loud).
 //
-// Serial LOG_I lines: one boot line (rate/format/channels/pins/volume),
-// one meter line at CFG_AUDIO_METER_MS cadence (rmsL/rmsR/peak/side), one
+// Serial log lines: one boot line (rate/format/channels/pins/volume), one
+// meter line at CFG_AUDIO_METER_MS cadence (rmsL/rmsR/peak/side, DEBUG
+// level so INFO transcripts stay readable), one
 // beep-start line per note + one done line per queue drain.
 //
 // Structure mirrors sensor_task.h: the top half (namespace audiometer) is
@@ -432,13 +433,16 @@ class AudioManager {
       hal_.writeTx(txStereo_, sizeof(txStereo_), 50);
 
       // Meter serial line at the CFG cadence (the ONLY periodic audio log).
+      // DEBUG level (bench lesson, Task 10): at INFO it drowned the UDP
+      // security-drop lines in the transcript. Still visible in debug
+      // builds; release builds strip it at compile time.
       const uint32_t nowMs = millis();
       if (nowMs - lastMeterMs_ >= kMeterMs) {
         lastMeterMs_ = nowMs;
         xSemaphoreTake(mutex_, portMAX_DELAY);
         const audiometer::AudioLevel level = level_;
         xSemaphoreGive(mutex_);
-        LOG_I("AUDIO", "meter rmsL=%lu rmsR=%lu peak=%lu side=%s", static_cast<unsigned long>(level.rmsL),
+        LOG_D("AUDIO", "meter rmsL=%lu rmsR=%lu peak=%lu side=%s", static_cast<unsigned long>(level.rmsL),
               static_cast<unsigned long>(level.rmsR), static_cast<unsigned long>(level.peak),
               audiometer::sideName(level.side));
       }

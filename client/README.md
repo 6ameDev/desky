@@ -62,10 +62,13 @@ xcodebuild -workspace iosApp.xcworkspace -scheme iosApp -configuration Debug \
 - The drive loop must never pause: the robot failsafes ~500 ms after the
   last datagram, so the app heartbeats centered frames even with untouched
   sticks.
-- Discovery must send a *valid* 6-byte control frame — the firmware drops
-  malformed datagrams, so empty/arbitrary hellos never pin the unicast peer.
-- Pairing PINs are **not real security**: the token is derived client-locally
-  and the firmware speaks open UDP (`TODO(firmware-auth)` in code).
+- Pairing is a real handshake: the 6-digit code is single-use (burned on
+  first bond, 5 tries → 30 s lockout), the bond PSK arrives AES-GCM-wrapped,
+  and every drive frame is HMAC-signed with a strictly increasing counter.
+  Unsigned drive frames never move the robot post-bond.
+- The drive loop must never pause: the robot failsafes ~500 ms after the
+  last datagram, so the app heartbeats centered *signed* frames even with
+  untouched sticks.
 
 ## Deferred-run checklist (needs hardware or downloads)
 

@@ -93,17 +93,20 @@ graph LR
         TU --> ST[telemetry + mode + Connected]
         ST --> UI[Compose / SwiftUI bars]
     end
-    subgraph Pairing["Pairing (client-local until firmware-auth exists)"]
-        IP[IP + PIN] --> P[PairDeviceWithCodeUseCase<br/>sha256 of ip + pin + salt]
-        P --> DB[(Room: 1 device row)]
+    subgraph Pairing["Pairing/auth v1 (real handshake)"]
+        CODE[6-digit code] --> REQ[PairDeviceWithCodeUseCase<br/>PAIR_REQ to fixed 192.168.4.1]
+        REQ --> OK[PAIR_OK: unwrap PSK<br/>HKDF + AES-GCM]
+        OK --> VAULT[(platform vault:<br/>Keystore / Keychain)]
+        VAULT --> DB[(Room: 1 device row<br/>no key material)]
     end
 ```
 
 Load-bearing wire details (see `README.md` protocol notes + code KDoc):
-hello/discovery must send a *valid* centered control frame (firmware drops
-malformed datagrams); E-STOP latches `ESTOP_FLAG` (client-defined — firmware
-ignores flags today); unpair pauses the send loop (loop re-reads live pairing
-every tick); IPv4 conversion is little-endian network-order (`data/Ipv4.kt`).
+drive frames are signed `DRIVE_V2` (counter + HMAC, PSK cached in memory,
+counter persisted every 128 sends); E-STOP latches `ESTOP_FLAG` (signed
+centered frame — firmware authenticates it like any drive frame); unpair
+pauses the send loop and drops the cached key (loop re-reads live pairing
+every tick); missing PSK surfaces "please re-pair", never legacy frames.
 
 ## 5. Build-task map
 

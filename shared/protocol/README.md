@@ -94,6 +94,33 @@ drive datagrams are dropped.
 Libraries only, no custom crypto: firmware `mbedtls_md_hmac` +
 `mbedtls_hkdf` + `mbedtls_gcm` + `mbedtls_ct_memcmp` + `esp_random`;
 client `dev.whyoleg.cryptography:0.6.0` (JCA/CryptoKit backends).
+
+## Design decisions (bench-proven 2026-10-15, `pair_bench.py`)
+
+- Two tiers, decoupled: the pairing code proves presence (single-use,
+  time-boxed), the PSK proves ownership (persistent). Rotation never
+  evicts; single owner; re-pair only via bond wipe.
+- Counter, not timestamps, for freshness: the S3 has no trustworthy clock
+  (no RTC, no NTP on the AP), and timestamps without a seen-cache don't
+  stop in-window replay anyway. One `uint32`, strictly greater, wrap-aware;
+  first drive uses 1, 0 is never valid. No sync protocol to desync.
+- HMAC covers counter + sticks: the tag authenticates `counter||mode||thr`
+  `||str||flags`, so bumping the counter (or the sticks) without the PSK
+  is a drop. Nothing is encrypted — motion is publicly observable, so
+  there is no confidentiality requirement, only authorship + integrity.
+- Timing budget: sustained worst-case HMAC verify measured 333µs on-device
+  (software SHA256); budget is 1000µs — ~20% of one 5ms Core 0 tick, Core 1
+  control untouched. Throttled `drive verify dt/max` line proves it live.
+- Drops log first-of-boot at INFO, then throttled: `LOG_EVERY_N` alone hid
+  the first N-1 occurrences and blinded the first bench run. Same for the
+  audio meter (now DEBUG) — INFO transcripts stay readable.
+- Dev-stage pragmatism (revisit before real customers): destructive Room
+  migration, no NVS/PSK migration code, client discovery scan deleted
+  (fixed `192.168.4.1` needs none in AP mode).
+- Known-tolerated smell: refusal logging is per-site duplicated
+  (`dropFirst` + `LOG_EVERY_N` at each site). Graduate to a central
+  `refuse()` funnel if a second consumer of drop data ever appears
+  (telemetry counters, diagnostics) — not before.
 Shared test vector (fixed code/nonces/psk -> KEK/ct/tag) must pass both
 sides (`embedded/scripts/gen_pair_vectors.py` regenerates it;
 client `domain/PairingCryptoTest.kt` pins it):
