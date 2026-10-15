@@ -11,6 +11,19 @@ const val CONTROL_SIZE = 6
 const val TELEMETRY_SIZE = 9
 const val DEFAULT_UDP_PORT = 3333
 
+/** Fixed robot endpoint: the app never takes an IP from the user. */
+const val ROBOT_HOST = "192.168.4.1"
+
+/** Pairing wire headers/sizes (frozen spec: `shared/protocol/README.md` §v1). */
+const val PAIR_REQ_HEADER = 0x50
+const val PAIR_OK_HEADER = 0x51
+const val PAIR_ERR_HEADER = 0x52
+const val PAIR_REQ_SIZE = 12
+const val PAIR_OK_SIZE = 38
+const val PAIR_ERR_SIZE = 4
+const val PAIR_CODE_SIZE = 6
+const val PAIR_NONCE_SIZE = 4
+
 /** Failsafe window: the robot stops ~500 ms after the last control datagram. */
 const val STALE_MS = 500
 
@@ -124,6 +137,58 @@ object ControlPacketCodec {
     }
 }
 
+/**
+ * Pairing packet codec (frozen spec: `shared/protocol/README.md`
+ * §"Pairing + authenticated drive v1").
+ *
+ * - `PAIR_REQ` App -> Robot, 12 bytes:
+ *   `[0x50 | code 6B ASCII | client_nonce 4B | XOR]`.
+ * - `PAIR_OK` Robot -> App, 38 bytes:
+ *   `[0x51 | server_nonce 4B | ct 16B | gcm_tag 16B | XOR]`.
+ * - `PAIR_ERR` Robot -> App, 4 bytes:
+ *   `[0x52 | reason 1B | retry_s 1B | XOR]`
+ *   (reason: 0=bad_code, 1=locked, 2=not_in_window, 3=already_bonded).
+ *
+ * Pure byte math mirroring the firmware `middleware/pairing.h` layout.
+ */
+object PairingPacketCodec {
+    /** Throws [IllegalArgumentException] unless [code] is 6B and [clientNonce] 4B. */
+    fun encodePairReq(code: ByteArray, clientNonce: ByteArray): ByteArray {
+        require(code.size == PAIR_CODE_SIZE) { "encodePairReq: code must be 6 ASCII digits" }
+        require(clientNonce.size == PAIR_NONCE_SIZE) { "encodePairReq: client nonce must be 4 bytes" }
+        val out = ByteArray(PAIR_REQ_SIZE)
+        out[0] = PAIR_REQ_HEADER.toByte()
+        code.copyInto(out, destinationOffset = 1)
+        clientNonce.copyInto(out, destinationOffset = 1 + PAIR_CODE_SIZE)
+        out[PAIR_REQ_SIZE - 1] = xorChecksum(out, PAIR_REQ_SIZE - 1)
+        return out
+    }
+
+    /**
+     * Null on wrong header, wrong length, or bad checksum. On success the
+     * `Triple` is `(server_nonce 4B, ct 16B, gcm_tag 16B)`.
+     */
+    fun decodePairOk(bytes: ByteArray): Triple<ByteArray, ByteArray, ByteArray>? {
+        if (bytes.size != PAIR_OK_SIZE) return null
+        if ((bytes[0].toInt() and 0xFF) != PAIR_OK_HEADER) return null
+        if (xorChecksum(bytes, PAIR_OK_SIZE - 1) != bytes[PAIR_OK_SIZE - 1]) return null
+        val serverNonce = bytes.copyOfRange(1, 1 + PAIR_NONCE_SIZE)
+        val ct = bytes.copyOfRange(5, 5 + 16)
+        val tag = bytes.copyOfRange(21, 21 + 16)
+        return Triple(serverNonce, ct, tag)
+    }
+
+    /**
+     * Null on wrong header, wrong length, or bad checksum. On success the
+     * `Pair` is `(reason, retry_s)` as unsigned ints.
+     */
+    fun decodePairErr(bytes: ByteArray): Pair<Int, Int>? {
+        if (bytes.size != PAIR_ERR_SIZE) return null
+        if ((bytes[0].toInt() and 0xFF) != PAIR_ERR_HEADER) return null
+        if (xorChecksum(bytes, PAIR_ERR_SIZE - 1) != bytes[PAIR_ERR_SIZE - 1]) return null
+        return (bytes[1].toInt() and 0xFF) to (bytes[2].toInt() and 0xFF)
+    }
+}
 /**
  * Telemetry packet codec: Robot -> App, 9 bytes
  * `[0xBB | pitchBE i16 | rollBE i16 | distBE u16 | statusFlags | XOR]`.

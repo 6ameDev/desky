@@ -19,7 +19,6 @@ final class PairingViewState: ObservableObject {
         }
     }
 
-    func onIpChange(_ ip: String) { vm.onIpChange(ip: ip) }
     func onPinChange(_ pin: String) { vm.onPinChange(pin: pin) }
     func onPair() { vm.onPair() }
     func onUnpair() { vm.onUnpair() }
@@ -37,20 +36,14 @@ struct PairingView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Pair with Desky").font(.title2).bold()
-            TextField("Robot IP", text: Binding(
-                get: { state.snapshot.ip },
-                set: { state.onIpChange($0) }
-            ))
-            .textFieldStyle(.roundedBorder)
-            // numbersAndPunctuation, not decimalPad: IPs need dots (192.168.4.1).
-            .keyboardType(.numbersAndPunctuation)
-            .autocorrectionDisabled(true)
-            .textInputAutocapitalization(.never)
-            SecureField("PIN", text: Binding(
+            SecureField("Pairing code", text: Binding(
                 get: { state.snapshot.pin },
                 set: { state.onPinChange($0) }
             ))
             .textFieldStyle(.roundedBorder)
+            .keyboardType(.numberPad)
+            .autocorrectionDisabled(true)
+            .textInputAutocapitalization(.never)
             Button(state.snapshot.isPairing ? "Pairing…" : "Pair") {
                 state.onPair()
             }

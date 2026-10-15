@@ -7,6 +7,7 @@ import dev.whyoleg.cryptography.algorithms.AES
 import dev.whyoleg.cryptography.algorithms.HKDF
 import dev.whyoleg.cryptography.algorithms.HMAC
 import dev.whyoleg.cryptography.algorithms.SHA256
+import dev.whyoleg.cryptography.random.CryptographyRandom
 
 /**
  * Pairing/auth v1 crypto (frozen spec: `shared/protocol/README.md`
@@ -89,6 +90,65 @@ suspend fun aesGcmEncrypt(
     return ctAndTag.copyOfRange(0, 16) to ctAndTag.copyOfRange(16, 32)
 }
 
+/**
+ * `PAIR_OK` unwrap: `psk16 = AES-128-GCM-decrypt(KEK, nonce12, AAD, ct||tag)`,
+ * the inverse of [aesGcmEncrypt] with the same spec-mandated `nonce12` and
+ * `AAD` layout.
+ *
+ * GCM authentication failure throws (the backend's tag-mismatch exception) —
+ * callers map it to a pairing-failure outcome, never to a retry.
+ *
+ * @param key 16-byte KEK from [hkdfSha256].
+ * @param nonce12 12-byte GCM nonce (`server_nonce(4) || client_nonce(4) || zeros`).
+ * @param aad 9-byte additional data (`0x51 || client_nonce(4) || server_nonce(4)`).
+ * @param ct 16-byte wrapped-PSK ciphertext.
+ * @param tag 16-byte GCM authentication tag.
+ * @return unwrapped 16-byte PSK.
+ */
+// Custom IV is spec-mandated here (server_nonce||client_nonce||zeros);
+// never reuse a (key, nonce) pair outside the single PAIR_OK wrap.
+@OptIn(DelicateCryptographyApi::class)
+suspend fun aesGcmDecrypt(
+    key: ByteArray,
+    nonce12: ByteArray,
+    aad: ByteArray,
+    ct: ByteArray,
+    tag: ByteArray,
+): ByteArray {
+    require(key.size == 16) { "aesGcmDecrypt: key must be 16 bytes (AES-128)" }
+    require(nonce12.size == 12) { "aesGcmDecrypt: nonce must be 12 bytes" }
+    require(aad.size == 9) { "aesGcmDecrypt: AAD must be 9 bytes (0x51||nonces)" }
+    require(ct.size == 16) { "aesGcmDecrypt: ct must be 16 bytes" }
+    require(tag.size == 16) { "aesGcmDecrypt: tag must be 16 bytes" }
+    val aesGcm = CryptographyProvider.Default.get(AES.GCM)
+    val cryptoKey = aesGcm.keyDecoder().decodeFromByteArray(AES.Key.Format.RAW, key)
+    return cryptoKey.cipher().decryptWithIv(
+        iv = nonce12,
+        ciphertext = ct + tag,
+        associatedData = aad,
+    )
+}
+
+/**
+ * Fresh 4-byte `client_nonce` from the platform CSPRNG
+ * (`cryptography-random`: JVM `SecureRandom`, Apple `CCRandomGenerateBytes`,
+ * Linux `getrandom` — exposed via the `kotlin.random.Random` API, never
+ * hand-rolled).
+ */
+suspend fun pairingNonce(): ByteArray =
+    CryptographyRandom.Default.nextBytes(PAIR_NONCE_SIZE)
+
+/** Lowercase hex rendering (e.g. PSK persistence). */
+fun ByteArray.toHex(): String {
+    val chars = CharArray(size * 2)
+    val digits = "0123456789abcdef"
+    for (i in indices) {
+        val v = this[i].toInt() and 0xFF
+        chars[i * 2] = digits[v ushr 4]
+        chars[i * 2 + 1] = digits[v and 0x0F]
+    }
+    return chars.concatToString()
+}
 /**
  * `DRIVE_V2` auth tag: `first6(HMAC-SHA256(psk16,
  * counterBE4 || mode || thr || str || flags))`.

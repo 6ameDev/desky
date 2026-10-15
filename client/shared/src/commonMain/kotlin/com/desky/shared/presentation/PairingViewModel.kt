@@ -16,9 +16,12 @@ import kotlinx.coroutines.launch
 /**
  * Pairing screen state (unidirectional data flow: single [StateFlow] +
  * explicit intents below).
+ *
+ * The robot endpoint is fixed (`192.168.4.1:3333` — pairing/auth v1), so
+ * there is no IP/host field: [pin] holds the 6-digit pairing code shown on
+ * the robot display.
  */
 data class PairingUiState(
-    val ip: String = "",
     val pin: String = "",
     val isPairing: Boolean = false,
     val pairedDevice: PairedDevice? = null,
@@ -49,10 +52,6 @@ class PairingViewModel(
         }
     }
 
-    fun onIpChange(ip: String) {
-        _state.update { it.copy(ip = ip, error = null) }
-    }
-
     fun onPinChange(pin: String) {
         _state.update { it.copy(pin = pin, error = null) }
     }
@@ -66,7 +65,7 @@ class PairingViewModel(
         if (_state.value.isPairing) return
         _state.update { it.copy(isPairing = true, error = null) }
         viewModelScope.launch {
-            when (val result = pairUC(_state.value.ip, _state.value.pin)) {
+            when (val result = pairUC(_state.value.pin)) {
                 is Outcome.Success ->
                     _state.update { it.copy(isPairing = false, pairedDevice = result.data) }
                 is Outcome.Failure ->

@@ -25,6 +25,8 @@ data class PairedDeviceEntity(
     val ip: String,
     val port: Int,
     val authToken: String,
+    /** Bond PSK as lowercase hex; null for rows written before pairing/auth v1. */
+    val pskHex: String? = null,
     val alias: String,
 )
 
@@ -46,6 +48,7 @@ fun PairedDeviceEntity.toDomain(): PairedDevice =
         ip = ip,
         port = port,
         authToken = authToken,
+        pskHex = pskHex,
         alias = alias,
     )
 
@@ -56,6 +59,7 @@ fun PairedDevice.toEntity(): PairedDeviceEntity =
         ip = ip,
         port = port,
         authToken = authToken,
+        pskHex = pskHex,
         alias = alias,
     )
 

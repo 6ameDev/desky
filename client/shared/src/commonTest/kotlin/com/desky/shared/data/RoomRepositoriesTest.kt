@@ -13,6 +13,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 /**
@@ -48,6 +49,44 @@ class RoomRepositoriesTest {
             alias = "bench",
         )
         assertEquals(device, device.toEntity().toDomain())
+    }
+
+    @Test
+    fun deviceMappingRoundTripsPskHex() {
+        val device = PairedDevice(
+            id = "desky-192.168.4.1",
+            ip = "192.168.4.1",
+            port = 3333,
+            authToken = "psk-v1",
+            pskHex = "00112233445566778899aabbccddeeff",
+            alias = "192.168.4.1",
+        )
+        assertEquals(device, device.toEntity().toDomain())
+    }
+
+    @Test
+    fun legacyRowWithoutPskHexReadsBackNull() = runTest {
+        // A v1 row after the v1 -> v2 auto-migration has NULL pskHex:
+        // simulate it with a raw insert that omits the column, then read
+        // back through the repository.
+        db.useConnection(isReadOnly = false) { transactor ->
+            transactor.usePrepared(
+                "INSERT INTO paired_device (id, ip, port, authToken, alias) VALUES (?, ?, ?, ?, ?)",
+            ) { stmt ->
+                stmt.bindText(1, "desky-192.168.4.1")
+                stmt.bindText(2, "192.168.4.1")
+                stmt.bindLong(3, 3333)
+                stmt.bindText(4, "tok")
+                stmt.bindText(5, "192.168.4.1")
+                stmt.step()
+            }
+        }
+
+        RoomDeviceRepository(db.pairedDeviceDao()).observePaired().test {
+            val device = assertNotNull(awaitItem())
+            assertNull(device.pskHex)
+            cancelAndIgnoreRemainingEvents()
+        }
     }
 
     @Test

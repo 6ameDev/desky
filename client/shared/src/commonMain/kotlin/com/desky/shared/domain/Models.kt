@@ -56,14 +56,16 @@ data class Telemetry(
 }
 
 /**
- * A robot the app is paired with. [authToken] is opaque here — the handshake
- * that mints it is out of scope for the domain layer (no pairing logic).
+ * A robot the app is paired with. [authToken] is a version marker (`"psk-v1"`)
+ * since pairing/auth v1 — the bond secret itself lives in [pskHex] (lowercase
+ * hex of the 16-byte PSK) until Task 8 moves it to the platform secure vault.
  */
 data class PairedDevice(
     val id: String,
     val ip: String,
     val port: Int = DEFAULT_UDP_PORT,
     val authToken: String,
+    val pskHex: String? = null,
     val alias: String = ip,
 )
 

@@ -40,7 +40,7 @@ fun dataModule(db: DeskyDatabase): Module = module {
 
 /** Domain-layer module: all 7 use cases as factories. */
 val domainModule: Module = module {
-    factory { PairDeviceWithCodeUseCase(get()) }
+    factory { PairDeviceWithCodeUseCase(get(), get()) }
     factory { SendRobotControlCommandUseCase(get()) }
     factory { ObserveTelemetryUseCase(get()) }
     factory { EmergencyStopUseCase(get()) }

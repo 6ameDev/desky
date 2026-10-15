@@ -36,7 +36,6 @@ fun PairingScreen(
     }
     PairingContent(
         state = state,
-        onIpChange = vm::onIpChange,
         onPinChange = vm::onPinChange,
         onPair = vm::onPair,
         onUnpair = vm::onUnpair,
@@ -47,7 +46,6 @@ fun PairingScreen(
 @Composable
 fun PairingContent(
     state: PairingUiState,
-    onIpChange: (String) -> Unit,
     onPinChange: (String) -> Unit,
     onPair: () -> Unit,
     onUnpair: () -> Unit,
@@ -63,16 +61,9 @@ fun PairingContent(
         ) {
             Text("Pair with Desky", style = MaterialTheme.typography.headlineSmall)
             OutlinedTextField(
-                value = state.ip,
-                onValueChange = onIpChange,
-                label = { Text("Robot IP") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
                 value = state.pin,
                 onValueChange = onPinChange,
-                label = { Text("PIN") },
+                label = { Text("Pairing code") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -101,15 +92,13 @@ private fun PairingContentPreview() {
     MaterialTheme {
         PairingContent(
             state = PairingUiState(
-                ip = "192.168.1.42",
-                pin = "1234",
+                pin = "123456",
                 pairedDevice = PairedDevice(
                     id = "1",
-                    ip = "192.168.1.42",
-                    authToken = "token",
+                    ip = "192.168.4.1",
+                    authToken = "psk-v1",
                 ),
             ),
-            onIpChange = {},
             onPinChange = {},
             onPair = {},
             onUnpair = {},

@@ -65,12 +65,66 @@ class PairingCryptoTest {
     }
 
     @Test
+    fun aesGcmDecryptsGoldenPsk() = runTest {
+        val psk = aesGcmDecrypt(
+            key = hex(KEK_HEX),
+            nonce12 = NONCE12,
+            aad = AAD,
+            ct = hex(CT_HEX),
+            tag = hex(GCM_TAG_HEX),
+        )
+        assertContentEquals(PSK, psk)
+    }
+
+    @Test
+    fun aesGcmDecryptRejectsTamperedTag() = runTest {
+        val badTag = hex(GCM_TAG_HEX).copyOf().also { it[0] = (it[0].toInt() xor 0xFF).toByte() }
+        var threw = false
+        try {
+            aesGcmDecrypt(
+                key = hex(KEK_HEX),
+                nonce12 = NONCE12,
+                aad = AAD,
+                ct = hex(CT_HEX),
+                tag = badTag,
+            )
+        } catch (e: Exception) {
+            threw = true
+        }
+        kotlin.test.assertTrue(threw, "GCM tag mismatch must throw")
+    }
+
+    @Test
+    fun pairingNonceIsFourBytes() = runTest {
+        kotlin.test.assertEquals(4, pairingNonce().size)
+        kotlin.test.assertEquals(4, pairingNonce().size)
+    }
+
+    @Test
     fun rejectsBadSizes() = runTest {
         assertFailsWith<IllegalArgumentException> {
             hkdfSha256(salt = ByteArray(4), ikm = CODE, info = "desky-pair-v1", length = 16)
         }
         assertFailsWith<IllegalArgumentException> {
             aesGcmEncrypt(key = ByteArray(8), nonce12 = NONCE12, aad = AAD, plaintext = PSK)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            aesGcmDecrypt(
+                key = ByteArray(8),
+                nonce12 = NONCE12,
+                aad = AAD,
+                ct = hex(CT_HEX),
+                tag = hex(GCM_TAG_HEX),
+            )
+        }
+        assertFailsWith<IllegalArgumentException> {
+            aesGcmDecrypt(
+                key = hex(KEK_HEX),
+                nonce12 = NONCE12,
+                aad = AAD,
+                ct = hex(CT_HEX),
+                tag = ByteArray(8),
+            )
         }
         assertFailsWith<IllegalArgumentException> {
             driveTag(psk = ByteArray(8), counter = 1u, mode = 0, thr = 0, str = 0, flags = 0)
