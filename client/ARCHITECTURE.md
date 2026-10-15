@@ -26,6 +26,16 @@ for everything below live in `gradle/libs.versions.toml`, summarized in
 Dependency rule: `domain` ← nothing; `data` implements domain interfaces;
 `presentation` uses use cases; UI shells depend on presentation only.
 
+SKIE constraint (house rule — breaks the iOS build if violated): keep
+`suspend` functions top-level, never members of Kotlin `object`s. SKIE
+0.10.15 misgenerates the Swift wrapper for `object` suspend members
+(`swiftc` fails in `linkPod*Framework*` with `static member 'shared'
+cannot be used on instance of type ...`). Top-level `suspend` functions
+generate correctly. Revisit on SKIE upgrade; until then the constraint
+holds for all of `commonMain`. (`jvmTest` + APK builds do NOT catch this —
+only `:shared:syncFramework` does, so run it for any `commonMain` API
+change.)
+
 ## 2. Module & target map
 
 ```mermaid

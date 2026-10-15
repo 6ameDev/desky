@@ -6,6 +6,7 @@ import com.desky.shared.data.createUdpSocketManager
 import com.desky.shared.data.db.DeskyDatabase
 import com.desky.shared.domain.BondSecretStore
 import com.desky.shared.domain.DeviceRepository
+import com.desky.shared.domain.DriveCounter
 import com.desky.shared.domain.EmergencyStopUseCase
 import com.desky.shared.domain.ForgetDeviceUseCase
 import com.desky.shared.domain.GetBondPskUseCase
@@ -15,6 +16,7 @@ import com.desky.shared.domain.PairDeviceWithCodeUseCase
 import com.desky.shared.domain.SaveDeviceConfigUseCase
 import com.desky.shared.domain.SendSignedControlUseCase
 import com.desky.shared.domain.SettingsRepository
+import com.desky.shared.domain.UdpSocketBinder
 import com.desky.shared.domain.UdpSocketManager
 import com.desky.shared.presentation.PairingViewModel
 import com.desky.shared.presentation.RobotControlViewModel
@@ -30,21 +32,29 @@ import org.koin.dsl.module
 /**
  * Data-layer module. Takes the platform-built [DeskyDatabase] (Room needs a
  * platform context/builder, so the app module constructs it and passes it
- * in) and the platform-built [BondSecretStore] (Android's
- * EncryptedSharedPreferences likewise needs a Context) and wires
- * repositories + the UDP transport.
+ * in), the platform-built [BondSecretStore] (Android's
+ * EncryptedSharedPreferences likewise needs a Context), and the optional
+ * platform [UdpSocketBinder] (Android Wi-Fi pinning; null on JVM/iOS), and
+ * wires repositories + the UDP transport.
  */
-fun dataModule(db: DeskyDatabase, bondSecretStore: BondSecretStore): Module = module {
+fun dataModule(
+    db: DeskyDatabase,
+    bondSecretStore: BondSecretStore,
+    socketBinder: UdpSocketBinder? = null,
+): Module = module {
     single { db }
     single<BondSecretStore> { bondSecretStore }
     single<DeviceRepository> { RoomDeviceRepository(get<DeskyDatabase>().pairedDeviceDao()) }
     single<SettingsRepository> { RoomSettingsRepository(get<DeskyDatabase>().robotConfigDao()) }
     single(named("ioScope")) { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
-    single<UdpSocketManager> { createUdpSocketManager(get(named("ioScope"))) }
+    single<UdpSocketManager> {
+        createUdpSocketManager(get(named("ioScope"))).also { socketBinder?.attach(it) }
+    }
 }
 
-/** Domain-layer module: all 8 use cases as factories. */
+/** Domain-layer module: all 8 use cases as factories + the shared drive counter. */
 val domainModule: Module = module {
+    single { DriveCounter(get()) }
     factory { PairDeviceWithCodeUseCase(get(), get(), get()) }
     factory { GetBondPskUseCase(get(), get()) }
     factory { SendSignedControlUseCase(get()) }
@@ -52,7 +62,7 @@ val domainModule: Module = module {
     factory { EmergencyStopUseCase(get()) }
     factory { SaveDeviceConfigUseCase(get()) }
     factory { ObserveDeviceConfigUseCase(get()) }
-    factory { ForgetDeviceUseCase(get(), get()) }
+    factory { ForgetDeviceUseCase(get(), get(), get(), get(), get()) }
 }
 
 /**
@@ -61,6 +71,6 @@ val domainModule: Module = module {
  */
 val presentationModule: Module = module {
     viewModel { PairingViewModel(get(), get(), get()) }
-    viewModel { RobotControlViewModel(get(), get(), get(), get(), get(), get()) }
+    viewModel { RobotControlViewModel(get(), get(), get(), get(), get(), get(), get()) }
     viewModel { SettingsViewModel(get(), get(), get()) }
 }

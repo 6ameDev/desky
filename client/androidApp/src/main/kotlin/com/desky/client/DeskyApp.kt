@@ -3,6 +3,7 @@ package com.desky.client
 import android.app.Application
 import com.desky.shared.data.createBondSecretStore
 import com.desky.shared.data.createDeskyDatabase
+import com.desky.shared.data.createWifiSocketBinder
 import com.desky.shared.di.dataModule
 import com.desky.shared.di.domainModule
 import com.desky.shared.di.presentationModule
@@ -15,7 +16,11 @@ class DeskyApp : Application() {
         startKoin {
             androidContext(this@DeskyApp)
             modules(
-                dataModule(createDeskyDatabase(this@DeskyApp), createBondSecretStore(this@DeskyApp)),
+                dataModule(
+                    createDeskyDatabase(this@DeskyApp),
+                    createBondSecretStore(this@DeskyApp),
+                    createWifiSocketBinder(this@DeskyApp),
+                ),
                 domainModule,
                 presentationModule,
             )

@@ -5,10 +5,16 @@ import com.desky.shared.domain.ControlPacketCodec
 import com.desky.shared.domain.DEFAULT_UDP_PORT
 import com.desky.shared.domain.DRIVE_V2_HEADER
 import com.desky.shared.domain.DRIVE_V2_SIZE
+import com.desky.shared.domain.DriveCounter
 import com.desky.shared.domain.ESTOP_FLAG
 import com.desky.shared.domain.EmergencyStopUseCase
+import com.desky.shared.domain.ForgetDeviceUseCase
 import com.desky.shared.domain.GetBondPskUseCase
+import com.desky.shared.domain.UNBOND_HEADER
+import com.desky.shared.domain.encodeSigned
+import com.desky.shared.domain.encodeUnbond
 import com.desky.shared.domain.ObserveTelemetryUseCase
+import com.desky.shared.domain.Outcome
 import com.desky.shared.domain.RobotMode
 import com.desky.shared.domain.SendSignedControlUseCase
 import com.desky.shared.domain.Telemetry
@@ -19,6 +25,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -34,6 +41,7 @@ class RobotControlViewModelTest {
         udp: FakeUdpSocketManager = FakeUdpSocketManager(),
         vault: FakeBondSecretStore = FakeBondSecretStore().apply { seed(testDevice().id, PSK_HEX) },
         tickMs: Long = 20,
+        holder: DriveCounter = DriveCounter(repo),
     ): Quad {
         val sendSigned = SendSignedControlUseCase(udp)
         val viewModel = RobotControlViewModel(
@@ -43,9 +51,10 @@ class RobotControlViewModelTest {
             repo,
             GetBondPskUseCase(vault, repo),
             udp,
+            holder,
             tickMs,
         )
-        return Quad(viewModel, repo, udp, vault)
+        return Quad(viewModel, repo, udp, vault, holder)
     }
 
     private data class Quad(
@@ -53,6 +62,7 @@ class RobotControlViewModelTest {
         val repo: FakeDeviceRepository,
         val udp: FakeUdpSocketManager,
         val vault: FakeBondSecretStore,
+        val holder: DriveCounter,
     )
 
     @Test
@@ -78,7 +88,7 @@ class RobotControlViewModelTest {
         assertEquals(1, udp.sent.size)
         assertTrue(
             udp.sent[0].bytes.contentEquals(
-                ControlPacketCodec.encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f, 0), 1u, psk()),
+                encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f, 0), 1u, psk()),
             ),
         )
         assertEquals("192.168.4.1", udp.sent[0].host)
@@ -99,7 +109,7 @@ class RobotControlViewModelTest {
         val last = udp.sent.last()
         assertTrue(
             last.bytes.contentEquals(
-                ControlPacketCodec.encodeSigned(ControlCommand(RobotMode.MANUAL, 0.5f, -0.25f, 0), 6u, psk()),
+                encodeSigned(ControlCommand(RobotMode.MANUAL, 0.5f, -0.25f, 0), 6u, psk()),
             ),
         )
     }
@@ -137,7 +147,7 @@ class RobotControlViewModelTest {
         assertEquals(1, udp.sent.size)
         assertTrue(
             udp.sent[0].bytes.contentEquals(
-                ControlPacketCodec.encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f, 0), 101u, psk()),
+                encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f, 0), 101u, psk()),
             ),
         )
         assertNull(viewModel.state.value.error)
@@ -215,7 +225,7 @@ class RobotControlViewModelTest {
         assertEquals(0f, latched.steering)
         // Immediate signed estop frame via the dedicated use case
         // (counter 1 went out before the clear, so this is 2).
-        val estop2 = ControlPacketCodec.encodeSigned(
+        val estop2 = encodeSigned(
             ControlCommand(RobotMode.MANUAL, 0f, 0f, ESTOP_FLAG),
             2u,
             psk(),
@@ -233,7 +243,7 @@ class RobotControlViewModelTest {
         val loopFrames = udp.sent.drop(1)
         assertTrue(loopFrames.size >= 3)
         loopFrames.forEachIndexed { i, frame ->
-            val expected = ControlPacketCodec.encodeSigned(
+            val expected = encodeSigned(
                 ControlCommand(RobotMode.MANUAL, 0f, 0f, ESTOP_FLAG),
                 (3u + i.toUInt()),
                 psk(),
@@ -266,9 +276,41 @@ class RobotControlViewModelTest {
         // Fresh pair row resets the counter: first frame back is counter 1.
         assertTrue(
             udp.sent[0].bytes.contentEquals(
-                ControlPacketCodec.encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f, 0), 1u, psk()),
+                encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f, 0), 1u, psk()),
             ),
         )
+    }
+
+    @Test
+    fun forgetAfterUnpersistedFramesUsesLiveCounter() = runVmTest { main ->
+        // Field-proven regression: the Room watermark persists only every
+        // 128 sends, but the robot enforces strictly-greater against its
+        // LIVE counter. UNBOND must allocate from the shared holder (live),
+        // never `device.lastCounter + 1` (watermark).
+        val deviceId = testDevice().id
+        val (viewModel, repo, udp, vault, holder) = setup(tickMs = 20)
+        assertNull(viewModel.state.value.error)
+        main.runCurrent()
+        // 150 drive frames total (t=0 + 149 ticks): persist fires once at 128.
+        main.advanceTimeBy(149 * 20 + 1)
+
+        assertEquals(150, udp.sent.size)
+        assertEquals(listOf(deviceId to 128u), repo.counterSaves)
+
+        // Forget WITHOUT further persists: the holder still holds 150 live.
+        val forget = ForgetDeviceUseCase(repo, vault, udp, GetBondPskUseCase(vault, repo), holder)
+        val result = forget()
+
+        assertIs<Outcome.Success<Unit>>(result, "forget result: $result")
+        // 3x fire-and-forget UNBOND on top of the 150 drive frames.
+        assertEquals(153, udp.sent.size)
+        val unbonds = udp.sent.drop(150)
+        assertEquals(3, unbonds.size)
+        val expected = encodeUnbond(psk(), 151u)
+        unbonds.forEachIndexed { i, frame ->
+            assertEquals(UNBOND_HEADER, frame.bytes[0].toInt() and 0xFF, "unbond $i")
+            assertTrue(frame.bytes.contentEquals(expected), "unbond $i carries live counter 151, not watermark 129")
+        }
     }
 
     @Test
@@ -289,7 +331,7 @@ class RobotControlViewModelTest {
         assertTrue(udp.sent.isNotEmpty())
         assertTrue(
             udp.sent.last().bytes.contentEquals(
-                ControlPacketCodec.encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f, 0), 3u, psk()),
+                encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f, 0), 3u, psk()),
             ),
         )
     }

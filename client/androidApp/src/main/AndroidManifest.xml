@@ -3,6 +3,14 @@
 
     <!-- Required: UDP control/telemetry sockets (DatagramSocketManager). -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Required: Wi-Fi network requests for UDP socket pinning (WifiSocketBinder).
+         Both install-time (normal level), no runtime prompt. CHANGE_NETWORK_STATE
+         is required by ConnectivityManager.requestNetwork() itself (bench-proven:
+         without it the app crashes at startup with SecurityException) — it is
+         NOT only for process-wide binding. We still never bind process-wide;
+         only the single UDP socket is pinned via Network.bindSocket(). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
 
     <application
         android:name=".DeskyApp"

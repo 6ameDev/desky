@@ -69,6 +69,10 @@ xcodebuild -workspace iosApp.xcworkspace -scheme iosApp -configuration Debug \
 - The drive loop must never pause: the robot failsafes ~500 ms after the
   last datagram, so the app heartbeats centered *signed* frames even with
   untouched sticks.
+- Pairing requires joining the robot AP `desky` (fixed `192.168.4.1`); the app
+  pins its UDP socket to Wi-Fi (which carries no internet capability), so
+  mobile data cannot steal the route — if it still does, airplane-mode +
+  Wi-Fi is the fallback.
 
 ## Deferred-run checklist (needs hardware or downloads)
 

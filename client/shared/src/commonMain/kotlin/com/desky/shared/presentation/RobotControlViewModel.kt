@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.desky.shared.domain.ControlCommand
 import com.desky.shared.domain.DeviceRepository
+import com.desky.shared.domain.DriveCounter
 import com.desky.shared.domain.ESTOP_FLAG
 import com.desky.shared.domain.EmergencyStopUseCase
 import com.desky.shared.domain.GetBondPskUseCase
@@ -44,9 +45,6 @@ data class RobotControlUiState(
     val error: String? = null,
 )
 
-/** Room counter persist cadence: every N successful sends (mirrors firmware A1). */
-private const val COUNTER_PERSIST_EVERY = 128
-
 /**
  * Drives the robot-control screen (pairing/auth Task 9: every frame is an
  * authenticated `DRIVE_V2` datagram).
@@ -63,19 +61,21 @@ private const val COUNTER_PERSIST_EVERY = 128
  *   sticks with [ESTOP_FLAG].
  *
  * Drive session: after the first pairing the loop loads the bond PSK via
- * [GetBondPskUseCase] ONCE and caches it in memory with the counter resumed
- * from the Room row (`lastCounter`), so the first wire packet uses counter
- * 1 after a fresh pair. Each send consumes the next counter; every 128th
- * successful send persists it to Room. A missing PSK surfaces
- * [Connectivity.Unpaired] + "Please re-pair to drive" and sends NOTHING
- * (never legacy frames); the miss is latched per device so the vault is
- * still read at most once (the idle loop does not retry).
+ * [GetBondPskUseCase] ONCE and caches it in memory, seeding the shared
+ * [DriveCounter] from the Room row (`lastCounter`), so the first wire
+ * packet uses counter 1 after a fresh pair. Each send allocates the next
+ * counter from the holder (which persists to Room every 128th allocation).
+ * A missing PSK surfaces [Connectivity.Unpaired] + "Please re-pair to
+ * drive" and sends NOTHING (never legacy frames); the miss is latched per
+ * device so the vault is still read at most once (the idle loop does not
+ * retry).
  *
  * A later unpair pauses the send loop until re-pair (the loop re-reads
- * [currentDevice] every tick) and drops the cached PSK/counter, so the next
- * pairing reloads both fresh (one more vault read for the new session).
- * The session mutex serializes the loop tick against the immediate e-stop
- * frame so both share one strictly increasing counter sequence.
+ * [currentDevice] every tick) and drops the cached PSK plus the holder era,
+ * so the next pairing reloads both fresh (one more vault read for the new
+ * session). The session mutex serializes the loop tick against the
+ * immediate e-stop frame so both share one strictly increasing counter
+ * sequence.
  * [tickMs] is a constructor parameter so tests can drive virtual time.
  *
  * @param udp transport handle, kept for API symmetry with the use cases
@@ -89,6 +89,7 @@ class RobotControlViewModel(
     private val deviceRepo: DeviceRepository,
     private val getBondPskUC: GetBondPskUseCase,
     private val udp: UdpSocketManager,
+    private val driveCounter: DriveCounter,
     private val tickMs: Long = 20,
 ) : ViewModel() {
 
@@ -101,8 +102,6 @@ class RobotControlViewModel(
     /** Drive-session cache, guarded by [sessionMutex]. Null PSK = no session loaded. */
     private val sessionMutex = Mutex()
     private var sessionPsk: ByteArray? = null
-    private var lastSentCounter: UInt = 0u
-    private var sendsSincePersist: Int = 0
     /**
      * Device id whose vault lookup already came back empty. The loop idles
      * for it (no per-tick vault reads — the vault is read at most once per
@@ -145,6 +144,7 @@ class RobotControlViewModel(
                         sessionMutex.withLock {
                             sessionPsk = null
                             pskMissingFor = null
+                            driveCounter.reset()
                         }
                         delay(tickMs)
                         continue
@@ -168,28 +168,23 @@ class RobotControlViewModel(
 
     /**
      * Sends one signed frame on the session, loading the session first when
-     * empty. Must hold [sessionMutex]. On success the counter advances and
-     * every 128th send persists to Room; on a missing PSK the failure tells
-     * the user to re-pair (connectivity is forced back to Unpaired so the
-     * screen never claims a live link it cannot drive).
+     * empty. Must hold [sessionMutex]. On a missing PSK (or an exhausted
+     * counter) the failure tells the user to re-pair (connectivity is forced
+     * back to Unpaired so the screen never claims a live link it cannot
+     * drive).
      */
     private suspend fun sendFrameLocked(dev: PairedDevice, cmd: ControlCommand): Outcome<Unit> {
         val (psk, next) = sessionCounterLocked(dev) ?: return missingPsk()
-        return when (val result = sendUC(dev, cmd, psk, next)) {
-            is Outcome.Success -> {
-                accountSendLocked(dev, next)
-                result
-            }
-            is Outcome.Failure -> result
-        }
+        return sendUC(dev, cmd, psk, next)
     }
 
     /**
      * Session load + counter allocation shared by the loop tick and the
      * immediate e-stop frame, so both consume one strictly increasing
-     * sequence. Must hold [sessionMutex]. Null = no PSK (caller reports
-     * [missingPsk]); the `0u` exhaustion guard refuses to wrap (0 is never
-     * valid on the wire — practically unreachable: 2^32 sends).
+     * sequence from the shared [DriveCounter]. Must hold [sessionMutex].
+     * Null = no PSK, or no counter available (caller reports [missingPsk]);
+     * the holder's `0u` exhaustion guard refuses to wrap (0 is never valid
+     * on the wire — practically unreachable: 2^32 sends).
      */
     private suspend fun sessionCounterLocked(dev: PairedDevice): Pair<ByteArray, UInt>? {
         var psk = sessionPsk
@@ -205,21 +200,12 @@ class RobotControlViewModel(
             }
             psk = hexToBytes(hex)
             sessionPsk = psk
-            lastSentCounter = dev.lastCounter
-            sendsSincePersist = 0
         }
-        val next = lastSentCounter + 1u
-        if (next == 0u) return null
+        // Seed from Room on a fresh era only; a live era is a no-op, so the
+        // watermark can never rewind the sequence mid-session.
+        driveCounter.ensure(dev.id, dev.lastCounter)
+        val next = driveCounter.next() ?: return null
         return psk to next
-    }
-
-    /** Records a successful send: advances the counter, persists every 128th. */
-    private suspend fun accountSendLocked(dev: PairedDevice, sent: UInt) {
-        lastSentCounter = sent
-        sendsSincePersist++
-        if (sendsSincePersist % COUNTER_PERSIST_EVERY == 0) {
-            deviceRepo.updateCounter(dev.id, sent)
-        }
     }
 
     private fun missingPsk(): Outcome.Failure {
@@ -256,13 +242,7 @@ class RobotControlViewModel(
             val paired = currentDevice.value ?: return@launch
             val result = sessionMutex.withLock {
                 val (psk, next) = sessionCounterLocked(paired) ?: return@withLock null
-                when (val r = emergencyUC(paired, psk, next)) {
-                    is Outcome.Success -> {
-                        accountSendLocked(paired, next)
-                        r
-                    }
-                    is Outcome.Failure -> r
-                }
+                emergencyUC(paired, psk, next)
             } ?: return@launch
             if (result is Outcome.Failure) {
                 _state.update { it.copy(error = result.reason) }

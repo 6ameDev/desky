@@ -125,6 +125,11 @@
 #define CFG_PAIR_WINDOW_MS 300000
 #define CFG_PAIR_MAX_TRIES 5
 #define CFG_PAIR_LOCKOUT_MS 30000
+// PAIR_OK redelivery window: while bonded, an identical PAIR_REQ
+// (same code + client nonce) within this window after the bond re-unicasts
+// the cached PAIR_OK instead of answering already_bonded (covers the lost-
+// reply / client-retry race; RAM-only, never persisted).
+#define CFG_PAIR_REDELIVERY_MS 60000
 
 // I2S audio (MAX98357A amp + 2x INMP441 mics, shared BCLK/WS @16kHz LRCLK;
 // GPIOs via the MCU header, never hardcoded here).

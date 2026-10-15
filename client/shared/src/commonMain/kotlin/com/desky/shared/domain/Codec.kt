@@ -32,6 +32,17 @@ const val PAIR_NONCE_SIZE = 4
 const val DRIVE_V2_HEADER = 0xAC
 const val DRIVE_V2_SIZE = 16
 
+/**
+ * Signed unbond header/size: `UNBOND`, 12 bytes
+ * `[0xAD | counterBE4 | tag6 | XOR]`, where
+ * `tag = first6(HMAC-SHA256(psk16, "UNBOND ASCII" || counterBE4))` — the
+ * 10-byte message is the 6 ASCII bytes of `"UNBOND"` followed by the 4-byte
+ * big-endian counter. Must match the firmware `UNBOND` frame exactly. The
+ * robot never replies; the app always proceeds to the local forget.
+ */
+const val UNBOND_HEADER = 0xAD
+const val UNBOND_SIZE = 12
+
 /** Failsafe window: the robot stops ~500 ms after the last control datagram. */
 const val STALE_MS = 500
 
@@ -148,43 +159,47 @@ object ControlPacketCodec {
             flags = bytes[4].toInt() and 0xFF,
         )
     }
+}
 
-    /**
-     * Authenticated drive frame: `DRIVE_V2`, 16 bytes
-     * `[0xAC | mode | thr | str | flags | counter 4B BE | tag 6B | XOR]`
-     * (frozen spec: `shared/protocol/README.md` §"Pairing + authenticated
-     * drive v1").
-     *
-     * Sticks/mode/flags bytes sit at the same positions as the legacy
-     * layout; `counter` (bytes 5..8, big-endian) is 1 for the first wire
-     * packet and strictly increasing after (0 is never valid on the wire);
-     * `tag = driveTag(psk, counter, mode, thr, str, flags)`; the trailing
-     * byte is the XOR over bytes 0..14.
-     *
-     * Suspend: the tag needs the platform HMAC backend ([driveTag]).
-     *
-     * @param psk 16-byte bond PSK.
-     */
-    suspend fun encodeSigned(cmd: ControlCommand, counter: UInt, psk: ByteArray): ByteArray {
-        require(psk.size == 16) { "encodeSigned: psk must be 16 bytes" }
-        val out = ByteArray(DRIVE_V2_SIZE)
-        out[0] = DRIVE_V2_HEADER.toByte()
-        val mode = cmd.mode.toBits().toByte()
-        val thr = unitToByte(cmd.throttle)
-        val str = unitToByte(cmd.steering)
-        val flags = cmd.flags.toByte()
-        out[1] = mode
-        out[2] = thr
-        out[3] = str
-        out[4] = flags
-        out[5] = (counter shr 24).toByte()
-        out[6] = (counter shr 16).toByte()
-        out[7] = (counter shr 8).toByte()
-        out[8] = counter.toByte()
-        driveTag(psk, counter, mode, thr, str, flags).copyInto(out, destinationOffset = 9)
-        out[DRIVE_V2_SIZE - 1] = xorChecksum(out, DRIVE_V2_SIZE - 1)
-        return out
-    }
+/**
+ * Authenticated drive frame: `DRIVE_V2`, 16 bytes
+ * `[0xAC | mode | thr | str | flags | counter 4B BE | tag 6B | XOR]`
+ * (frozen spec: `shared/protocol/README.md` §"Pairing + authenticated
+ * drive v1").
+ *
+ * Sticks/mode/flags bytes sit at the same positions as the legacy
+ * layout; `counter` (bytes 5..8, big-endian) is 1 for the first wire
+ * packet and strictly increasing after (0 is never valid on the wire);
+ * `tag = driveTag(psk, counter, mode, thr, str, flags)`; the trailing
+ * byte is the XOR over bytes 0..14.
+ *
+ * Top-level (not an `object` member) per the SKIE constraint documented in
+ * `client/ARCHITECTURE.md` (house rule — `object` suspend members break
+ * the iOS framework build).
+ *
+ * Suspend: the tag needs the platform HMAC backend ([driveTag]).
+ *
+ * @param psk 16-byte bond PSK.
+ */
+suspend fun encodeSigned(cmd: ControlCommand, counter: UInt, psk: ByteArray): ByteArray {
+    require(psk.size == 16) { "encodeSigned: psk must be 16 bytes" }
+    val out = ByteArray(DRIVE_V2_SIZE)
+    out[0] = DRIVE_V2_HEADER.toByte()
+    val mode = cmd.mode.toBits().toByte()
+    val thr = unitToByte(cmd.throttle)
+    val str = unitToByte(cmd.steering)
+    val flags = cmd.flags.toByte()
+    out[1] = mode
+    out[2] = thr
+    out[3] = str
+    out[4] = flags
+    out[5] = (counter shr 24).toByte()
+    out[6] = (counter shr 16).toByte()
+    out[7] = (counter shr 8).toByte()
+    out[8] = counter.toByte()
+    driveTag(psk, counter, mode, thr, str, flags).copyInto(out, destinationOffset = 9)
+    out[DRIVE_V2_SIZE - 1] = xorChecksum(out, DRIVE_V2_SIZE - 1)
+    return out
 }
 
 /**
@@ -238,6 +253,36 @@ object PairingPacketCodec {
         if (xorChecksum(bytes, PAIR_ERR_SIZE - 1) != bytes[PAIR_ERR_SIZE - 1]) return null
         return (bytes[1].toInt() and 0xFF) to (bytes[2].toInt() and 0xFF)
     }
+}
+
+/**
+ * Signed unbond frame: App -> Robot, 12 bytes
+ * `[0xAD | counter 4B BE | tag 6B | XOR]`.
+ *
+ * Tells a bonded robot to drop the bond. Fire-and-forget: the firmware
+ * never replies, so the app sends it (up to 3x, see [ForgetDeviceUseCase])
+ * and always proceeds to the local forget regardless of send outcome.
+ *
+ * Top-level (not an `object` member) per the SKIE constraint documented in
+ * `client/ARCHITECTURE.md` (same reason as [encodeSigned] above).
+ *
+ * Suspend: the tag needs the platform HMAC backend ([unbondTag]).
+ *
+ * @param psk 16-byte bond PSK.
+ * @param counter next drive counter (`lastCounter + 1`; strictly increasing
+ *   like every other signed frame).
+ */
+suspend fun encodeUnbond(psk: ByteArray, counter: UInt): ByteArray {
+    require(psk.size == 16) { "encodeUnbond: psk must be 16 bytes" }
+    val out = ByteArray(UNBOND_SIZE)
+    out[0] = UNBOND_HEADER.toByte()
+    out[1] = (counter shr 24).toByte()
+    out[2] = (counter shr 16).toByte()
+    out[3] = (counter shr 8).toByte()
+    out[4] = counter.toByte()
+    unbondTag(psk, counter).copyInto(out, destinationOffset = 5)
+    out[UNBOND_SIZE - 1] = xorChecksum(out, UNBOND_SIZE - 1)
+    return out
 }
 /**
  * Telemetry packet codec: Robot -> App, 9 bytes

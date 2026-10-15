@@ -84,6 +84,15 @@ info="desky-pair-v1", L=16)`.
 - `DRIVE_V2` App -> Robot, 16 bytes @30-50Hz:
   `[0xAC | mode | thr | str | flags | counter 4B BE | tag 6B | XOR]`
   with `tag = first6(HMAC-SHA256(psk, counter||mode||thr||str||flags))`.
+- `UNBOND` App -> Robot, 12 bytes (fire-and-forget, no reply):
+  `[0xAD | counterBE 4B | tag 6B | XOR]`
+  with `tag = first6(HMAC-SHA256(psk, "UNBOND"||counterBE4))` — the 10B
+  message is the ASCII prefix `UNBOND` + the 4B big-endian counter, domain-
+  separating the unbond tag from drive tags. Verify order mirrors drive:
+  len -> header -> XOR -> bonded? -> counter fresh (`isFreshCounter`) ->
+  HMAC constant-time. Fail = silent drop. Pass = symmetric forget: the
+  robot clears the NVS bond + in-memory key + PAIR_OK redelivery cache and
+  opens a fresh pairing window, so a new phone can pair immediately.
 
 Verify order (Core 0, pre-publish): len -> header -> XOR -> bonded? ->
 counter > lastSeen -> HMAC constant-time (`mbedtls_ct_memcmp`). Fail =

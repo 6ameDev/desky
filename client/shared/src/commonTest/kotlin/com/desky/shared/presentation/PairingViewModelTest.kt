@@ -3,7 +3,9 @@ package com.desky.shared.presentation
 import app.cash.turbine.test
 import com.desky.shared.domain.DEFAULT_UDP_PORT
 import com.desky.shared.domain.DeviceRepository
+import com.desky.shared.domain.DriveCounter
 import com.desky.shared.domain.ForgetDeviceUseCase
+import com.desky.shared.domain.GetBondPskUseCase
 import com.desky.shared.domain.PairDeviceWithCodeUseCase
 import com.desky.shared.domain.PAIR_ERR_HEADER
 import com.desky.shared.domain.PAIR_OK_HEADER
@@ -65,7 +67,7 @@ class PairingViewModelTest {
         vault: FakeBondSecretStore = FakeBondSecretStore(),
     ) = PairingViewModel(
         PairDeviceWithCodeUseCase(repo, udp, vault),
-        ForgetDeviceUseCase(repo, vault),
+        ForgetDeviceUseCase(repo, vault, udp, GetBondPskUseCase(vault, repo), DriveCounter(repo)),
         repo,
     )
 

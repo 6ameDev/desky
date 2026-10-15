@@ -6,6 +6,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 private fun Byte.unsigned(): Int = this.toInt() and 0xFF
 
@@ -115,7 +116,6 @@ class PairingPacketsTest {
             assertEquals(reason to 0, PairingPacketCodec.decodePairErr(framed), "reason=$reason")
         }
     }
-
     @Test
     fun decodePairErrRejects() {
         val good = byteArrayOf(0x52.toByte(), 0x00.toByte(), 0x00.toByte(), 0x52.toByte())
@@ -128,5 +128,71 @@ class PairingPacketsTest {
         assertNull(PairingPacketCodec.decodePairErr(badChecksum))
         val badPayload = good.copyOf().also { it[1] = (it[1] + 1).toByte() }
         assertNull(PairingPacketCodec.decodePairErr(badPayload))
+    }
+}
+
+class UnbondPacketTest {
+
+    @Test
+    fun constants() {
+        assertEquals(0xAD, UNBOND_HEADER)
+        assertEquals(12, UNBOND_SIZE)
+    }
+
+    /**
+     * Golden `UNBOND` frame (psk=`0011...eeff`, counter=1). The expected tag
+     * is built from a MANUALLY assembled 10-byte HMAC input
+     * (`"UNBOND" ASCII || counterBE4`) through the [hmacSha256] primitive —
+     * never through [encodeUnbond][com.desky.shared.domain.encodeUnbond] itself — and the frame
+     * bytes are laid out literally around it.
+     */
+    @Test
+    fun goldenFrameBytesAndTag() = kotlinx.coroutines.test.runTest {
+        val psk = hex("00112233445566778899aabbccddeeff")
+        val counter = 1u
+
+        val hmacInput = "UNBOND".encodeToByteArray() + byteArrayOf(0x00, 0x00, 0x00, 0x01)
+        assertEquals(10, hmacInput.size)
+        val tag = hmacSha256(psk, hmacInput).copyOfRange(0, 6)
+
+        val body = byteArrayOf(0xAD.toByte(), 0x00, 0x00, 0x00, 0x01) + tag
+        assertEquals(11, body.size)
+        val expected = body + byteArrayOf(xorOf(body, body.size).toByte())
+
+        val actual = encodeUnbond(psk, counter)
+
+        assertEquals(UNBOND_SIZE, actual.size)
+        assertContentEquals(expected, actual)
+        // Structural spot checks independent of the tag value.
+        assertEquals(0xAD, actual[0].unsigned())
+        assertEquals(0, actual[1].unsigned())
+        assertEquals(0, actual[2].unsigned())
+        assertEquals(0, actual[3].unsigned())
+        assertEquals(1, actual[4].unsigned())
+        assertContentEquals(tag, actual.copyOfRange(5, 11))
+        assertEquals(xorOf(actual, UNBOND_SIZE - 1), actual[UNBOND_SIZE - 1].unsigned())
+    }
+
+    @Test
+    fun counterLaysOutBigEndian() = kotlinx.coroutines.test.runTest {
+        val psk = ByteArray(16) { it.toByte() }
+        val pkt = encodeUnbond(psk, 0x01020304u)
+        assertEquals(0xAD, pkt[0].unsigned())
+        assertEquals(0x01, pkt[1].unsigned())
+        assertEquals(0x02, pkt[2].unsigned())
+        assertEquals(0x03, pkt[3].unsigned())
+        assertEquals(0x04, pkt[4].unsigned())
+        assertEquals(xorOf(pkt, UNBOND_SIZE - 1), pkt[UNBOND_SIZE - 1].unsigned())
+    }
+
+    @Test
+    fun rejectsShortPsk() = kotlinx.coroutines.test.runTest {
+        var threw = false
+        try {
+            encodeUnbond(ByteArray(8), 1u)
+        } catch (e: IllegalArgumentException) {
+            threw = true
+        }
+        assertTrue(threw, "encodeUnbond must require a 16-byte PSK")
     }
 }

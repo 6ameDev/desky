@@ -130,6 +130,26 @@ suspend fun aesGcmDecrypt(
 }
 
 /**
+ * `UNBOND` auth tag: `first6(HMAC-SHA256(psk16, "UNBOND" || counterBE4))`.
+ * The 10-byte message is the 6 ASCII bytes of `"UNBOND"` followed by the
+ * 4-byte big-endian counter — must match the firmware `UNBOND` frame exactly.
+ *
+ * @param psk 16-byte bond PSK.
+ * @param counter next drive counter (`lastCounter + 1` at forget time).
+ * @return 6-byte tag.
+ */
+suspend fun unbondTag(psk: ByteArray, counter: UInt): ByteArray {
+    require(psk.size == 16) { "unbondTag: psk must be 16 bytes" }
+    val msg = "UNBOND".encodeToByteArray() + byteArrayOf(
+        (counter shr 24).toByte(),
+        (counter shr 16).toByte(),
+        (counter shr 8).toByte(),
+        counter.toByte(),
+    )
+    return hmacSha256(psk, msg).copyOfRange(0, 6)
+}
+
+/**
  * Fresh 4-byte `client_nonce` from the platform CSPRNG
  * (`cryptography-random`: JVM `SecureRandom`, Apple `CCRandomGenerateBytes`,
  * Linux `getrandom` — exposed via the `kotlin.random.Random` API, never

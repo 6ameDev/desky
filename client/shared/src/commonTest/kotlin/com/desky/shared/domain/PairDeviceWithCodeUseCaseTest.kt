@@ -19,6 +19,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 
@@ -216,16 +217,44 @@ class PairDeviceWithCodeUseCaseTest {
     }
 
     @Test
-    fun timeoutSendsExactlyTwiceThenFails() = runTest {
+    fun timeoutSendsExactlyThreeTimesThenFails() = runTest {
         val udp = FakePairingUdp()
 
         val result = useCase(repo(), udp)("123456")
 
         val failure = assertIs<Outcome.Failure>(result)
         assertEquals("No response from robot", failure.reason)
-        // Initial send + exactly one re-send: never more, or the firmware
+        // Initial send + exactly two re-sends: never more, or the firmware
         // 5-try lockout could trip on our own retries.
-        assertEquals(2, udp.sent.size)
+        assertEquals(3, udp.sent.size)
+    }
+
+    @Test
+    fun successOnSecondSendAfterOneTimeout() = runTest {
+        val deviceRepo = repo()
+        everySuspend { deviceRepo.save(any()) } returns Unit
+        val udp = FakePairingUdp()
+        val vault = FakeBondSecretStore()
+        val deferred = startPairing(udp, useCase(deviceRepo, udp, vault))
+        assertEquals(1, udp.sent.size, "exactly one PAIR_REQ before any reply")
+
+        // First 5 s window expires with no reply -> exactly one re-send.
+        advanceTimeBy(5000)
+        runCurrent()
+        assertEquals(2, udp.sent.size, "one re-send after the first timeout")
+        // The re-send is byte-identical (same code+nonce): idempotent, so a
+        // duplicated request the robot already answered just re-triggers the
+        // same reply and can never burn an extra pairing try.
+        assertContentEquals(udp.sent[0].bytes, udp.sent[1].bytes)
+
+        val clientNonce = udp.sent[0].bytes.copyOfRange(7, 11)
+        udp.inbound.emit(UdpDatagram(pairOkFor(clientNonce), ROBOT_HOST, DEFAULT_UDP_PORT))
+        val result = deferred.await()
+
+        val outcome = assertIs<Outcome.Success<PairedDevice>>(result)
+        assertEquals(PSK_HEX, vault.loadPsk(outcome.data.id))
+        verifySuspend { deviceRepo.save(outcome.data) }
+        assertEquals(2, udp.sent.size, "no further sends after the reply")
     }
 
     @Test

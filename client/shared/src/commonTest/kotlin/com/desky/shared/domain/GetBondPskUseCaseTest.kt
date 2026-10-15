@@ -2,6 +2,7 @@ package com.desky.shared.domain
 
 import com.desky.shared.presentation.FakeBondSecretStore
 import com.desky.shared.presentation.FakeDeviceRepository
+import com.desky.shared.presentation.FakeUdpSocketManager
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -60,8 +61,9 @@ class GetBondPskUseCaseTest {
     fun forgetClearsVaultAndRoom() = runTest {
         val repo = FakeDeviceRepository(bondedDevice())
         val vault = FakeBondSecretStore().apply { seed(DEVICE_ID, PSK_HEX) }
+        val udp = FakeUdpSocketManager()
 
-        val result = ForgetDeviceUseCase(repo, vault)()
+        val result = ForgetDeviceUseCase(repo, vault, udp, GetBondPskUseCase(vault, repo), DriveCounter(repo))()
 
         assertIs<Outcome.Success<Unit>>(result)
         assertNull(vault.loadPsk(DEVICE_ID))
@@ -72,8 +74,10 @@ class GetBondPskUseCaseTest {
     @Test
     fun forgetWhenUnpairedStillSucceeds() = runTest {
         val vault = FakeBondSecretStore()
+        val repo = FakeDeviceRepository(null)
+        val udp = FakeUdpSocketManager()
 
-        val result = ForgetDeviceUseCase(FakeDeviceRepository(null), vault)()
+        val result = ForgetDeviceUseCase(repo, vault, udp, GetBondPskUseCase(vault, repo), DriveCounter(repo))()
 
         assertIs<Outcome.Success<Unit>>(result)
         assertEquals(0, vault.clearCalls)

@@ -129,5 +129,8 @@ class PairingCryptoTest {
         assertFailsWith<IllegalArgumentException> {
             driveTag(psk = ByteArray(8), counter = 1u, mode = 0, thr = 0, str = 0, flags = 0)
         }
+        assertFailsWith<IllegalArgumentException> {
+            unbondTag(psk = ByteArray(8), counter = 1u)
+        }
     }
 }

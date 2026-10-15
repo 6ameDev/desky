@@ -164,6 +164,15 @@ void test_udp_fresh_counter_wrap_accept();
 void test_udp_fresh_counter_half_range_reject();
 void test_udp_classify_table();
 void test_udp_classify_wrong_header_or_size_drops();
+void test_udp_redeliver_same_true();
+void test_udp_redeliver_different_nonce_false();
+void test_udp_redeliver_different_code_false();
+void test_udp_redeliver_expired_false();
+void test_udp_redeliver_invalid_or_null_false();
+void test_udp_redeliver_millis_wrap_true();
+void test_udp_unbond_wire_constants();
+void test_udp_classify_unbond();
+void test_udp_unbond_tag_msg_golden();
 
 // I2S audio DSP + meter policy, defined in test_audio.cpp.
 void test_audio_dual_mono32_top_justified();
@@ -267,6 +276,15 @@ int main() {
   RUN_TEST(test_udp_fresh_counter_half_range_reject);
   RUN_TEST(test_udp_classify_table);
   RUN_TEST(test_udp_classify_wrong_header_or_size_drops);
+  RUN_TEST(test_udp_redeliver_same_true);
+  RUN_TEST(test_udp_redeliver_different_nonce_false);
+  RUN_TEST(test_udp_redeliver_different_code_false);
+  RUN_TEST(test_udp_redeliver_expired_false);
+  RUN_TEST(test_udp_redeliver_invalid_or_null_false);
+  RUN_TEST(test_udp_redeliver_millis_wrap_true);
+  RUN_TEST(test_udp_unbond_wire_constants);
+  RUN_TEST(test_udp_classify_unbond);
+  RUN_TEST(test_udp_unbond_tag_msg_golden);
   RUN_TEST(test_audio_dual_mono32_top_justified);
   RUN_TEST(test_audio_chime_shape_and_decay);
   RUN_TEST(test_audio_int24_unpack_top24_in_32);

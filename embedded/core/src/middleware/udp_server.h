@@ -47,6 +47,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// Fallback keeps the host tests + firmware compiling if config keys drift;
+// in-project include/config.h always wins (same pattern as pairing.h).
+#ifndef CFG_PAIR_REDELIVERY_MS
+#define CFG_PAIR_REDELIVERY_MS 60000
+#endif
+
 namespace udpstatus {
 
 // Telemetry statusFlags bit map (wire byte: udp::TelemetryPacket.statusFlags,
@@ -100,10 +106,15 @@ constexpr uint8_t kDriveV2Header = 0xAC;
 constexpr size_t kDriveV2Size = 16;
 constexpr uint8_t kPairReqHeader = 0x50;
 constexpr size_t kPairReqSize = 12;
+constexpr uint8_t kUnbondHeader = 0xAD;
+constexpr size_t kUnbondSize = 12;
+constexpr size_t kUnbondTagLen = 6;
+constexpr size_t kUnbondMsgLen = 10;  // "UNBOND" (6 ASCII) || counterBE4
+constexpr uint32_t kRedeliveryMs = CFG_PAIR_REDELIVERY_MS;
 
 // RX demux result: classifyRx maps (len, header) -> kind; anything else
 // (wrong size, wrong header, oversize truncation) is kDrop.
-enum class RxKind : uint8_t { kLegacy, kDriveV2, kPairReq, kDrop };
+enum class RxKind : uint8_t { kLegacy, kDriveV2, kPairReq, kUnbond, kDrop };
 
 inline RxKind classifyRx(size_t len, uint8_t header) {
   if (len == 6 && header == 0xAA) {
@@ -115,7 +126,29 @@ inline RxKind classifyRx(size_t len, uint8_t header) {
   if (len == kPairReqSize && header == kPairReqHeader) {
     return RxKind::kPairReq;
   }
+  if (len == kUnbondSize && header == kUnbondHeader) {
+    return RxKind::kUnbond;
+  }
   return RxKind::kDrop;
+}
+
+// UNBOND tag message (10B, host-testable): "UNBOND" ASCII || counterBE4.
+// Domain-separates the unbond tag from drive tags (drive covers
+// counter||mode||thr||str||flags with no ASCII prefix).
+inline void unbondTagMsg(uint32_t counter, uint8_t out10[kUnbondMsgLen]) {
+  if (out10 == nullptr) {
+    return;
+  }
+  out10[0] = 'U';
+  out10[1] = 'N';
+  out10[2] = 'B';
+  out10[3] = 'O';
+  out10[4] = 'N';
+  out10[5] = 'D';
+  out10[6] = static_cast<uint8_t>((counter >> 24) & 0xFFu);
+  out10[7] = static_cast<uint8_t>((counter >> 16) & 0xFFu);
+  out10[8] = static_cast<uint8_t>((counter >> 8) & 0xFFu);
+  out10[9] = static_cast<uint8_t>(counter & 0xFFu);
 }
 
 // Wrap-aware strictly-greater for the DRIVE_V2 32-bit BE counter (starts at
@@ -124,6 +157,36 @@ inline RxKind classifyRx(size_t len, uint8_t header) {
 // of exactly half the range is direction-ambiguous and rejected.
 inline bool isFreshCounter(uint32_t lastSeen, uint32_t got) {
   return got != lastSeen && (got - lastSeen) < 0x80000000u;
+}
+
+// PAIR_OK redelivery predicate (RAM-only cache in UdpServer::lastPair_).
+// True when the bonded robot should re-unicast the cached PAIR_OK: the cache
+// is valid, the incoming code (6B) matches with a no-early-exit loop, the
+// incoming client nonce (4B) matches, and the bond is younger than
+// kRedeliveryMs (wrap-safe millis math). Null pointers -> false. Deliberately
+// local (no pairing.h include) so this top half stays stdint-only.
+inline bool shouldRedeliver(bool valid, const uint8_t* storedCode, const uint8_t* storedNonce,
+                             const uint8_t* inCode, const uint8_t* inNonce, uint32_t bondMs,
+                             uint32_t nowMs) {
+  if (!valid) {
+    return false;
+  }
+  if (storedCode == nullptr || storedNonce == nullptr || inCode == nullptr || inNonce == nullptr) {
+    return false;
+  }
+  uint8_t codeDiff = 0;
+  for (size_t i = 0; i < 6; ++i) {
+    codeDiff |= static_cast<uint8_t>(storedCode[i] ^ inCode[i]);
+  }
+  if (codeDiff != 0) {
+    return false;
+  }
+  for (size_t i = 0; i < 4; ++i) {
+    if (storedNonce[i] != inNonce[i]) {
+      return false;
+    }
+  }
+  return (nowMs - bondMs) < kRedeliveryMs;
 }
 
 }  // namespace udpstatus
@@ -229,7 +292,9 @@ class UdpServer {
         lastCounter_(0),
         bonded_(false),
         validCount_(0),
-        maxVerifyUs_(0) {}
+        maxVerifyUs_(0) {
+    lastPair_.valid = false;
+  }
 
   // Starts WiFi (async both modes), binds the UDP port, and pins the server
   // task to Core 0. Call once in setup(), AFTER Coordinator::begin (the RX
@@ -270,6 +335,9 @@ class UdpServer {
     // Bonded -> DRIVE_V2 verifies against the stored PSK; unbonded -> open
     // a pairing window (the code LOG_I line IS the display for now).
     // ConfigStore::begin() already ran in setup(), so loadBond is safe here.
+    // The PAIR_OK redelivery cache stays invalid across reboot on both paths
+    // (RAM-only: a rebooted robot answers already_bonded until a fresh pair).
+    lastPair_.valid = false;
     uint8_t loadedPsk[16] = {};
     uint32_t storedCtr = 0;
     bool storedBond = false;
@@ -316,12 +384,19 @@ class UdpServer {
   // Explicit unpair / 10s-hold factory reset hook (Task 10 bench procedure;
   // no button wired yet): clears the NVS bond + in-memory Core + key
   // material. The next begin() (or openPairingWindow()) starts fresh.
+  // Also invalidates the PAIR_OK redelivery cache (+zeroizes its secrets).
   bool clearBond() {
     pairCore_.clearBond();
     bonded_ = false;
     lastCounter_ = 0;
     validCount_ = 0;
     mbedtls_platform_zeroize(psk_, sizeof(psk_));
+    lastPair_.valid = false;
+    mbedtls_platform_zeroize(lastPair_.code6, sizeof(lastPair_.code6));
+    mbedtls_platform_zeroize(lastPair_.cliNonce4, sizeof(lastPair_.cliNonce4));
+    mbedtls_platform_zeroize(lastPair_.srvNonce4, sizeof(lastPair_.srvNonce4));
+    mbedtls_platform_zeroize(lastPair_.ok38, sizeof(lastPair_.ok38));
+    lastPair_.bondMs = 0;
     return ConfigStore::clearBond();
   }
 
@@ -397,6 +472,9 @@ class UdpServer {
             break;
           case udpstatus::RxKind::kPairReq:
             handlePairReq(buf, rip, rport, nowMs);
+            break;
+          case udpstatus::RxKind::kUnbond:
+            handleUnbond(buf, rip, rport, nowMs);
             break;
           case udpstatus::RxKind::kDrop:
             dropFirst(firstMalformedDrop_, "drop datagram pending=%d got=%d (first of boot)", pending, got);
@@ -530,6 +608,17 @@ class UdpServer {
     if (buf == nullptr) {
       return;
     }
+    // Lost-PAIR_OK race: while bonded, an identical retry (same code +
+    // client nonce) inside the redelivery window re-unicasts the cached
+    // PAIR_OK. Checked BEFORE the already_bonded reply below.
+    if (bonded_ && udpstatus::shouldRedeliver(lastPair_.valid, lastPair_.code6, lastPair_.cliNonce4,
+                                              buf + 1, buf + 7, lastPair_.bondMs, nowMs)) {
+      udp_.beginPacket(rip, rport);
+      udp_.write(lastPair_.ok38, sizeof(lastPair_.ok38));
+      udp_.endPacket();
+      LOG_I("UDP", "pair redeliver");
+      return;
+    }
     if (bonded_) {
       sendPairErr(rip, rport, pairing::toWireReason(pairing::Result::kAlreadyBonded), 0);
       dropFirst(firstPairDrop_, "pair req while bonded (first of boot)");
@@ -566,6 +655,7 @@ class UdpServer {
     const uint8_t* code6 = buf + 1;  // Verified match — the HKDF IKM.
     const uint8_t* clientNonce = buf + 7;
     bool sent = false;
+    uint8_t out[38] = {};  // Function scope: cached into lastPair_ on send.
     // Bond baseline is counter 0 (never valid on the wire): the client's
     // first DRIVE_V2 uses counter 1, matching the spec's "starts 1".
     if (ConfigStore::saveBond(newPsk, 0)) {
@@ -575,7 +665,6 @@ class UdpServer {
       if (pairing::deriveKek(code6, clientNonce, serverNonce, kek) &&
           pairing::wrapPsk(newPsk, kek, clientNonce, serverNonce, ct, tag)) {
         // PAIR_OK 38B [0x51|server_nonce4|ct16|tag16|XOR].
-        uint8_t out[38];
         out[0] = pairing::kPairOkHeader;
         for (size_t i = 0; i < pairing::kPairNonceLen; ++i) {
           out[1 + i] = serverNonce[i];
@@ -606,6 +695,22 @@ class UdpServer {
       }
       lastCounter_ = 0;
       bonded_ = true;
+      // Cache the reply BEFORE the stack zeroizes below: an identical retry
+      // inside kRedeliveryMs re-unicasts these bytes (RAM-only redelivery).
+      for (size_t i = 0; i < sizeof(lastPair_.code6); ++i) {
+        lastPair_.code6[i] = code6[i];
+      }
+      for (size_t i = 0; i < sizeof(lastPair_.cliNonce4); ++i) {
+        lastPair_.cliNonce4[i] = clientNonce[i];
+      }
+      for (size_t i = 0; i < sizeof(lastPair_.srvNonce4); ++i) {
+        lastPair_.srvNonce4[i] = serverNonce[i];
+      }
+      for (size_t i = 0; i < sizeof(lastPair_.ok38); ++i) {
+        lastPair_.ok38[i] = out[i];
+      }
+      lastPair_.bondMs = nowMs;
+      lastPair_.valid = true;
       peerIp_ = rip;  // The new owner pins the telemetry unicast path.
       peerPort_ = rport;
       havePeer_ = true;
@@ -617,6 +722,68 @@ class UdpServer {
     }
     mbedtls_platform_zeroize(newPsk, sizeof(newPsk));
     mbedtls_platform_zeroize(serverNonce, sizeof(serverNonce));
+  }
+
+  // UNBOND layout [0xAD|ctrBE4 1..4|tag6 5..10|XOR] (len + header + XOR
+  // checked by the caller). Symmetric forget: a signed fire-and-forget from
+  // the bonded owner. Fail = silent drop (stale/replay/bad-tag). Pass clears
+  // the NVS bond + Core + key material + redelivery cache and opens a fresh
+  // pairing window so a new phone can pair immediately. No reply packet.
+  void handleUnbond(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs) {
+    (void)rip;
+    (void)rport;
+    (void)nowMs;
+    DESKY_ASSERT(buf != nullptr);
+    if (buf == nullptr) {
+      return;
+    }
+    if (!bonded_) {
+      dropFirst(firstUnbondDrop_, "drop unbond unbonded (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop unbond unbonded");
+      return;
+    }
+    const uint32_t ctr = (static_cast<uint32_t>(buf[1]) << 24) | (static_cast<uint32_t>(buf[2]) << 16) |
+                         (static_cast<uint32_t>(buf[3]) << 8) | static_cast<uint32_t>(buf[4]);
+    if (!udpstatus::isFreshCounter(lastCounter_, ctr)) {
+      dropFirst(firstUnbondDrop_, "drop unbond replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
+      LOG_EVERY_N(20, "UDP", "drop unbond replay ctr=%lu", static_cast<unsigned long>(ctr));
+      return;
+    }
+    // tag = first6(HMAC-SHA256(psk, "UNBOND"||counterBE4)).
+    uint8_t msg[udpstatus::kUnbondMsgLen];
+    udpstatus::unbondTagMsg(ctr, msg);
+    uint8_t mac[32];
+    const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    int rc = -1;
+    if (md != nullptr) {
+      rc = mbedtls_md_hmac(md, psk_, sizeof(psk_), msg, sizeof(msg), mac);
+    }
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    bool ok = (rc == 0);
+    if (ok) {
+      ok = pairing::ctEqual(mac, buf + 5, udpstatus::kUnbondTagLen);
+    }
+    mbedtls_platform_zeroize(mac, sizeof(mac));
+    if (!ok) {
+      dropFirst(firstUnbondDrop_, "drop unbond auth (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop unbond auth");
+      return;
+    }
+    ConfigStore::clearBond();
+    pairCore_.clearBond();
+    mbedtls_platform_zeroize(psk_, sizeof(psk_));
+    bonded_ = false;
+    lastCounter_ = 0;
+    lastPair_.valid = false;
+    mbedtls_platform_zeroize(lastPair_.code6, sizeof(lastPair_.code6));
+    mbedtls_platform_zeroize(lastPair_.cliNonce4, sizeof(lastPair_.cliNonce4));
+    mbedtls_platform_zeroize(lastPair_.srvNonce4, sizeof(lastPair_.srvNonce4));
+    mbedtls_platform_zeroize(lastPair_.ok38, sizeof(lastPair_.ok38));
+    lastPair_.bondMs = 0;
+    LOG_I("UDP", "unbond ok");
+    if (!openPairingWindow()) {
+      LOG_W("UDP", "pair window open failed (post-unbond)");
+    }
   }
 
   void sendPairErr(const IPAddress& ip, uint16_t port, uint8_t reason, uint8_t retryS) {
@@ -719,12 +886,26 @@ class UdpServer {
   bool bonded_;
   uint32_t validCount_;
   uint32_t maxVerifyUs_;
+  // Last PAIR_OK redelivery cache (RAM-only, never persisted): an identical
+  // PAIR_REQ (same code + client nonce) inside kRedeliveryMs re-unicasts the
+  // cached bytes. Invalidated on reboot (begin both paths), clearBond, and
+  // signed UNBOND; secrets zeroized alongside psk_.
+  struct LastPair {
+    bool valid = false;
+    uint8_t code6[6] = {};
+    uint8_t cliNonce4[4] = {};
+    uint8_t srvNonce4[4] = {};
+    uint8_t ok38[38] = {};
+    uint32_t bondMs = 0;
+  };
+  LastPair lastPair_;
   // First-drop flags for dropFirst() (bench lesson: first occurrence per
   // boot per class always logs). Reset only by reboot — never per window.
   bool firstMalformedDrop_ = true;
   bool firstLegacyDrop_ = true;
   bool firstDriveDrop_ = true;
   bool firstPairDrop_ = true;
+  bool firstUnbondDrop_ = true;
 };
 
 #endif  // ARDUINO

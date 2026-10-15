@@ -19,7 +19,7 @@ class SendSignedControlUseCase(
         counter: UInt,
     ): Outcome<Unit> {
         return try {
-            udp.send(ControlPacketCodec.encodeSigned(cmd, counter, psk), device.ip, device.port)
+            udp.send(encodeSigned(cmd, counter, psk), device.ip, device.port)
             Outcome.Success(Unit)
         } catch (e: Exception) {
             Outcome.Failure("Failed to send control command: ${e.message}", e)

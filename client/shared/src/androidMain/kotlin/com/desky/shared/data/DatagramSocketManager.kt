@@ -1,6 +1,7 @@
 package com.desky.shared.data
 
 import com.desky.shared.domain.UdpDatagram
+import com.desky.shared.domain.UdpSocketBinder
 import com.desky.shared.domain.UdpSocketManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +18,7 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.SocketException
 import java.net.SocketTimeoutException
+import android.net.Network
 
 /** Wake interval so a blocked `receive` notices cancellation/close. */
 private const val RECEIVE_TIMEOUT_MS = 500
@@ -29,6 +31,11 @@ private const val MAX_DATAGRAM_BYTES = 64
  * the constructor (broadcast enabled, 500 ms `soTimeout` for an
  * interruptible receive loop), loop launched in `init` into [scope] on
  * `Dispatchers.IO` feeding a no-replay flow with a 64-slot buffer.
+ *
+ * Wi-Fi pinning: [WifiSocketBinder.attach] (wired via `dataModule`) calls
+ * [bindToWifiNetwork] on every `onAvailable`, which re-points this same fd at
+ * the Wi-Fi network — rebind-only, so the ephemeral port never churns. See
+ * `WifiSocketBinder` KDoc for the mobile-data root cause.
  */
 actual fun createUdpSocketManager(scope: CoroutineScope): UdpSocketManager =
     DatagramSocketManager(scope)
@@ -40,6 +47,8 @@ internal class DatagramSocketManager(
         broadcast = true
         soTimeout = RECEIVE_TIMEOUT_MS
     }
+
+    private var wifiBinder: UdpSocketBinder? = null
 
     private val _incoming = MutableSharedFlow<UdpDatagram>(extraBufferCapacity = 64)
     override val incoming: Flow<UdpDatagram> = _incoming.asSharedFlow()
@@ -74,8 +83,28 @@ internal class DatagramSocketManager(
         }
     }
 
+    /**
+     * Pin [socket] to [network] (per-socket binding — no process-wide route
+     * change). Called by [WifiSocketBinder] on every `onAvailable`; safe to
+     * call repeatedly (re-points the fd) and safe after [close] (ignored).
+     */
+    internal fun bindToWifiNetwork(network: Network) {
+        try {
+            network.bindSocket(socket)
+        } catch (_: Exception) {
+            // Socket already closed (close() won the race) — nothing to bind.
+        }
+    }
+
+    /** Remember [binder] so [close] can unregister its network callback. */
+    internal fun setWifiBinder(binder: UdpSocketBinder?) {
+        wifiBinder = binder
+    }
+
     override suspend fun close() {
         receiveJob.cancel()
         socket.close()
+        wifiBinder?.detach()
+        wifiBinder = null
     }
 }

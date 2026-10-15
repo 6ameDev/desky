@@ -310,7 +310,7 @@ class SignedControlPacketTest {
     fun goldenFrameBytesAndTag() = kotlinx.coroutines.test.runTest {
         val psk = hex("00112233445566778899aabbccddeeff")
         val cmd = ControlCommand(RobotMode.MANUAL, 0f, 0f, 0)
-        val pkt = ControlPacketCodec.encodeSigned(cmd, 1u, psk)
+        val pkt = encodeSigned(cmd, 1u, psk)
 
         assertEquals(DRIVE_V2_SIZE, pkt.size)
         assertEquals(0xAC, pkt[0].unsigned())
@@ -336,7 +336,7 @@ class SignedControlPacketTest {
     @Test
     fun counterLaysOutBigEndian() = kotlinx.coroutines.test.runTest {
         val psk = ByteArray(16) { it.toByte() }
-        val pkt = ControlPacketCodec.encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f), 0x01020304u, psk)
+        val pkt = encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f), 0x01020304u, psk)
         assertEquals(0x01, pkt[5].unsigned())
         assertEquals(0x02, pkt[6].unsigned())
         assertEquals(0x03, pkt[7].unsigned())
@@ -348,7 +348,7 @@ class SignedControlPacketTest {
     fun rejectsShortPsk() = kotlinx.coroutines.test.runTest {
         var threw = false
         try {
-            ControlPacketCodec.encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f), 1u, ByteArray(8))
+            encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f), 1u, ByteArray(8))
         } catch (e: IllegalArgumentException) {
             threw = true
         }

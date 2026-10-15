@@ -32,7 +32,7 @@ class SendSignedControlUseCaseTest {
         everySuspend { udp.send(any(), any(), any()) } returns Unit
         val device = testDevice()
         val cmd = ControlCommand(RobotMode.AUTONOMOUS, 0.5f, -0.25f)
-        val expected = ControlPacketCodec.encodeSigned(cmd, 7u, psk())
+        val expected = encodeSigned(cmd, 7u, psk())
 
         val result = SendSignedControlUseCase(udp)(device, cmd, psk(), 7u)
 
@@ -108,7 +108,7 @@ class EmergencyStopUseCaseTest {
         val udp = mock<UdpSocketManager>()
         everySuspend { udp.send(any(), any(), any()) } returns Unit
         val device = testDevice()
-        val expected = ControlPacketCodec.encodeSigned(
+        val expected = encodeSigned(
             ControlCommand(RobotMode.MANUAL, 0f, 0f, ESTOP_FLAG),
             3u,
             psk(),
@@ -156,11 +156,11 @@ class EmergencyStopUseCaseTest {
         val cmd = ControlCommand(RobotMode.MANUAL, 0f, 0f, ESTOP_FLAG)
 
         EmergencyStopUseCase(SendSignedControlUseCase(udp))(device, psk(), 9u)
-        val direct = ControlPacketCodec.encodeSigned(cmd, 9u, psk())
+        val direct = encodeSigned(cmd, 9u, psk())
 
         verifySuspend {
             udp.send(matches { actual: ByteArray -> actual.contentEquals(direct) }, device.ip, device.port)
         }
-        assertContentEquals(direct, ControlPacketCodec.encodeSigned(cmd, 9u, psk()))
+        assertContentEquals(direct, encodeSigned(cmd, 9u, psk()))
     }
 }

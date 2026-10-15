@@ -158,3 +158,72 @@ void test_udp_classify_wrong_header_or_size_drops() {
 
 // Runner lives in test_udp_codec.cpp (single main for the native-test
 // binary): the udpstatus tests are declared extern there.
+
+// PAIR_OK redelivery predicate (Task 1): same code+nonce inside the window
+// redelivers; anything else does not. Window is CFG_PAIR_REDELIVERY_MS (60s).
+
+void test_udp_redeliver_same_true() {
+  const uint8_t code[6] = {'1', '2', '3', '4', '5', '6'};
+  const uint8_t nonce[4] = {0x01, 0x02, 0x03, 0x04};
+  TEST_ASSERT_TRUE(udpstatus::shouldRedeliver(true, code, nonce, code, nonce, 1000u, 2000u));
+}
+
+void test_udp_redeliver_different_nonce_false() {
+  const uint8_t code[6] = {'1', '2', '3', '4', '5', '6'};
+  const uint8_t nonce[4] = {0x01, 0x02, 0x03, 0x04};
+  const uint8_t other[4] = {0x01, 0x02, 0x03, 0x05};
+  TEST_ASSERT_FALSE(udpstatus::shouldRedeliver(true, code, nonce, code, other, 1000u, 2000u));
+}
+
+void test_udp_redeliver_different_code_false() {
+  const uint8_t code[6] = {'1', '2', '3', '4', '5', '6'};
+  const uint8_t wrong[6] = {'1', '2', '3', '4', '5', '7'};
+  const uint8_t nonce[4] = {0x01, 0x02, 0x03, 0x04};
+  TEST_ASSERT_FALSE(udpstatus::shouldRedeliver(true, code, nonce, wrong, nonce, 1000u, 2000u));
+}
+
+void test_udp_redeliver_expired_false() {
+  const uint8_t code[6] = {'1', '2', '3', '4', '5', '6'};
+  const uint8_t nonce[4] = {0x01, 0x02, 0x03, 0x04};
+  TEST_ASSERT_FALSE(udpstatus::shouldRedeliver(true, code, nonce, code, nonce, 0u, 60000u));
+  TEST_ASSERT_FALSE(udpstatus::shouldRedeliver(true, code, nonce, code, nonce, 0u, 60001u));
+}
+
+void test_udp_redeliver_invalid_or_null_false() {
+  const uint8_t code[6] = {'1', '2', '3', '4', '5', '6'};
+  const uint8_t nonce[4] = {0x01, 0x02, 0x03, 0x04};
+  TEST_ASSERT_FALSE(udpstatus::shouldRedeliver(false, code, nonce, code, nonce, 1000u, 2000u));
+  TEST_ASSERT_FALSE(udpstatus::shouldRedeliver(true, nullptr, nonce, code, nonce, 1000u, 2000u));
+  TEST_ASSERT_FALSE(udpstatus::shouldRedeliver(true, code, nullptr, code, nonce, 1000u, 2000u));
+  TEST_ASSERT_FALSE(udpstatus::shouldRedeliver(true, code, nonce, nullptr, nonce, 1000u, 2000u));
+  TEST_ASSERT_FALSE(udpstatus::shouldRedeliver(true, code, nonce, code, nullptr, 1000u, 2000u));
+}
+
+void test_udp_redeliver_millis_wrap_true() {
+  const uint8_t code[6] = {'1', '2', '3', '4', '5', '6'};
+  const uint8_t nonce[4] = {0x01, 0x02, 0x03, 0x04};
+  TEST_ASSERT_TRUE(udpstatus::shouldRedeliver(true, code, nonce, code, nonce, 0xFFFFFF00u, 100u));
+}
+
+// Signed UNBOND (Task 2): wire constants, demux, and the tag-message golden.
+
+void test_udp_unbond_wire_constants() {
+  TEST_ASSERT_EQUAL_UINT8(0xAD, udpstatus::kUnbondHeader);
+  TEST_ASSERT_TRUE(udpstatus::kUnbondSize == 12);
+}
+
+void test_udp_classify_unbond() {
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kUnbond), rxKindInt(udpstatus::classifyRx(12, 0xAD)));
+  // Neighbouring sizes/headers still drop.
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(11, 0xAD)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(13, 0xAD)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(12, 0xAC)));
+}
+
+void test_udp_unbond_tag_msg_golden() {
+  uint8_t msg[udpstatus::kUnbondMsgLen];
+  udpstatus::unbondTagMsg(1u, msg);
+  const uint8_t expected[10] = {0x55, 0x4E, 0x42, 0x4F, 0x4E,
+                                0x44, 0x00, 0x00, 0x00, 0x01};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, msg, sizeof(expected));
+}
