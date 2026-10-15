@@ -156,6 +156,14 @@ void test_status_flags_unpack_round_trip();
 void test_pack_command_center_edges();
 void test_telemetry_round_trip_with_flags_set();
 void test_deg_to_decideg_edges_and_clamp();
+// Pairing/auth v1 RX demux (Task 5), defined in test_udp_server.cpp.
+void test_udp_wire_constants();
+void test_udp_fresh_counter_greater_ok();
+void test_udp_fresh_counter_equal_older_reject();
+void test_udp_fresh_counter_wrap_accept();
+void test_udp_fresh_counter_half_range_reject();
+void test_udp_classify_table();
+void test_udp_classify_wrong_header_or_size_drops();
 
 // I2S audio DSP + meter policy, defined in test_audio.cpp.
 void test_audio_dual_mono32_top_justified();
@@ -252,6 +260,13 @@ int main() {
   RUN_TEST(test_pack_command_center_edges);
   RUN_TEST(test_telemetry_round_trip_with_flags_set);
   RUN_TEST(test_deg_to_decideg_edges_and_clamp);
+  RUN_TEST(test_udp_wire_constants);
+  RUN_TEST(test_udp_fresh_counter_greater_ok);
+  RUN_TEST(test_udp_fresh_counter_equal_older_reject);
+  RUN_TEST(test_udp_fresh_counter_wrap_accept);
+  RUN_TEST(test_udp_fresh_counter_half_range_reject);
+  RUN_TEST(test_udp_classify_table);
+  RUN_TEST(test_udp_classify_wrong_header_or_size_drops);
   RUN_TEST(test_audio_dual_mono32_top_justified);
   RUN_TEST(test_audio_chime_shape_and_decay);
   RUN_TEST(test_audio_int24_unpack_top24_in_32);

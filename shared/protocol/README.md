@@ -66,7 +66,9 @@ bond evicts the old; re-pair only via 10s button hold (clears bond).
 
 Constants: code = 6 ASCII digits (`esp_random`, CSPRNG); single-use,
 5-min window, 5 bad tries -> 30s lockout; PSK = 16 bytes (`esp_random`);
-counter = 32-bit BE, starts 1, strictly increasing, persisted periodically;
+counter = 32-bit BE, first drive packet uses 1 (0 is reserved as the bond
+baseline and never valid on the wire), strictly increasing, persisted
+periodically;
 `KEK = HKDF-SHA256(salt=client_nonce||server_nonce, IKM=code ASCII,
 info="desky-pair-v1", L=16)`.
 

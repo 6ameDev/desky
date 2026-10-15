@@ -179,7 +179,14 @@ class Core {
 // services/ConfigStore; policy/state is pairing::Core above.
 
 #include <mbedtls/cipher.h>
+// NOTE: this vendored constant_time.h ships WITHOUT the extern "C" guard
+// every other mbedtls header has, so a plain include mangles
+// mbedtls_ct_memcmp in C++ and ctEqual below fails at link (undefined
+// _Z17mbedtls_ct_memcmp...). The prebuilt lib provides the C symbol, hence
+// the explicit C-linkage wrapper (harmless if a future header adds its own).
+extern "C" {
 #include <mbedtls/constant_time.h>
+}
 #include <mbedtls/gcm.h>
 #include <mbedtls/hkdf.h>
 #include <mbedtls/md.h>

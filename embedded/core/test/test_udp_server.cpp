@@ -83,5 +83,78 @@ void test_deg_to_decideg_edges_and_clamp() {
   TEST_ASSERT_EQUAL_INT16(-32768, udpstatus::degToDecideg(-4000.0f));
 }
 
+// Pairing/auth v1 (Task 5): frozen wire constants, wrap-aware counter
+// freshness, and the RX demux table. The firmware verify path (HMAC, NVS,
+// sockets) is #ifdef ARDUINO and exercised on hardware.
+
+void test_udp_wire_constants() {
+  TEST_ASSERT_EQUAL_UINT8(0xAC, udpstatus::kDriveV2Header);
+  TEST_ASSERT_TRUE(udpstatus::kDriveV2Size == 16);
+  TEST_ASSERT_EQUAL_UINT8(0x50, udpstatus::kPairReqHeader);
+  TEST_ASSERT_TRUE(udpstatus::kPairReqSize == 12);
+}
+
+void test_udp_fresh_counter_greater_ok() {
+  // Initial lastSeen=0, so the first counter (1) is fresh.
+  TEST_ASSERT_TRUE(udpstatus::isFreshCounter(0, 1));
+  TEST_ASSERT_TRUE(udpstatus::isFreshCounter(1, 2));
+  TEST_ASSERT_TRUE(udpstatus::isFreshCounter(41, 42));
+}
+
+void test_udp_fresh_counter_equal_older_reject() {
+  TEST_ASSERT_FALSE(udpstatus::isFreshCounter(7, 7));
+  TEST_ASSERT_FALSE(udpstatus::isFreshCounter(0, 0));
+  TEST_ASSERT_FALSE(udpstatus::isFreshCounter(10, 9));
+  TEST_ASSERT_FALSE(udpstatus::isFreshCounter(1, 0));
+}
+
+void test_udp_fresh_counter_wrap_accept() {
+  TEST_ASSERT_TRUE(udpstatus::isFreshCounter(0xFFFFFFFFu, 0u));
+  TEST_ASSERT_TRUE(udpstatus::isFreshCounter(0xFFFFFFFEu, 0xFFFFFFFFu));
+  TEST_ASSERT_TRUE(udpstatus::isFreshCounter(0xFFFFFFFFu, 1u));
+  // Equal across the wrap is still a replay.
+  TEST_ASSERT_FALSE(udpstatus::isFreshCounter(0xFFFFFFFFu, 0xFFFFFFFFu));
+}
+
+void test_udp_fresh_counter_half_range_reject() {
+  // Exactly half the range ahead is direction-ambiguous: reject.
+  TEST_ASSERT_FALSE(udpstatus::isFreshCounter(0u, 0x80000000u));
+  TEST_ASSERT_FALSE(udpstatus::isFreshCounter(0x80000000u, 0u));
+  // Just inside half-range still accepts; just outside rejects.
+  TEST_ASSERT_TRUE(udpstatus::isFreshCounter(0u, 0x7FFFFFFFu));
+  TEST_ASSERT_FALSE(udpstatus::isFreshCounter(0u, 0x80000001u));
+}
+
+namespace {
+int rxKindInt(udpstatus::RxKind k) { return static_cast<int>(k); }
+}  // namespace
+
+void test_udp_classify_table() {
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kLegacy), rxKindInt(udpstatus::classifyRx(6, 0xAA)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDriveV2), rxKindInt(udpstatus::classifyRx(16, 0xAC)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kPairReq), rxKindInt(udpstatus::classifyRx(12, 0x50)));
+}
+
+void test_udp_classify_wrong_header_or_size_drops() {
+  // Right size, wrong header.
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(6, 0xAC)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(6, 0x50)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(16, 0xAA)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(16, 0x50)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(12, 0xAA)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(12, 0xAC)));
+  // Right header, wrong size.
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(5, 0xAA)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(7, 0xAA)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(15, 0xAC)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(17, 0xAC)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(11, 0x50)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(13, 0x50)));
+  // Telemetry header never arrives on the RX path.
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(9, 0xBB)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(12, 0xBB)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(0, 0xAA)));
+}
+
 // Runner lives in test_udp_codec.cpp (single main for the native-test
 // binary): the udpstatus tests are declared extern there.
