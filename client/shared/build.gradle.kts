@@ -47,6 +47,8 @@ kotlin {
             implementation(libs.ktor.client.core)
             implementation(libs.room3.runtime)
             implementation(libs.sqlite.bundled)
+            implementation(libs.cryptography.core)
+            implementation(libs.cryptography.provider.optimal)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

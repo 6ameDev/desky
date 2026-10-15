@@ -95,4 +95,12 @@ Libraries only, no custom crypto: firmware `mbedtls_md_hmac` +
 `mbedtls_hkdf` + `mbedtls_gcm` + `mbedtls_ct_memcmp` + `esp_random`;
 client `dev.whyoleg.cryptography:0.6.0` (JCA/CryptoKit backends).
 Shared test vector (fixed code/nonces/psk -> KEK/ct/tag) must pass both
-sides; vector values land in Task 6.
+sides (`embedded/scripts/gen_pair_vectors.py` regenerates it;
+client `domain/PairingCryptoTest.kt` pins it):
+fixed inputs code=`123456`, client_nonce=`01020304`,
+server_nonce=`05060708`, psk=`00112233445566778899aabbccddeeff`
+(drive sample: counter=1, mode=`0x00`, thr=`0x80`, str=`0x80`,
+flags=`0x00`); KEK=`0544036bb09f5c5a7a41759d414e2f46`,
+ct=`f47f282e8b8020ec2acf8bf1eaf2ee25`,
+gcm_tag=`dd497abf431870b75f5722754aa2a105`,
+drive_tag=`3ec8b625c9c1`.
