@@ -149,6 +149,23 @@ fun ByteArray.toHex(): String {
     }
     return chars.concatToString()
 }
+
+/**
+ * Inverse of [ByteArray.toHex]: even-length ASCII hex (upper or lower case)
+ * -> bytes. Throws [IllegalArgumentException] on odd length or non-hex
+ * digits. Used to rehydrate the vault-stored PSK hex into key bytes at
+ * session start (Task 9: the vault is read once, the bytes cached in
+ * memory).
+ */
+fun hexToBytes(hex: String): ByteArray {
+    require(hex.length % 2 == 0) { "hexToBytes: odd length (${hex.length})" }
+    return ByteArray(hex.length / 2) { i ->
+        val hi = hex[i * 2].digitToIntOrNull(16)
+        val lo = hex[i * 2 + 1].digitToIntOrNull(16)
+        require(hi != null && lo != null) { "hexToBytes: non-hex digits at byte $i" }
+        ((hi shl 4) or lo).toByte()
+    }
+}
 /**
  * `DRIVE_V2` auth tag: `first6(HMAC-SHA256(psk16,
  * counterBE4 || mode || thr || str || flags))`.

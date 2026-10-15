@@ -25,8 +25,13 @@ data class PairedDeviceEntity(
     val ip: String,
     val port: Int,
     val authToken: String,
-    /** Bond PSK as lowercase hex; null for rows written before pairing/auth v1. */
-    val pskHex: String? = null,
+    /**
+     * Last drive counter persisted by the signed send loop (every 128 sends,
+     * mirroring firmware A1). Stored as [Long] — SQLite INTEGER is 64-bit and
+     * Room has no `UInt` column type; the domain mapping narrows to `UInt`
+     * (the wire counter is 32-bit, so every stored value fits).
+     */
+    val lastCounter: Long = 0L,
     val alias: String,
 )
 
@@ -48,7 +53,7 @@ fun PairedDeviceEntity.toDomain(): PairedDevice =
         ip = ip,
         port = port,
         authToken = authToken,
-        pskHex = pskHex,
+        lastCounter = lastCounter.toUInt(),
         alias = alias,
     )
 
@@ -59,7 +64,7 @@ fun PairedDevice.toEntity(): PairedDeviceEntity =
         ip = ip,
         port = port,
         authToken = authToken,
-        pskHex = pskHex,
+        lastCounter = lastCounter.toLong(),
         alias = alias,
     )
 

@@ -28,13 +28,15 @@ fun testDevice(ip: String = "192.168.4.1") = PairedDevice(
     authToken = "token",
 )
 
-/** Hand-written fake: controllable pairing with save/clear counters. */
+/** Hand-written fake: controllable pairing with save/clear/counter counters. */
 class FakeDeviceRepository(initial: PairedDevice? = null) : DeviceRepository {
     private val flow = MutableStateFlow(initial)
     var saveCalls = 0
     var clearCalls = 0
     var saveError: Throwable? = null
     var clearError: Throwable? = null
+    /** Every (deviceId, counter) persisted via [updateCounter], in order. */
+    val counterSaves = mutableListOf<Pair<String, UInt>>()
 
     override fun observePaired(): Flow<PairedDevice?> = flow
 
@@ -50,9 +52,10 @@ class FakeDeviceRepository(initial: PairedDevice? = null) : DeviceRepository {
         flow.value = null
     }
 
-    override suspend fun clearPskHex(deviceId: String) {
+    override suspend fun updateCounter(deviceId: String, counter: UInt) {
+        counterSaves += deviceId to counter
         val current = flow.value
-        if (current?.id == deviceId) flow.value = current.copy(pskHex = null)
+        if (current?.id == deviceId) flow.value = current.copy(lastCounter = counter)
     }
 
     fun emit(device: PairedDevice?) {
@@ -64,6 +67,7 @@ class FakeDeviceRepository(initial: PairedDevice? = null) : DeviceRepository {
 class FakeBondSecretStore : BondSecretStore {
     private val vault = mutableMapOf<String, String>()
     var saveCalls = 0
+    var loadCalls = 0
     var clearCalls = 0
 
     override suspend fun savePsk(deviceId: String, pskHex: String) {
@@ -71,7 +75,10 @@ class FakeBondSecretStore : BondSecretStore {
         vault[deviceId] = pskHex
     }
 
-    override suspend fun loadPsk(deviceId: String): String? = vault[deviceId]
+    override suspend fun loadPsk(deviceId: String): String? {
+        loadCalls++
+        return vault[deviceId]
+    }
 
     override suspend fun clear(deviceId: String) {
         clearCalls++

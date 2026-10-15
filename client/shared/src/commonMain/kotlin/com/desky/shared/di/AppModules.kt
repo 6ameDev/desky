@@ -13,7 +13,7 @@ import com.desky.shared.domain.ObserveDeviceConfigUseCase
 import com.desky.shared.domain.ObserveTelemetryUseCase
 import com.desky.shared.domain.PairDeviceWithCodeUseCase
 import com.desky.shared.domain.SaveDeviceConfigUseCase
-import com.desky.shared.domain.SendRobotControlCommandUseCase
+import com.desky.shared.domain.SendSignedControlUseCase
 import com.desky.shared.domain.SettingsRepository
 import com.desky.shared.domain.UdpSocketManager
 import com.desky.shared.presentation.PairingViewModel
@@ -47,7 +47,7 @@ fun dataModule(db: DeskyDatabase, bondSecretStore: BondSecretStore): Module = mo
 val domainModule: Module = module {
     factory { PairDeviceWithCodeUseCase(get(), get(), get()) }
     factory { GetBondPskUseCase(get(), get()) }
-    factory { SendRobotControlCommandUseCase(get()) }
+    factory { SendSignedControlUseCase(get()) }
     factory { ObserveTelemetryUseCase(get()) }
     factory { EmergencyStopUseCase(get()) }
     factory { SaveDeviceConfigUseCase(get()) }
@@ -61,6 +61,6 @@ val domainModule: Module = module {
  */
 val presentationModule: Module = module {
     viewModel { PairingViewModel(get(), get(), get()) }
-    viewModel { RobotControlViewModel(get(), get(), get(), get(), get()) }
+    viewModel { RobotControlViewModel(get(), get(), get(), get(), get(), get()) }
     viewModel { SettingsViewModel(get(), get(), get()) }
 }

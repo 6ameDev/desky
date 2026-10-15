@@ -31,7 +31,7 @@ class RoomDeviceRepository(
         dao.deleteAll()
     }
 
-    override suspend fun clearPskHex(deviceId: String) {
-        dao.clearPskHex(deviceId)
+    override suspend fun updateCounter(deviceId: String, counter: UInt) {
+        dao.updateCounter(deviceId, counter.toLong())
     }
 }

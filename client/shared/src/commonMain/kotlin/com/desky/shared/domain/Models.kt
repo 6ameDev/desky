@@ -57,17 +57,19 @@ data class Telemetry(
 
 /**
  * A robot the app is paired with. [authToken] is a version marker (`"psk-v1"`)
- * since pairing/auth v1 — the bond secret itself lives in the platform vault
- * ([BondSecretStore]) since Task 8. [pskHex] (lowercase hex of the 16-byte
- * PSK) is legacy: always null on rows written by [PairDeviceWithCodeUseCase],
- * non-null only on pre-Task-8 rows until [GetBondPskUseCase] migrates them.
+ * since pairing/auth v1 — the bond secret itself lives only in the platform
+ * vault ([BondSecretStore]) since Task 8, never in Room. [lastCounter] is the
+ * last drive counter persisted to Room (Task 9: saved every 128 sends,
+ * mirroring firmware A1); the drive session resumes from it, so the first
+ * wire packet after a fresh pair uses counter 1. Never shown in UI state —
+ * a domain/session field only.
  */
 data class PairedDevice(
     val id: String,
     val ip: String,
     val port: Int = DEFAULT_UDP_PORT,
     val authToken: String,
-    val pskHex: String? = null,
+    val lastCounter: UInt = 0u,
     val alias: String = ip,
 )
 

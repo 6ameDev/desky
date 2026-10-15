@@ -11,12 +11,12 @@ import kotlin.test.assertNull
 private const val PSK_HEX = "00112233445566778899aabbccddeeff"
 private const val DEVICE_ID = "desky-192.168.4.1"
 
-private fun legacyDevice() = PairedDevice(
+private fun bondedDevice() = PairedDevice(
     id = DEVICE_ID,
     ip = "192.168.4.1",
     port = DEFAULT_UDP_PORT,
     authToken = "psk-v1",
-    pskHex = PSK_HEX,
+    lastCounter = 0u,
     alias = "192.168.4.1",
 )
 
@@ -36,27 +36,11 @@ class GetBondPskUseCaseTest {
     }
 
     @Test
-    fun vaultHitReturnsKeyWithoutTouchingRoom() = runTest {
-        val repo = FakeDeviceRepository(legacyDevice().copy(pskHex = null))
+    fun vaultHitReturnsKey() = runTest {
+        val repo = FakeDeviceRepository(bondedDevice())
         val vault = FakeBondSecretStore().apply { seed(DEVICE_ID, PSK_HEX) }
 
         assertEquals(PSK_HEX, GetBondPskUseCase(vault, repo)())
-        assertEquals(PSK_HEX, vault.loadPsk(DEVICE_ID))
-    }
-
-    @Test
-    fun migrationMovesLegacyKeyToVaultAndBlanksRoom() = runTest {
-        val repo = FakeDeviceRepository(legacyDevice())
-        val vault = FakeBondSecretStore()
-
-        // First call migrates: returns the key, vault holds it, Room blanked.
-        assertEquals(PSK_HEX, GetBondPskUseCase(vault, repo)())
-        assertEquals(PSK_HEX, vault.loadPsk(DEVICE_ID))
-        assertEquals(1, vault.saveCalls)
-
-        // Second call is a pure vault hit: no second save, same key.
-        assertEquals(PSK_HEX, GetBondPskUseCase(vault, repo)())
-        assertEquals(1, vault.saveCalls)
         assertEquals(PSK_HEX, vault.loadPsk(DEVICE_ID))
     }
 
@@ -66,15 +50,15 @@ class GetBondPskUseCaseTest {
     }
 
     @Test
-    fun nullWhenPairedWithoutKeyAnywhere() = runTest {
-        val repo = FakeDeviceRepository(legacyDevice().copy(pskHex = null))
+    fun nullWhenPairedWithoutKey() = runTest {
+        val repo = FakeDeviceRepository(bondedDevice())
 
         assertNull(GetBondPskUseCase(FakeBondSecretStore(), repo)())
     }
 
     @Test
     fun forgetClearsVaultAndRoom() = runTest {
-        val repo = FakeDeviceRepository(legacyDevice().copy(pskHex = null))
+        val repo = FakeDeviceRepository(bondedDevice())
         val vault = FakeBondSecretStore().apply { seed(DEVICE_ID, PSK_HEX) }
 
         val result = ForgetDeviceUseCase(repo, vault)()

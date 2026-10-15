@@ -52,41 +52,16 @@ class RoomRepositoriesTest {
     }
 
     @Test
-    fun deviceMappingRoundTripsPskHex() {
+    fun deviceMappingRoundTripsLastCounter() {
         val device = PairedDevice(
             id = "desky-192.168.4.1",
             ip = "192.168.4.1",
             port = 3333,
             authToken = "psk-v1",
-            pskHex = "00112233445566778899aabbccddeeff",
+            lastCounter = 128u,
             alias = "192.168.4.1",
         )
         assertEquals(device, device.toEntity().toDomain())
-    }
-
-    @Test
-    fun legacyRowWithoutPskHexReadsBackNull() = runTest {
-        // A v1 row after the v1 -> v2 auto-migration has NULL pskHex:
-        // simulate it with a raw insert that omits the column, then read
-        // back through the repository.
-        db.useConnection(isReadOnly = false) { transactor ->
-            transactor.usePrepared(
-                "INSERT INTO paired_device (id, ip, port, authToken, alias) VALUES (?, ?, ?, ?, ?)",
-            ) { stmt ->
-                stmt.bindText(1, "desky-192.168.4.1")
-                stmt.bindText(2, "192.168.4.1")
-                stmt.bindLong(3, 3333)
-                stmt.bindText(4, "tok")
-                stmt.bindText(5, "192.168.4.1")
-                stmt.step()
-            }
-        }
-
-        RoomDeviceRepository(db.pairedDeviceDao()).observePaired().test {
-            val device = assertNotNull(awaitItem())
-            assertNull(device.pskHex)
-            cancelAndIgnoreRemainingEvents()
-        }
     }
 
     @Test
@@ -153,23 +128,23 @@ class RoomRepositoriesTest {
     }
 
     @Test
-    fun clearPskHexBlanksColumnKeepingRow() = runTest {
+    fun updateCounterPersistsKeepingRow() = runTest {
         val repo = RoomDeviceRepository(db.pairedDeviceDao())
         repo.save(
             PairedDevice(
                 id = "desky-192.168.4.1",
                 ip = "192.168.4.1",
                 authToken = "psk-v1",
-                pskHex = "00112233445566778899aabbccddeeff",
+                lastCounter = 0u,
                 alias = "192.168.4.1",
             ),
         )
 
-        repo.clearPskHex("desky-192.168.4.1")
+        repo.updateCounter("desky-192.168.4.1", 128u)
 
         repo.observePaired().test {
             val device = assertNotNull(awaitItem())
-            assertNull(device.pskHex)
+            assertEquals(128u, device.lastCounter)
             assertEquals("desky-192.168.4.1", device.id)
             assertEquals("192.168.4.1", device.ip)
             assertEquals("psk-v1", device.authToken)

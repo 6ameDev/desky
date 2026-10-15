@@ -8,6 +8,7 @@ import dev.mokkery.matcher.matches
 import dev.mokkery.mock
 import dev.mokkery.verifySuspend
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
@@ -16,20 +17,24 @@ private fun testDevice() = PairedDevice(
     id = "desky-192.168.4.1",
     ip = "192.168.4.1",
     port = DEFAULT_UDP_PORT,
-    authToken = "token",
+    authToken = "psk-v1",
 )
 
-class SendRobotControlCommandUseCaseTest {
+private const val PSK_HEX = "00112233445566778899aabbccddeeff"
+
+private fun psk() = hexToBytes(PSK_HEX)
+
+class SendSignedControlUseCaseTest {
 
     @Test
-    fun sendsExactCodecBytesToDeviceAddress() = runTest {
+    fun sendsExactSignedBytesToDeviceAddress() = runTest {
         val udp = mock<UdpSocketManager>()
         everySuspend { udp.send(any(), any(), any()) } returns Unit
         val device = testDevice()
         val cmd = ControlCommand(RobotMode.AUTONOMOUS, 0.5f, -0.25f)
-        val expected = ControlPacketCodec.encode(cmd)
+        val expected = ControlPacketCodec.encodeSigned(cmd, 7u, psk())
 
-        val result = SendRobotControlCommandUseCase(udp)(device, cmd)
+        val result = SendSignedControlUseCase(udp)(device, cmd, psk(), 7u)
 
         assertIs<Outcome.Success<Unit>>(result)
         verifySuspend {
@@ -38,11 +43,57 @@ class SendRobotControlCommandUseCaseTest {
     }
 
     @Test
+    fun counterGoesOnTheWire() = runTest {
+        val udp = mock<UdpSocketManager>()
+        everySuspend { udp.send(any(), any(), any()) } returns Unit
+        val cmd = ControlCommand(RobotMode.MANUAL, 0f, 0f)
+
+        SendSignedControlUseCase(udp)(testDevice(), cmd, psk(), 1u)
+        SendSignedControlUseCase(udp)(testDevice(), cmd, psk(), 2u)
+
+        // Counter BE bytes 5..8 of each frame.
+        verifySuspend {
+            udp.send(
+                matches { actual: ByteArray ->
+                    actual.size == DRIVE_V2_SIZE &&
+                        actual[5] == 0.toByte() && actual[6] == 0.toByte() &&
+                        actual[7] == 0.toByte() && actual[8] == 1.toByte()
+                },
+                any(),
+                any(),
+            )
+        }
+    }
+
+    @Test
+    fun shortPskRejectedAsFailure() = runTest {
+        val udp = mock<UdpSocketManager>()
+        everySuspend { udp.send(any(), any(), any()) } returns Unit
+
+        // Like the legacy sender, every throw (including the codec's
+        // require) maps to Outcome.Failure — never an escape.
+        val result = SendSignedControlUseCase(udp)(
+            testDevice(),
+            ControlCommand(RobotMode.MANUAL, 0f, 0f),
+            ByteArray(8),
+            1u,
+        )
+
+        val failure = assertIs<Outcome.Failure>(result)
+        assertTrue(failure.reason.contains("psk"), "reason: ${failure.reason}")
+    }
+
+    @Test
     fun sendThrowingMapsToFailure() = runTest {
         val udp = mock<UdpSocketManager>()
         everySuspend { udp.send(any(), any(), any()) } calls { throw IllegalStateException("no route") }
 
-        val result = SendRobotControlCommandUseCase(udp)(testDevice(), ControlCommand(RobotMode.MANUAL, 0f, 0f))
+        val result = SendSignedControlUseCase(udp)(
+            testDevice(),
+            ControlCommand(RobotMode.MANUAL, 0f, 0f),
+            psk(),
+            1u,
+        )
 
         val failure = assertIs<Outcome.Failure>(result)
         assertTrue(failure.reason.isNotBlank())
@@ -53,18 +104,29 @@ class SendRobotControlCommandUseCaseTest {
 class EmergencyStopUseCaseTest {
 
     @Test
-    fun sendsZeroedManualCommandWithEstopFlag() = runTest {
+    fun sendsSignedZeroedManualCommandWithEstopFlag() = runTest {
         val udp = mock<UdpSocketManager>()
         everySuspend { udp.send(any(), any(), any()) } returns Unit
         val device = testDevice()
-        val expected = ControlPacketCodec.encode(ControlCommand(RobotMode.MANUAL, 0f, 0f, ESTOP_FLAG))
+        val expected = ControlPacketCodec.encodeSigned(
+            ControlCommand(RobotMode.MANUAL, 0f, 0f, ESTOP_FLAG),
+            3u,
+            psk(),
+        )
 
-        val result = EmergencyStopUseCase(udp)(device)
+        val result = EmergencyStopUseCase(SendSignedControlUseCase(udp))(device, psk(), 3u)
 
         assertIs<Outcome.Success<Unit>>(result)
         verifySuspend {
             udp.send(matches { actual: ByteArray -> actual.contentEquals(expected) }, device.ip, device.port)
         }
+        // The signed frame carries the flag byte and the frozen golden tag
+        // inputs (counter=3 differs from the counter=1 golden vector, so
+        // only the layout is pinned here — CodecTest pins the tag bytes).
+        val sent = expected
+        assertTrue(sent.size == DRIVE_V2_SIZE)
+        assertTrue((sent[0].toInt() and 0xFF) == DRIVE_V2_HEADER)
+        assertTrue((sent[4].toInt() and 0xFF) == ESTOP_FLAG)
     }
 
     @Test
@@ -77,10 +139,28 @@ class EmergencyStopUseCaseTest {
         val udp = mock<UdpSocketManager>()
         everySuspend { udp.send(any(), any(), any()) } calls { throw IllegalStateException("no route") }
 
-        val result = EmergencyStopUseCase(udp)(testDevice())
+        val result = EmergencyStopUseCase(SendSignedControlUseCase(udp))(testDevice(), psk(), 1u)
 
         val failure = assertIs<Outcome.Failure>(result)
         assertTrue(failure.reason.isNotBlank())
         assertIs<IllegalStateException>(failure.cause)
+    }
+
+    @Test
+    fun delegatesToSignedSenderBytes() = runTest {
+        // E-stop shares the exact wire path: delegate output must equal a
+        // direct signed send of the centered+flag command.
+        val udp = mock<UdpSocketManager>()
+        everySuspend { udp.send(any(), any(), any()) } returns Unit
+        val device = testDevice()
+        val cmd = ControlCommand(RobotMode.MANUAL, 0f, 0f, ESTOP_FLAG)
+
+        EmergencyStopUseCase(SendSignedControlUseCase(udp))(device, psk(), 9u)
+        val direct = ControlPacketCodec.encodeSigned(cmd, 9u, psk())
+
+        verifySuspend {
+            udp.send(matches { actual: ByteArray -> actual.contentEquals(direct) }, device.ip, device.port)
+        }
+        assertContentEquals(direct, ControlPacketCodec.encodeSigned(cmd, 9u, psk()))
     }
 }

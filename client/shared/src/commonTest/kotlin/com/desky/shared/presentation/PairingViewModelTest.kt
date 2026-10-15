@@ -108,8 +108,9 @@ class PairingViewModelTest {
         val device = assertNotNull(state.pairedDevice)
         assertEquals("192.168.4.1", device.ip)
         assertEquals("psk-v1", device.authToken)
-        // Room row carries no key material; the vault holds the bond PSK.
-        assertNull(device.pskHex)
+        // Room row carries no key material and resets the drive counter;
+        // the vault holds the bond PSK.
+        assertEquals(0u, device.lastCounter)
         assertEquals("00112233445566778899aabbccddeeff", vault.loadPsk(device.id))
         assertEquals(1, repo.saveCalls)
     }

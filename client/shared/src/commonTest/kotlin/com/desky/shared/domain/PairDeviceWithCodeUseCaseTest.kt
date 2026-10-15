@@ -143,9 +143,10 @@ class PairDeviceWithCodeUseCaseTest {
         assertEquals(ROBOT_HOST, outcome.data.ip)
         assertEquals(DEFAULT_UDP_PORT, outcome.data.port)
         assertEquals("psk-v1", outcome.data.authToken)
-        // Room never holds key material: the row (and the returned device
-        // mirroring it) carries a null column; the vault holds the key.
-        assertEquals(null, outcome.data.pskHex)
+        // Room never holds key material (no pskHex column since Task 9);
+        // the counter resets so the first drive packet is 1; the vault
+        // holds the key.
+        assertEquals(0u, outcome.data.lastCounter)
         assertEquals(PSK_HEX, vault.loadPsk(outcome.data.id))
         assertEquals(ROBOT_HOST, outcome.data.alias)
         verifySuspend { deviceRepo.save(outcome.data) }
@@ -169,7 +170,7 @@ class PairDeviceWithCodeUseCaseTest {
         udp.inbound.emit(UdpDatagram(pairOkFor(clientNonce), ROBOT_HOST, DEFAULT_UDP_PORT))
 
         val outcome = assertIs<Outcome.Success<PairedDevice>>(deferred.await())
-        assertEquals(null, outcome.data.pskHex)
+        assertEquals(0u, outcome.data.lastCounter)
         assertEquals(PSK_HEX, vault.loadPsk(outcome.data.id))
         assertEquals(1, udp.sent.size)
     }

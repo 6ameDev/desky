@@ -23,10 +23,10 @@ private const val PAIRING_TIMEOUT_MS = 5000L
  * persist the bond.
  *
  * The unwrapped PSK is stored in the platform vault ([BondSecretStore]);
- * the Room row is written with a null `pskHex` column (Task 8: Room no
- * longer holds key material). The returned [PairedDevice] matches the
- * persisted row (null `pskHex`); session code reads the key via
- * [GetBondPskUseCase].
+ * the Room row carries no key material (Task 9: no `pskHex` column) and
+ * `lastCounter = 0` so the drive session's first wire packet uses counter 1.
+ * The returned [PairedDevice] matches the persisted row; session code reads
+ * the key via [GetBondPskUseCase].
  *
  * At most 2 `PAIR_REQ` datagrams leave the app per [invoke] by construction,
  * so our own retries can never trip the firmware 5-try lockout.
@@ -122,7 +122,8 @@ class PairDeviceWithCodeUseCase(
             ip = ROBOT_HOST,
             port = DEFAULT_UDP_PORT,
             authToken = "psk-v1",
-            pskHex = null,
+            // Fresh bond: the counter restarts so the first drive packet is 1.
+            lastCounter = 0u,
             alias = ROBOT_HOST,
         )
         return try {

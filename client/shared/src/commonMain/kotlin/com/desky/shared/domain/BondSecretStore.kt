@@ -1,12 +1,13 @@
 package com.desky.shared.domain
 
 /**
- * Platform secure vault for bond PSKs (pairing/auth Task 8).
+ * Platform secure vault for bond PSKs (pairing/auth Task 8, vault-only
+ * since Task 9).
  *
- * The vault is the at-rest home of the 16-byte bond secret (lowercase hex);
- * Room's `paired_device.pskHex` column is legacy (always null for rows
- * written by [PairDeviceWithCodeUseCase], blanked on read by
- * [GetBondPskUseCase]) and is never read anywhere else.
+ * The vault is the ONLY at-rest home of the 16-byte bond secret (lowercase
+ * hex): Room's `paired_device` table carries the drive counter alone and
+ * never key material. [GetBondPskUseCase] is the single session-load entry
+ * point.
  *
  * Semantics: [loadPsk] returns null when nothing is stored (never throws
  * for a missing entry); [savePsk] overwrites; [clear] removes the entry and

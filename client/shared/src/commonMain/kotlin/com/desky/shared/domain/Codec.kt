@@ -24,6 +24,14 @@ const val PAIR_ERR_SIZE = 4
 const val PAIR_CODE_SIZE = 6
 const val PAIR_NONCE_SIZE = 4
 
+/**
+ * Authenticated drive header/size (frozen spec: `shared/protocol/README.md`
+ * §"Pairing + authenticated drive v1": `DRIVE_V2` 16 bytes
+ * `[0xAC | mode | thr | str | flags | counterBE4 | tag6 | XOR]`).
+ */
+const val DRIVE_V2_HEADER = 0xAC
+const val DRIVE_V2_SIZE = 16
+
 /** Failsafe window: the robot stops ~500 ms after the last control datagram. */
 const val STALE_MS = 500
 
@@ -106,6 +114,11 @@ private fun getI16BE(bytes: ByteArray, at: Int): Short {
  * Control packet codec: App -> Robot, 6 bytes
  * `[0xAA | mode | throttle | steering | flags | XOR]`.
  * Pure byte math mirroring `udp::encodeControl` / `udp::decodeControl`.
+ *
+ * Legacy post-bond: the firmware drops `0xAA` drive datagrams once bonded,
+ * so NOTHING in the app sends through [encode] anymore — it stays only as
+ * the bench/test frame builder (telemetry-garbage fixtures, hello shape).
+ * All drive traffic goes through [encodeSigned].
  */
 object ControlPacketCodec {
     fun encode(cmd: ControlCommand): ByteArray {
@@ -134,6 +147,43 @@ object ControlPacketCodec {
             steering = byteToUnit(bytes[3]),
             flags = bytes[4].toInt() and 0xFF,
         )
+    }
+
+    /**
+     * Authenticated drive frame: `DRIVE_V2`, 16 bytes
+     * `[0xAC | mode | thr | str | flags | counter 4B BE | tag 6B | XOR]`
+     * (frozen spec: `shared/protocol/README.md` §"Pairing + authenticated
+     * drive v1").
+     *
+     * Sticks/mode/flags bytes sit at the same positions as the legacy
+     * layout; `counter` (bytes 5..8, big-endian) is 1 for the first wire
+     * packet and strictly increasing after (0 is never valid on the wire);
+     * `tag = driveTag(psk, counter, mode, thr, str, flags)`; the trailing
+     * byte is the XOR over bytes 0..14.
+     *
+     * Suspend: the tag needs the platform HMAC backend ([driveTag]).
+     *
+     * @param psk 16-byte bond PSK.
+     */
+    suspend fun encodeSigned(cmd: ControlCommand, counter: UInt, psk: ByteArray): ByteArray {
+        require(psk.size == 16) { "encodeSigned: psk must be 16 bytes" }
+        val out = ByteArray(DRIVE_V2_SIZE)
+        out[0] = DRIVE_V2_HEADER.toByte()
+        val mode = cmd.mode.toBits().toByte()
+        val thr = unitToByte(cmd.throttle)
+        val str = unitToByte(cmd.steering)
+        val flags = cmd.flags.toByte()
+        out[1] = mode
+        out[2] = thr
+        out[3] = str
+        out[4] = flags
+        out[5] = (counter shr 24).toByte()
+        out[6] = (counter shr 16).toByte()
+        out[7] = (counter shr 8).toByte()
+        out[8] = counter.toByte()
+        driveTag(psk, counter, mode, thr, str, flags).copyInto(out, destinationOffset = 9)
+        out[DRIVE_V2_SIZE - 1] = xorChecksum(out, DRIVE_V2_SIZE - 1)
+        return out
     }
 }
 

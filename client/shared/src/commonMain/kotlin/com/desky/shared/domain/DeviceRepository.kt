@@ -14,9 +14,9 @@ interface DeviceRepository {
     suspend fun clear()
 
     /**
-     * Blank the legacy Room `pskHex` column for [deviceId] after its key
-     * has been moved to the [BondSecretStore] vault. Migration-only
-     * ([GetBondPskUseCase]); new pairings are written with a null column.
+     * Persist the drive counter for [deviceId] (signed send loop, every 128
+     * sends). The session resumes from this value; a fresh pairing resets it
+     * to 0 via [save] so the first wire packet uses counter 1.
      */
-    suspend fun clearPskHex(deviceId: String)
+    suspend fun updateCounter(deviceId: String, counter: UInt)
 }

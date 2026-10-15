@@ -285,3 +285,91 @@ class TelemetryPacketTest {
         assertNull(TelemetryPacketCodec.decode(badPayload))
     }
 }
+
+class SignedControlPacketTest {
+
+    private fun hex(s: String): ByteArray {
+        require(s.length % 2 == 0)
+        return ByteArray(s.length / 2) { i ->
+            s.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        }
+    }
+
+    @Test
+    fun constants() {
+        assertEquals(0xAC, DRIVE_V2_HEADER)
+        assertEquals(16, DRIVE_V2_SIZE)
+    }
+
+    /**
+     * Full 16B golden frame through the Task 6 frozen `drive_tag`
+     * (`3ec8b625c9c1` for counter=1, mode=`0x00`, thr/str=`0x80`,
+     * flags=`0x00`, psk=`0011...eeff`).
+     */
+    @Test
+    fun goldenFrameBytesAndTag() = kotlinx.coroutines.test.runTest {
+        val psk = hex("00112233445566778899aabbccddeeff")
+        val cmd = ControlCommand(RobotMode.MANUAL, 0f, 0f, 0)
+        val pkt = ControlPacketCodec.encodeSigned(cmd, 1u, psk)
+
+        assertEquals(DRIVE_V2_SIZE, pkt.size)
+        assertEquals(0xAC, pkt[0].unsigned())
+        assertEquals(0x00, pkt[1].unsigned())
+        // Sticks identical to the legacy positions: 0 -> byte 128.
+        assertEquals(128, pkt[2].unsigned())
+        assertEquals(128, pkt[3].unsigned())
+        assertEquals(0x00, pkt[4].unsigned())
+        // Counter BE bytes 5..8 = 1.
+        assertEquals(0, pkt[5].unsigned())
+        assertEquals(0, pkt[6].unsigned())
+        assertEquals(0, pkt[7].unsigned())
+        assertEquals(1, pkt[8].unsigned())
+        // Tag bytes 9..14 = frozen drive_tag vector.
+        assertTrue(
+            pkt.copyOfRange(9, 15).contentEquals(hex("3ec8b625c9c1")),
+            "tag bytes, got ${pkt.copyOfRange(9, 15).joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }}",
+        )
+        // Trailing XOR over bytes 0..14.
+        assertEquals(xorOf(pkt, 15), pkt[15].unsigned())
+    }
+
+    @Test
+    fun counterLaysOutBigEndian() = kotlinx.coroutines.test.runTest {
+        val psk = ByteArray(16) { it.toByte() }
+        val pkt = ControlPacketCodec.encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f), 0x01020304u, psk)
+        assertEquals(0x01, pkt[5].unsigned())
+        assertEquals(0x02, pkt[6].unsigned())
+        assertEquals(0x03, pkt[7].unsigned())
+        assertEquals(0x04, pkt[8].unsigned())
+        assertEquals(xorOf(pkt, 15), pkt[15].unsigned())
+    }
+
+    @Test
+    fun rejectsShortPsk() = kotlinx.coroutines.test.runTest {
+        var threw = false
+        try {
+            ControlPacketCodec.encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f), 1u, ByteArray(8))
+        } catch (e: IllegalArgumentException) {
+            threw = true
+        }
+        assertTrue(threw, "encodeSigned must require a 16-byte PSK")
+    }
+
+    @Test
+    fun hexRoundTrip() {
+        assertTrue(hexToBytes("00112233445566778899aabbccddeeff").contentEquals(hex("00112233445566778899aabbccddeeff")))
+        assertTrue(hexToBytes("3EC8B625C9C1").contentEquals(hex("3ec8b625c9c1")))
+        var threw = 0
+        try {
+            hexToBytes("abc")
+        } catch (e: IllegalArgumentException) {
+            threw++
+        }
+        try {
+            hexToBytes("zz")
+        } catch (e: IllegalArgumentException) {
+            threw++
+        }
+        assertEquals(2, threw)
+    }
+}

@@ -9,15 +9,22 @@ package com.desky.shared.domain
  */
 const val ESTOP_FLAG = 0x01
 
-/** Send a zeroed MANUAL command with [ESTOP_FLAG] set. */
+/**
+ * Send a signed zeroed MANUAL command with [ESTOP_FLAG] set (pairing/auth
+ * Task 9: e-stop rides the same authenticated `DRIVE_V2` path as every
+ * other drive frame, via [SendSignedControlUseCase]).
+ *
+ * The caller owns the counter exactly like the drive loop (strictly
+ * increasing, 1 first, never 0); the drive session allocates it so the
+ * immediate frame and the loop frames share one sequence.
+ */
 class EmergencyStopUseCase(
-    private val udp: UdpSocketManager,
+    private val sendSigned: SendSignedControlUseCase,
 ) {
-    suspend operator fun invoke(device: PairedDevice): Outcome<Unit> {
+    suspend operator fun invoke(device: PairedDevice, psk: ByteArray, counter: UInt): Outcome<Unit> {
         return try {
             val cmd = ControlCommand(RobotMode.MANUAL, 0f, 0f, ESTOP_FLAG)
-            udp.send(ControlPacketCodec.encode(cmd), device.ip, device.port)
-            Outcome.Success(Unit)
+            sendSigned(device, cmd, psk, counter)
         } catch (e: Exception) {
             Outcome.Failure("Failed to send emergency stop: ${e.message}", e)
         }
