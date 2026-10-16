@@ -56,10 +56,13 @@ internal fun wifiNetworkRequest(): NetworkRequest = NetworkRequest.Builder()
  * marks [wifiStale] and the next `onAvailable` re-binds it. Sends issued before
  * the first `onAvailable` still use the default route — the pairing/drive
  * retry loops cover that window. [detach] unregisters the callback and is
- * idempotent (also called from `DatagramSocketManager.close()`).
+ * idempotent (also called from `DatagramSocketManager.close()`; safe when
+ * never attached — the `attached` flag short-circuits under lock).
  *
- * Holds the application context only (never an activity), so [attach] from
- * the app-lifetime Koin graph cannot leak a UI context.
+ * Ownership: app scope (`DeskyApp` Koin singleton), NOT any ViewModel —
+ * see `DatagramSocketManager` KDoc. Holds the application context only
+ * (never an activity), so [attach] from the app-lifetime Koin graph cannot
+ * leak a UI context.
  */
 internal class WifiSocketBinder(context: Context) : UdpSocketBinder {
     private val connectivityManager =

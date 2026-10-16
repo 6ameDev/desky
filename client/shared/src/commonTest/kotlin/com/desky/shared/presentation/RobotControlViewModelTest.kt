@@ -120,16 +120,91 @@ class RobotControlViewModelTest {
         main.runCurrent()
         main.advanceTimeBy(201)
 
-        assertTrue(udp.sent.size >= 10)
+        // Centered idle: 200 ms activity grace (t=0..160) then ~5 Hz, so 9
+        // sends here — every one from the single cached session load.
+        assertEquals(9, udp.sent.size)
         assertEquals(1, vault.loadCalls, "vault read once, session cached in memory")
         main.advanceTimeBy(201)
         assertEquals(1, vault.loadCalls)
     }
 
+    /**
+     * Idle heartbeat: centered sticks drop to ~5 Hz (one send per 10 ticks)
+     * after the 200 ms activity grace, with gapless counters (skipped ticks
+     * allocate nothing); any deflection or latched e-stop restores every-tick
+     * sends immediately. 200 ms << 500 ms robot failsafe, so no safety loss.
+     */
+    @Test
+    fun idleHeartbeatThrottlesAndActivityRestoresFullRate() = runVmTest { main ->
+        val (viewModel, _, udp, _) = setup(tickMs = 20)
+        main.runCurrent()
+        assertEquals(1, udp.sent.size, "first frame goes out immediately")
+
+        // Centered idle: 9-frame grace (t=0..160) then heartbeats at
+        // t=360,560,760,960 — 13 sends in 50 ticks, counters 1..13 gapless.
+        main.advanceTimeBy(1000)
+        assertEquals(13, udp.sent.size, "idle sends ~1 per 10 ticks")
+        assertTrue(
+            udp.sent.last().bytes.contentEquals(
+                encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f, 0), 13u, psk()),
+            ),
+            "skipped ticks allocate no counters",
+        )
+
+        // Deflection resumes every tick immediately (the runCurrent also
+        // fires the loop tick due exactly at the advanceTimeBy end boundary).
+        viewModel.onStick(0.5f, 0f)
+        main.runCurrent()
+        udp.sent.clear()
+        // +1 for advanceTimeBy's exclusive end boundary: ticks at 20..100.
+        main.advanceTimeBy(101)
+        assertEquals(5, udp.sent.size, "deflection sends every tick")
+        assertTrue(
+            udp.sent.last().bytes.contentEquals(
+                encodeSigned(ControlCommand(RobotMode.MANUAL, 0.5f, 0f, 0), 19u, psk()),
+            ),
+        )
+
+        // Recenter past the grace: 9-frame grace then heartbeats every 10th
+        // tick — 13 sends in the next 50 ticks, counters 20..32 gapless.
+        viewModel.onStick(0f, 0f)
+        main.runCurrent()
+        udp.sent.clear()
+        main.advanceTimeBy(1000)
+        assertEquals(13, udp.sent.size, "recentered idle returns to ~1 per 10 ticks")
+        assertTrue(
+            udp.sent.last().bytes.contentEquals(
+                encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f, 0), 32u, psk()),
+            ),
+        )
+
+        // Latched e-stop forces every tick (centered + ESTOP_FLAG): the
+        // immediate frame is counter 33, the loop sends 34,35,36.
+        viewModel.onEmergencyStop()
+        main.runCurrent()
+        udp.sent.clear()
+        main.advanceTimeBy(61)
+        assertEquals(3, udp.sent.size, "eStopped forces every tick")
+        udp.sent.forEachIndexed { i, frame ->
+            assertTrue(
+                frame.bytes.contentEquals(
+                    encodeSigned(
+                        ControlCommand(RobotMode.MANUAL, 0f, 0f, ESTOP_FLAG),
+                        (34u + i.toUInt()),
+                        psk(),
+                    ),
+                ),
+                "estop loop frame $i",
+            )
+        }
+    }
+
     @Test
     fun counterPersistsEvery128Sends() = runVmTest { main ->
         val deviceId = testDevice().id
-        val (_, repo, udp, _) = setup(tickMs = 20)
+        // Deflected (full-rate): idle heartbeat would only send ~13 frames here.
+        val (viewModel, repo, udp, _) = setup(tickMs = 20)
+        viewModel.onStick(0.5f, 0f)
         main.runCurrent()
         // 129 frames total (t=0..2560): the 128th successful send persists.
         main.advanceTimeBy(2561)
@@ -329,6 +404,8 @@ class RobotControlViewModelTest {
         val (viewModel, repo, udp, vault, holder) = setup(tickMs = 20)
         assertNull(viewModel.state.value.error)
         main.runCurrent()
+        // Full-rate deflection: idle heartbeat would only send ~15 frames here.
+        viewModel.onStick(0.5f, 0f)
         // 150 drive frames total (t=0 + 149 ticks): persist fires once at 128.
         main.advanceTimeBy(149 * 20 + 1)
 
@@ -372,5 +449,266 @@ class RobotControlViewModelTest {
                 encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f, 0), 3u, psk()),
             ),
         )
+    }
+
+    /**
+     * Joystick deadband + distinct: sub-threshold noise snaps to centered,
+     * and rapid identical calls collapse to a single effective state update
+     * (no extra sends — onStick itself never transmits, the loop samples).
+     */
+    @Test
+    fun stickDeadbandSnapsNoiseAndDistinctSkipsDuplicates() = runVmTest { main ->
+        val (viewModel, _, _, _) = setup()
+        main.runCurrent()
+
+        // Tiny noise (< 0.02) snaps to zero, never latching a deflection.
+        viewModel.onStick(0.01f, -0.015f)
+        assertEquals(0f, viewModel.state.value.throttle)
+        assertEquals(0f, viewModel.state.value.steering)
+
+        // Rapid identical deflected calls: one effective update, state stable.
+        viewModel.onStick(0.5f, 0.25f)
+        val deflected = viewModel.state.value
+        assertEquals(0.5f, deflected.throttle)
+        assertEquals(0.25f, deflected.steering)
+        repeat(20) { viewModel.onStick(0.5f, 0.25f) }
+        assertEquals(deflected, viewModel.state.value)
+
+        // Identical centered noise stays zero (no phantom deflection).
+        viewModel.onStick(0f, 0f)
+        repeat(20) { viewModel.onStick(0.005f, -0.005f) }
+        assertEquals(0f, viewModel.state.value.throttle)
+        assertEquals(0f, viewModel.state.value.steering)
+    }
+
+    /**
+     * Sub-threshold stick noise between ticks must not hold the radio at
+     * full rate: after reaching steady idle, spamming noise keeps the ~5 Hz
+     * heartbeat (13 sends / 1000 ms at tickMs=20), not 50 Hz.
+     */
+    @Test
+    fun stickNoiseDoesNotHoldFullRate() = runVmTest { main ->
+        val (viewModel, _, udp, _) = setup(tickMs = 20)
+        main.runCurrent()
+        assertEquals(1, udp.sent.size, "first frame goes out immediately")
+
+        // Reach steady idle first (same 13-send shape as the heartbeat test).
+        main.advanceTimeBy(1000)
+        assertEquals(13, udp.sent.size)
+        udp.sent.clear()
+
+        // Spam sub-threshold noise, then measure a full steady-idle window.
+        // Steady idle (no grace restart) is 5 heartbeats / 1000 ms; had the
+        // noise stamped activity, the 9-frame grace would restart → 13.
+        repeat(20) { viewModel.onStick(0.01f, -0.01f) }
+        main.runCurrent()
+        udp.sent.clear()
+        repeat(10) { viewModel.onStick(0.015f, 0.015f) }
+        main.advanceTimeBy(1000)
+        assertEquals(5, udp.sent.size, "sub-threshold noise must not hold full-rate")
+
+        // Sanity: identical deflected spam sends at full rate but adds no
+        // extra frames beyond the loop ticks (5 ticks per 101 ms window).
+        viewModel.onStick(0.5f, 0f)
+        main.runCurrent()
+        udp.sent.clear()
+        repeat(20) { viewModel.onStick(0.5f, 0f) }
+        main.advanceTimeBy(101)
+        assertEquals(5, udp.sent.size, "deflection sends every tick, no extras per call")
+    }
+
+    /**
+     * Background pause: [RobotControlViewModel.onBackground] stops sends
+     * (no counter alloc) while keeping the tick delay; [onForeground]
+     * resumes with gapless counters and no vault re-read. Virtual time,
+     * full-rate deflection so idle gating cannot hide a leak.
+     */
+    @Test
+    fun backgroundPausesSendsAndForegroundResumesGapless() = runVmTest { main ->
+        val (viewModel, _, udp, vault) = setup(tickMs = 20)
+        main.runCurrent()
+        assertEquals(1, udp.sent.size, "first frame goes out immediately")
+
+        // Full-rate deflection: deterministic every-tick sends.
+        viewModel.onStick(0.5f, 0f)
+        main.runCurrent()
+        udp.sent.clear()
+        // +1 for advanceTimeBy's exclusive end boundary: ticks at 20..100.
+        main.advanceTimeBy(101)
+        assertEquals(5, udp.sent.size, "deflection sends every tick")
+        // Counters so far: 1 (t=0) + 5 = 6; last is 6.
+        assertTrue(
+            udp.sent.last().bytes.contentEquals(
+                encodeSigned(ControlCommand(RobotMode.MANUAL, 0.5f, 0f, 0), 6u, psk()),
+            ),
+        )
+        assertEquals(1, vault.loadCalls, "session cached")
+
+        // Background: 25 ticks, zero sends, zero counter advance.
+        viewModel.onBackground()
+        main.runCurrent()
+        udp.sent.clear()
+        main.advanceTimeBy(500)
+        assertTrue(udp.sent.isEmpty(), "background pauses sends")
+        assertEquals(1, vault.loadCalls, "background holds session, no vault re-read")
+
+        // Foreground resumes immediately with the next gapless counter (7).
+        viewModel.onForeground()
+        // No intermediate runCurrent/clear: measure the next window directly.
+        main.advanceTimeBy(101)
+        assertEquals(5, udp.sent.size, "foreground resumes every tick")
+        assertTrue(
+            udp.sent.first().bytes.contentEquals(
+                encodeSigned(ControlCommand(RobotMode.MANUAL, 0.5f, 0f, 0), 7u, psk()),
+            ),
+            "no counter advance while backgrounded",
+        )
+        assertTrue(
+            udp.sent.last().bytes.contentEquals(
+                encodeSigned(ControlCommand(RobotMode.MANUAL, 0.5f, 0f, 0), 11u, psk()),
+            ),
+        )
+        assertEquals(1, vault.loadCalls, "resume needs no vault re-read")
+    }
+
+    /**
+     * Phase-1 UI coalescing: a 15 Hz burst of pitch-only packets recomposes
+     * at ~5 Hz (gated copies), while the link logic stays at 15 Hz
+     * (Connected throughout) and the 2 s silence timeout still demotes with
+     * last-packet retention.
+     */
+    @Test
+    fun telemetryBurstCoalescesToUiRateButKeepsLinkAndTimeout() = runVmTest { main ->
+        val (viewModel, _, udp, _) = setup(tickMs = 20)
+        main.runCurrent()
+
+        fun datagram(pitch: Float) = UdpDatagram(
+            TelemetryPacketCodec.encode(
+                Telemetry(
+                    pitchDeg = pitch,
+                    rollDeg = 0f,
+                    distanceMm = 900,
+                    cliff = false,
+                    driving = true,
+                    mode = RobotMode.MANUAL,
+                ),
+            ),
+            "192.168.4.1",
+            DEFAULT_UDP_PORT,
+        )
+
+        // First packet paints immediately (promotion + due clock).
+        udp.inbound.emit(datagram(0f))
+        main.runCurrent()
+        assertEquals(Connectivity.Connected, viewModel.state.value.connectivity)
+        assertEquals(0f, viewModel.state.value.telemetry?.pitchDeg)
+
+        // 15 Hz burst: 9 pitch-only packets ~66 ms apart (~594 ms total).
+        // UI window is 200 ms (10 ticks), so at most ~3-4 gated copies.
+        val observed = mutableListOf(viewModel.state.value.telemetry?.pitchDeg)
+        repeat(9) { i ->
+            main.advanceTimeBy(66)
+            udp.inbound.emit(datagram(10f + i))
+            main.runCurrent()
+            observed += viewModel.state.value.telemetry?.pitchDeg
+        }
+        val uiChanges = observed.zipWithNext().count { (a, b) -> a != b }
+        assertTrue(
+            uiChanges < 9,
+            "15 Hz pitch-only burst must coalesce: got $uiChanges UI updates for 9 packets ($observed)",
+        )
+        assertTrue(
+            uiChanges <= 4,
+            "expected ~5 Hz (~3 UI updates in ~600 ms), got $uiChanges ($observed)",
+        )
+        assertTrue(uiChanges >= 1, "burst must paint at least once per window ($observed)")
+        assertEquals(
+            Connectivity.Connected,
+            viewModel.state.value.connectivity,
+            "logic path stays Connected at 15 Hz even when UI copies are gated",
+        )
+
+        // Silence past the 2 s budget still demotes, last packet retained.
+        main.advanceTimeBy(2500)
+        main.runCurrent()
+        val stale = viewModel.state.value
+        assertEquals(Connectivity.Disconnected, stale.connectivity)
+        assertEquals(
+            viewModel.state.value.telemetry,
+            stale.telemetry,
+            "last packet stays visible on Disconnected",
+        )
+        kotlin.test.assertNotNull(stale.telemetry)
+    }
+
+    /**
+     * High-value edges (mode / cliff / driving flips) promote immediately
+     * even inside the 200 ms UI window, while a pitch-only drift in the same
+     * window stays gated.
+     */
+    @Test
+    fun telemetryModeCliffDrivingEdgesPromoteImmediately() = runVmTest { main ->
+        val (viewModel, _, udp, _) = setup(tickMs = 20)
+        main.runCurrent()
+
+        fun datagram(
+            pitch: Float = 1f,
+            mode: RobotMode = RobotMode.MANUAL,
+            cliff: Boolean = false,
+            driving: Boolean = true,
+        ) = UdpDatagram(
+            TelemetryPacketCodec.encode(
+                Telemetry(
+                    pitchDeg = pitch,
+                    rollDeg = 0f,
+                    distanceMm = 900,
+                    cliff = cliff,
+                    driving = driving,
+                    mode = mode,
+                ),
+            ),
+            "192.168.4.1",
+            DEFAULT_UDP_PORT,
+        )
+
+        udp.inbound.emit(datagram())
+        main.runCurrent()
+        assertEquals(RobotMode.MANUAL, viewModel.state.value.mode)
+        assertEquals(false, viewModel.state.value.telemetry?.cliff)
+
+        // 1 tick later (well inside the 200 ms / 10-tick window): pitch-only
+        // drift stays gated...
+        main.advanceTimeBy(20)
+        udp.inbound.emit(datagram(pitch = 2f))
+        main.runCurrent()
+        assertEquals(
+            1f,
+            viewModel.state.value.telemetry?.pitchDeg,
+            "low-value drift inside the window must not recompose",
+        )
+
+        // ...but a mode flip in the same window paints immediately.
+        main.advanceTimeBy(20)
+        udp.inbound.emit(datagram(pitch = 3f, mode = RobotMode.AUTONOMOUS))
+        main.runCurrent()
+        assertEquals(RobotMode.AUTONOMOUS, viewModel.state.value.mode)
+        assertEquals(3f, viewModel.state.value.telemetry?.pitchDeg)
+
+        // Cliff edge: 1 tick after the mode paint (window just reset).
+        main.advanceTimeBy(20)
+        udp.inbound.emit(datagram(pitch = 4f, mode = RobotMode.AUTONOMOUS, cliff = true))
+        main.runCurrent()
+        assertEquals(true, viewModel.state.value.telemetry?.cliff)
+        assertEquals(4f, viewModel.state.value.telemetry?.pitchDeg)
+
+        // Driving edge: same story.
+        main.advanceTimeBy(20)
+        udp.inbound.emit(
+            datagram(pitch = 5f, mode = RobotMode.AUTONOMOUS, cliff = true, driving = false),
+        )
+        main.runCurrent()
+        assertEquals(false, viewModel.state.value.telemetry?.driving)
+        assertEquals(5f, viewModel.state.value.telemetry?.pitchDeg)
+        assertEquals(Connectivity.Connected, viewModel.state.value.connectivity)
     }
 }

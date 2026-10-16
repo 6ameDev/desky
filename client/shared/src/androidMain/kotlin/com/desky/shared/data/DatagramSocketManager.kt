@@ -48,6 +48,13 @@ private const val MAX_DATAGRAM_BYTES = 64
  * throwing initializer. Null surfaces a closed/broken manager: the receive
  * loop exits immediately and [send] fails fast with `IOException` (reported
  * to the caller, never a startup crash).
+ *
+ * Ownership: app scope (`DeskyApp` Koin singleton), NOT any ViewModel.
+ * ViewModels (e.g. `RobotControlViewModel`) hold the manager for API
+ * symmetry but must never close it — closing the shared singleton would
+ * break every other screen. Close/detach live and die with the process
+ * (there is no `DeskyApp.onTerminate` wiring: it never runs on real
+ * devices, so KDoc-only by design — no new lifecycle dependency).
  */
 actual fun createUdpSocketManager(scope: CoroutineScope): UdpSocketManager =
     DatagramSocketManager(scope)
@@ -66,6 +73,15 @@ internal class DatagramSocketManager(
     }
 
     private var wifiBinder: UdpSocketBinder? = null
+
+    /**
+     * Close guard: [close] is idempotent — safe to call twice or racing a
+     * `bindToWifiNetwork` (which treats a closed/null socket as no-op).
+     * Volatile, not locked: every step inside is itself idempotent
+     * (`Job.cancel`, `DatagramSocket.close`, `UdpSocketBinder.detach`).
+     */
+    @Volatile
+    private var closed = false
 
     private val _incoming = MutableSharedFlow<UdpDatagram>(extraBufferCapacity = 64)
     override val incoming: Flow<UdpDatagram> = _incoming.asSharedFlow()
@@ -139,9 +155,18 @@ internal class DatagramSocketManager(
         wifiBinder = binder
     }
 
+    /**
+     * Idempotent + safe double-call: second (or concurrent) calls no-op.
+     * App-scope only — never call from a ViewModel (see class KDoc).
+     */
     override suspend fun close() {
+        if (closed) return
+        closed = true
         receiveJob.cancel()
+        // DatagramSocket.close() is itself idempotent; null = creation failed.
         socket?.close()
+        // detach() is idempotent (safe when never attached); null afterwards
+        // so a repeated close cannot re-detach.
         wifiBinder?.detach()
         wifiBinder = null
     }
