@@ -23,6 +23,7 @@
 #include <Preferences.h>
 
 #include "common/logger.h"
+#include "middleware/connection_manager.h"
 
 class ConfigStore {
  public:
@@ -66,7 +67,17 @@ class ConfigStore {
   // Persists a fresh bond: 16-byte PSK + starting counter. Overwrites any
   // previous owner (single-owner rule). Returns false if NVS is unavailable
   // or psk is null (nothing is partially written on invalid input).
+  // Platform split 1.1: the Receipt& overload is the minter (marks the
+  // receipt valid ONLY on a full persist — the store-before-ACK proof
+  // consumed by UdpServer::sendPairOk/sendRekeyAck); the plain overload
+  // delegates so existing callers keep compiling.
   static bool saveBond(const uint8_t* psk, uint32_t counter) {
+    connection::PersistReceipt receipt;
+    return saveBond(psk, counter, receipt);
+  }
+
+  static bool saveBond(const uint8_t* psk, uint32_t counter, connection::PersistReceipt& receipt) {
+    receipt.mark(false);
     if (psk == nullptr) {
       return false;
     }
@@ -91,6 +102,7 @@ class ConfigStore {
       LOG_E("CONFIG", "bond counter/flag write failed (%u/%u)", (unsigned)counterWritten, (unsigned)bondedWritten);
       return false;
     }
+    receipt.mark(true);  // Store-before-ACK proof minted ONLY on full persist.
     return true;
   }
 
@@ -153,7 +165,14 @@ class ConfigStore {
 
   // Persists a rekeyed bond atomically: next PSK + next era + baseline
   // counter 0 (first post-rekey drive uses 1 — same as fresh pair).
+  // Same minter/delegating split as saveBond above.
   static bool saveRekey(const uint8_t* psk, uint16_t era, uint32_t counter) {
+    connection::PersistReceipt receipt;
+    return saveRekey(psk, era, counter, receipt);
+  }
+
+  static bool saveRekey(const uint8_t* psk, uint16_t era, uint32_t counter, connection::PersistReceipt& receipt) {
+    receipt.mark(false);
     if (psk == nullptr) {
       return false;
     }
@@ -175,6 +194,7 @@ class ConfigStore {
       LOG_E("CONFIG", "rekey era/counter/flag write failed");
       return false;
     }
+    receipt.mark(true);  // Store-before-ACK proof minted ONLY on full persist.
     return true;
   }
 

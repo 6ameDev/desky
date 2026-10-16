@@ -10,9 +10,58 @@
 
 #include <unity.h>
 
+#include <type_traits>
+#include <utility>
+
 #include "../src/behavior/coordinator.h"
 #include "../src/middleware/udp_codec.h"
 #include "../src/middleware/udp_server.h"
+// Platform split 1.1: udp_server.h is included FIRST (it defines
+// UDPSTATUS_TOP_HALF_INCLUDED + pulls the connection core); pairing.h is
+// the PairingExchange owner, telemetry_manager.h the cadence/encode owner.
+#include "../src/middleware/pairing.h"
+#include "../src/services/telemetry_manager.h"
+
+// Static assert #3 (platform split 1.1): frozen wire sizes + LastPair cache
+// shape + distinct claimed headers, pinned at COMPILE time on the host.
+// (The LastPair::ok39 == kPairOkSize pin lives in udp_server.h
+// firmware-side — both contexts covered. All goldens below stay green.)
+static_assert(pairing::kPairOkSize == 39, "PAIR_OK is 39B (v1.1)");
+static_assert(pairing::kPairOkLegacySize == 38, "v1 PAIR_OK was 38B");
+static_assert(udpstatus::kRekeyAckSize == 10, "REKEY_ACK is 10B");
+static_assert(pairing::kRekeyAckSize == 10, "REKEY_ACK is 10B (pairing owner)");
+static_assert(udpstatus::kRekeyAckSize == pairing::kRekeyAckSize, "rekey ACK size single truth");
+static_assert(udpstatus::kAliveSize == 14, "ALIVE is 14B");
+static_assert(udpstatus::kDisconnectSize == 14, "DISCONNECT is 14B");
+static_assert(pairing::kAliveSize == 14, "ALIVE is 14B (pairing owner)");
+static_assert(pairing::kDisconnectSize == 14, "DISCONNECT is 14B (pairing owner)");
+static_assert(udpstatus::kDriveV2Size == 16, "DRIVE_V2 is 16B");
+static_assert(udp::kTelemetrySize == 9, "telemetry is 9B");
+static_assert(udpstatus::kDriveV2Header != udpstatus::kPairReqHeader, "claimed headers distinct");
+static_assert(udpstatus::kDriveV2Header != udpstatus::kUnbondHeader, "claimed headers distinct");
+static_assert(udpstatus::kDriveV2Header != udpstatus::kRekeyReqHeader, "claimed headers distinct");
+static_assert(udpstatus::kDriveV2Header != udpstatus::kAliveHeader, "claimed headers distinct");
+static_assert(udpstatus::kDriveV2Header != udpstatus::kDisconnectHeader, "claimed headers distinct");
+static_assert(udpstatus::kPairReqHeader != udpstatus::kUnbondHeader, "claimed headers distinct");
+static_assert(udpstatus::kPairReqHeader != udpstatus::kRekeyReqHeader, "claimed headers distinct");
+static_assert(udpstatus::kPairReqHeader != udpstatus::kAliveHeader, "claimed headers distinct");
+static_assert(udpstatus::kPairReqHeader != udpstatus::kDisconnectHeader, "claimed headers distinct");
+static_assert(udpstatus::kUnbondHeader != udpstatus::kRekeyReqHeader, "claimed headers distinct");
+static_assert(udpstatus::kUnbondHeader != udpstatus::kAliveHeader, "claimed headers distinct");
+static_assert(udpstatus::kUnbondHeader != udpstatus::kDisconnectHeader, "claimed headers distinct");
+static_assert(udpstatus::kRekeyReqHeader != udpstatus::kAliveHeader, "claimed headers distinct");
+static_assert(udpstatus::kRekeyReqHeader != udpstatus::kDisconnectHeader, "claimed headers distinct");
+static_assert(udpstatus::kAliveHeader != udpstatus::kDisconnectHeader, "claimed headers distinct");
+// Token discipline (platform split 1.1, token #1): move-only, never copied.
+static_assert(!std::is_copy_constructible<connection::Verified>::value, "Verified is move-only");
+static_assert(!std::is_copy_assignable<connection::Verified>::value, "Verified is move-only");
+static_assert(std::is_move_constructible<connection::Verified>::value, "Verified moves");
+static_assert(!std::is_copy_constructible<connection::Pinned>::value, "Pinned is move-only");
+static_assert(!std::is_copy_assignable<connection::Pinned>::value, "Pinned is move-only");
+static_assert(std::is_move_constructible<connection::Pinned>::value, "Pinned moves");
+static_assert(!std::is_copy_constructible<connection::PersistReceipt>::value, "PersistReceipt is move-only");
+static_assert(!std::is_copy_assignable<connection::PersistReceipt>::value, "PersistReceipt is move-only");
+static_assert(std::is_move_constructible<connection::PersistReceipt>::value, "PersistReceipt moves");
 
 void test_status_flags_pack_bits() {
   TEST_ASSERT_EQUAL_UINT8(0x01, udpstatus::packStatus(true, false, 0));
@@ -357,4 +406,228 @@ void test_udp_telemetry_gate_silent_pre_bond() {
 void test_udp_telemetry_gate_wrap() {
   TEST_ASSERT_TRUE(udpstatus::shouldSendTelemetry(true, true, 0xFFFFFF00u, 100u));
   TEST_ASSERT_FALSE(udpstatus::shouldSendTelemetry(true, true, 0xFFFFFF00u, 6000u));
+}
+
+// Platform split 1.1, step 5: runtime mirror of the frozen-size static
+// asserts above (keeps the sizes visible in the test log too).
+void test_udp_frozen_sizes() {
+  TEST_ASSERT_EQUAL(39, static_cast<int>(pairing::kPairOkSize));
+  TEST_ASSERT_EQUAL(38, static_cast<int>(pairing::kPairOkLegacySize));
+  TEST_ASSERT_EQUAL(10, static_cast<int>(udpstatus::kRekeyAckSize));
+  TEST_ASSERT_EQUAL(14, static_cast<int>(udpstatus::kAliveSize));
+  TEST_ASSERT_EQUAL(14, static_cast<int>(udpstatus::kDisconnectSize));
+  TEST_ASSERT_EQUAL(16, static_cast<int>(udpstatus::kDriveV2Size));
+  TEST_ASSERT_EQUAL(9, static_cast<int>(udp::kTelemetrySize));
+}
+
+// Platform split 1.1, step 1: ConnectionManager (u32 peer, no IPAddress in
+// core). Window is the udpstatus::kAliveMs passthrough — pinned, not
+// redefined: the manager takes it as a ctor parameter.
+void test_conn_ip_u32_roundtrip() {
+  TEST_ASSERT_EQUAL_UINT32(0xC0A80401u, connection::ipToU32(192, 168, 4, 1));
+  uint8_t out[4] = {};
+  connection::u32ToIp(0xC0A80401u, out);
+  const uint8_t expected[4] = {192, 168, 4, 1};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, out, sizeof(expected));
+  connection::u32ToIp(0, nullptr);  // Null-safe no-op.
+}
+
+void test_conn_initial_cleared() {
+  connection::ConnectionManager mgr(udpstatus::kAliveMs);
+  TEST_ASSERT_EQUAL_UINT32(5000, udpstatus::kAliveMs);  // Passthrough value pinned.
+  TEST_ASSERT_FALSE(mgr.havePeer());
+  TEST_ASSERT_FALSE(mgr.isAlive(1000));
+  TEST_ASSERT_EQUAL_UINT32(0, mgr.peer());
+}
+
+void test_conn_markalive_pins_and_alive() {
+  connection::ConnectionManager mgr(udpstatus::kAliveMs);
+  const connection::Checks okc{true, true, true, true};
+  connection::Verified v = connection::AuthVerifier::verify(okc, 42, 3);
+  TEST_ASSERT_TRUE(v.valid());
+  TEST_ASSERT_EQUAL_UINT32(42, v.ctr());
+  TEST_ASSERT_EQUAL_UINT16(3, v.era());
+  connection::Pinned p = mgr.markAlive(std::move(v), 0xC0A80401u, 1000);
+  TEST_ASSERT_TRUE(p.valid());
+  TEST_ASSERT_EQUAL_UINT32(0xC0A80401u, p.peer());
+  TEST_ASSERT_TRUE(mgr.havePeer());
+  TEST_ASSERT_EQUAL_UINT32(0xC0A80401u, mgr.peer());
+  TEST_ASSERT_TRUE(mgr.isAlive(1000));
+  TEST_ASSERT_TRUE(mgr.isAlive(6000));   // Boundary counts as fresh.
+  TEST_ASSERT_FALSE(mgr.isAlive(6001));  // Past the window: stale.
+}
+
+void test_conn_markalive_rejects_unverified() {
+  connection::ConnectionManager mgr(udpstatus::kAliveMs);
+  // Each denied cause mints an invalid token; the funnel changes nothing.
+  const connection::Checks causes[4] = {
+      {false, true, true, true}, {true, false, true, true}, {true, true, false, true}, {true, true, true, false}};
+  for (size_t i = 0; i < 4; ++i) {
+    connection::Verified v = connection::AuthVerifier::verify(causes[i], 7, 0);
+    TEST_ASSERT_FALSE(v.valid());
+    connection::Pinned p = mgr.markAlive(std::move(v), 0xC0A80401u, 1000);
+    TEST_ASSERT_FALSE(p.valid());
+  }
+  TEST_ASSERT_FALSE(mgr.havePeer());
+  TEST_ASSERT_FALSE(mgr.isAlive(1000));
+}
+
+void test_conn_refresh_then_clear() {
+  connection::ConnectionManager mgr(udpstatus::kAliveMs);
+  const connection::Checks okc{true, true, true, true};
+  connection::Verified v = connection::AuthVerifier::verify(okc, 1, 0);
+  connection::Pinned p = mgr.markAlive(std::move(v), 0xC0A80401u, 1000);
+  TEST_ASSERT_TRUE(p.valid());
+  connection::Verified g = connection::AuthVerifier::verify(okc, 2, 0);
+  mgr.refreshThenClear(std::move(g), 2000);  // Signed goodbye: stamp kept, net peer gone.
+  TEST_ASSERT_FALSE(mgr.havePeer());
+  TEST_ASSERT_FALSE(mgr.isAlive(2000));
+  TEST_ASSERT_EQUAL_UINT32(2000, mgr.lastAliveMs());
+  mgr.clear();
+  TEST_ASSERT_EQUAL_UINT32(0, mgr.lastAliveMs());
+}
+
+void test_conn_pin_peer_no_stamp() {
+  // Legacy pre-bond quirk (preserved exactly): pinning records the peer
+  // WITHOUT touching the alive stamp.
+  connection::ConnectionManager mgr(udpstatus::kAliveMs);
+  mgr.pinPeer(0xC0A80401u);
+  TEST_ASSERT_TRUE(mgr.havePeer());
+  TEST_ASSERT_EQUAL_UINT32(0, mgr.lastAliveMs());
+  const connection::Checks okc{true, true, true, true};
+  connection::Verified v = connection::AuthVerifier::verify(okc, 1, 0);
+  connection::Pinned p = mgr.markAlive(std::move(v), 0xC0A80401u, 1000);
+  TEST_ASSERT_TRUE(p.valid());
+  mgr.pinPeer(0xC0A80402u);  // Re-pin (e.g. DHCP change) without a valid frame.
+  TEST_ASSERT_EQUAL_UINT32(0xC0A80402u, mgr.peer());
+  TEST_ASSERT_EQUAL_UINT32(1000, mgr.lastAliveMs());  // Stamp untouched by the pin.
+}
+
+void test_conn_isalive_wrap_safe() {
+  connection::ConnectionManager mgr(udpstatus::kAliveMs);
+  const connection::Checks okc{true, true, true, true};
+  connection::Verified v = connection::AuthVerifier::verify(okc, 1, 0);
+  connection::Pinned p = mgr.markAlive(std::move(v), 1, 0xFFFFFF00u);
+  TEST_ASSERT_TRUE(p.valid());
+  TEST_ASSERT_TRUE(mgr.isAlive(100u));    // 356ms after a near-rollover mark: fresh.
+  TEST_ASSERT_FALSE(mgr.isAlive(6000u));  // 6256ms: stale.
+}
+
+// Platform split 1.1, step 3: token move semantics — validity transfers to
+// the new owner, the moved-from token is dead (no proof duplication).
+void test_tokens_move_transfers_validity() {
+  const connection::Checks okc{true, true, true, true};
+  connection::Verified v = connection::AuthVerifier::verify(okc, 9, 1);
+  connection::Verified v2(std::move(v));
+  TEST_ASSERT_TRUE(v2.valid());
+  connection::ConnectionManager mgr(udpstatus::kAliveMs);
+  connection::Pinned p = mgr.markAlive(std::move(v2), 5, 100);
+  connection::Pinned p2(std::move(p));
+  TEST_ASSERT_TRUE(p2.valid());
+  TEST_ASSERT_EQUAL_UINT32(5, p2.peer());
+  connection::PersistReceipt r;  // Default-constructs INVALID (fail-closed).
+  TEST_ASSERT_FALSE(r.valid());
+  connection::PersistReceipt r2(std::move(r));
+  TEST_ASSERT_FALSE(r2.valid());
+}
+
+// Platform split 1.1, step 2: TelemetryManager — encode moved verbatim
+// (same udpstatus pack lines sendTelemetry used), cadence + edge decide,
+// bytes leave via the caller-provided send fn (no sockets here).
+void test_telemetry_encode_snapshot_golden() {
+  telemetry::Snapshot s;
+  s.mode = 3;
+  s.cliff = true;
+  s.driving = true;
+  s.pitchDeg = 12.3f;
+  s.rollDeg = -4.5f;
+  s.distMm = 1234;
+  udp::TelemetryPacket pkt;
+  telemetry::encodeSnapshot(s, pkt);
+  TEST_ASSERT_EQUAL_INT16(123, pkt.pitch);
+  TEST_ASSERT_EQUAL_INT16(-45, pkt.roll);
+  TEST_ASSERT_EQUAL_UINT16(1234, pkt.distanceMm);
+  TEST_ASSERT_EQUAL_UINT8(0x0F, pkt.statusFlags);  // cliff + driving + EMERGENCY.
+  // Single-owner cross-check: identical to the udpstatus lines moved here.
+  TEST_ASSERT_EQUAL_INT16(udpstatus::degToDecideg(12.3f), pkt.pitch);
+  TEST_ASSERT_EQUAL_INT16(udpstatus::degToDecideg(-4.5f), pkt.roll);
+  TEST_ASSERT_EQUAL_UINT8(udpstatus::packStatus(true, true, 3), pkt.statusFlags);
+}
+
+void test_telemetry_publish_sends_when_due() {
+  telemetry::TelemetryManager tm(66);
+  TEST_ASSERT_EQUAL_UINT32(66, tm.rateMs());
+  telemetry::Snapshot s;
+  s.distMm = 300;
+  udp::TelemetryPacket pkt;
+  telemetry::encodeSnapshot(s, pkt);
+  uint8_t got[udp::kTelemetrySize] = {};
+  size_t gotLen = 0;
+  uint32_t calls = 0;
+  const bool sent = tm.publish(pkt, true, 1000, [&](const uint8_t* b, size_t n) {
+    gotLen = n;
+    for (size_t i = 0; i < n && i < sizeof(got); ++i) {
+      got[i] = b[i];
+    }
+    ++calls;
+  });
+  TEST_ASSERT_TRUE(sent);
+  TEST_ASSERT_EQUAL_UINT32(1, calls);
+  uint8_t expected[udp::kTelemetrySize] = {};
+  udp::encodeTelemetry(pkt, expected);
+  TEST_ASSERT_EQUAL(sizeof(expected), gotLen);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, got, sizeof(expected));
+  TEST_ASSERT_TRUE(tm.hasSent());
+  TEST_ASSERT_EQUAL_UINT32(1000, tm.lastTxMs());
+}
+
+void test_telemetry_publish_silent_without_gate() {
+  telemetry::TelemetryManager tm(66);
+  telemetry::Snapshot s;
+  udp::TelemetryPacket pkt;
+  telemetry::encodeSnapshot(s, pkt);
+  uint32_t calls = 0;
+  TEST_ASSERT_FALSE(tm.publish(pkt, false, 1000, [&](const uint8_t* b, size_t n) {
+    (void)b;
+    (void)n;
+    ++calls;
+  }));
+  TEST_ASSERT_EQUAL_UINT32(0, calls);
+  TEST_ASSERT_FALSE(tm.hasSent());
+}
+
+void test_telemetry_publish_holds_cadence() {
+  telemetry::TelemetryManager tm(66);
+  telemetry::Snapshot s;
+  udp::TelemetryPacket pkt;
+  telemetry::encodeSnapshot(s, pkt);
+  uint32_t calls = 0;
+  auto send = [&](const uint8_t* b, size_t n) {
+    (void)b;
+    (void)n;
+    ++calls;
+  };
+  TEST_ASSERT_TRUE(tm.publish(pkt, true, 1000, send));
+  TEST_ASSERT_FALSE(tm.publish(pkt, true, 1001, send));  // Same bytes, before cadence: silent.
+  TEST_ASSERT_TRUE(tm.publish(pkt, true, 1066, send));   // Cadence due: sends.
+  TEST_ASSERT_EQUAL_UINT32(2, calls);
+}
+
+void test_telemetry_publish_edge_forces_early() {
+  telemetry::TelemetryManager tm(60000);  // Huge cadence: only an edge can send early.
+  telemetry::Snapshot s;
+  udp::TelemetryPacket pkt;
+  telemetry::encodeSnapshot(s, pkt);
+  uint32_t calls = 0;
+  auto send = [&](const uint8_t* b, size_t n) {
+    (void)b;
+    (void)n;
+    ++calls;
+  };
+  TEST_ASSERT_TRUE(tm.publish(pkt, true, 1000, send));   // First send is an edge.
+  TEST_ASSERT_FALSE(tm.publish(pkt, true, 1001, send));  // Same bytes: silent.
+  s.cliff = true;                                        // Status edge: cliff bit flips.
+  telemetry::encodeSnapshot(s, pkt);
+  TEST_ASSERT_TRUE(tm.publish(pkt, true, 1001, send));  // Edge fires before cadence.
+  TEST_ASSERT_EQUAL_UINT32(2, calls);
 }

@@ -197,5 +197,34 @@ void test_disconnect_tag_msg_golden() {
   pairing::disconnectTagMsg(1u, 1u, nullptr);
 }
 
+// Platform split 1.1, step 4 (PairingExchange absorb): bond/era lifecycle
+// in Core — fresh pair resets era 0 + stamps the bond clock, rotation moves
+// the era, symmetric forget clears all three. UdpServer forwards at the
+// same points it flips its own flags (firmware-only, proven on-device).
+void test_pair_core_bond_lifecycle() {
+  pairing::Core core;
+  TEST_ASSERT_FALSE(core.bonded());
+  TEST_ASSERT_EQUAL_UINT16(0, core.era());
+  TEST_ASSERT_EQUAL_UINT32(0, core.bondMs());
+  TEST_ASSERT_TRUE(core.openWindow(1000, kCode));
+  TEST_ASSERT_EQUAL(static_cast<int>(pairing::Result::kOk),
+                    static_cast<int>(core.tryCode(kCode, pairing::kCodeLen, 1001)));
+  TEST_ASSERT_TRUE(core.bonded());
+  TEST_ASSERT_EQUAL_UINT16(0, core.era());  // Fresh pair starts era 0.
+  TEST_ASSERT_EQUAL_UINT32(1001, core.bondMs());
+  core.onRekeyApplied(7);  // Forwarded after the NVS saveRekey + switch.
+  TEST_ASSERT_TRUE(core.bonded());
+  TEST_ASSERT_EQUAL_UINT16(7, core.era());
+  TEST_ASSERT_EQUAL_UINT32(1001, core.bondMs());  // Rotation keeps the bond clock.
+  core.onPairBonded(2000);                        // Forward is idempotent (same values twice).
+  TEST_ASSERT_TRUE(core.bonded());
+  TEST_ASSERT_EQUAL_UINT16(0, core.era());
+  TEST_ASSERT_EQUAL_UINT32(2000, core.bondMs());
+  core.onUnbonded();  // Symmetric forget.
+  TEST_ASSERT_FALSE(core.bonded());
+  TEST_ASSERT_EQUAL_UINT16(0, core.era());
+  TEST_ASSERT_EQUAL_UINT32(0, core.bondMs());
+}
+
 // Runner lives in test_udp_codec.cpp (single main for the native-test
 // binary): the pairing tests are declared extern there.

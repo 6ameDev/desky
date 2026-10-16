@@ -145,6 +145,15 @@ window. Pre-bond ALIVE/DISCONNECT drop like pre-bond drive; old-key
 frames die via HMAC with no layout change. App-side ALIVE send is a
 separate task — the firmware handler ships first so the wire is stable.
 
+Platform split (structure-only — wire unchanged): connection peer + alive
+funnel core is `embedded/core/src/middleware/connection_manager.h`
+(`connection::ConnectionManager`, u32 peer; `UdpServer` adapts
+`IPAddress`<->u32 and keeps the WiFiUDP fd + gate logging + send);
+telemetry cadence/encode is `embedded/core/src/services/telemetry_manager.h`
+(aggregate `Snapshot` in, bytes out via a `UdpServer`-provided send fn);
+bond/era lifecycle is `middleware/pairing.h` `Core` (`UdpServer` keeps the
+PSK/counter/NVS + redelivery cache).
+
 Tier-1 silent auto-rekey (era + PSK rotation, fully silent, no user
 action): before the app counter hits `EXHAUSTION_GATE` (`0xFFFFFF00`) both
 sides rotate to a new era + PSK under the old PSK, reset the counter to the

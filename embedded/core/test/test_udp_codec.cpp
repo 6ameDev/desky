@@ -203,6 +203,20 @@ void test_udp_telemetry_gate_silent_when_stale();
 void test_udp_telemetry_gate_silent_when_no_peer();
 void test_udp_telemetry_gate_silent_pre_bond();
 void test_udp_telemetry_gate_wrap();
+void test_udp_frozen_sizes();
+void test_conn_ip_u32_roundtrip();
+void test_conn_initial_cleared();
+void test_conn_markalive_pins_and_alive();
+void test_conn_markalive_rejects_unverified();
+void test_conn_refresh_then_clear();
+void test_conn_pin_peer_no_stamp();
+void test_conn_isalive_wrap_safe();
+void test_tokens_move_transfers_validity();
+void test_telemetry_encode_snapshot_golden();
+void test_telemetry_publish_sends_when_due();
+void test_telemetry_publish_silent_without_gate();
+void test_telemetry_publish_holds_cadence();
+void test_telemetry_publish_edge_forces_early();
 
 // I2S audio DSP + meter policy, defined in test_audio.cpp.
 void test_audio_dual_mono32_top_justified();
@@ -225,6 +239,7 @@ void test_rekey_ack_tag_msg_golden();
 void test_alive_disconnect_wire_consts();
 void test_alive_tag_msg_golden();
 void test_disconnect_tag_msg_golden();
+void test_pair_core_bond_lifecycle();
 
 int main() {
   UNITY_BEGIN();
@@ -337,6 +352,20 @@ int main() {
   RUN_TEST(test_udp_telemetry_gate_silent_when_no_peer);
   RUN_TEST(test_udp_telemetry_gate_silent_pre_bond);
   RUN_TEST(test_udp_telemetry_gate_wrap);
+  RUN_TEST(test_udp_frozen_sizes);
+  RUN_TEST(test_conn_ip_u32_roundtrip);
+  RUN_TEST(test_conn_initial_cleared);
+  RUN_TEST(test_conn_markalive_pins_and_alive);
+  RUN_TEST(test_conn_markalive_rejects_unverified);
+  RUN_TEST(test_conn_refresh_then_clear);
+  RUN_TEST(test_conn_pin_peer_no_stamp);
+  RUN_TEST(test_conn_isalive_wrap_safe);
+  RUN_TEST(test_tokens_move_transfers_validity);
+  RUN_TEST(test_telemetry_encode_snapshot_golden);
+  RUN_TEST(test_telemetry_publish_sends_when_due);
+  RUN_TEST(test_telemetry_publish_silent_without_gate);
+  RUN_TEST(test_telemetry_publish_holds_cadence);
+  RUN_TEST(test_telemetry_publish_edge_forces_early);
   RUN_TEST(test_audio_dual_mono32_top_justified);
   RUN_TEST(test_audio_chime_shape_and_decay);
   RUN_TEST(test_audio_int24_unpack_top24_in_32);
@@ -355,5 +384,6 @@ int main() {
   RUN_TEST(test_alive_disconnect_wire_consts);
   RUN_TEST(test_alive_tag_msg_golden);
   RUN_TEST(test_disconnect_tag_msg_golden);
+  RUN_TEST(test_pair_core_bond_lifecycle);
   return UNITY_END();
 }

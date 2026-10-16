@@ -25,10 +25,14 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -51,6 +55,25 @@ fun ControlScreen(
     vm: RobotControlViewModel = koinViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    // Screen-scope lifecycle: leaving Controls = goodbye (flush + DISCONNECT 2x
+    // + pause via onBackground), returning = immediate ALIVE + resume via
+    // onForeground. Scoped to this composable's LifecycleOwner so other screens
+    // are unaffected (NOT ProcessLifecycleOwner — app-wide would pause while the
+    // user is merely on Settings). Rapid pause/resume needs no extra debounce
+    // here: onForeground's ALIVE due-flag is idempotent (bursts collapse to one
+    // ALIVE) and the background-pause flag is a plain boolean.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, vm) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> vm.onBackground()
+                Lifecycle.Event.ON_RESUME -> vm.onForeground()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     ControlContent(
         state = state,
         onStick = vm::onStick,

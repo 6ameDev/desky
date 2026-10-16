@@ -46,6 +46,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "middleware/connection_manager.h"
+
 // Fallback keeps the host tests + firmware compiling if config keys drift;
 // in-project include/config.h always wins (same pattern as pairing.h).
 #ifndef CFG_PAIR_REDELIVERY_MS
@@ -241,6 +243,13 @@ inline bool shouldRedeliver(bool valid, const uint8_t* storedCode, const uint8_t
 
 }  // namespace udpstatus
 
+// Platform split 1.1: the telemetry decision + encode core. Included here
+// (right after the udpstatus single-owner definitions it builds on) so the
+// firmware class below and host tests share one header. Host tests include
+// this file first, then services/telemetry_manager.h directly.
+#define UDPSTATUS_TOP_HALF_INCLUDED
+#include "services/telemetry_manager.h"
+
 #ifdef ARDUINO
 // ── Firmware: UDP server task (WiFi + WiFiUDP, Core 0) ────────────────────
 
@@ -250,6 +259,8 @@ inline bool shouldRedeliver(bool valid, const uint8_t* storedCode, const uint8_t
 #include <esp_system.h>
 #include <mbedtls/md.h>
 #include <mbedtls/platform_util.h>
+
+#include <utility>
 
 #include "behavior/coordinator.h"
 #include "common/diagnostics.h"
@@ -332,11 +343,11 @@ class UdpServer {
         mpu_(nullptr),
         task_(nullptr),
         peerPort_(0),
-        havePeer_(false),
         lastV_(0.0f),
         lastOmega_(0.0f),
         lastRxMs_(0),
-        lastAliveMs_(0),
+        conn_(udpstatus::kAliveMs),
+        telem_(kTelemetryMs),
         lastRetryMs_(0),
         pairCore_(),
         psk_{},
@@ -396,7 +407,6 @@ class UdpServer {
     if (ConfigStore::loadBond(loadedPsk, storedCtr, storedBond) && storedBond) {
       bonded_ = true;
       lastCounter_ = storedCtr;
-      lastAliveMs_ = 0;
       era_ = ConfigStore::loadEra();
       for (size_t i = 0; i < sizeof(psk_); ++i) {
         psk_[i] = loadedPsk[i];
@@ -406,7 +416,6 @@ class UdpServer {
     } else {
       bonded_ = false;
       lastCounter_ = 0;
-      lastAliveMs_ = 0;
       era_ = 0;
       if (!openPairingWindow()) {
         LOG_W("UDP", "pair window open failed");
@@ -446,7 +455,7 @@ class UdpServer {
     pairCore_.clearBond();
     bonded_ = false;
     lastCounter_ = 0;
-    lastAliveMs_ = 0;
+    conn_.clear();
     era_ = 0;
     validCount_ = 0;
     mbedtls_platform_zeroize(psk_, sizeof(psk_));
@@ -583,20 +592,29 @@ class UdpServer {
   // any opcode-specific effect (event publish, counter persist, ACK) — no
   // opcode holds a privilege here: a 1Hz ALIVE keeps the robot alive exactly
   // like 50Hz drive. DISCONNECT/UNBOND never call this: they run
-  // refresh-then-clear instead (lastAliveMs_ refreshed, havePeer_ dropped).
-  void markAlive(const IPAddress& rip, uint16_t rport, uint32_t nowMs) {
+  // refresh-then-clear instead (stamp refreshed, net peer dropped).
+  // Platform split 1.1: consumes the Verified token (proves AuthVerifier ran
+  // AFTER the HMAC) and returns the Pinned token the drive publish / rekey
+  // ACK require — effect-before-verify no longer compiles. Invalid token ->
+  // no state change (fail-closed). Peer slot + stamp live in conn_; the
+  // IPAddress pin below is the socket residual (documented on conn_).
+  connection::Pinned markAlive(connection::Verified&& verified, const IPAddress& rip, uint16_t rport, uint32_t nowMs) {
     // Correlation marker (log-only, no behavior change): re-pin changes are
     // rare (AP rejoin/DHCP), so log the new peer once per change; steady
     // 50 Hz traffic re-pins the same IP/port and stays silent. IP+era only —
     // never key/nonce material.
-    const bool repinned = !havePeer_ || !(peerIp_ == rip) || peerPort_ != rport;
+    const bool repinned = !conn_.havePeer() || !(peerIp_ == rip) || peerPort_ != rport;
+    connection::Pinned pinned =
+        conn_.markAlive(std::move(verified), connection::ipToU32(rip[0], rip[1], rip[2], rip[3]), nowMs);
+    if (!pinned.valid()) {
+      return pinned;
+    }
     peerIp_ = rip;
     peerPort_ = rport;
-    havePeer_ = true;
-    lastAliveMs_ = nowMs;
     if (repinned) {
       LOG_I("UDP", "peer re-pinned ip=%s era=%u", rip.toString().c_str(), static_cast<unsigned>(era_));
     }
+    return pinned;
   }
 
   // Pre-bond pin-only: remember the peer for unicast replies (pair + tele-
@@ -612,7 +630,7 @@ class UdpServer {
     }
     peerIp_ = rip;
     peerPort_ = rport;
-    havePeer_ = true;
+    conn_.pinPeer(connection::ipToU32(rip[0], rip[1], rip[2], rip[3]));
   }
 
   // DRIVE_V2 verify order (pre-publish): bonded? -> counter fresh? -> HMAC
@@ -673,6 +691,12 @@ class UdpServer {
       LOG_EVERY_N(20, "UDP", "drop drive auth");
       return;
     }
+    // Platform split 1.1 (AuthVerifier threading): fold the passed
+    // prechecks into the Verified token — bonded/fresh/hmac re-evaluated
+    // fail-closed here (all true on this path; the per-cause drops+logs
+    // above stay verbatim). The drive effect below REQUIREs the token.
+    const connection::Checks driveChecks{bonded_, true, udpstatus::isFreshCounter(lastCounter_, ctr), ok};
+    connection::Verified verified = connection::AuthVerifier::verify(driveChecks, ctr, era_);
     lastCounter_ = ctr;
     ++validCount_;
     // Robot-side persist cadence matches the interval advertised in PAIR_OK
@@ -680,11 +704,23 @@ class UdpServer {
     if ((validCount_ % pairing::kPairPersistDefault) == 0) {
       ConfigStore::saveCounter(lastCounter_);  // Periodic persist, never per-packet (flash wear).
     }
-    markAlive(rip, rport, nowMs);  // Alive funnel BEFORE the drive effect below.
+    // Alive funnel BEFORE the drive effect below.
+    connection::Pinned pinned = markAlive(std::move(verified), rip, rport, nowMs);
+    publishDrive(std::move(pinned), nowMs, buf[1], buf[2], buf[3], buf[4]);
+  }
+
+  // Drive effect (extracted VERBATIM from handleDriveV2 — DriveSession
+  // absorb minimum): runs ONLY on a valid Pinned token (invalid -> silent
+  // no-op, fail-closed). The failsafe policy itself stays in
+  // behavior/coordinator.h; the HMAC verify above stays middleware here.
+  void publishDrive(connection::Pinned pinned, uint32_t nowMs, uint8_t mode, uint8_t thr, uint8_t str, uint8_t flags) {
+    if (!pinned.valid()) {
+      return;
+    }
     lastRxMs_ = nowMs;
-    lastV_ = coordinator::byteToUnit(buf[2]);
-    lastOmega_ = coordinator::byteToUnit(buf[3]);
-    EventBus::publish(EVENT_UDP_COMMAND_RECEIVED, coordinator::packCommand(buf[1], buf[2], buf[3], buf[4]));
+    lastV_ = coordinator::byteToUnit(thr);
+    lastOmega_ = coordinator::byteToUnit(str);
+    EventBus::publish(EVENT_UDP_COMMAND_RECEIVED, coordinator::packCommand(mode, thr, str, flags));
   }
 
   // PAIR_REQ layout [0x50|code6 1..6|clientNonce4 7..10|XOR] (len + header +
@@ -747,7 +783,10 @@ class UdpServer {
     uint8_t out[pairing::kPairOkSize] = {};  // Function scope: cached into lastPair_ on send.
     // Bond baseline is counter 0 (never valid on the wire): the client's
     // first DRIVE_V2 uses counter 1, matching the spec's "starts 1".
-    if (ConfigStore::saveBond(newPsk, 0)) {
+    // Platform split 1.1: the receipt overload mints the store-before-ACK
+    // proof consumed by sendPairOk below (invalid until the NVS save lands).
+    connection::PersistReceipt receipt;
+    if (ConfigStore::saveBond(newPsk, 0, receipt)) {
       uint8_t kek[pairing::kKekLen];
       uint8_t ct[pairing::kPairCtLen];
       uint8_t tag[pairing::kPairTagLen];
@@ -770,9 +809,7 @@ class UdpServer {
           outXor ^= out[i];
         }
         out[sizeof(out) - 1] = outXor;
-        udp_.beginPacket(rip, rport);
-        udp_.write(out, sizeof(out));
-        udp_.endPacket();
+        sendPairOk(std::move(receipt), rip, rport, out);
         sent = true;
       }
       mbedtls_platform_zeroize(kek, sizeof(kek));
@@ -786,6 +823,7 @@ class UdpServer {
       lastCounter_ = 0;
       era_ = 0;  // Fresh pair starts era 0 (saveBond persists it).
       bonded_ = true;
+      pairCore_.onPairBonded(nowMs);  // PairingExchange forward (same point, same order; idempotent).
       // Cache the reply BEFORE the stack zeroizes below: an identical retry
       // inside kRedeliveryMs re-unicasts these bytes (RAM-only redelivery).
       for (size_t i = 0; i < sizeof(lastPair_.code6); ++i) {
@@ -804,7 +842,7 @@ class UdpServer {
       lastPair_.valid = true;
       peerIp_ = rip;  // The new owner pins the telemetry unicast path.
       peerPort_ = rport;
-      havePeer_ = true;
+      conn_.pinPeer(connection::ipToU32(rip[0], rip[1], rip[2], rip[3]));
       LOG_I("UDP", "pair ok");
     } else {
       // M11 spec freeze: the code is already burned (single-use), so an NVS
@@ -864,16 +902,20 @@ class UdpServer {
       LOG_EVERY_N(20, "UDP", "drop unbond auth");
       return;
     }
+    // Platform split 1.1: fold the passed prechecks into Verified (same
+    // pattern as drive; per-cause drops+logs above stay verbatim), consumed
+    // by the refresh-then-clear below.
+    const connection::Checks unbondChecks{bonded_, true, udpstatus::isFreshCounter(lastCounter_, ctr), ok};
+    connection::Verified unbondVerified = connection::AuthVerifier::verify(unbondChecks, ctr, era_);
     ConfigStore::clearBond();
-    pairCore_.clearBond();
+    pairCore_.onUnbonded();  // PairingExchange forward (superset of clearBond: +era/bondMs reset).
     mbedtls_platform_zeroize(psk_, sizeof(psk_));
     bonded_ = false;
     lastCounter_ = 0;
     era_ = 0;
     // Refresh-then-clear: the signed goodbye still proves the owner was
     // alive at nowMs; the net peer is gone (no more unicast to a dead app).
-    lastAliveMs_ = nowMs;
-    havePeer_ = false;
+    conn_.refreshThenClear(std::move(unbondVerified), nowMs);
     lastPair_.valid = false;
     mbedtls_platform_zeroize(lastPair_.code6, sizeof(lastPair_.code6));
     mbedtls_platform_zeroize(lastPair_.cliNonce4, sizeof(lastPair_.cliNonce4));
@@ -914,7 +956,10 @@ class UdpServer {
     }
     const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(buf[1]) << 8) | static_cast<uint16_t>(buf[2]));
     if (era == era_) {
-      sendRekeyAck(rip, rport, era_);
+      // Idempotent duplicate: re-ACK WITHOUT re-deriving or re-verifying
+      // (the lost-ACK retry reuses the same era; the ACK carries no secret).
+      // Explicitly bypasses the Pinned gate below — documented, by design.
+      sendRekeyAckImpl(rip, rport, era_);
       LOG_EVERY_N(20, "UDP", "rekey redeliver era=%u", static_cast<unsigned>(era_));
       return;
     }
@@ -951,6 +996,11 @@ class UdpServer {
       LOG_EVERY_N(20, "UDP", "drop rekey auth");
       return;
     }
+    // Platform split 1.1: fold the passed prechecks into Verified (same
+    // pattern as drive; per-cause drops+logs above stay verbatim).
+    const connection::Checks rekeyChecks{bonded_, era == static_cast<uint16_t>(era_ + 1),
+                                         udpstatus::isFreshCounter(lastCounter_, ctr), ok};
+    connection::Verified rekeyVerified = connection::AuthVerifier::verify(rekeyChecks, ctr, era);
     uint8_t nextPsk[pairing::kPskLen];
     if (!pairing::deriveRekeyPsk(psk_, era, nextPsk)) {
       dropFirst(firstRekeyDrop_, "drop rekey derive (first of boot)");
@@ -968,10 +1018,12 @@ class UdpServer {
     }
     mbedtls_platform_zeroize(nextPsk, sizeof(nextPsk));
     era_ = era;
+    pairCore_.onRekeyApplied(era);  // PairingExchange forward (same point, same order).
     lastCounter_ = 0;
     validCount_ = 0;
-    markAlive(rip, rport, nowMs);  // Alive funnel BEFORE the ACK below.
-    sendRekeyAck(rip, rport, era_);
+    // Alive funnel BEFORE the ACK below.
+    connection::Pinned rekeyPinned = markAlive(std::move(rekeyVerified), rip, rport, nowMs);
+    sendRekeyAck(std::move(rekeyPinned), rip, rport, era_);
     LOG_I("UDP", "rekey ok era=%u", static_cast<unsigned>(era_));
   }
 
@@ -1026,6 +1078,10 @@ class UdpServer {
       LOG_EVERY_N(20, "UDP", "drop alive auth");
       return;
     }
+    // Platform split 1.1: fold the passed prechecks into Verified (same
+    // pattern as drive; per-cause drops+logs above stay verbatim).
+    const connection::Checks aliveChecks{bonded_, era == era_, udpstatus::isFreshCounter(lastCounter_, ctr), ok};
+    connection::Verified aliveVerified = connection::AuthVerifier::verify(aliveChecks, ctr, era);
     // Shared counter: a valid ALIVE consumes exactly like drive (same
     // holder app-side), so a replayed ALIVE can never refresh twice.
     lastCounter_ = ctr;
@@ -1033,7 +1089,8 @@ class UdpServer {
     if ((validCount_ % pairing::kPairPersistDefault) == 0) {
       ConfigStore::saveCounter(lastCounter_);  // Periodic persist, never per-packet (flash wear).
     }
-    markAlive(rip, rport, nowMs);  // Alive only: no lastV_/lastOmega_/lastRxMs_, no publish.
+    markAlive(std::move(aliveVerified), rip, rport,
+              nowMs);  // Alive only: no lastV_/lastOmega_/lastRxMs_, no publish (Pinned needs no effect).
   }
 
   // DISCONNECT layout [0x56|eraBE2 1..2|ctrBE4 3..6|tag6 7..12|XOR] (len +
@@ -1041,7 +1098,7 @@ class UdpServer {
   // PSK: verify mirrors ALIVE (bonded? -> era is current -> counter fresh ->
   // HMAC constant-time). Pass runs refresh-then-clear like UNBOND — the
   // signed goodbye proves the owner was alive at nowMs, then the net peer is
-  // gone (havePeer_ = false). Unlike UNBOND the bond is KEPT (no NVS/Core/
+  // gone (conn_.havePeer() = false). Unlike UNBOND the bond is KEPT (no NVS/Core/
   // key clear, no pairing window): the next launch rejoins instantly.
   // Never drives. Fail = silent drop. Pre-bond DISCONNECTs drop like drive.
   void handleDisconnect(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs) {
@@ -1091,13 +1148,17 @@ class UdpServer {
       LOG_EVERY_N(20, "UDP", "drop disconnect auth");
       return;
     }
+    // Platform split 1.1: fold the passed prechecks into Verified (same
+    // pattern as drive; per-cause drops+logs above stay verbatim), consumed
+    // by the refresh-then-clear below.
+    const connection::Checks discChecks{bonded_, era == era_, udpstatus::isFreshCounter(lastCounter_, ctr), ok};
+    connection::Verified discVerified = connection::AuthVerifier::verify(discChecks, ctr, era);
     lastCounter_ = ctr;  // Consume: a replayed goodbye can never clear twice.
     ++validCount_;
     if ((validCount_ % pairing::kPairPersistDefault) == 0) {
       ConfigStore::saveCounter(lastCounter_);
     }
-    lastAliveMs_ = nowMs;  // Refresh-then-clear: net gone, bond kept.
-    havePeer_ = false;
+    conn_.refreshThenClear(std::move(discVerified), nowMs);  // Refresh-then-clear: net gone, bond kept.
     LOG_I("UDP", "disconnect ok");
   }
 
@@ -1105,7 +1166,19 @@ class UdpServer {
   // tag = first6(HMAC-SHA256(newPsk, "REKEYACK"||eraBE2)). Called only after
   // the switch (psk_ IS the new key here) or for the idempotent duplicate
   // path. Key material never logged.
-  void sendRekeyAck(const IPAddress& ip, uint16_t port, uint16_t era) {
+  // Platform split 1.1: the Impl holds the wire bytes VERBATIM; the
+  // token-gated sendRekeyAck below is the only path the verified switch
+  // takes (consumes Pinned by value — proves the markAlive funnel ran
+  // BEFORE the ACK). The idempotent duplicate path calls the Impl directly
+  // (no verify by design — the ACK leaks no secret).
+  void sendRekeyAck(connection::Pinned pinned, const IPAddress& ip, uint16_t port, uint16_t era) {
+    if (!pinned.valid()) {
+      return;
+    }
+    sendRekeyAckImpl(ip, port, era);
+  }
+
+  void sendRekeyAckImpl(const IPAddress& ip, uint16_t port, uint16_t era) {
     uint8_t msg[pairing::kRekeyAckMsgLen];
     pairing::rekeyAckTagMsg(era, msg);
     uint8_t mac[32];
@@ -1148,6 +1221,20 @@ class UdpServer {
     udp_.endPacket();
   }
 
+  // PAIR_OK 39B unicast (moved VERBATIM out of handlePairReq): consumes the
+  // PersistReceipt by value (moved) — proves ConfigStore::saveBond persisted
+  // BEFORE anything left the radio (store-before-send contract). Invalid
+  // receipt -> silent no-op (fail-closed).
+  void sendPairOk(connection::PersistReceipt receipt, const IPAddress& ip, uint16_t port,
+                  const uint8_t ok39[pairing::kPairOkSize]) {
+    if (!receipt.valid()) {
+      return;
+    }
+    udp_.beginPacket(ip, port);
+    udp_.write(ok39, pairing::kPairOkSize);
+    udp_.endPacket();
+  }
+
   void sendTelemetry(uint32_t nowMs) {
     // Coordinator-owned intent (mode/active/cliff level); defaults hold if
     // the snapshot ever fails (boot race): MANUAL, stopped, no cliff.
@@ -1178,24 +1265,31 @@ class UdpServer {
     // tracking; the coordinator owns no driving flag). The cliff bit below
     // mirrors the coordinator level, which the sensor task keeps live.
     const bool driving = (lastV_ != 0.0f || lastOmega_ != 0.0f) && (nowMs - lastRxMs_ <= kStaleMs);
+    // Platform split 1.1: the aggregate snapshot fills here (verbatim
+    // sources as above); pack + cadence/edge + encode live in
+    // telemetry::TelemetryManager, the socket send stays here.
+    telemetry::Snapshot tsnap;
+    tsnap.mode = static_cast<uint8_t>(snap.mode);
+    tsnap.cliff = snap.cliffDetected;
+    tsnap.driving = driving;
+    tsnap.pitchDeg = pitchDeg;
+    tsnap.rollDeg = rollDeg;
+    tsnap.distMm = distMm;
     udp::TelemetryPacket tp;
-    tp.pitch = udpstatus::degToDecideg(pitchDeg);
-    tp.roll = udpstatus::degToDecideg(rollDeg);
-    tp.distanceMm = distMm;
-    tp.statusFlags = udpstatus::packStatus(snap.cliffDetected, driving, static_cast<uint8_t>(snap.mode));
-    uint8_t out[udp::kTelemetrySize];
-    udp::encodeTelemetry(tp, out);
+    telemetry::encodeSnapshot(tsnap, tp);
 
     // Telemetry gate: bonded && peer pinned && alive-fresh -> unicast;
-    // else silent (broadcast fallback deleted). havePeer_ stays true across
+    // else silent (broadcast fallback deleted). The peer stays pinned across
     // a stale window — the next ALIVE/drive re-freshes via markAlive (which
     // re-pins IP/port each time) with no re-registration. DISCONNECT/UNBOND
-    // cleared havePeer_, so silence follows naturally there too.
-    if (!udpstatus::shouldSendTelemetry(bonded_, havePeer_, lastAliveMs_, nowMs)) {
+    // cleared the peer, so silence follows naturally there too. Gate
+    // predicate single-owned by udpstatus::shouldSendTelemetry; logging here.
+    const bool gateOk = udpstatus::shouldSendTelemetry(bonded_, conn_.havePeer(), conn_.lastAliveMs(), nowMs);
+    if (!gateOk) {
       // Correlation marker (log-only, no behavior change): the alive-stale
       // silence edge shares firstTelemetryDrop_ (one first-of-boot INFO) and
       // stays throttled afterwards — same pattern as the no-peer path.
-      if (bonded_ && havePeer_) {
+      if (bonded_ && conn_.havePeer()) {
         dropFirst(firstTelemetryDrop_, "alive stale -> silent (first of boot)");
         LOG_EVERY_N(20, "UDP", "alive stale -> silent");
       } else {
@@ -1204,9 +1298,11 @@ class UdpServer {
       }
       return;
     }
-    udp_.beginPacket(peerIp_, peerPort_);
-    udp_.write(out, sizeof(out));
-    udp_.endPacket();
+    telem_.publish(tp, gateOk, nowMs, [this](const uint8_t* buf, size_t len) {
+      udp_.beginPacket(peerIp_, peerPort_);
+      udp_.write(buf, len);
+      udp_.endPacket();
+    });
   }
 
   Coordinator* coord_;
@@ -1216,17 +1312,25 @@ class UdpServer {
   WiFiUDP udp_;
   IPAddress peerIp_;
   uint16_t peerPort_;
-  bool havePeer_;
   float lastV_;
   float lastOmega_;
   uint32_t lastRxMs_;
-  // Robot alive rule: refreshed by the markAlive funnel on every VALID
-  // bonded packet (ALIVE, DRIVE_V2, REKEY_REQ); DISCONNECT/UNBOND refresh
-  // then drop the net peer (havePeer_ = false). Fresh while
-  // udpstatus::isAliveFresh(lastAliveMs_, nowMs) (kAliveMs = 5s window).
+  // Robot alive rule (platform split 1.1): the peer slot + alive window live
+  // in conn_ (connection::ConnectionManager, Arduino-free core, host-pinned;
+  // window = udpstatus::kAliveMs passthrough — the 5s literal is NEVER
+  // repeated here). Refreshed by the markAlive funnel on every VALID bonded
+  // packet (ALIVE, DRIVE_V2, REKEY_REQ); DISCONNECT/UNBOND refresh then drop
+  // the net peer (havePeer() = false). Fresh while
+  // udpstatus::isAliveFresh(lastAliveMs, nowMs) (kAliveMs = 5s window).
   // Never touched by ALIVE's no-drive path beyond the funnel itself, and
-  // never by legacy/pair traffic.
-  uint32_t lastAliveMs_;
+  // never by legacy/pair traffic. peerIp_/peerPort_ stay here (residual):
+  // WiFiUDP::beginPacket needs an IPAddress; the u32 in conn_ is the
+  // portable identity (adapter: connection::ipToU32/u32ToIp).
+  connection::ConnectionManager conn_;
+  // Telemetry cadence + encode core (services/telemetry_manager.h): the
+  // bonded-default rate is kTelemetryMs passthrough (no new logic); the
+  // socket + gate logging stay here in sendTelemetry.
+  telemetry::TelemetryManager telem_;
   uint32_t lastRetryMs_;
   pairing::Core pairCore_;
   uint8_t psk_[16];
@@ -1250,6 +1354,10 @@ class UdpServer {
     uint8_t ok39[pairing::kPairOkSize] = {};
     uint32_t bondMs = 0;
   };
+  // Static assert #3 (platform split 1.1): the redelivery cache holds
+  // exactly one PAIR_OK frame — a size drift here breaks the unicast on the
+  // lost-PAIR_OK race. Host-side size pins live in test_udp_server.cpp.
+  static_assert(sizeof(LastPair::ok39) == pairing::kPairOkSize, "LastPair cache must hold exactly one PAIR_OK frame");
   LastPair lastPair_;
   // First-drop flags for dropFirst() (bench lesson: first occurrence per
   // boot per class always logs). Reset only by reboot — never per window.
