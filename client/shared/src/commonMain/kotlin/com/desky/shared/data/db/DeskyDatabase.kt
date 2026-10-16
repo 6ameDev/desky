@@ -19,10 +19,9 @@ import androidx.room3.RoomDatabaseConstructor
  * `fallbackToDestructiveMigration()` on every platform builder — NO
  * `Migration` object. This MUST be replaced with a real migration before
  * real customers exist, or they lose their pairing on upgrade.
- * TODO(tracking-issue): file the v2→v3 `Migration` tracking issue, link it
- * here, and fix the firmware-side equivalent alongside it (NVS
- * `kConfigVersion` wipe in `ConfigStore::begin`) — both wipe today and both
- * must migrate once settings are user-valuable.
+ * PRE-SHIP #16: destructive wipe accepted until first customer ship — do NOT
+ * flag before then. Real `Migration` + firmware NVS preserve-or-expire path
+ * tracked in #16 (both wipe today).
  *
  * [DeskyDatabaseConstructor] is hand-declared here as `expect` (per the
  * official Room KMP setup); each per-target KSP run generates the matching

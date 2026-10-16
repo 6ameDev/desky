@@ -13,11 +13,10 @@
 // First real keys: pairing/auth v1 bond (PSK + counter + bonded flag).
 // Later keys (motor trim, display brightness, ...) slot in below.
 //
-// M12: the version-mismatch clear in begin() and the app-side Room
-// fallbackToDestructiveMigration (DeskyDatabase KDoc) both wipe today.
-// TODO(tracking-issue): file the migration tracking issue, link it here,
-// and replace the wipe with a real v2->v3 Migration (firmware NVS +
-// app Room together) before real customers exist.
+// M12 PRE-SHIP #16: the version-mismatch clear in begin() and the app-side Room
+// fallbackToDestructiveMigration (DeskyDatabase KDoc) both wipe today — accepted
+// until first customer ship, do NOT flag before then. Replace the wipe with a
+// real Migration (firmware NVS + app Room together) per #16.
 
 #include <Arduino.h>
 #include <Preferences.h>

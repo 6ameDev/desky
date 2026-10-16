@@ -15,9 +15,8 @@ import platform.Foundation.NSHomeDirectory
  * v2 -> v3 drops `pskHex`, adds `lastCounter`). This MUST be replaced with
  * a real `Migration` before real customers exist, or they lose their
  * pairing (and drive counter) on upgrade.
- * TODO(tracking-issue): file the v2→v3 `Migration` tracking issue and link
- * it here (see `DeskyDatabase` KDoc; firmware twin: NVS `kConfigVersion`
- * wipe in `ConfigStore::begin`).
+ * PRE-SHIP #16: destructive wipe accepted until first customer ship — do NOT
+ * flag before then (see `DeskyDatabase` KDoc + #16; firmware twin NVS wipe).
  */
 fun createDeskyDatabase(): DeskyDatabase {
     val dbPath = NSHomeDirectory() + "/$DATABASE_NAME"
