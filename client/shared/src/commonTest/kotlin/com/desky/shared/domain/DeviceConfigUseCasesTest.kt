@@ -172,7 +172,8 @@ class ForgetDeviceUseCaseTest {
         for (sent in udp.sent) {
             assertContentEquals(expected, sent.bytes)
         }
-        assertTrue(repo.counterSaves.isEmpty(), "no persist crossed 128: pure live allocation")
+        assertTrue(repo.counterSaves.isNotEmpty(), "Layer A: flush persists the live watermark before UNBOND")
+        assertEquals(listOf(bonded.id to 15u), repo.counterSaves)
     }
 
     @Test

@@ -13,6 +13,8 @@ import com.desky.shared.domain.GetBondPskUseCase
 import com.desky.shared.domain.ObserveDeviceConfigUseCase
 import com.desky.shared.domain.ObserveTelemetryUseCase
 import com.desky.shared.domain.PairDeviceWithCodeUseCase
+import com.desky.shared.domain.AliveUseCase
+import com.desky.shared.domain.RekeyUseCase
 import com.desky.shared.domain.SaveDeviceConfigUseCase
 import com.desky.shared.domain.SendSignedControlUseCase
 import com.desky.shared.domain.SettingsRepository
@@ -50,9 +52,13 @@ fun dataModule(
     single<UdpSocketManager> {
         createUdpSocketManager(get(named("ioScope"))).also { socketBinder?.attach(it) }
     }
+    // Expose the platform binder for the control VM's AP-rejoin knock:
+    // Android registers the shared WifiSocketBinder; JVM/iOS pass null, so
+    // no binding exists there and `getOrNull<UdpSocketBinder>()` stays null.
+    socketBinder?.let { binder -> single<UdpSocketBinder> { binder } }
 }
 
-/** Domain-layer module: all 8 use cases as factories + the shared drive counter. */
+/** Domain-layer module: all use cases as factories + the shared drive counter. */
 val domainModule: Module = module {
     single { DriveCounter(get()) }
     factory { PairDeviceWithCodeUseCase(get(), get(), get()) }
@@ -63,6 +69,8 @@ val domainModule: Module = module {
     factory { SaveDeviceConfigUseCase(get()) }
     factory { ObserveDeviceConfigUseCase(get()) }
     factory { ForgetDeviceUseCase(get(), get(), get(), get(), get()) }
+    factory { RekeyUseCase(get(), get(), get(), get(), get()) }
+    factory { AliveUseCase(get()) }
 }
 
 /**
@@ -71,6 +79,11 @@ val domainModule: Module = module {
  */
 val presentationModule: Module = module {
     viewModel { PairingViewModel(get(), get(), get()) }
-    viewModel { RobotControlViewModel(get(), get(), get(), get(), get(), get(), get()) }
+    // rekeyUC/aliveUC/socketBinder are named (tickMs keeps its default):
+    // the rekey trigger stays inert when the domain module has no RekeyUseCase
+    // binding, the ALIVE/DISCONNECT knock stays inert without an AliveUseCase
+    // binding, and the AP-rejoin knock stays inert without a UdpSocketBinder
+    // binding (JVM/iOS — getOrNull, tests, legacy graphs).
+    viewModel { RobotControlViewModel(get(), get(), get(), get(), get(), get(), get(), rekeyUC = getOrNull<RekeyUseCase>(), aliveUC = getOrNull<AliveUseCase>(), socketBinder = getOrNull<UdpSocketBinder>()) }
     viewModel { SettingsViewModel(get(), get(), get()) }
 }

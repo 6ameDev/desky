@@ -14,9 +14,9 @@ val DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS: List<Long> = listOf(1000, 2000, 4000, 4000
  * `shared/protocol/README.md` §"Pairing + authenticated drive v1").
  *
  * Flow: validate the code -> `client_nonce = pairingNonce()` -> send
- * `PAIR_REQ` -> await the first `PAIR_OK` (38B/`0x51`) or `PAIR_ERR`
- * (4B/`0x52`) on the shared [UdpSocketManager.incoming] flow within the
- * per-send budget, re-sending `PAIR_REQ` on silence only ->
+ * `PAIR_REQ` -> await the first `PAIR_OK` (38B v1 / 39B v1.1, `0x51`) or
+ * `PAIR_ERR` (4B/`0x52`) on the shared [UdpSocketManager.incoming] flow
+ * within the per-send budget, re-sending `PAIR_REQ` on silence only ->
  * on `PAIR_OK` derive `KEK = HKDF-SHA256(client||server, code,
  * "desky-pair-v1", 16)` and unwrap the bond PSK with AES-128-GCM
  * (`nonce12 = server||client||00^4`, `AAD = 0x51||client||server`) ->
@@ -25,6 +25,10 @@ val DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS: List<Long> = listOf(1000, 2000, 4000, 4000
  * The unwrapped PSK is stored in the platform vault ([BondSecretStore]);
  * the Room row carries no key material (Task 9: no `pskHex` column) and
  * `lastCounter = 0` so the drive session's first wire packet uses counter 1.
+ * The v1.1 trailing interval byte (when a 39B frame arrives) becomes
+ * [PairedDevice.persistEvery] (sanitized 8..1024 else 128; a 38B v1 frame
+ * defaults to 128) and is Room-persisted with the row, so the drive
+ * session keeps the negotiated cadence across restarts.
  * The returned [PairedDevice] matches the persisted row; session code reads
  * the key via [GetBondPskUseCase].
  *
@@ -111,7 +115,7 @@ class PairDeviceWithCodeUseCase(
     private fun isPairingReply(bytes: ByteArray): Boolean {
         if (bytes.isEmpty()) return false
         val header = bytes[0].toInt() and 0xFF
-        return (bytes.size == PAIR_OK_SIZE && header == PAIR_OK_HEADER) ||
+        return ((bytes.size == PAIR_OK_SIZE || bytes.size == PAIR_OK_SIZE_V11) && header == PAIR_OK_HEADER) ||
             (bytes.size == PAIR_ERR_SIZE && header == PAIR_ERR_HEADER)
     }
 
@@ -126,7 +130,8 @@ class PairDeviceWithCodeUseCase(
             val (reason, retryS) = err
             return Outcome.Failure(mapPairError(reason, retryS))
         }
-        // Sized/filtered as PAIR_OK above; a bad XOR here means corruption.
+        // Sized/filtered as PAIR_OK above (38B v1 or 39B v1.1); a bad XOR
+        // here means corruption.
         val ok = PairingPacketCodec.decodePairOk(reply)
             ?: return Outcome.Failure("Pairing failed: invalid response from robot")
         val (serverNonce, ct, tag) = ok
@@ -138,8 +143,8 @@ class PairDeviceWithCodeUseCase(
         )
         val nonce12 = serverNonce + clientNonce + ByteArray(4)
         val aad = byteArrayOf(PAIR_OK_HEADER.toByte()) + clientNonce + serverNonce
-        val psk = try {
-            aesGcmDecrypt(kek, nonce12, aad, ct, tag)
+        val (psk, persistEvery) = try {
+            unwrapPairPlaintext(aesGcmDecrypt(kek, nonce12, aad, ct, tag))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -153,6 +158,7 @@ class PairDeviceWithCodeUseCase(
             // Fresh bond: the counter restarts so the first drive packet is 1.
             lastCounter = 0u,
             alias = ROBOT_HOST,
+            persistEvery = persistEvery,
         )
         return try {
             // Vault first: if the Room write below throws, the key already

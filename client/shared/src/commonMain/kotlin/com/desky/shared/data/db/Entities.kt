@@ -33,6 +33,23 @@ data class PairedDeviceEntity(
      */
     val lastCounter: Long = 0L,
     val alias: String,
+    /**
+     * Counter-persist cadence negotiated once at pair (v1.1 `PAIR_OK`
+     * interval byte; v4 column, default 128 = [DriveCounter.COUNTER_PERSIST_EVERY]).
+     * The drive session reads it back on restart so the negotiated cadence
+     * survives app kills (producers sanitize 8..1024 else 128 before save).
+     */
+    val persistEvery: Int = 128,
+    /**
+     * Tier-1 rekey epoch (u16 on the wire as `eraBE2`, v5 column, default 0
+     * = fresh-pair era). Stored as [Int] — SQLite INTEGER is 64-bit and Room
+     * has no `UShort` column type; the domain mapping narrows to `UShort`
+     * (every stored value fits: producers mask to 0..65535). Incremented by
+     * each silent era+PSK rotation (which resets [lastCounter] to the bond
+     * baseline); the drive session reads it back on restart so the era
+     * survives app kills.
+     */
+    val era: Int = 0,
 )
 
 @Entity(tableName = "robot_config")
@@ -55,6 +72,8 @@ fun PairedDeviceEntity.toDomain(): PairedDevice =
         authToken = authToken,
         lastCounter = lastCounter.toUInt(),
         alias = alias,
+        persistEvery = persistEvery,
+        era = era.toUShort(),
     )
 
 /** Domain -> entity. */
@@ -66,6 +85,8 @@ fun PairedDevice.toEntity(): PairedDeviceEntity =
         authToken = authToken,
         lastCounter = lastCounter.toLong(),
         alias = alias,
+        persistEvery = persistEvery,
+        era = era.toInt(),
     )
 
 /** Entity -> domain. */

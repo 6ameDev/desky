@@ -65,6 +65,35 @@ class RoomRepositoriesTest {
     }
 
     @Test
+    fun deviceMappingRoundTripsPersistEvery() {
+        val device = PairedDevice(
+            id = "desky-192.168.4.1",
+            ip = "192.168.4.1",
+            port = 3333,
+            authToken = "psk-v1",
+            lastCounter = 0u,
+            alias = "192.168.4.1",
+            persistEvery = 16,
+        )
+        assertEquals(device, device.toEntity().toDomain())
+    }
+
+    @Test
+    fun deviceMappingRoundTripsEra() {
+        val device = PairedDevice(
+            id = "desky-192.168.4.1",
+            ip = "192.168.4.1",
+            port = 3333,
+            authToken = "psk-v1",
+            lastCounter = 0u,
+            alias = "192.168.4.1",
+            persistEvery = 128,
+            era = 7u,
+        )
+        assertEquals(device, device.toEntity().toDomain())
+    }
+
+    @Test
     fun configMappingRoundTrip() {
         val config = RobotConfig(
             speedLimit = 0.6f,
@@ -148,6 +177,52 @@ class RoomRepositoriesTest {
             assertEquals("desky-192.168.4.1", device.id)
             assertEquals("192.168.4.1", device.ip)
             assertEquals("psk-v1", device.authToken)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun saveThenObserveKeepsNegotiatedPersistEvery() = runTest {
+        val repo = RoomDeviceRepository(db.pairedDeviceDao())
+        val device = PairedDevice(
+            id = "desky-192.168.4.1",
+            ip = "192.168.4.1",
+            authToken = "psk-v1",
+            lastCounter = 0u,
+            alias = "192.168.4.1",
+            persistEvery = 16,
+        )
+
+        repo.save(device)
+
+        repo.observePaired().test {
+            assertEquals(device, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun updateRekeyPersistsEraAndBaselineKeepingRow() = runTest {
+        val repo = RoomDeviceRepository(db.pairedDeviceDao())
+        repo.save(
+            PairedDevice(
+                id = "desky-192.168.4.1",
+                ip = "192.168.4.1",
+                authToken = "psk-v1",
+                lastCounter = 100u,
+                alias = "192.168.4.1",
+                persistEvery = 128,
+                era = 0u,
+            ),
+        )
+
+        repo.updateRekey("desky-192.168.4.1", 0u, 1u)
+
+        repo.observePaired().test {
+            val device = assertNotNull(awaitItem())
+            assertEquals(0u, device.lastCounter)
+            assertEquals(1u, device.era)
+            assertEquals(128, device.persistEvery, "rotation keeps the negotiated cadence")
             cancelAndIgnoreRemainingEvents()
         }
     }

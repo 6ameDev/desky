@@ -7,6 +7,7 @@ import com.desky.shared.domain.PairedDevice
 import com.desky.shared.domain.RobotConfig
 import com.desky.shared.domain.SettingsRepository
 import com.desky.shared.domain.UdpDatagram
+import com.desky.shared.domain.UdpSocketBinder
 import com.desky.shared.domain.UdpSocketManager
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -14,6 +15,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.TestScope
@@ -56,6 +59,15 @@ class FakeDeviceRepository(initial: PairedDevice? = null) : DeviceRepository {
         counterSaves += deviceId to counter
         val current = flow.value
         if (current?.id == deviceId) flow.value = current.copy(lastCounter = counter)
+    }
+
+    /** Every (deviceId, counter, era) persisted via [updateRekey], in order. */
+    val rekeySaves = mutableListOf<Triple<String, UInt, UShort>>()
+
+    override suspend fun updateRekey(deviceId: String, counter: UInt, era: UShort) {
+        rekeySaves += Triple(deviceId, counter, era)
+        val current = flow.value
+        if (current?.id == deviceId) flow.value = current.copy(lastCounter = counter, era = era)
     }
 
     fun emit(device: PairedDevice?) {
@@ -131,6 +143,28 @@ class FakeUdpSocketManager : UdpSocketManager {
     }
 
     override suspend fun close() = Unit
+}
+
+/**
+ * Hand-written fake binder: non-suspending rejoin signal mirroring the
+ * production `WifiSocketBinder` contract (`MutableSharedFlow(
+ * extraBufferCapacity = 1)` + `tryEmit`). `attach`/`detach` are no-ops;
+ * tests fire [emitNetworkAvailable] directly (no 1 s debounce here — the
+ * debounce lives in the Android binder; the VM collapses bursts
+ * idempotently, so a flap still yields one `ALIVE`).
+ */
+class FakeUdpSocketBinder : UdpSocketBinder {
+    private val _networkAvailable = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    override val networkAvailable: SharedFlow<Unit> = _networkAvailable.asSharedFlow()
+
+    override fun attach(manager: UdpSocketManager) = Unit
+
+    override fun detach() = Unit
+
+    /** Non-suspending, like the production `onAvailable` path. */
+    fun emitNetworkAvailable() {
+        _networkAvailable.tryEmit(Unit)
+    }
 }
 
 /**

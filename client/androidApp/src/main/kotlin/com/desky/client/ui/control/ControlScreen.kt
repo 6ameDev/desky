@@ -90,12 +90,18 @@ fun ControlContent(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             TelemetryBar(state)
-            JoystickPad(onStick = onStick)
+            // Disconnected gate (mirrors the ViewModel no-op guards on
+            // onStick/onEmergencyStop/onReleaseEmergency): the robot's
+            // ~500 ms stale-command failsafe is already stopping it, and the
+            // ALIVE knock underneath re-enables on the first telemetry.
+            val controlsEnabled = state.connectivity != Connectivity.Disconnected
+            JoystickPad(onStick = onStick, enabled = controlsEnabled)
             if (state.eStopped) {
-                OutlinedButton(onClick = onReleaseEmergency) { Text("Release E-STOP") }
+                OutlinedButton(onClick = onReleaseEmergency, enabled = controlsEnabled) { Text("Release E-STOP") }
             } else {
                 Button(
                     onClick = onEmergencyStop,
+                    enabled = controlsEnabled,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error,
                     ),
@@ -133,36 +139,42 @@ fun JoystickPad(
     modifier: Modifier = Modifier,
     padSizeDp: Int = 192,
     knobSizeDp: Int = 64,
+    /** Disconnected gate: while false, gestures move nothing and send nothing. */
+    enabled: Boolean = true,
 ) {
     var knob by remember { mutableStateOf(Offset.Zero) }
     Box(
         modifier = modifier
             .size(padSizeDp.dp)
             .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
-            .pointerInput(Unit) {
+            .pointerInput(enabled) {
                 detectDragGestures(
                     onDragStart = { offset ->
-                        val radius = size.width / 2f
-                        val centered = offset - Offset(radius, radius)
-                        val clamped = clampToRadius(centered, radius)
-                        knob = clamped
-                        onStick(-clamped.y / radius, clamped.x / radius)
+                        if (enabled) {
+                            val radius = size.width / 2f
+                            val centered = offset - Offset(radius, radius)
+                            val clamped = clampToRadius(centered, radius)
+                            knob = clamped
+                            onStick(-clamped.y / radius, clamped.x / radius)
+                        }
                     },
                     onDrag = { change, _ ->
-                        change.consume()
-                        val radius = size.width / 2f
-                        val centered = change.position - Offset(radius, radius)
-                        val clamped = clampToRadius(centered, radius)
-                        knob = clamped
-                        onStick(-clamped.y / radius, clamped.x / radius)
+                        if (enabled) {
+                            change.consume()
+                            val radius = size.width / 2f
+                            val centered = change.position - Offset(radius, radius)
+                            val clamped = clampToRadius(centered, radius)
+                            knob = clamped
+                            onStick(-clamped.y / radius, clamped.x / radius)
+                        }
                     },
                     onDragEnd = {
                         knob = Offset.Zero
-                        onStick(0f, 0f)
+                        if (enabled) onStick(0f, 0f)
                     },
                     onDragCancel = {
                         knob = Offset.Zero
-                        onStick(0f, 0f)
+                        if (enabled) onStick(0f, 0f)
                     },
                 )
             },

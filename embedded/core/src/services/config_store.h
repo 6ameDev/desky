@@ -35,6 +35,9 @@ class ConfigStore {
   static constexpr const char* kPskKey = "psk";
   static constexpr const char* kCounterKey = "bctr";
   static constexpr const char* kBondedKey = "bonded";
+  // Tier-1 rekey era (u16, additive key — no version bump: bonds written
+  // before the rekey feature read back era 0, matching the fresh-pair era).
+  static constexpr const char* kEraKey = "bera";
   static constexpr size_t kPskLen = 16;
 
   // Opens NVS, enforces schema version, seeds defaults. Call once in setup().
@@ -75,6 +78,8 @@ class ConfigStore {
     const size_t written = prefs.putBytes(kPskKey, psk, kPskLen);
     const size_t counterWritten = prefs.putUInt(kCounterKey, counter);
     const size_t bondedWritten = prefs.putUChar(kBondedKey, 1);
+    // Fresh pair starts era 0 (single owner: a new bond evicts the old era).
+    const size_t eraWritten = prefs.putUShort(kEraKey, 0);
     prefs.end();
     if (written != kPskLen) {
       LOG_E("CONFIG", "psk write short (%u)", (unsigned)written);
@@ -82,7 +87,7 @@ class ConfigStore {
     }
     // M10: putUInt/putUChar failures used to be ignored while saveBond still
     // returned true (half-persisted bond). All three writes must succeed.
-    if (counterWritten == 0 || bondedWritten == 0) {
+    if (counterWritten == 0 || bondedWritten == 0 || eraWritten == 0) {
       LOG_E("CONFIG", "bond counter/flag write failed (%u/%u)", (unsigned)counterWritten, (unsigned)bondedWritten);
       return false;
     }
@@ -92,6 +97,8 @@ class ConfigStore {
   // Persists the drive counter alone (called periodically from the drive
   // verify path so a reboot resyncs without replaying old packets). Cheap
   // enough for every N packets; not per-packet (flash wear).
+  // NOTE: counter-only saves never touch the era key (era changes only via
+  // saveBond fresh-pair reset or saveRekey rotation).
   static bool saveCounter(uint32_t counter) {
     Preferences prefs;
     if (!prefs.begin(kNamespace, false)) {
@@ -132,6 +139,45 @@ class ConfigStore {
     return bonded;
   }
 
+  // Tier-1 rekey era accessors (additive: a bond written before the rekey
+  // feature has no era key and reads back 0 — the fresh-pair era).
+  static uint16_t loadEra() {
+    Preferences prefs;
+    if (!prefs.begin(kNamespace, true)) {
+      return 0;
+    }
+    const uint16_t era = prefs.isKey(kEraKey) ? static_cast<uint16_t>(prefs.getUShort(kEraKey, 0)) : 0;
+    prefs.end();
+    return era;
+  }
+
+  // Persists a rekeyed bond atomically: next PSK + next era + baseline
+  // counter 0 (first post-rekey drive uses 1 — same as fresh pair).
+  static bool saveRekey(const uint8_t* psk, uint16_t era, uint32_t counter) {
+    if (psk == nullptr) {
+      return false;
+    }
+    Preferences prefs;
+    if (!prefs.begin(kNamespace, false)) {
+      LOG_E("CONFIG", "nvs open failed (saveRekey)");
+      return false;
+    }
+    const size_t written = prefs.putBytes(kPskKey, psk, kPskLen);
+    const size_t eraWritten = prefs.putUShort(kEraKey, era);
+    const size_t counterWritten = prefs.putUInt(kCounterKey, counter);
+    const size_t bondedWritten = prefs.putUChar(kBondedKey, 1);
+    prefs.end();
+    if (written != kPskLen) {
+      LOG_E("CONFIG", "rekey psk write short (%u)", (unsigned)written);
+      return false;
+    }
+    if (eraWritten == 0 || counterWritten == 0 || bondedWritten == 0) {
+      LOG_E("CONFIG", "rekey era/counter/flag write failed");
+      return false;
+    }
+    return true;
+  }
+
   // Explicit unpair / 10s-hold factory reset. Removes bond keys only (never
   // nvs_flash_erase); schema version is preserved so no re-migration runs.
   // The in-memory pairing::Core::clearBond() must be called alongside this.
@@ -144,6 +190,7 @@ class ConfigStore {
     prefs.remove(kPskKey);
     prefs.remove(kCounterKey);
     prefs.remove(kBondedKey);
+    prefs.remove(kEraKey);
     prefs.end();
     LOG_I("CONFIG", "bond cleared");
     return true;

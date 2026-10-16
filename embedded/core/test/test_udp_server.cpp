@@ -236,3 +236,125 @@ void test_udp_unbond_tag_msg_golden() {
   const uint8_t expected[10] = {0x55, 0x4E, 0x42, 0x4F, 0x4E, 0x44, 0x00, 0x00, 0x00, 0x01};
   TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, msg, sizeof(expected));
 }
+
+// Tier-1 silent auto-rekey (Task: era+PSK rotation): wire constants pin the
+// claimed headers/sizes (0x53/0x54 — never 0xAA/0xAC/0xBB/0x50/0x51/0x52/
+// 0xAD), and the demux accepts exactly the 14B REKEY_REQ shape.
+
+void test_udp_rekey_wire_constants() {
+  TEST_ASSERT_EQUAL_UINT8(0x53, udpstatus::kRekeyReqHeader);
+  TEST_ASSERT_TRUE(udpstatus::kRekeyReqSize == 14);
+  TEST_ASSERT_EQUAL_UINT8(0x54, udpstatus::kRekeyAckHeader);
+  TEST_ASSERT_TRUE(udpstatus::kRekeyAckSize == 10);
+}
+
+void test_udp_classify_rekey() {
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kRekeyReq), rxKindInt(udpstatus::classifyRx(14, 0x53)));
+  // Neighbouring sizes/headers still drop (incl. the ACK header, which the
+  // robot only ever transmits, and every previously claimed header).
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(13, 0x53)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(15, 0x53)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0x54)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0xAC)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0xAD)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(10, 0x54)));
+}
+
+// ALIVE + DISCONNECT (robot alive rule): wire constants pin the claimed
+// headers/sizes (0x55/0x56 — never 0xAA/0xAC/0xBB/0x50/0x51/0x52/0x53/0x54/
+// 0xAD), and the demux accepts exactly the two 14B shapes. The HMAC tag
+// goldens live in shared/protocol/README.md (firmware verifies on-device);
+// these host tests pin consts + demux + the 5s freshness window.
+void test_udp_alive_disconnect_wire_constants() {
+  TEST_ASSERT_EQUAL_UINT8(0x55, udpstatus::kAliveHeader);
+  TEST_ASSERT_TRUE(udpstatus::kAliveSize == 14);
+  TEST_ASSERT_EQUAL_UINT8(0x56, udpstatus::kDisconnectHeader);
+  TEST_ASSERT_TRUE(udpstatus::kDisconnectSize == 14);
+  TEST_ASSERT_EQUAL_UINT32(5000, udpstatus::kAliveMs);
+}
+
+void test_udp_classify_alive_disconnect() {
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kAlive), rxKindInt(udpstatus::classifyRx(14, 0x55)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDisconnect), rxKindInt(udpstatus::classifyRx(14, 0x56)));
+  // Neighbouring sizes/headers still drop (incl. the ACK header, which the
+  // robot only ever transmits at 10B, and every other claimed header at 14B
+  // — except 0x53, which IS the valid 14B REKEY_REQ shape).
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(13, 0x55)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(15, 0x55)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(13, 0x56)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(15, 0x56)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0x54)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0xAC)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0xAD)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0x50)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0xAA)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(12, 0x55)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(12, 0x56)));
+}
+
+void test_udp_claimed_headers_distinct() {
+  // Never-reuse rule: every claimed RX header is distinct from the legacy
+  // control header, the telemetry header, and each other.
+  const uint8_t headers[] = {0xAA,
+                             udpstatus::kDriveV2Header,
+                             udpstatus::kPairReqHeader,
+                             udpstatus::kUnbondHeader,
+                             udpstatus::kRekeyReqHeader,
+                             udpstatus::kAliveHeader,
+                             udpstatus::kDisconnectHeader};
+  for (size_t i = 0; i < sizeof(headers); ++i) {
+    for (size_t j = i + 1; j < sizeof(headers); ++j) {
+      TEST_ASSERT_TRUE(headers[i] != headers[j]);
+    }
+    TEST_ASSERT_TRUE(udp::kTelemetryHeader != headers[i]);
+  }
+}
+
+void test_udp_alive_fresh_inside_window() {
+  TEST_ASSERT_TRUE(udpstatus::isAliveFresh(1000u, 1000u));
+  TEST_ASSERT_TRUE(udpstatus::isAliveFresh(1000u, 5999u));
+  TEST_ASSERT_TRUE(udpstatus::isAliveFresh(1000u, 6000u));  // Boundary counts as fresh.
+}
+
+void test_udp_alive_stale_past_window() {
+  TEST_ASSERT_FALSE(udpstatus::isAliveFresh(1000u, 6001u));
+  TEST_ASSERT_FALSE(udpstatus::isAliveFresh(0u, 5001u));
+  TEST_ASSERT_FALSE(udpstatus::isAliveFresh(0u, 60000u));
+}
+
+void test_udp_alive_fresh_millis_wrap() {
+  // Wrap-safe: 356ms after a near-rollover mark is fresh, 6256ms is stale.
+  TEST_ASSERT_TRUE(udpstatus::isAliveFresh(0xFFFFFF00u, 100u));
+  TEST_ASSERT_FALSE(udpstatus::isAliveFresh(0xFFFFFF00u, 6000u));
+}
+
+// Telemetry TX gate (broadcast fallback deleted): unicast only when bonded
+// && peer pinned && alive-fresh; else silent. Pre-bond stays silent.
+void test_udp_telemetry_gate_unicast_when_bonded_alive() {
+  TEST_ASSERT_TRUE(udpstatus::shouldSendTelemetry(true, true, 1000u, 1000u));
+  TEST_ASSERT_TRUE(udpstatus::shouldSendTelemetry(true, true, 1000u, 6000u));  // Boundary fresh.
+}
+
+void test_udp_telemetry_gate_silent_when_stale() {
+  TEST_ASSERT_FALSE(udpstatus::shouldSendTelemetry(true, true, 1000u, 6001u));
+  TEST_ASSERT_FALSE(udpstatus::shouldSendTelemetry(true, true, 0u, 60000u));
+}
+
+void test_udp_telemetry_gate_silent_when_no_peer() {
+  // Post-bond reboot before the first packet: no peer yet -> silent (the
+  // deleted broadcast fallback used to send here).
+  TEST_ASSERT_FALSE(udpstatus::shouldSendTelemetry(true, false, 1000u, 1000u));
+  TEST_ASSERT_FALSE(udpstatus::shouldSendTelemetry(true, false, 0u, 0u));
+}
+
+void test_udp_telemetry_gate_silent_pre_bond() {
+  // Pre-bond stays silent even with a pinned peer + fresh stamp.
+  TEST_ASSERT_FALSE(udpstatus::shouldSendTelemetry(false, true, 1000u, 1000u));
+  TEST_ASSERT_FALSE(udpstatus::shouldSendTelemetry(false, false, 1000u, 1000u));
+  TEST_ASSERT_FALSE(udpstatus::shouldSendTelemetry(false, true, 1000u, 6001u));
+}
+
+void test_udp_telemetry_gate_wrap() {
+  TEST_ASSERT_TRUE(udpstatus::shouldSendTelemetry(true, true, 0xFFFFFF00u, 100u));
+  TEST_ASSERT_FALSE(udpstatus::shouldSendTelemetry(true, true, 0xFFFFFF00u, 6000u));
+}

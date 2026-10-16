@@ -124,3 +124,120 @@ Frozen: `0xBB` payload bytes, `DRIVE_V2` layout, XOR + HMAC construction. Rate c
 - Exact rate steps? Persist per-bond or global?
 - Expose rate in UI or auto (foreground 10Hz / background 1Hz)?
 - Battery-threshold urgent values?
+
+## 13. Appendix: counter durability + exhaustion + persist-interval (shipped state, owner-refinable)
+
+Status note: this appendix records what is already shipped on `feat/pairing-auth`
+vs what remains spec-only, so a later Phase-2 change does not re-litigate it.
+Layer-A flush, Tier-2 fail-closed, Tier-1 rekey frames + key schedule, and the
+persist-interval byte are implemented; Layer-B resync is spec-only; the Tier-1
+background trigger is an inert stub. Normative wire for all shipped items stays
+in `shared/protocol/README.md` — this section is rationale + ranking only.
+
+### 13.1 Layer-B resync (spec-only — not implemented)
+
+Problem: Layer-A (flush `DriveCounter` to disk every N sends + on graceful
+stop) already covers graceful kills — app backgrounded, clean close, robot
+reboot with NVS intact. What it does not cover is the ungraceful kill: OS
+jetsam / crash / power loss between two persist points leaves the in-memory
+counter up to N ahead of disk, so the next launch replays a stale counter and
+the robot drops the first frames until the counter climbs past `lastSeen`.
+Bounded (≤ N drops, self-healing), but visible as a ~seconds stick lag after a
+crash. Layer-B closes that gap. Three options, ranked:
+
+- **B1 — `lastCounter` hint in telemetry (forward-only, capped). Recommended
+  first.** Robot piggybacks its `lastSeen` counter on the steady `0xBB`
+  telemetry (new field or trailing byte; shape TBD — must not disturb the
+  frozen 9-byte layout until Phase-2 accepts a wire change). On launch / after
+  TX-gap, the app reads the hint and fast-forwards its counter to
+  `max(diskCounter, hint)` — forward-only, capped at e.g. `hint + 1` step so a
+  spoofed/jammed hint can never rewind or leap the counter. Tradeoffs: cheapest
+  (no new round trips, no new headers, rides existing unicast telemetry);
+  self-limiting (hint is advisory, `isFreshCounter` stays authoritative);
+  stale-hint safe (forward-only + cap). Backward compat: old robot sends no
+  hint → app falls back to disk counter (today's behaviour); old app ignores
+  the extra byte (length-gated decode, same rule as `PAIR_OK` 38B→39B).
+  Open: hint cadence (every frame vs every Kth), exact cap, where the byte
+  lives post-Phase-2.
+- **B2 — write-ahead N+128 window.** App persists `counter + 128` ahead of the
+  wire (i.e. disk claims headroom the wire has not spent yet), so a crash
+  replays from inside already-authorised headroom rather than behind
+  `lastSeen`. Tradeoffs: zero wire change, zero round trips; but widens the
+  replay window the robot must accept (a stolen DB snapshot replays up to 128
+  frames — same bound as today's persist cadence, just shifted); interacts
+  with the exhaustion gate (headroom arithmetic must not cross
+  `0xFFFFFF00` silently). Backward compat: pure app-side, no interop matrix.
+  Open: whether the +128 headroom needs clamping near the gate.
+- **B3 — `RESYNC_REQ` / `RESYNC_ACK` handshake.** App asks the robot for its
+  `lastSeen`; robot answers authenticated under the PSK; app fast-forwards.
+  Tradeoffs: exact (no guessing, no headroom math); but costs new headers
+  (must avoid `0xAA/0xAC/0xBB/0x50/0x51/0x52/0x53/0x54/0xAD`), new verify
+  order, new retry/backoff + lost-ACK idempotency — a second reliable exchange
+  next to `SET_RATE` / `REKEY` for a seconds-long cosmetic lag. Backward
+  compat: old robot drops the request (unknown header) → app falls back to B0
+  (today's self-heal); old app never sends it. Open: ack auth (under PSK like
+  `REKEY_ACK`?), rate-limiting the request so it cannot become a peer-oracle.
+
+Ranking: **B1 > B2 > B3.** B1 keeps the UDP-stateless shape of §5 (advisory,
+no ACKs, robot stays authoritative); B2 is the zero-wire fallback if B1's
+byte cannot be placed; B3 only if field data shows crash-replay lag is a real
+complaint — do not pay handshake complexity for a self-healing cosmetic.
+
+### 13.2 Counter exhaustion: Tier-2 fail-closed + Tier-1 silent auto-rekey (shipped)
+
+- **Tier-2 (no bond / legacy path): fail-closed at `0xFFFFFF00` + explicit
+  re-pair (shipped).** When the counter reaches `EXHAUSTION_GATE`
+  (`0xFFFFFF00`, ~256 frames of headroom before u32 wrap), the side refuses to
+  send further and surfaces the Tier-2 repair copy ("session expired — please
+  re-pair"). No wrap, no silent reuse, no auto-recovery — the user re-pairs.
+  Rationale: without a shared key there is nothing to rotate *under*, so
+  fail-closed is the only safe shape.
+- **Tier-1 (bonded): silent auto-rekey era rotation (shipped frames +
+  schedule; trigger stub inert).** Before the gate, both sides rotate to a new
+  era + PSK under the old PSK, reset the counter to the bond baseline (0
+  persisted, first post-rekey drive uses 1 — same as a fresh pair), and resume
+  gapless. Wire (claimed headers, never reuse): `REKEY_REQ 0x53 [eraBE2 |
+  counterBE4 | tag6]` with
+  `tag = first6(HMAC-SHA256(oldPsk, "REKEY"||eraBE2||counterBE4))`;
+  `REKEY_ACK 0x54 [eraBE2 | tag6]` with
+  `tag = first6(HMAC-SHA256(newPsk, "REKEYACK"||eraBE2))` so the ACK proves
+  the switch. Key schedule (no key transport — both sides derive):
+  `PSK_next = HKDF-SHA256(salt="desky-rekey-v1", IKM=oldPsk16,
+  info=eraBE2(new), L=16)`. Verify mirrors drive/unbond (len → header → XOR →
+  bonded? → era == stored+1, duplicate era == stored re-ACKs idempotently
+  without re-verifying → counter fresh → HMAC constant-time under OLD key);
+  fail = silent drop with 3x byte-identical app retry, then Tier-2 repair
+  copy. Pass = persist (`era+1`/`psk_next`/counter 0) BEFORE the ACK, switch
+  atomically, old PSK dropped immediately (no reorder window — stale in-flight
+  old-key drives drop via HMAC). Proactive margin: app fires at
+  `lastSent >= GATE - 1000` (`REKEY_MARGIN`, ~20 s at 50 Hz) so rotation
+  completes before the gate.
+- **Follow-up (not in this branch): background-launch the trigger.** The
+  `maybeRekey` check at send time is intentionally inert (returns false) so
+  the shipped path cannot half-fire. The follow-up wires it to a background
+  launcher with: a `rekeyInFlight` guard (one exchange at a time), a vault/DB
+  refresh after persist (so the new era + PSK survive process death), and
+  bounded retry with backoff (3x byte-identical, then Tier-2 copy — no tight
+  loop at 50 Hz). Until then exhaustion is exercised by tests only, and field
+  behaviour at the gate is fail-closed on both tiers.
+
+### 13.3 Persist-interval `persist_u8` (shipped, v1.1 `PAIR_OK` 39B)
+
+The counter-persist cadence N travels once, at pair, inside the `PAIR_OK`
+ciphertext — never as a bare field. Plaintext is `psk16||persist_u8` (17B);
+`ct||tag = AES-128-GCM(KEK, nonce12=server_nonce||client_nonce||00 00 00 00,
+AAD=0x51||nonces, psk16||persist_u8)` — the byte is authenticated by the GCM
+tag + AAD exactly like the PSK. Guard is minimal (not an allowlist): N in
+8..1024 else 128 (wire holds the u8 subset 8..255; 256..1024 reserved for a
+future u16 field and map to 128 on the wire) — kills 0/div-zero + absurd
+values. Both sides default 128 (`COUNTER_PERSIST_EVERY` / `DriveCounter`
+default); a v1 robot (38B, no byte) → app defaults to 128 and stays
+compatible. Once-at-pair by design: no re-negotiation, no `SET_RATE`-style
+exchange — changing N mid-bond would fork the crash-replay bound between the
+two sides. Shared test vector pins `persist_every=128 (0x80)` with
+`ct=f47f282e8b8020ec2acf8bf1eaf2ee2590`.
+
+Open questions for owner: accept B1-first ranking (or prefer B2's zero-wire
+shape)? Hint byte placement + cap for B1? `REKEY_MARGIN` 1000 the right
+proactive distance? Background rekey backoff shape (fixed vs exponential)?
+Persist-interval ever per-bond renegotiable, or once-at-pair forever?

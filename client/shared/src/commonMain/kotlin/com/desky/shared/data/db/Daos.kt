@@ -24,12 +24,22 @@ interface PairedDeviceDao {
     suspend fun deleteAll()
 
     /**
-     * Persist the drive counter mid-session (called every 128 sends by the
-     * signed send loop, mirroring firmware A1). Keeps the row; the session
-     * resumes from this value after a restart.
+     * Persist the drive counter mid-session (called every negotiated persist
+     * cadence by the signed send loop, default 128, mirroring the
+     * firmware). Keeps the row; the session resumes from this value after
+     * a restart.
      */
     @Query("UPDATE paired_device SET lastCounter = :counter WHERE id = :deviceId")
     suspend fun updateCounter(deviceId: String, counter: Long)
+
+    /**
+     * Persist a Tier-1 rekey rotation: the new era + the bond-baseline
+     * counter (0 — the first post-rekey drive uses 1, same as a fresh
+     * pair). Called once per confirmed `REKEY_ACK` by the rekey use case;
+     * keeps the row (the vault PSK update is a separate call).
+     */
+    @Query("UPDATE paired_device SET lastCounter = :counter, era = :era WHERE id = :deviceId")
+    suspend fun updateRekey(deviceId: String, counter: Long, era: Int)
 }
 
 @Dao

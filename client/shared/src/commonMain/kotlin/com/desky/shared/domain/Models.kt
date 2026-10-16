@@ -61,8 +61,15 @@ data class Telemetry(
  * vault ([BondSecretStore]) since Task 8, never in Room. [lastCounter] is the
  * last drive counter persisted to Room (Task 9: saved every 128 sends,
  * mirroring firmware A1); the drive session resumes from it, so the first
- * wire packet after a fresh pair uses counter 1. Never shown in UI state —
- * a domain/session field only.
+ * wire packet after a fresh pair uses counter 1. [persistEvery] is the
+ * counter-persist cadence negotiated once at pair (v1.1 `PAIR_OK` interval
+ * byte, sanitized 8..1024 else 128; a v1 robot sends no byte and the app
+ * defaults to 128) — Room-persisted (v4 column) so the drive session keeps
+ * the negotiated cadence across restarts. [era] is the Tier-1 rekey epoch
+ * (u16, fresh pair = 0, Room-persisted v5 column + firmware NVS "bera"):
+ * every silent era+PSK rotation increments it and resets [lastCounter] to
+ * the bond baseline (0 persisted, first post-rekey drive uses 1). Never
+ * shown in UI state — domain/session fields only.
  */
 data class PairedDevice(
     val id: String,
@@ -71,6 +78,8 @@ data class PairedDevice(
     val authToken: String,
     val lastCounter: UInt = 0u,
     val alias: String = ip,
+    val persistEvery: Int = DriveCounter.COUNTER_PERSIST_EVERY,
+    val era: UShort = 0u,
 )
 
 /** Plain robot settings holder (persistence lives elsewhere). */

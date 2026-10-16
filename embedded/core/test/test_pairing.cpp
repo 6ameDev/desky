@@ -83,5 +83,119 @@ void test_pair_malformed_input_is_bad_code() {
   TEST_ASSERT_FALSE(core.bonded());
 }
 
+// v1.1 persist-interval byte: minimal guard (not an allowlist) — 8..255
+// pass, 0..7 (incl. div-zero 0) and anything above the u8 wire range
+// (incl. the app-reserved 256..1024) fall back to 128.
+void test_pair_persist_every_guard() {
+  TEST_ASSERT_EQUAL_UINT8(128, pairing::sanitizePersistEvery(0));
+  TEST_ASSERT_EQUAL_UINT8(128, pairing::sanitizePersistEvery(7));
+  TEST_ASSERT_EQUAL_UINT8(8, pairing::sanitizePersistEvery(8));
+  TEST_ASSERT_EQUAL_UINT8(16, pairing::sanitizePersistEvery(16));
+  TEST_ASSERT_EQUAL_UINT8(128, pairing::sanitizePersistEvery(128));
+  TEST_ASSERT_EQUAL_UINT8(255, pairing::sanitizePersistEvery(255));
+  TEST_ASSERT_EQUAL_UINT8(128, pairing::sanitizePersistEvery(256));
+  TEST_ASSERT_EQUAL_UINT8(128, pairing::sanitizePersistEvery(1024));
+  TEST_ASSERT_EQUAL_UINT8(128, pairing::sanitizePersistEvery(65535));
+}
+
+// v1.1 wire layout: GCM plaintext psk16||persist_u8 (17B) -> PAIR_OK 39B;
+// legacy v1 robots send 38B with no byte (app defaults to 128).
+void test_pair_wrap_layout_consts() {
+  TEST_ASSERT_EQUAL_UINT8(128, pairing::kPairPersistDefault);
+  TEST_ASSERT_EQUAL(17, static_cast<int>(pairing::kPairWrapPlainLen));
+  TEST_ASSERT_EQUAL(17, static_cast<int>(pairing::kPairCtLen));
+  TEST_ASSERT_EQUAL(39, static_cast<int>(pairing::kPairOkSize));
+  TEST_ASSERT_EQUAL(38, static_cast<int>(pairing::kPairOkLegacySize));
+}
+
+// Tier-1 silent auto-rekey: wire constants + tag-message goldens. The HKDF
+// key schedule (deriveRekeyPsk) is ARDUINO-only (mbedTLS) and exercised on
+// hardware; the cross-side vectors live app-side (PairingCryptoTest rekey
+// goldens: nextPsk=df7441d0... + REQ/ACK tags) — these host tests pin the
+// message layouts both sides must agree on.
+void test_rekey_wire_consts() {
+  TEST_ASSERT_EQUAL_UINT8(0x53, pairing::kRekeyReqHeader);
+  TEST_ASSERT_EQUAL(14, static_cast<int>(pairing::kRekeyReqSize));
+  TEST_ASSERT_EQUAL_UINT8(0x54, pairing::kRekeyAckHeader);
+  TEST_ASSERT_EQUAL(10, static_cast<int>(pairing::kRekeyAckSize));
+  TEST_ASSERT_EQUAL(6, static_cast<int>(pairing::kRekeyTagLen));
+  TEST_ASSERT_EQUAL(11, static_cast<int>(pairing::kRekeyMsgLen));
+  TEST_ASSERT_EQUAL(10, static_cast<int>(pairing::kRekeyAckMsgLen));
+}
+
+void test_rekey_tag_msg_golden() {
+  uint8_t msg[pairing::kRekeyMsgLen];
+  pairing::rekeyTagMsg(1u, 100u, msg);
+  // "REKEY" || eraBE2(0001) || counterBE4(00000064).
+  const uint8_t expected[11] = {0x52, 0x45, 0x4B, 0x45, 0x59, 0x00, 0x01, 0x00, 0x00, 0x00, 0x64};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, msg, sizeof(expected));
+  // Era/counter lay out big-endian.
+  pairing::rekeyTagMsg(0x0102u, 0x01020304u, msg);
+  const uint8_t be[11] = {0x52, 0x45, 0x4B, 0x45, 0x59, 0x01, 0x02, 0x01, 0x02, 0x03, 0x04};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(be, msg, sizeof(be));
+  // Null-safe (no crash on null out).
+  pairing::rekeyTagMsg(1u, 1u, nullptr);
+}
+
+void test_rekey_ack_tag_msg_golden() {
+  uint8_t msg[pairing::kRekeyAckMsgLen];
+  pairing::rekeyAckTagMsg(1u, msg);
+  // "REKEYACK" || eraBE2(0001).
+  const uint8_t expected[10] = {0x52, 0x45, 0x4B, 0x45, 0x59, 0x41, 0x43, 0x4B, 0x00, 0x01};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, msg, sizeof(expected));
+  pairing::rekeyAckTagMsg(0x0102u, msg);
+  TEST_ASSERT_EQUAL_UINT8(0x01, msg[8]);
+  TEST_ASSERT_EQUAL_UINT8(0x02, msg[9]);
+  pairing::rekeyAckTagMsg(1u, nullptr);
+}
+
+// ALIVE + DISCONNECT (robot alive rule): domain constants pin the claimed
+// headers/sizes (0x55/0x56 — never 0xAA/0xAC/0xBB/0x50/0x51/0x52/0x53/0x54/
+// 0xAD) and the tag-message lengths. HMAC tags themselves are ARDUINO-only
+// (mbedTLS) and pinned as cross-side vectors in shared/protocol/README.md
+// (alive_tag=dd152baa54f7, disconnect_tag=ca90ca039040 for era=1,
+// counter=100 under the shared psk) — these host tests pin the message
+// layouts both sides must agree on.
+void test_alive_disconnect_wire_consts() {
+  TEST_ASSERT_EQUAL_UINT8(0x55, pairing::kAliveHeader);
+  TEST_ASSERT_EQUAL(14, static_cast<int>(pairing::kAliveSize));
+  TEST_ASSERT_EQUAL_UINT8(0x56, pairing::kDisconnectHeader);
+  TEST_ASSERT_EQUAL(14, static_cast<int>(pairing::kDisconnectSize));
+  TEST_ASSERT_EQUAL(6, static_cast<int>(pairing::kAliveTagLen));
+  TEST_ASSERT_EQUAL(11, static_cast<int>(pairing::kAliveMsgLen));
+  TEST_ASSERT_EQUAL(6, static_cast<int>(pairing::kDisconnectTagLen));
+  TEST_ASSERT_EQUAL(16, static_cast<int>(pairing::kDisconnectMsgLen));
+}
+
+void test_alive_tag_msg_golden() {
+  uint8_t msg[pairing::kAliveMsgLen];
+  pairing::aliveTagMsg(1u, 100u, msg);
+  // "ALIVE" || eraBE2(0001) || counterBE4(00000064).
+  const uint8_t expected[11] = {0x41, 0x4C, 0x49, 0x56, 0x45, 0x00, 0x01, 0x00, 0x00, 0x00, 0x64};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, msg, sizeof(expected));
+  // Era/counter lay out big-endian.
+  pairing::aliveTagMsg(0x0102u, 0x01020304u, msg);
+  const uint8_t be[11] = {0x41, 0x4C, 0x49, 0x56, 0x45, 0x01, 0x02, 0x01, 0x02, 0x03, 0x04};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(be, msg, sizeof(be));
+  // Null-safe (no crash on null out).
+  pairing::aliveTagMsg(1u, 1u, nullptr);
+}
+
+void test_disconnect_tag_msg_golden() {
+  uint8_t msg[pairing::kDisconnectMsgLen];
+  pairing::disconnectTagMsg(1u, 100u, msg);
+  // "DISCONNECT" || eraBE2(0001) || counterBE4(00000064).
+  const uint8_t expected[16] = {0x44, 0x49, 0x53, 0x43, 0x4F, 0x4E, 0x4E, 0x45,
+                                0x43, 0x54, 0x00, 0x01, 0x00, 0x00, 0x00, 0x64};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, msg, sizeof(expected));
+  // Era/counter lay out big-endian.
+  pairing::disconnectTagMsg(0x0102u, 0x01020304u, msg);
+  const uint8_t be[16] = {0x44, 0x49, 0x53, 0x43, 0x4F, 0x4E, 0x4E, 0x45,
+                          0x43, 0x54, 0x01, 0x02, 0x01, 0x02, 0x03, 0x04};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(be, msg, sizeof(be));
+  // Null-safe (no crash on null out).
+  pairing::disconnectTagMsg(1u, 1u, nullptr);
+}
+
 // Runner lives in test_udp_codec.cpp (single main for the native-test
 // binary): the pairing tests are declared extern there.

@@ -57,12 +57,21 @@ class ForgetDeviceUseCase(
      * The counter comes from the shared [DriveCounter] (live sequence),
      * never `device.lastCounter` (the stale Room watermark): after any
      * unpersisted drive frames the watermark lags the robot, and the robot
-     * drops the `UNBOND` as a replay.
+     * drops the `UNBOND` as a replay. A best-effort [DriveCounter.flush]
+     * runs first so the watermark is fresh even when all sends fail (flush
+     * errors swallowed — graceful degradation preserved).
      */
     private suspend fun sendUnbondBestEffort(device: PairedDevice) {
         val pskHex = getBondPsk() ?: return
         try {
-            driveCounter.ensure(device.id, device.lastCounter)
+            driveCounter.ensure(device.id, device.lastCounter, device.persistEvery)
+            try {
+                driveCounter.flush()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Swallowed: forget proceeds regardless.
+            }
             val counter = driveCounter.next() ?: return
             val unbond = encodeUnbond(hexToBytes(pskHex), counter)
             repeat(MAX_UNBOND_SENDS) {

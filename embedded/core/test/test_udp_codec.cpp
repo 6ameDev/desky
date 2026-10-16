@@ -4,6 +4,7 @@
 #include <unity.h>
 
 #include "../src/middleware/udp_codec.h"
+#include "../src/middleware/udp_server.h"
 
 void setUp() {}
 void tearDown() {}
@@ -71,6 +72,22 @@ void test_telemetry_rejects_bad_header_checksum() {
   buf[0] = 0xBB;
   buf[udp::kTelemetrySize - 1] ^= 0xFF;
   TEST_ASSERT_FALSE(udp::decodeTelemetry(buf, sizeof(buf), pkt));
+}
+
+// ALIVE/DISCONNECT (robot alive rule): the new 0x55/0x56 headers never
+// collide with the frozen control/telemetry headers owned by this codec,
+// and their 14B size matches neither the 6B control nor the 9B telemetry
+// shape — so neither legacy decode path can ever accept one.
+void test_codec_alive_disconnect_headers_distinct() {
+  TEST_ASSERT_TRUE(udp::kControlHeader != udpstatus::kAliveHeader);
+  TEST_ASSERT_TRUE(udp::kControlHeader != udpstatus::kDisconnectHeader);
+  TEST_ASSERT_TRUE(udp::kTelemetryHeader != udpstatus::kAliveHeader);
+  TEST_ASSERT_TRUE(udp::kTelemetryHeader != udpstatus::kDisconnectHeader);
+  TEST_ASSERT_TRUE(udpstatus::kAliveHeader != udpstatus::kDisconnectHeader);
+  TEST_ASSERT_TRUE(udpstatus::kAliveSize != udp::kControlSize);
+  TEST_ASSERT_TRUE(udpstatus::kAliveSize != udp::kTelemetrySize);
+  TEST_ASSERT_TRUE(udpstatus::kDisconnectSize != udp::kControlSize);
+  TEST_ASSERT_TRUE(udpstatus::kDisconnectSize != udp::kTelemetrySize);
 }
 
 // Sensor fusion tests, defined in test_sensor_fusion.cpp (pio test links all
@@ -173,6 +190,19 @@ void test_udp_redeliver_millis_wrap_true();
 void test_udp_unbond_wire_constants();
 void test_udp_classify_unbond();
 void test_udp_unbond_tag_msg_golden();
+void test_udp_rekey_wire_constants();
+void test_udp_classify_rekey();
+void test_udp_alive_disconnect_wire_constants();
+void test_udp_classify_alive_disconnect();
+void test_udp_claimed_headers_distinct();
+void test_udp_alive_fresh_inside_window();
+void test_udp_alive_stale_past_window();
+void test_udp_alive_fresh_millis_wrap();
+void test_udp_telemetry_gate_unicast_when_bonded_alive();
+void test_udp_telemetry_gate_silent_when_stale();
+void test_udp_telemetry_gate_silent_when_no_peer();
+void test_udp_telemetry_gate_silent_pre_bond();
+void test_udp_telemetry_gate_wrap();
 
 // I2S audio DSP + meter policy, defined in test_audio.cpp.
 void test_audio_dual_mono32_top_justified();
@@ -187,6 +217,14 @@ void test_pair_fifth_try_locks_then_expires();
 void test_pair_window_expiry_rejects();
 void test_pair_pre_window_rejects();
 void test_pair_malformed_input_is_bad_code();
+void test_pair_persist_every_guard();
+void test_pair_wrap_layout_consts();
+void test_rekey_wire_consts();
+void test_rekey_tag_msg_golden();
+void test_rekey_ack_tag_msg_golden();
+void test_alive_disconnect_wire_consts();
+void test_alive_tag_msg_golden();
+void test_disconnect_tag_msg_golden();
 
 int main() {
   UNITY_BEGIN();
@@ -196,6 +234,7 @@ int main() {
   RUN_TEST(test_telemetry_golden_vector);
   RUN_TEST(test_telemetry_decode_round_trip_negative);
   RUN_TEST(test_telemetry_rejects_bad_header_checksum);
+  RUN_TEST(test_codec_alive_disconnect_headers_distinct);
   RUN_TEST(test_flat_rest_no_cliff_near_zero_tilt);
   RUN_TEST(test_nose_up_45_pitch_tracks_identity);
   RUN_TEST(test_nose_up_45_pitch_tracks_swapped);
@@ -285,6 +324,19 @@ int main() {
   RUN_TEST(test_udp_unbond_wire_constants);
   RUN_TEST(test_udp_classify_unbond);
   RUN_TEST(test_udp_unbond_tag_msg_golden);
+  RUN_TEST(test_udp_rekey_wire_constants);
+  RUN_TEST(test_udp_classify_rekey);
+  RUN_TEST(test_udp_alive_disconnect_wire_constants);
+  RUN_TEST(test_udp_classify_alive_disconnect);
+  RUN_TEST(test_udp_claimed_headers_distinct);
+  RUN_TEST(test_udp_alive_fresh_inside_window);
+  RUN_TEST(test_udp_alive_stale_past_window);
+  RUN_TEST(test_udp_alive_fresh_millis_wrap);
+  RUN_TEST(test_udp_telemetry_gate_unicast_when_bonded_alive);
+  RUN_TEST(test_udp_telemetry_gate_silent_when_stale);
+  RUN_TEST(test_udp_telemetry_gate_silent_when_no_peer);
+  RUN_TEST(test_udp_telemetry_gate_silent_pre_bond);
+  RUN_TEST(test_udp_telemetry_gate_wrap);
   RUN_TEST(test_audio_dual_mono32_top_justified);
   RUN_TEST(test_audio_chime_shape_and_decay);
   RUN_TEST(test_audio_int24_unpack_top24_in_32);
@@ -295,5 +347,13 @@ int main() {
   RUN_TEST(test_pair_window_expiry_rejects);
   RUN_TEST(test_pair_pre_window_rejects);
   RUN_TEST(test_pair_malformed_input_is_bad_code);
+  RUN_TEST(test_pair_persist_every_guard);
+  RUN_TEST(test_pair_wrap_layout_consts);
+  RUN_TEST(test_rekey_wire_consts);
+  RUN_TEST(test_rekey_tag_msg_golden);
+  RUN_TEST(test_rekey_ack_tag_msg_golden);
+  RUN_TEST(test_alive_disconnect_wire_consts);
+  RUN_TEST(test_alive_tag_msg_golden);
+  RUN_TEST(test_disconnect_tag_msg_golden);
   return UNITY_END();
 }

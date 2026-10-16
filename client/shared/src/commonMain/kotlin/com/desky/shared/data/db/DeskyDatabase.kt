@@ -6,12 +6,16 @@ import androidx.room3.RoomDatabase
 import androidx.room3.RoomDatabaseConstructor
 
 /**
- * Room database (T5 data layer, version 3).
+ * Room database (T5 data layer, version 5).
  *
  * v1 -> v2 was an additive auto-migration (nullable `pskHex` on
  * `paired_device`). v2 -> v3 drops that column and adds `lastCounter`
  * (Task 9: the vault owns the PSK now; Room only resumes the drive
- * counter). Dev-stage wipe-freely: destructive migration via
+ * counter). v3 -> v4 adds `persistEvery` (default 128 — the v1.1 pair-
+ * negotiated counter-persist cadence, so the drive session keeps it
+ * across restarts). v4 -> v5 adds `era` (default 0 — the Tier-1 rekey
+ * epoch, so the drive session keeps the rotation generation across
+ * restarts). Dev-stage wipe-freely: destructive migration via
  * `fallbackToDestructiveMigration()` on every platform builder — NO
  * `Migration` object. This MUST be replaced with a real migration before
  * real customers exist, or they lose their pairing on upgrade.
@@ -27,7 +31,7 @@ import androidx.room3.RoomDatabaseConstructor
  */
 @Database(
     entities = [PairedDeviceEntity::class, RobotConfigEntity::class],
-    version = 3,
+    version = 5,
 )
 @ConstructedBy(DeskyDatabaseConstructor::class)
 abstract class DeskyDatabase : RoomDatabase() {

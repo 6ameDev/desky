@@ -61,9 +61,15 @@ class PairingViewModel(
      * Starts pairing. Guards re-entry via [PairingUiState.isPairing]: the flag
      * is set synchronously (before the coroutine is even scheduled), so a
      * second tap while a pairing is in flight is a no-op.
+     *
+     * Bonded gate: while [PairingUiState.pairedDevice] is non-null the Pair
+     * button is disabled (the UI binds `enabled` to this too) — only Forget
+     * ([onUnpair], always enabled) plus the screen's auto-retry are offered,
+     * so a second bond can never be stacked over a live one.
      */
     fun onPair() {
         if (_state.value.isPairing) return
+        if (_state.value.pairedDevice != null) return
         // Snapshot the PIN before launch: the field stays enabled during
         // pairing (UX-owned), so reading inside the coroutine could race an edit.
         val code = _state.value.pin

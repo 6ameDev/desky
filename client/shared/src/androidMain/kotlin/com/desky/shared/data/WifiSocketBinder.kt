@@ -7,6 +7,9 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import com.desky.shared.domain.UdpSocketBinder
 import com.desky.shared.domain.UdpSocketManager
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 /**
  * Platform [UdpSocketBinder] for Android, constructed in `DeskyApp` from the
@@ -63,6 +66,15 @@ internal fun wifiNetworkRequest(): NetworkRequest = NetworkRequest.Builder()
  * see `DatagramSocketManager` KDoc. Holds the application context only
  * (never an activity), so [attach] from the app-lifetime Koin graph cannot
  * leak a UI context.
+ *
+ * Rejoin signal: [networkAvailable] emits on every debounced `onAvailable`
+ * (see [REJOIN_DEBOUNCE_MS]) via non-suspending `tryEmit` — a system
+ * callback cannot suspend, same idiom as the socket `incoming` flows. The
+ * control ViewModel collects it and forces the `ALIVE` clock due, so an AP
+ * rejoin knocks immediately like boot-ready / foreground, then the steady
+ * 2 Hz resumes. The 1 s binder debounce suffices (no ViewModel debounce):
+ * flaps collapse here, and any residual burst collapses idempotently there
+ * (repeated due-flags before the next tick yield one `ALIVE`).
  */
 internal class WifiSocketBinder(context: Context) : UdpSocketBinder {
     private val connectivityManager =
@@ -88,6 +100,28 @@ internal class WifiSocketBinder(context: Context) : UdpSocketBinder {
     var wifiStale = true
         private set
 
+    /**
+     * AP-rejoin debounce window: `onAvailable` flaps inside this are
+     * socket re-binds only (no [networkAvailable] emit). 1 s collapses the
+     * connect/re-validate burst while still knocking an order of magnitude
+     * inside the robot's 5 s alive window.
+     */
+    companion object {
+        const val REJOIN_DEBOUNCE_MS = 1000L
+    }
+
+    private val _networkAvailable = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    override val networkAvailable: SharedFlow<Unit> = _networkAvailable.asSharedFlow()
+
+    /**
+     * Last rejoin emit, `System.currentTimeMillis` (wall clock — simple,
+     * matches the diagnostic nature; a reboot/NTP step can only admit one
+     * extra knock, never suppress a real rejoin past one window).
+     */
+    @Volatile
+    var lastRejoinEmitMs: Long = 0L
+        private set
+
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             lastNetwork = network
@@ -102,6 +136,15 @@ internal class WifiSocketBinder(context: Context) : UdpSocketBinder {
                 false
             }
             wifiStale = !bound
+            // Rejoin signal (debounced, non-suspending): flaps < 1 s are
+            // re-binds only. tryEmit never suspends the system callback; a
+            // full buffer drops (the ViewModel's due-flag is idempotent —
+            // one pending knock is enough).
+            val now = System.currentTimeMillis()
+            if (now - lastRejoinEmitMs >= REJOIN_DEBOUNCE_MS) {
+                lastRejoinEmitMs = now
+                _networkAvailable.tryEmit(Unit)
+            }
         }
 
         override fun onLost(network: Network) {

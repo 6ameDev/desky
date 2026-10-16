@@ -2,7 +2,10 @@ package com.desky.shared.presentation
 
 import com.desky.shared.domain.ControlCommand
 import com.desky.shared.domain.ControlPacketCodec
+import com.desky.shared.domain.ALIVE_HEADER
+import com.desky.shared.domain.AliveUseCase
 import com.desky.shared.domain.DEFAULT_UDP_PORT
+import com.desky.shared.domain.DISCONNECT_HEADER
 import com.desky.shared.domain.DRIVE_V2_HEADER
 import com.desky.shared.domain.DRIVE_V2_SIZE
 import com.desky.shared.domain.DriveCounter
@@ -11,6 +14,8 @@ import com.desky.shared.domain.EmergencyStopUseCase
 import com.desky.shared.domain.ForgetDeviceUseCase
 import com.desky.shared.domain.GetBondPskUseCase
 import com.desky.shared.domain.UNBOND_HEADER
+import com.desky.shared.domain.encodeAlive
+import com.desky.shared.domain.encodeDisconnect
 import com.desky.shared.domain.encodeSigned
 import com.desky.shared.domain.encodeUnbond
 import com.desky.shared.domain.ObserveTelemetryUseCase
@@ -42,6 +47,8 @@ class RobotControlViewModelTest {
         vault: FakeBondSecretStore = FakeBondSecretStore().apply { seed(testDevice().id, PSK_HEX) },
         tickMs: Long = 20,
         holder: DriveCounter = DriveCounter(repo),
+        useAlive: Boolean = false,
+        binder: FakeUdpSocketBinder = FakeUdpSocketBinder(),
     ): Quad {
         val sendSigned = SendSignedControlUseCase(udp)
         val viewModel = RobotControlViewModel(
@@ -53,8 +60,28 @@ class RobotControlViewModelTest {
             udp,
             holder,
             tickMs,
+            aliveUC = if (useAlive) AliveUseCase(udp) else null,
+            socketBinder = binder,
         )
-        return Quad(viewModel, repo, udp, vault, holder)
+        return Quad(viewModel, repo, udp, vault, holder, binder)
+    }
+
+    /**
+     * Promotes the link to [Connectivity.Connected] with a neutral MANUAL
+     * packet. Required before any user intent: sticks/e-stop/release are
+     * gated to no-ops while [Connectivity.Disconnected]. Emits + pumps but
+     * advances no virtual time, so the 2 s silence budget restarts here.
+     */
+    private suspend fun promote(udp: FakeUdpSocketManager) {
+        val packet = Telemetry(
+            pitchDeg = 0f,
+            rollDeg = 0f,
+            distanceMm = 900,
+            cliff = false,
+            driving = false,
+            mode = RobotMode.MANUAL,
+        )
+        udp.inbound.emit(UdpDatagram(TelemetryPacketCodec.encode(packet), "192.168.4.1", DEFAULT_UDP_PORT))
     }
 
     private data class Quad(
@@ -63,11 +90,14 @@ class RobotControlViewModelTest {
         val udp: FakeUdpSocketManager,
         val vault: FakeBondSecretStore,
         val holder: DriveCounter,
+        val binder: FakeUdpSocketBinder = FakeUdpSocketBinder(),
     )
 
     @Test
     fun stickUpdatesStateClamped() = runVmTest { main ->
-        val (viewModel, _, _, _) = setup()
+        val (viewModel, _, udp, _) = setup()
+        main.runCurrent()
+        promote(udp)
         main.runCurrent()
 
         viewModel.onStick(0.5f, -0.25f)
@@ -94,6 +124,9 @@ class RobotControlViewModelTest {
         assertEquals("192.168.4.1", udp.sent[0].host)
         assertEquals(DEFAULT_UDP_PORT, udp.sent[0].port)
 
+        // Sticks are gated while Disconnected: promote first.
+        promote(udp)
+        main.runCurrent()
         viewModel.onStick(0.5f, -0.25f)
         // +1 past the last tick: advanceTimeBy() does NOT run tasks due
         // exactly at the end of the window (exclusive boundary).
@@ -139,6 +172,10 @@ class RobotControlViewModelTest {
         val (viewModel, _, udp, _) = setup(tickMs = 20)
         main.runCurrent()
         assertEquals(1, udp.sent.size, "first frame goes out immediately")
+        // Gated while Disconnected: promote up front (safe here — clock is
+        // t=0, no loop tick due, so the pump sends nothing extra).
+        promote(udp)
+        main.runCurrent()
 
         // Centered idle: 9-frame grace (t=0..160) then heartbeats at
         // t=360,560,760,960 — 13 sends in 50 ticks, counters 1..13 gapless.
@@ -180,6 +217,11 @@ class RobotControlViewModelTest {
 
         // Latched e-stop forces every tick (centered + ESTOP_FLAG): the
         // immediate frame is counter 33, the loop sends 34,35,36.
+        // ~2.1 s since the initial promote: re-promote past the silence
+        // budget first (safe — clock sits off-grid at t=2101, no loop tick
+        // due, so the pump sends nothing extra).
+        promote(udp)
+        main.runCurrent()
         viewModel.onEmergencyStop()
         main.runCurrent()
         udp.sent.clear()
@@ -204,6 +246,11 @@ class RobotControlViewModelTest {
         val deviceId = testDevice().id
         // Deflected (full-rate): idle heartbeat would only send ~13 frames here.
         val (viewModel, repo, udp, _) = setup(tickMs = 20)
+        main.runCurrent()
+        // Gated while Disconnected: promote first (pump init before the
+        // emit — an emit before the first pump never reaches the collector).
+        promote(udp)
+        main.runCurrent()
         viewModel.onStick(0.5f, 0f)
         main.runCurrent()
         // 129 frames total (t=0..2560): the 128th successful send persists.
@@ -242,6 +289,30 @@ class RobotControlViewModelTest {
         assertEquals(Connectivity.Unpaired, state.connectivity)
         assertEquals("Please re-pair to drive", state.error)
         assertEquals(1, vault.loadCalls, "missing PSK latched: vault read once, loop idles")
+    }
+
+    /**
+     * Tier-2 exhaustion surface: a session whose Room watermark sits at
+     * gate-1 (PSK present — NOT the missing-PSK path) allocates nothing,
+     * sends nothing (no UNBOND counter is consumed either), and surfaces
+     * [Connectivity.Unpaired] + the repair copy. Vault still read once
+     * (session cached, loop idles).
+     */
+    @Test
+    fun sessionExpiredSurfacesRepair() = runVmTest { main ->
+        val device = testDevice().copy(lastCounter = DriveCounter.EXHAUSTION_GATE - 1u)
+        val (viewModel, _, udp, vault) = setup(
+            repo = FakeDeviceRepository(device),
+            vault = FakeBondSecretStore().apply { seed(device.id, PSK_HEX) },
+        )
+        main.runCurrent()
+        main.advanceTimeBy(101)
+
+        assertTrue(udp.sent.isEmpty(), "exhausted counter: no sends at all")
+        val state = viewModel.state.value
+        assertEquals(Connectivity.Unpaired, state.connectivity)
+        assertEquals("Session expired after long use — please re-pair", state.error)
+        assertEquals(1, vault.loadCalls, "session cached: vault read once, loop idles")
     }
 
     @Test
@@ -324,6 +395,8 @@ class RobotControlViewModelTest {
     fun emergencyStopLatchesAndKeepsSendingSignedEstop() = runVmTest { main ->
         val (viewModel, _, udp, _) = setup(tickMs = 20)
         main.runCurrent()
+        promote(udp)
+        main.runCurrent()
         viewModel.onStick(0.5f, 0.5f)
         main.runCurrent()
         udp.sent.clear()
@@ -404,6 +477,8 @@ class RobotControlViewModelTest {
         val (viewModel, repo, udp, vault, holder) = setup(tickMs = 20)
         assertNull(viewModel.state.value.error)
         main.runCurrent()
+        promote(udp)
+        main.runCurrent()
         // Full-rate deflection: idle heartbeat would only send ~15 frames here.
         viewModel.onStick(0.5f, 0f)
         // 150 drive frames total (t=0 + 149 ticks): persist fires once at 128.
@@ -432,6 +507,8 @@ class RobotControlViewModelTest {
     fun releaseEmergencyClearsLatch() = runVmTest { main ->
         val (viewModel, _, udp, _) = setup(tickMs = 20)
         main.runCurrent()
+        promote(udp)
+        main.runCurrent()
         viewModel.onEmergencyStop()
         main.runCurrent()
         assertTrue(viewModel.state.value.eStopped)
@@ -458,7 +535,9 @@ class RobotControlViewModelTest {
      */
     @Test
     fun stickDeadbandSnapsNoiseAndDistinctSkipsDuplicates() = runVmTest { main ->
-        val (viewModel, _, _, _) = setup()
+        val (viewModel, _, udp, _) = setup()
+        main.runCurrent()
+        promote(udp)
         main.runCurrent()
 
         // Tiny noise (< 0.02) snaps to zero, never latching a deflection.
@@ -491,6 +570,8 @@ class RobotControlViewModelTest {
         val (viewModel, _, udp, _) = setup(tickMs = 20)
         main.runCurrent()
         assertEquals(1, udp.sent.size, "first frame goes out immediately")
+        promote(udp)
+        main.runCurrent()
 
         // Reach steady idle first (same 13-send shape as the heartbeat test).
         main.advanceTimeBy(1000)
@@ -509,6 +590,9 @@ class RobotControlViewModelTest {
 
         // Sanity: identical deflected spam sends at full rate but adds no
         // extra frames beyond the loop ticks (5 ticks per 101 ms window).
+        // ~2 s since the initial promote: re-promote past the silence budget.
+        promote(udp)
+        main.runCurrent()
         viewModel.onStick(0.5f, 0f)
         main.runCurrent()
         udp.sent.clear()
@@ -528,6 +612,8 @@ class RobotControlViewModelTest {
         val (viewModel, _, udp, vault) = setup(tickMs = 20)
         main.runCurrent()
         assertEquals(1, udp.sent.size, "first frame goes out immediately")
+        promote(udp)
+        main.runCurrent()
 
         // Full-rate deflection: deterministic every-tick sends.
         viewModel.onStick(0.5f, 0f)
@@ -569,6 +655,33 @@ class RobotControlViewModelTest {
             ),
         )
         assertEquals(1, vault.loadCalls, "resume needs no vault re-read")
+    }
+
+    /**
+     * Layer A flush: driving N<128 (no cadence persist yet), then
+     * [RobotControlViewModel.onBackground] fire-and-forget flushes the
+     * watermark — one extra Room write with the live lastSent.
+     */
+    @Test
+    fun backgroundFlushesWatermark() = runVmTest { main ->
+        val deviceId = testDevice().id
+        val (viewModel, repo, udp, _) = setup(tickMs = 20)
+        main.runCurrent()
+        assertEquals(1, udp.sent.size, "first frame goes out immediately")
+        promote(udp)
+        main.runCurrent()
+
+        viewModel.onStick(0.5f, 0f)
+        main.runCurrent()
+        udp.sent.clear()
+        // +1 for advanceTimeBy's exclusive end boundary: ticks at 20..100.
+        main.advanceTimeBy(101)
+        assertEquals(5, udp.sent.size)
+        assertTrue(repo.counterSaves.isEmpty(), "N<128: no cadence persist yet")
+
+        viewModel.onBackground()
+        main.runCurrent()
+        assertEquals(listOf(deviceId to 6u), repo.counterSaves)
     }
 
     /**
@@ -710,5 +823,241 @@ class RobotControlViewModelTest {
         assertEquals(false, viewModel.state.value.telemetry?.driving)
         assertEquals(5f, viewModel.state.value.telemetry?.pitchDeg)
         assertEquals(Connectivity.Connected, viewModel.state.value.connectivity)
+    }
+
+    /**
+     * Disconnected gating (locked decision b): while
+     * [Connectivity.Disconnected], sticks, e-stop, and release are all
+     * no-ops — no state change, no immediate frame, latched error kept.
+     * The drive send loop itself keeps heartbeating centered underneath
+     * (failsafe intact).
+     */
+    @Test
+    fun disconnectedGatesSticksAndEstop() = runVmTest { main ->
+        val (viewModel, _, udp, _) = setup(tickMs = 20)
+        main.runCurrent()
+        assertEquals(Connectivity.Disconnected, viewModel.state.value.connectivity)
+        assertEquals(1, udp.sent.size, "loop heartbeats even while Disconnected")
+
+        viewModel.onStick(0.5f, -0.25f)
+        assertEquals(0f, viewModel.state.value.throttle, "stick gated: no state change")
+        assertEquals(0f, viewModel.state.value.steering, "stick gated: no state change")
+
+        viewModel.onEmergencyStop()
+        main.runCurrent()
+        assertFalse(viewModel.state.value.eStopped, "e-stop gated: no latch, no frame")
+
+        viewModel.onReleaseEmergency()
+        assertFalse(viewModel.state.value.eStopped)
+
+        // +1 for advanceTimeBy's exclusive end boundary: ticks at 20..100.
+        // Every frame is a centered MANUAL flags-0 heartbeat — nothing
+        // deflected, nothing latched, no error surfaced.
+        main.advanceTimeBy(101)
+        assertEquals(6, udp.sent.size)
+        udp.sent.forEachIndexed { i, frame ->
+            assertEquals(DRIVE_V2_HEADER, frame.bytes[0].toInt() and 0xFF, "frame $i")
+            assertEquals(0x00, frame.bytes[1].toInt() and 0xFF, "frame $i mode")
+            assertEquals(0x80, frame.bytes[2].toInt() and 0xFF, "frame $i throttle centered")
+            assertEquals(0x80, frame.bytes[3].toInt() and 0xFF, "frame $i steering centered")
+            assertEquals(0x00, frame.bytes[4].toInt() and 0xFF, "frame $i flags clear")
+        }
+        assertNull(viewModel.state.value.error, "gating keeps the banner untouched")
+    }
+
+    /**
+     * `ALIVE` keepalive: immediate on the first paired tick (session ready),
+     * then steady 2 Hz on its own tick clock — independent of the drive
+     * idle heartbeat. Both frames share one dense counter sequence with
+     * drive (frame index + 1 == counter, zero skips).
+     */
+    @Test
+    fun aliveImmediateThenSteadyTwoHz() = runVmTest { main ->
+        val (viewModel, _, udp, vault) = setup(tickMs = 20, useAlive = true)
+        main.runCurrent()
+
+        // First paired tick: ALIVE(1) immediately, then the drive heartbeat(2).
+        assertEquals(2, udp.sent.size, "session-ready tick sends ALIVE + drive")
+        val firstAlive = udp.sent[0]
+        assertEquals(ALIVE_HEADER, firstAlive.bytes[0].toInt() and 0xFF)
+        assertTrue(
+            firstAlive.bytes.contentEquals(encodeAlive(psk(), 0u, 1u)),
+            "first ALIVE takes counter 1 under era 0",
+        )
+        assertTrue(
+            udp.sent[1].bytes.contentEquals(
+                encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f, 0), 2u, psk()),
+            ),
+            "drive heartbeat follows on the same sequence",
+        )
+        assertEquals(1, vault.loadCalls, "ALIVE reuses the session cache: one vault read")
+
+        // +1 boundary: ticks at 20..500. Second ALIVE lands at t=500
+        // (25 ticks); its counter is dense (frame index + 1).
+        main.advanceTimeBy(501)
+        val alives = udp.sent.filter { (it.bytes[0].toInt() and 0xFF) == ALIVE_HEADER }
+        assertEquals(2, alives.size, "2 Hz: t=0 and t=500")
+        val secondIdx = udp.sent.indexOf(alives[1])
+        assertTrue(
+            alives[1].bytes.contentEquals(encodeAlive(psk(), 0u, (secondIdx + 1).toUInt())),
+            "ALIVE counter stays dense with drive",
+        )
+        // Drive kept flowing underneath (idle-gated, but alive).
+        assertTrue(udp.sent.any { (it.bytes[0].toInt() and 0xFF) == DRIVE_V2_HEADER })
+        assertNull(viewModel.state.value.error, "ALIVE never touches the banner")
+
+        // Next 500 ms window: third ALIVE at t=1000, still 2 Hz (+1 so the
+        // boundary tick runs inside the window).
+        main.advanceTimeBy(501)
+        val alives3 = udp.sent.filter { (it.bytes[0].toInt() and 0xFF) == ALIVE_HEADER }
+        assertEquals(3, alives3.size, "2 Hz: t=0, 500, 1000")
+        val thirdIdx = udp.sent.indexOf(alives3[2])
+        assertTrue(
+            alives3[2].bytes.contentEquals(encodeAlive(psk(), 0u, (thirdIdx + 1).toUInt())),
+            "third ALIVE stays dense",
+        )
+    }
+
+    /**
+     * Background sends `DISCONNECT` 2x byte-identical (one shared-counter
+     * allocation) then pauses all sends; foreground forces the `ALIVE`
+     * clock due so the next tick knocks immediately with gapless counters.
+     */
+    @Test
+    fun backgroundSendsDisconnectThenPausesAndForegroundKnocksAlive() = runVmTest { main ->
+        val deviceId = testDevice().id
+        val (viewModel, repo, udp, _) = setup(tickMs = 20, useAlive = true)
+        main.runCurrent()
+        assertEquals(2, udp.sent.size, "ALIVE(1) + drive(2) on the first tick")
+        promote(udp)
+        main.runCurrent()
+        assertEquals(Connectivity.Connected, viewModel.state.value.connectivity)
+
+        viewModel.onBackground()
+        main.runCurrent()
+        // Flush (2 live allocs) + one DISCONNECT allocation sent twice.
+        assertEquals(listOf(deviceId to 2u), repo.counterSaves, "flush persists the live watermark")
+        assertEquals(4, udp.sent.size, "exactly 2 DISCONNECT frames on top")
+        val goodbyes = udp.sent.drop(2)
+        goodbyes.forEach { frame ->
+            assertEquals(DISCONNECT_HEADER, frame.bytes[0].toInt() and 0xFF)
+        }
+        assertTrue(
+            goodbyes[0].bytes.contentEquals(goodbyes[1].bytes),
+            "byte-identical repeat: one allocation, like UNBOND",
+        )
+        assertTrue(
+            goodbyes[0].bytes.contentEquals(encodeDisconnect(psk(), 0u, 3u)),
+            "DISCONNECT consumes the next live counter under era 0",
+        )
+
+        // Paused: 25 ticks, zero sends, zero counter advance (+1 boundary
+        // so the t=500 tick runs inside the window instead of leaking into
+        // the resume measurement below).
+        main.advanceTimeBy(501)
+        assertEquals(4, udp.sent.size, "background pauses ALIVE and drive alike")
+
+        // Foreground: next tick knocks ALIVE(4) immediately, drive(5) resumes.
+        viewModel.onForeground()
+        main.advanceTimeBy(21)
+        assertEquals(6, udp.sent.size, "ALIVE + drive resume on the next tick")
+        assertTrue(
+            udp.sent[4].bytes.contentEquals(encodeAlive(psk(), 0u, 4u)),
+            "immediate ALIVE, no counter advance while backgrounded",
+        )
+        assertTrue(
+            udp.sent[5].bytes.contentEquals(
+                encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f, 0), 5u, psk()),
+            ),
+            "drive resumes gapless",
+        )
+        assertEquals(Connectivity.Connected, viewModel.state.value.connectivity)
+    }
+
+    /**
+     * Link-loss round trip: silence past [TELEMETRY_TIMEOUT_MS] demotes to
+     * [Connectivity.Disconnected] (intents gate, `ALIVE` keeps knocking),
+     * and the first telemetry re-enables via the existing promotion path.
+     */
+    @Test
+    fun telemetryDemoteGatesAndReenables() = runVmTest { main ->
+        val (viewModel, _, udp, _) = setup(tickMs = 20, useAlive = true)
+        main.runCurrent()
+        promote(udp)
+        main.runCurrent()
+        assertEquals(Connectivity.Connected, viewModel.state.value.connectivity)
+
+        viewModel.onStick(0.5f, 0f)
+        assertEquals(0.5f, viewModel.state.value.throttle, "connected sticks work")
+
+        // ~2.5 s silence: demoted, but the ALIVE knock kept going out.
+        main.advanceTimeBy(2500)
+        assertEquals(Connectivity.Disconnected, viewModel.state.value.connectivity)
+        val knocking = udp.sent.filter { (it.bytes[0].toInt() and 0xFF) == ALIVE_HEADER }
+        assertTrue(knocking.size >= 4, "ALIVE knocks through the silence (got ${knocking.size})")
+
+        // Gated while down (state frozen, no latch).
+        viewModel.onStick(0.9f, 0.9f)
+        assertEquals(0.5f, viewModel.state.value.throttle, "stick gated while Disconnected")
+        assertEquals(0f, viewModel.state.value.steering, "stick gated while Disconnected")
+        viewModel.onEmergencyStop()
+        main.runCurrent()
+        assertFalse(viewModel.state.value.eStopped, "e-stop gated while Disconnected")
+
+        // First telemetry re-enables: intents flow again immediately.
+        promote(udp)
+        main.runCurrent()
+        assertEquals(Connectivity.Connected, viewModel.state.value.connectivity)
+        viewModel.onStick(0.9f, 0.9f)
+        assertEquals(0.9f, viewModel.state.value.throttle)
+        assertEquals(0.9f, viewModel.state.value.steering)
+        viewModel.onEmergencyStop()
+        main.runCurrent()
+        assertTrue(viewModel.state.value.eStopped, "e-stop works once re-enabled")
+    }
+
+    /**
+     * AP rejoin: a `networkAvailable` event forces the `ALIVE` clock due so
+     * the next tick knocks immediately (boot-ready treatment), then the
+     * steady 2 Hz resumes; a flap burst collapses to one `ALIVE` (idempotent
+     * due-flag — the Fake has no 1 s debounce, so 5 rapid emits must still
+     * yield one knock; production collapses earlier in the binder).
+     */
+    @Test
+    fun rejoinFiresImmediateAlive() = runVmTest { main ->
+        val (_, _, udp, _, _, binder) = setup(tickMs = 20, useAlive = true)
+        main.runCurrent()
+        // t=0: ALIVE(1) + drive(2) on the first paired tick.
+        assertEquals(2, udp.sent.size)
+        fun aliveCount() = udp.sent.count { (it.bytes[0].toInt() and 0xFF) == ALIVE_HEADER }
+
+        // Drift mid-interval (t=200): ALIVE clock not due (next due t=500).
+        main.advanceTimeBy(200)
+        assertEquals(1, aliveCount(), "mid-interval: no second ALIVE yet")
+
+        // Rejoin: the next tick knocks immediately (within 1 tick).
+        binder.emitNetworkAvailable()
+        main.runCurrent()
+        main.advanceTimeBy(21)
+        assertEquals(2, aliveCount(), "rejoin forces immediate ALIVE within 1 tick")
+        val alives = udp.sent.filter { (it.bytes[0].toInt() and 0xFF) == ALIVE_HEADER }
+        val secondIdx = udp.sent.indexOf(alives[1])
+        assertTrue(
+            alives[1].bytes.contentEquals(encodeAlive(psk(), 0u, (secondIdx + 1).toUInt())),
+            "rejoin ALIVE stays dense with drive",
+        )
+
+        // Steady 2 Hz resumes: next ALIVE ~500 ms after the rejoin knock
+        // (+1 so the due tick runs inside the window).
+        main.advanceTimeBy(501)
+        assertEquals(3, aliveCount(), "2 Hz resumes after the rejoin knock")
+
+        // Flap x5 within 1 s: a single ALIVE (burst collapses before the tick).
+        udp.sent.clear()
+        repeat(5) { binder.emitNetworkAvailable() }
+        main.runCurrent()
+        main.advanceTimeBy(21)
+        val flapAlives = udp.sent.filter { (it.bytes[0].toInt() and 0xFF) == ALIVE_HEADER }
+        assertEquals(1, flapAlives.size, "flap burst yields a single ALIVE")
     }
 }

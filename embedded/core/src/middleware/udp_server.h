@@ -31,13 +31,12 @@
 //     tilt once the MPU is healthy, 0 before that);
 //   isDriving = tracked LOCALLY from RX (last commanded v/omega nonzero AND
 //     fresh within CFG_COORDINATOR_STALE_MS), not from the coordinator.
-// Destination: unicast to the last control peer (IP+port of the incoming
-// datagram); before any peer is seen, subnet broadcast (AP /24 .255, STA
-// ip|~mask) so telemetry flows with zero registration. scripts/ also send
-// one hello datagram to pin the unicast path (see udp_telemetry.py --help).
+// Destination: unicast-only to the last alive peer (IP+port pinned by the
+// markAlive funnel on every valid bonded packet); silent otherwise — the
+// subnet-broadcast fallback is deleted, pre-bond stays silent.
 //
 // Rules: no heap/String in the RX/TX path (fixed stack buffers: 20B RX,
-// 9B telemetry, 38B PAIR_OK, 8B HMAC msg), WDT fed every tick,
+// 9B telemetry, 39B PAIR_OK, 8/11/16B HMAC msg), WDT fed every tick,
 // Diagnostics::logWatermarks("UDP") every ~5s, task never halts. Key, code
 // and nonce bytes are never logged (the pair-code LOG_I line is the
 // display); drops log first-of-boot at INFO then throttled LOG_EVERY_N,
@@ -110,11 +109,32 @@ constexpr uint8_t kUnbondHeader = 0xAD;
 constexpr size_t kUnbondSize = 12;
 constexpr size_t kUnbondTagLen = 6;
 constexpr size_t kUnbondMsgLen = 10;  // "UNBOND" (6 ASCII) || counterBE4
+// Tier-1 silent auto-rekey (see pairing.h + shared/protocol/README.md):
+// REKEY_REQ 14B [0x53|eraBE2|ctrBE4|tag6|XOR], REKEY_ACK 10B (TX only).
+// Headers 0x53/0x54 are claimed here — never reuse 0xAA/0xAC/0xBB/
+// 0x50/0x51/0x52/0xAD (Phase-2 SET_RATE must pick other values).
+constexpr uint8_t kRekeyReqHeader = 0x53;
+constexpr size_t kRekeyReqSize = 14;
+constexpr uint8_t kRekeyAckHeader = 0x54;
+constexpr size_t kRekeyAckSize = 10;
+// ALIVE + DISCONNECT (robot alive rule, see pairing.h + README):
+// ALIVE 14B [0x55|eraBE2|ctrBE4|tag6|XOR], DISCONNECT 14B
+// [0x56|eraBE2|ctrBE4|tag6|XOR]. Headers 0x55/0x56 are claimed here —
+// never reuse 0xAA/0xAC/0xBB/0x50/0x51/0x52/0x53/0x54/0xAD.
+constexpr uint8_t kAliveHeader = 0x55;
+constexpr size_t kAliveSize = 14;
+constexpr uint8_t kDisconnectHeader = 0x56;
+constexpr size_t kDisconnectSize = 14;
+// Robot alive freshness window: a bonded peer counts as alive while its
+// last valid packet (ALIVE, DRIVE_V2, or REKEY_REQ) is within kAliveMs.
+// DISCONNECT/UNBOND clear the net peer immediately (refresh-then-clear),
+// so the window only matters for silent loss (no explicit goodbye).
+constexpr uint32_t kAliveMs = 5000;
 constexpr uint32_t kRedeliveryMs = CFG_PAIR_REDELIVERY_MS;
 
 // RX demux result: classifyRx maps (len, header) -> kind; anything else
 // (wrong size, wrong header, oversize truncation) is kDrop.
-enum class RxKind : uint8_t { kLegacy, kDriveV2, kPairReq, kUnbond, kDrop };
+enum class RxKind : uint8_t { kLegacy, kDriveV2, kPairReq, kUnbond, kRekeyReq, kAlive, kDisconnect, kDrop };
 
 inline RxKind classifyRx(size_t len, uint8_t header) {
   if (len == 6 && header == 0xAA) {
@@ -128,6 +148,15 @@ inline RxKind classifyRx(size_t len, uint8_t header) {
   }
   if (len == kUnbondSize && header == kUnbondHeader) {
     return RxKind::kUnbond;
+  }
+  if (len == kRekeyReqSize && header == kRekeyReqHeader) {
+    return RxKind::kRekeyReq;
+  }
+  if (len == kAliveSize && header == kAliveHeader) {
+    return RxKind::kAlive;
+  }
+  if (len == kDisconnectSize && header == kDisconnectHeader) {
+    return RxKind::kDisconnect;
   }
   return RxKind::kDrop;
 }
@@ -155,8 +184,30 @@ inline void unbondTagMsg(uint32_t counter, uint8_t out10[kUnbondMsgLen]) {
 // 1; initial lastSeen=0). Unsigned subtraction throughout: wrap-safe across
 // the 2^32 rollover (same idiom as coordinator/pairing millis math). A diff
 // of exactly half the range is direction-ambiguous and rejected.
+//
+// NOTE (Tier-2 exhaustion gate): the fail-closed counter ceiling lives
+// app-side only (client DriveCounter.EXHAUSTION_GATE = 0xFFFFFF00 — the app
+// stops allocating and requires an explicit re-pair well before the wrap,
+// so 0 and the wrap-adjacent region never reach this verify). No firmware
+// ceiling here by design: rejecting >= gate on the wire would change verify
+// behavior (and the host wrap tests below pin the full wrap-aware range).
+// TODO: if the app-side gate ever proves unenforceable, revisit a firmware
+// ceiling + coordinated re-pair signal — never silently extend the range.
 inline bool isFreshCounter(uint32_t lastSeen, uint32_t got) {
   return got != lastSeen && (got - lastSeen) < 0x80000000u;
+}
+
+// Robot alive freshness: true while the last valid bonded packet (ALIVE,
+// DRIVE_V2, or REKEY_REQ — all funnel through markAlive) is within kAliveMs.
+// Unsigned subtraction: wrap-safe across the ~49-day millis() rollover
+// (same idiom as isFreshCounter above). The boundary counts as fresh.
+inline bool isAliveFresh(uint32_t lastAliveMs, uint32_t nowMs) { return (nowMs - lastAliveMs) <= kAliveMs; }
+
+// Telemetry TX gate (host-testable; sendTelemetry calls this): unicast only
+// when bonded AND a peer is pinned AND the alive window is fresh; else
+// silent (no broadcast fallback — deleted). Pre-bond is always silent.
+inline bool shouldSendTelemetry(bool bonded, bool havePeer, uint32_t lastAliveMs, uint32_t nowMs) {
+  return bonded && havePeer && isAliveFresh(lastAliveMs, nowMs);
 }
 
 // PAIR_OK redelivery predicate (RAM-only cache in UdpServer::lastPair_).
@@ -285,11 +336,13 @@ class UdpServer {
         lastV_(0.0f),
         lastOmega_(0.0f),
         lastRxMs_(0),
+        lastAliveMs_(0),
         lastRetryMs_(0),
         pairCore_(),
         psk_{},
         lastCounter_(0),
         bonded_(false),
+        era_(0),
         validCount_(0),
         maxVerifyUs_(0) {
     lastPair_.valid = false;
@@ -343,13 +396,18 @@ class UdpServer {
     if (ConfigStore::loadBond(loadedPsk, storedCtr, storedBond) && storedBond) {
       bonded_ = true;
       lastCounter_ = storedCtr;
+      lastAliveMs_ = 0;
+      era_ = ConfigStore::loadEra();
       for (size_t i = 0; i < sizeof(psk_); ++i) {
         psk_[i] = loadedPsk[i];
       }
-      LOG_I("UDP", "bond loaded counter=%lu", static_cast<unsigned long>(storedCtr));
+      LOG_I("UDP", "bond loaded counter=%lu era=%u", static_cast<unsigned long>(storedCtr),
+            static_cast<unsigned>(era_));
     } else {
       bonded_ = false;
       lastCounter_ = 0;
+      lastAliveMs_ = 0;
+      era_ = 0;
       if (!openPairingWindow()) {
         LOG_W("UDP", "pair window open failed");
       }
@@ -388,13 +446,15 @@ class UdpServer {
     pairCore_.clearBond();
     bonded_ = false;
     lastCounter_ = 0;
+    lastAliveMs_ = 0;
+    era_ = 0;
     validCount_ = 0;
     mbedtls_platform_zeroize(psk_, sizeof(psk_));
     lastPair_.valid = false;
     mbedtls_platform_zeroize(lastPair_.code6, sizeof(lastPair_.code6));
     mbedtls_platform_zeroize(lastPair_.cliNonce4, sizeof(lastPair_.cliNonce4));
     mbedtls_platform_zeroize(lastPair_.srvNonce4, sizeof(lastPair_.srvNonce4));
-    mbedtls_platform_zeroize(lastPair_.ok38, sizeof(lastPair_.ok38));
+    mbedtls_platform_zeroize(lastPair_.ok39, sizeof(lastPair_.ok39));
     lastPair_.bondMs = 0;
     return ConfigStore::clearBond();
   }
@@ -475,6 +535,15 @@ class UdpServer {
           case udpstatus::RxKind::kUnbond:
             handleUnbond(buf, rip, rport, nowMs);
             break;
+          case udpstatus::RxKind::kRekeyReq:
+            handleRekey(buf, rip, rport, nowMs);
+            break;
+          case udpstatus::RxKind::kAlive:
+            handleAlive(buf, rip, rport, nowMs);
+            break;
+          case udpstatus::RxKind::kDisconnect:
+            handleDisconnect(buf, rip, rport, nowMs);
+            break;
           case udpstatus::RxKind::kDrop:
             dropFirst(firstMalformedDrop_, "drop datagram pending=%d got=%d (first of boot)", pending, got);
             LOG_EVERY_N(20, "UDP", "drop datagram pending=%d got=%d", pending, got);
@@ -505,6 +574,28 @@ class UdpServer {
     if (first) {
       first = false;
       LOG_I("UDP", fmt, args...);
+    }
+  }
+
+  // Robot alive funnel (single call site for every VALID bonded packet):
+  // pins the telemetry unicast peer AND refreshes the alive timestamp.
+  // Called for ALIVE, DRIVE_V2, and REKEY_REQ after verify passes and BEFORE
+  // any opcode-specific effect (event publish, counter persist, ACK) — no
+  // opcode holds a privilege here: a 1Hz ALIVE keeps the robot alive exactly
+  // like 50Hz drive. DISCONNECT/UNBOND never call this: they run
+  // refresh-then-clear instead (lastAliveMs_ refreshed, havePeer_ dropped).
+  void markAlive(const IPAddress& rip, uint16_t rport, uint32_t nowMs) {
+    // Correlation marker (log-only, no behavior change): re-pin changes are
+    // rare (AP rejoin/DHCP), so log the new peer once per change; steady
+    // 50 Hz traffic re-pins the same IP/port and stays silent. IP+era only —
+    // never key/nonce material.
+    const bool repinned = !havePeer_ || !(peerIp_ == rip) || peerPort_ != rport;
+    peerIp_ = rip;
+    peerPort_ = rport;
+    havePeer_ = true;
+    lastAliveMs_ = nowMs;
+    if (repinned) {
+      LOG_I("UDP", "peer re-pinned ip=%s era=%u", rip.toString().c_str(), static_cast<unsigned>(era_));
     }
   }
 
@@ -584,12 +675,12 @@ class UdpServer {
     }
     lastCounter_ = ctr;
     ++validCount_;
-    if ((validCount_ % 128u) == 0) {
+    // Robot-side persist cadence matches the interval advertised in PAIR_OK
+    // (pairing::kPairPersistDefault); the app mirrors it per negotiated byte.
+    if ((validCount_ % pairing::kPairPersistDefault) == 0) {
       ConfigStore::saveCounter(lastCounter_);  // Periodic persist, never per-packet (flash wear).
     }
-    peerIp_ = rip;
-    peerPort_ = rport;
-    havePeer_ = true;
+    markAlive(rip, rport, nowMs);  // Alive funnel BEFORE the drive effect below.
     lastRxMs_ = nowMs;
     lastV_ = coordinator::byteToUnit(buf[2]);
     lastOmega_ = coordinator::byteToUnit(buf[3]);
@@ -613,7 +704,7 @@ class UdpServer {
     if (bonded_ && udpstatus::shouldRedeliver(lastPair_.valid, lastPair_.code6, lastPair_.cliNonce4, buf + 1, buf + 7,
                                               lastPair_.bondMs, nowMs)) {
       udp_.beginPacket(rip, rport);
-      udp_.write(lastPair_.ok38, sizeof(lastPair_.ok38));
+      udp_.write(lastPair_.ok39, sizeof(lastPair_.ok39));
       udp_.endPacket();
       LOG_I("UDP", "pair redeliver");
       return;
@@ -653,25 +744,26 @@ class UdpServer {
     const uint8_t* code6 = buf + 1;  // Verified match — the HKDF IKM.
     const uint8_t* clientNonce = buf + 7;
     bool sent = false;
-    uint8_t out[38] = {};  // Function scope: cached into lastPair_ on send.
+    uint8_t out[pairing::kPairOkSize] = {};  // Function scope: cached into lastPair_ on send.
     // Bond baseline is counter 0 (never valid on the wire): the client's
     // first DRIVE_V2 uses counter 1, matching the spec's "starts 1".
     if (ConfigStore::saveBond(newPsk, 0)) {
       uint8_t kek[pairing::kKekLen];
-      uint8_t ct[pairing::kPskLen];
+      uint8_t ct[pairing::kPairCtLen];
       uint8_t tag[pairing::kPairTagLen];
       if (pairing::deriveKek(code6, clientNonce, serverNonce, kek) &&
-          pairing::wrapPsk(newPsk, kek, clientNonce, serverNonce, ct, tag)) {
-        // PAIR_OK 38B [0x51|server_nonce4|ct16|tag16|XOR].
+          pairing::wrapPsk(newPsk, kek, clientNonce, serverNonce, pairing::kPairPersistDefault, ct, tag)) {
+        // PAIR_OK 39B [0x51|server_nonce4|ct17|tag16|XOR]: ct covers
+        // psk16||persist_u8 (v1.1 addendum; old 38B frames have no byte).
         out[0] = pairing::kPairOkHeader;
         for (size_t i = 0; i < pairing::kPairNonceLen; ++i) {
           out[1 + i] = serverNonce[i];
         }
-        for (size_t i = 0; i < pairing::kPskLen; ++i) {
+        for (size_t i = 0; i < pairing::kPairCtLen; ++i) {
           out[5 + i] = ct[i];
         }
         for (size_t i = 0; i < pairing::kPairTagLen; ++i) {
-          out[21 + i] = tag[i];
+          out[5 + pairing::kPairCtLen + i] = tag[i];
         }
         uint8_t outXor = 0;
         for (size_t i = 0; i < sizeof(out) - 1; ++i) {
@@ -692,6 +784,7 @@ class UdpServer {
         psk_[i] = newPsk[i];
       }
       lastCounter_ = 0;
+      era_ = 0;  // Fresh pair starts era 0 (saveBond persists it).
       bonded_ = true;
       // Cache the reply BEFORE the stack zeroizes below: an identical retry
       // inside kRedeliveryMs re-unicasts these bytes (RAM-only redelivery).
@@ -704,8 +797,8 @@ class UdpServer {
       for (size_t i = 0; i < sizeof(lastPair_.srvNonce4); ++i) {
         lastPair_.srvNonce4[i] = serverNonce[i];
       }
-      for (size_t i = 0; i < sizeof(lastPair_.ok38); ++i) {
-        lastPair_.ok38[i] = out[i];
+      for (size_t i = 0; i < sizeof(lastPair_.ok39); ++i) {
+        lastPair_.ok39[i] = out[i];
       }
       lastPair_.bondMs = nowMs;
       lastPair_.valid = true;
@@ -735,7 +828,6 @@ class UdpServer {
   void handleUnbond(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs) {
     (void)rip;
     (void)rport;
-    (void)nowMs;
     DESKY_ASSERT(buf != nullptr);
     if (buf == nullptr) {
       return;
@@ -777,16 +869,272 @@ class UdpServer {
     mbedtls_platform_zeroize(psk_, sizeof(psk_));
     bonded_ = false;
     lastCounter_ = 0;
+    era_ = 0;
+    // Refresh-then-clear: the signed goodbye still proves the owner was
+    // alive at nowMs; the net peer is gone (no more unicast to a dead app).
+    lastAliveMs_ = nowMs;
+    havePeer_ = false;
     lastPair_.valid = false;
     mbedtls_platform_zeroize(lastPair_.code6, sizeof(lastPair_.code6));
     mbedtls_platform_zeroize(lastPair_.cliNonce4, sizeof(lastPair_.cliNonce4));
     mbedtls_platform_zeroize(lastPair_.srvNonce4, sizeof(lastPair_.srvNonce4));
-    mbedtls_platform_zeroize(lastPair_.ok38, sizeof(lastPair_.ok38));
+    mbedtls_platform_zeroize(lastPair_.ok39, sizeof(lastPair_.ok39));
     lastPair_.bondMs = 0;
     LOG_I("UDP", "unbond ok");
     if (!openPairingWindow()) {
       LOG_W("UDP", "pair window open failed (post-unbond)");
     }
+  }
+
+  // REKEY_REQ layout [0x53|eraBE2 1..2|ctrBE4 3..6|tag6 7..12|XOR] (len +
+  // header + XOR checked by the caller). Silent Tier-1 rotation: the app
+  // derives PSK_next under the OLD psk well before EXHAUSTION_GATE and asks
+  // to move to era+1; the robot verifies (bonded -> era is exactly next ->
+  // counter fresh -> HMAC constant-time under the OLD psk), persists
+  // (era+1/psk_next/counter 0) BEFORE the ACK, then switches atomically and
+  // replies REKEY_ACK. Next drive uses counter 1 under the new PSK.
+  // Store-before-ACK ordering mirrors pairing (a failed NVS save answers
+  // nothing — the app retries, then falls back to the Tier-2 repair copy).
+  // Old PSK is dropped immediately on switch (no reorder window): stale
+  // in-flight drive frames under the old key drop via HMAC — documented in
+  // shared/protocol/README.md. Duplicate REQ with era == current era
+  // re-ACKs idempotently WITHOUT re-deriving or re-verifying (the lost-ACK
+  // retry reuses the same era; the ACK carries no secret — era + HMAC tag
+  // under the new PSK — so the unverified re-ACK leaks nothing). Any other
+  // era (replay or future jump) is a silent drop. No reply on failure.
+  void handleRekey(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs) {
+    DESKY_ASSERT(buf != nullptr);
+    if (buf == nullptr) {
+      return;
+    }
+    if (!bonded_) {
+      dropFirst(firstRekeyDrop_, "drop rekey unbonded (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop rekey unbonded");
+      return;
+    }
+    const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(buf[1]) << 8) | static_cast<uint16_t>(buf[2]));
+    if (era == era_) {
+      sendRekeyAck(rip, rport, era_);
+      LOG_EVERY_N(20, "UDP", "rekey redeliver era=%u", static_cast<unsigned>(era_));
+      return;
+    }
+    if (era != static_cast<uint16_t>(era_ + 1)) {
+      dropFirst(firstRekeyDrop_, "drop rekey era=%u have=%u (first of boot)", static_cast<unsigned>(era),
+                static_cast<unsigned>(era_));
+      LOG_EVERY_N(20, "UDP", "drop rekey era=%u have=%u", static_cast<unsigned>(era), static_cast<unsigned>(era_));
+      return;
+    }
+    const uint32_t ctr = (static_cast<uint32_t>(buf[3]) << 24) | (static_cast<uint32_t>(buf[4]) << 16) |
+                         (static_cast<uint32_t>(buf[5]) << 8) | static_cast<uint32_t>(buf[6]);
+    if (!udpstatus::isFreshCounter(lastCounter_, ctr)) {
+      dropFirst(firstRekeyDrop_, "drop rekey replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
+      LOG_EVERY_N(20, "UDP", "drop rekey replay ctr=%lu", static_cast<unsigned long>(ctr));
+      return;
+    }
+    // tag = first6(HMAC-SHA256(oldPsk, "REKEY"||eraBE2||counterBE4)).
+    uint8_t msg[pairing::kRekeyMsgLen];
+    pairing::rekeyTagMsg(era, ctr, msg);
+    uint8_t mac[32];
+    const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    int rc = -1;
+    if (md != nullptr) {
+      rc = mbedtls_md_hmac(md, psk_, sizeof(psk_), msg, sizeof(msg), mac);
+    }
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    bool ok = (rc == 0);
+    if (ok) {
+      ok = pairing::ctEqual(mac, buf + 7, pairing::kRekeyTagLen);
+    }
+    mbedtls_platform_zeroize(mac, sizeof(mac));
+    if (!ok) {
+      dropFirst(firstRekeyDrop_, "drop rekey auth (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop rekey auth");
+      return;
+    }
+    uint8_t nextPsk[pairing::kPskLen];
+    if (!pairing::deriveRekeyPsk(psk_, era, nextPsk)) {
+      dropFirst(firstRekeyDrop_, "drop rekey derive (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop rekey derive");
+      return;
+    }
+    if (!ConfigStore::saveRekey(nextPsk, era, 0)) {
+      mbedtls_platform_zeroize(nextPsk, sizeof(nextPsk));
+      dropFirst(firstRekeyDrop_, "drop rekey persist (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop rekey persist");
+      return;
+    }
+    for (size_t i = 0; i < sizeof(psk_); ++i) {
+      psk_[i] = nextPsk[i];
+    }
+    mbedtls_platform_zeroize(nextPsk, sizeof(nextPsk));
+    era_ = era;
+    lastCounter_ = 0;
+    validCount_ = 0;
+    markAlive(rip, rport, nowMs);  // Alive funnel BEFORE the ACK below.
+    sendRekeyAck(rip, rport, era_);
+    LOG_I("UDP", "rekey ok era=%u", static_cast<unsigned>(era_));
+  }
+
+  // ALIVE layout [0x55|eraBE2 1..2|ctrBE4 3..6|tag6 7..12|XOR] (len +
+  // header + XOR checked by the caller). Keepalive under the bonded PSK:
+  // verify order mirrors drive (bonded? -> era is current -> counter fresh
+  // -> HMAC constant-time). Pass refreshes the alive funnel WITHOUT any
+  // drive effect (lastV_/lastOmega_/lastRxMs_ untouched — only DRIVE moves
+  // the sticks and feeds the failsafe). Fail = silent drop. Pre-bond ALIVEs
+  // drop like pre-bond drive; old-key frames die via HMAC.
+  void handleAlive(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs) {
+    DESKY_ASSERT(buf != nullptr);
+    if (buf == nullptr) {
+      return;
+    }
+    if (!bonded_) {
+      dropFirst(firstAliveDrop_, "drop alive unbonded (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop alive unbonded");
+      return;
+    }
+    const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(buf[1]) << 8) | static_cast<uint16_t>(buf[2]));
+    if (era != era_) {
+      dropFirst(firstAliveDrop_, "drop alive era=%u have=%u (first of boot)", static_cast<unsigned>(era),
+                static_cast<unsigned>(era_));
+      LOG_EVERY_N(20, "UDP", "drop alive era=%u have=%u", static_cast<unsigned>(era), static_cast<unsigned>(era_));
+      return;
+    }
+    const uint32_t ctr = (static_cast<uint32_t>(buf[3]) << 24) | (static_cast<uint32_t>(buf[4]) << 16) |
+                         (static_cast<uint32_t>(buf[5]) << 8) | static_cast<uint32_t>(buf[6]);
+    if (!udpstatus::isFreshCounter(lastCounter_, ctr)) {
+      dropFirst(firstAliveDrop_, "drop alive replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
+      LOG_EVERY_N(20, "UDP", "drop alive replay ctr=%lu", static_cast<unsigned long>(ctr));
+      return;
+    }
+    // tag = first6(HMAC-SHA256(psk, "ALIVE"||eraBE2||counterBE4)).
+    uint8_t msg[pairing::kAliveMsgLen];
+    pairing::aliveTagMsg(era, ctr, msg);
+    uint8_t mac[32];
+    const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    int rc = -1;
+    if (md != nullptr) {
+      rc = mbedtls_md_hmac(md, psk_, sizeof(psk_), msg, sizeof(msg), mac);
+    }
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    bool ok = (rc == 0);
+    if (ok) {
+      ok = pairing::ctEqual(mac, buf + 7, pairing::kAliveTagLen);
+    }
+    mbedtls_platform_zeroize(mac, sizeof(mac));
+    if (!ok) {
+      dropFirst(firstAliveDrop_, "drop alive auth (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop alive auth");
+      return;
+    }
+    // Shared counter: a valid ALIVE consumes exactly like drive (same
+    // holder app-side), so a replayed ALIVE can never refresh twice.
+    lastCounter_ = ctr;
+    ++validCount_;
+    if ((validCount_ % pairing::kPairPersistDefault) == 0) {
+      ConfigStore::saveCounter(lastCounter_);  // Periodic persist, never per-packet (flash wear).
+    }
+    markAlive(rip, rport, nowMs);  // Alive only: no lastV_/lastOmega_/lastRxMs_, no publish.
+  }
+
+  // DISCONNECT layout [0x56|eraBE2 1..2|ctrBE4 3..6|tag6 7..12|XOR] (len +
+  // header + XOR checked by the caller). Graceful goodbye under the bonded
+  // PSK: verify mirrors ALIVE (bonded? -> era is current -> counter fresh ->
+  // HMAC constant-time). Pass runs refresh-then-clear like UNBOND — the
+  // signed goodbye proves the owner was alive at nowMs, then the net peer is
+  // gone (havePeer_ = false). Unlike UNBOND the bond is KEPT (no NVS/Core/
+  // key clear, no pairing window): the next launch rejoins instantly.
+  // Never drives. Fail = silent drop. Pre-bond DISCONNECTs drop like drive.
+  void handleDisconnect(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs) {
+    (void)rip;
+    (void)rport;
+    DESKY_ASSERT(buf != nullptr);
+    if (buf == nullptr) {
+      return;
+    }
+    if (!bonded_) {
+      dropFirst(firstDisconnectDrop_, "drop disconnect unbonded (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop disconnect unbonded");
+      return;
+    }
+    const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(buf[1]) << 8) | static_cast<uint16_t>(buf[2]));
+    if (era != era_) {
+      dropFirst(firstDisconnectDrop_, "drop disconnect era=%u have=%u (first of boot)", static_cast<unsigned>(era),
+                static_cast<unsigned>(era_));
+      LOG_EVERY_N(20, "UDP", "drop disconnect era=%u have=%u", static_cast<unsigned>(era), static_cast<unsigned>(era_));
+      return;
+    }
+    const uint32_t ctr = (static_cast<uint32_t>(buf[3]) << 24) | (static_cast<uint32_t>(buf[4]) << 16) |
+                         (static_cast<uint32_t>(buf[5]) << 8) | static_cast<uint32_t>(buf[6]);
+    if (!udpstatus::isFreshCounter(lastCounter_, ctr)) {
+      dropFirst(firstDisconnectDrop_, "drop disconnect replay ctr=%lu (first of boot)",
+                static_cast<unsigned long>(ctr));
+      LOG_EVERY_N(20, "UDP", "drop disconnect replay ctr=%lu", static_cast<unsigned long>(ctr));
+      return;
+    }
+    // tag = first6(HMAC-SHA256(psk, "DISCONNECT"||eraBE2||counterBE4)).
+    uint8_t msg[pairing::kDisconnectMsgLen];
+    pairing::disconnectTagMsg(era, ctr, msg);
+    uint8_t mac[32];
+    const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    int rc = -1;
+    if (md != nullptr) {
+      rc = mbedtls_md_hmac(md, psk_, sizeof(psk_), msg, sizeof(msg), mac);
+    }
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    bool ok = (rc == 0);
+    if (ok) {
+      ok = pairing::ctEqual(mac, buf + 7, pairing::kDisconnectTagLen);
+    }
+    mbedtls_platform_zeroize(mac, sizeof(mac));
+    if (!ok) {
+      dropFirst(firstDisconnectDrop_, "drop disconnect auth (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop disconnect auth");
+      return;
+    }
+    lastCounter_ = ctr;  // Consume: a replayed goodbye can never clear twice.
+    ++validCount_;
+    if ((validCount_ % pairing::kPairPersistDefault) == 0) {
+      ConfigStore::saveCounter(lastCounter_);
+    }
+    lastAliveMs_ = nowMs;  // Refresh-then-clear: net gone, bond kept.
+    havePeer_ = false;
+    LOG_I("UDP", "disconnect ok");
+  }
+
+  // REKEY_ACK 10B [0x54|eraBE2|tag6|XOR] with
+  // tag = first6(HMAC-SHA256(newPsk, "REKEYACK"||eraBE2)). Called only after
+  // the switch (psk_ IS the new key here) or for the idempotent duplicate
+  // path. Key material never logged.
+  void sendRekeyAck(const IPAddress& ip, uint16_t port, uint16_t era) {
+    uint8_t msg[pairing::kRekeyAckMsgLen];
+    pairing::rekeyAckTagMsg(era, msg);
+    uint8_t mac[32];
+    uint8_t out[udpstatus::kRekeyAckSize];
+    out[0] = udpstatus::kRekeyAckHeader;
+    out[1] = static_cast<uint8_t>((era >> 8) & 0xFFu);
+    out[2] = static_cast<uint8_t>(era & 0xFFu);
+    const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    int rc = -1;
+    if (md != nullptr) {
+      rc = mbedtls_md_hmac(md, psk_, sizeof(psk_), msg, sizeof(msg), mac);
+    }
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    if (rc != 0) {
+      mbedtls_platform_zeroize(mac, sizeof(mac));
+      return;
+    }
+    for (size_t i = 0; i < pairing::kRekeyTagLen; ++i) {
+      out[3 + i] = mac[i];
+    }
+    mbedtls_platform_zeroize(mac, sizeof(mac));
+    uint8_t xorSum = 0;
+    for (size_t i = 0; i + 1 < sizeof(out); ++i) {
+      xorSum ^= out[i];
+    }
+    out[sizeof(out) - 1] = xorSum;
+    udp_.beginPacket(ip, port);
+    udp_.write(out, sizeof(out));
+    udp_.endPacket();
   }
 
   void sendPairErr(const IPAddress& ip, uint16_t port, uint8_t reason, uint8_t retryS) {
@@ -838,37 +1186,27 @@ class UdpServer {
     uint8_t out[udp::kTelemetrySize];
     udp::encodeTelemetry(tp, out);
 
-    if (havePeer_) {
-      udp_.beginPacket(peerIp_, peerPort_);
-    } else {
-      if (!bonded_) {
-        return;  // Pre-bond: unicast-only, never subnet broadcast.
+    // Telemetry gate: bonded && peer pinned && alive-fresh -> unicast;
+    // else silent (broadcast fallback deleted). havePeer_ stays true across
+    // a stale window — the next ALIVE/drive re-freshes via markAlive (which
+    // re-pins IP/port each time) with no re-registration. DISCONNECT/UNBOND
+    // cleared havePeer_, so silence follows naturally there too.
+    if (!udpstatus::shouldSendTelemetry(bonded_, havePeer_, lastAliveMs_, nowMs)) {
+      // Correlation marker (log-only, no behavior change): the alive-stale
+      // silence edge shares firstTelemetryDrop_ (one first-of-boot INFO) and
+      // stays throttled afterwards — same pattern as the no-peer path.
+      if (bonded_ && havePeer_) {
+        dropFirst(firstTelemetryDrop_, "alive stale -> silent (first of boot)");
+        LOG_EVERY_N(20, "UDP", "alive stale -> silent");
+      } else {
+        dropFirst(firstTelemetryDrop_, "drop telemetry no-peer/stale (first of boot)");
+        LOG_EVERY_N(20, "UDP", "drop telemetry no-peer/stale");
       }
-      // Post-bond without a peer yet (reboot before the first drive packet):
-      // keep the legacy subnet-broadcast fallback so telemetry still flows.
-      const IPAddress bcast = broadcastIP();
-      if (bcast == IPAddress(0, 0, 0, 0)) {
-        return;  // STA with no link: nothing to send on.
-      }
-      udp_.beginPacket(bcast, kPort);
+      return;
     }
+    udp_.beginPacket(peerIp_, peerPort_);
     udp_.write(out, sizeof(out));
     udp_.endPacket();
-  }
-
-  // Subnet broadcast for the pre-peer path: AP /24 .255, STA ip|~mask.
-  // Returns 0.0.0.0 when there is no usable interface (STA pre-link).
-  IPAddress broadcastIP() const {
-    if (kStaMode) {
-      if (WiFi.status() != WL_CONNECTED) {
-        return IPAddress(0, 0, 0, 0);
-      }
-      const uint32_t ip = static_cast<uint32_t>(WiFi.localIP());
-      const uint32_t mask = static_cast<uint32_t>(WiFi.subnetMask());
-      return IPAddress(ip | ~mask);
-    }
-    const IPAddress ap = WiFi.softAPIP();
-    return IPAddress(ap[0], ap[1], ap[2], 255);
   }
 
   Coordinator* coord_;
@@ -882,11 +1220,22 @@ class UdpServer {
   float lastV_;
   float lastOmega_;
   uint32_t lastRxMs_;
+  // Robot alive rule: refreshed by the markAlive funnel on every VALID
+  // bonded packet (ALIVE, DRIVE_V2, REKEY_REQ); DISCONNECT/UNBOND refresh
+  // then drop the net peer (havePeer_ = false). Fresh while
+  // udpstatus::isAliveFresh(lastAliveMs_, nowMs) (kAliveMs = 5s window).
+  // Never touched by ALIVE's no-drive path beyond the funnel itself, and
+  // never by legacy/pair traffic.
+  uint32_t lastAliveMs_;
   uint32_t lastRetryMs_;
   pairing::Core pairCore_;
   uint8_t psk_[16];
   uint32_t lastCounter_;
   bool bonded_;
+  // Tier-1 rekey era (u16, NVS "bera", fresh pair resets to 0). DRIVE_V2
+  // carries no era — post-switch old-key frames drop via HMAC, so no drive
+  // layout change was needed.
+  uint16_t era_;
   uint32_t validCount_;
   uint32_t maxVerifyUs_;
   // Last PAIR_OK redelivery cache (RAM-only, never persisted): an identical
@@ -898,7 +1247,7 @@ class UdpServer {
     uint8_t code6[6] = {};
     uint8_t cliNonce4[4] = {};
     uint8_t srvNonce4[4] = {};
-    uint8_t ok38[38] = {};
+    uint8_t ok39[pairing::kPairOkSize] = {};
     uint32_t bondMs = 0;
   };
   LastPair lastPair_;
@@ -909,6 +1258,10 @@ class UdpServer {
   bool firstDriveDrop_ = true;
   bool firstPairDrop_ = true;
   bool firstUnbondDrop_ = true;
+  bool firstRekeyDrop_ = true;
+  bool firstAliveDrop_ = true;
+  bool firstDisconnectDrop_ = true;
+  bool firstTelemetryDrop_ = true;
 };
 
 #endif  // ARDUINO

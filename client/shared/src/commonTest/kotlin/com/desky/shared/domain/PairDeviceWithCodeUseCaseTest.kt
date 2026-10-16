@@ -56,11 +56,17 @@ private suspend fun pairOkFor(
     code: ByteArray = CODE,
     serverNonce: ByteArray = SERVER_NONCE,
     psk: ByteArray = hex(PSK_HEX),
+    /**
+     * Interval byte appended to the GCM plaintext (v1.1 39B frame).
+     * Null builds the legacy v1 38B frame (no interval byte — old robot).
+     */
+    persistEvery: Int? = 128,
 ): ByteArray {
     val kek = hkdfSha256(clientNonce + serverNonce, code, "desky-pair-v1", 16)
     val nonce12 = serverNonce + clientNonce + ByteArray(4)
     val aad = byteArrayOf(PAIR_OK_HEADER.toByte()) + clientNonce + serverNonce
-    val (ct, tag) = aesGcmEncrypt(kek, nonce12, aad, psk)
+    val plain = if (persistEvery == null) psk else psk + byteArrayOf((persistEvery and 0xFF).toByte())
+    val (ct, tag) = aesGcmEncrypt(kek, nonce12, aad, plain)
     return framePairOk(serverNonce, ct, tag)
 }
 
@@ -149,13 +155,54 @@ class PairDeviceWithCodeUseCaseTest {
         assertEquals("psk-v1", outcome.data.authToken)
         // Room never holds key material (no pskHex column since Task 9);
         // the counter resets so the first drive packet is 1; the vault
-        // holds the key.
+        // holds the key. Default pairOkFor carries interval byte 128.
         assertEquals(0u, outcome.data.lastCounter)
+        assertEquals(128, outcome.data.persistEvery)
         assertEquals(PSK_HEX, vault.loadPsk(outcome.data.id))
         assertEquals(ROBOT_HOST, outcome.data.alias)
         verifySuspend { deviceRepo.save(outcome.data) }
         // No re-send was needed: exactly one PAIR_REQ on the wire.
         assertEquals(1, udp.sent.size)
+    }
+
+    @Test
+    fun successCarriesNegotiatedPersistEvery() = runTest {
+        for ((wire, expected) in listOf(16 to 16, 128 to 128, 0 to 128, 7 to 128)) {
+            val deviceRepo = repo()
+            everySuspend { deviceRepo.save(any()) } returns Unit
+            val udp = FakePairingUdp()
+            val vault = FakeBondSecretStore()
+            val deferred = startPairing(udp, useCase(deviceRepo, udp, vault))
+
+            val clientNonce = clientNonceOf(udp)
+            udp.inbound.emit(UdpDatagram(pairOkFor(clientNonce, persistEvery = wire), ROBOT_HOST, DEFAULT_UDP_PORT))
+            val result = deferred.await()
+
+            val outcome = assertIs<Outcome.Success<PairedDevice>>(result, "wire=$wire")
+            assertEquals(expected, outcome.data.persistEvery, "wire=$wire")
+            // The vault holds the unwrapped 16-byte PSK regardless of frame size.
+            assertEquals(PSK_HEX, vault.loadPsk(outcome.data.id), "wire=$wire")
+        }
+    }
+
+    @Test
+    fun legacyFrameWithoutIntervalDefaultsTo128() = runTest {
+        val deviceRepo = repo()
+        everySuspend { deviceRepo.save(any()) } returns Unit
+        val udp = FakePairingUdp()
+        val vault = FakeBondSecretStore()
+        val deferred = startPairing(udp, useCase(deviceRepo, udp, vault))
+
+        // v1 robot: 38B frame, no interval byte.
+        val reply = pairOkFor(clientNonceOf(udp), persistEvery = null)
+        assertEquals(PAIR_OK_SIZE, reply.size)
+        udp.inbound.emit(UdpDatagram(reply, ROBOT_HOST, DEFAULT_UDP_PORT))
+        val result = deferred.await()
+
+        val outcome = assertIs<Outcome.Success<PairedDevice>>(result)
+        assertEquals(128, outcome.data.persistEvery)
+        assertEquals(0u, outcome.data.lastCounter)
+        assertEquals(PSK_HEX, vault.loadPsk(outcome.data.id))
     }
 
     @Test
@@ -354,8 +401,8 @@ class PairDeviceWithCodeUseCaseTest {
             // the failure lands in GCM authentication, not the checksum.
             it[5] = (it[5].toInt() xor 0xFF).toByte()
             var xor = 0
-            for (i in 0 until PAIR_OK_SIZE - 1) xor = xor xor (it[i].toInt() and 0xFF)
-            it[PAIR_OK_SIZE - 1] = xor.toByte()
+            for (i in 0 until it.size - 1) xor = xor xor (it[i].toInt() and 0xFF)
+            it[it.size - 1] = xor.toByte()
         }
         udp.inbound.emit(UdpDatagram(tampered, ROBOT_HOST, DEFAULT_UDP_PORT))
 

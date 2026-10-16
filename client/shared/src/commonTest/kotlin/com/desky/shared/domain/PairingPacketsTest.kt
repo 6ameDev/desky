@@ -32,7 +32,12 @@ class PairingPacketsTest {
         assertEquals(0x52, PAIR_ERR_HEADER)
         assertEquals(12, PAIR_REQ_SIZE)
         assertEquals(38, PAIR_OK_SIZE)
+        assertEquals(39, PAIR_OK_SIZE_V11)
         assertEquals(4, PAIR_ERR_SIZE)
+        assertEquals(0x53, REKEY_REQ_HEADER)
+        assertEquals(14, REKEY_REQ_SIZE)
+        assertEquals(0x54, REKEY_ACK_HEADER)
+        assertEquals(10, REKEY_ACK_SIZE)
         assertEquals("192.168.4.1", ROBOT_HOST)
     }
 
@@ -63,7 +68,7 @@ class PairingPacketsTest {
 
     @Test
     fun decodePairOkGolden() {
-        // Frozen vectors (README §v1): server=05060708, ct/tag from aesGcmEncrypt.
+        // Frozen v1 vectors (README §v1): server=05060708, ct/tag from aesGcmEncrypt.
         val serverNonce = hex("05060708")
         val ct = hex("f47f282e8b8020ec2acf8bf1eaf2ee25")
         val tag = hex("dd497abf431870b75f5722754aa2a105")
@@ -80,6 +85,25 @@ class PairingPacketsTest {
     }
 
     @Test
+    fun decodePairOkV11Golden() {
+        // v1.1 vectors (README §v1.1 addendum): same nonces, 17B ct covering
+        // psk16||persist_u8(0x80).
+        val serverNonce = hex("05060708")
+        val ct = hex("f47f282e8b8020ec2acf8bf1eaf2ee2590")
+        val tag = hex("e211690852a899b6d4062fbf1058876c")
+        val body = byteArrayOf(PAIR_OK_HEADER.toByte()) + serverNonce + ct + tag
+        var xor = 0
+        for (b in body) xor = xor xor (b.toInt() and 0xFF)
+        val pkt = body + byteArrayOf(xor.toByte())
+
+        assertEquals(PAIR_OK_SIZE_V11, pkt.size)
+        val decoded = assertNotNull(PairingPacketCodec.decodePairOk(pkt))
+        assertContentEquals(serverNonce, decoded.first)
+        assertContentEquals(ct, decoded.second)
+        assertContentEquals(tag, decoded.third)
+    }
+
+    @Test
     fun decodePairOkRejects() {
         val good = run {
             val body = byteArrayOf(PAIR_OK_HEADER.toByte()) + ByteArray(36) { it.toByte() }
@@ -89,7 +113,9 @@ class PairingPacketsTest {
         }
         assertNull(PairingPacketCodec.decodePairOk(byteArrayOf()))
         assertNull(PairingPacketCodec.decodePairOk(good.copyOf(PAIR_OK_SIZE - 1)))
-        assertNull(PairingPacketCodec.decodePairOk(good + byteArrayOf(0x00)))
+        // 39B is the valid v1.1 size now (framing accepts it when the
+        // checksum lines up); 40B stays a wrong-length reject.
+        assertNull(PairingPacketCodec.decodePairOk(good + byteArrayOf(0x00, 0x00)))
         // Wrong header (e.g. a PAIR_REQ header on a 38-byte frame).
         val badHeader = good.copyOf().also { it[0] = PAIR_REQ_HEADER.toByte() }
         assertNull(PairingPacketCodec.decodePairOk(badHeader))
@@ -194,5 +220,101 @@ class UnbondPacketTest {
             threw = true
         }
         assertTrue(threw, "encodeUnbond must require a 16-byte PSK")
+    }
+}
+
+class RekeyPacketTest {
+
+    /**
+     * Golden `REKEY_REQ` frame (oldPsk=`0011...eeff`, era=1, counter=100).
+     * The expected tag is built from a MANUALLY assembled 11-byte HMAC input
+     * (`"REKEY" ASCII || eraBE2 || counterBE4`) through the [hmacSha256]
+     * primitive — never through [encodeRekeyReq] itself — and the frame
+     * bytes are laid out literally around it.
+     */
+    @Test
+    fun goldenReqBytesAndTag() = kotlinx.coroutines.test.runTest {
+        val oldPsk = hex("00112233445566778899aabbccddeeff")
+
+        val hmacInput = "REKEY".encodeToByteArray() + byteArrayOf(0x00, 0x01, 0x00, 0x00, 0x00, 0x64)
+        assertEquals(11, hmacInput.size)
+        val tag = hmacSha256(oldPsk, hmacInput).copyOfRange(0, 6)
+        assertContentEquals(hex("fdfe277d1623"), tag)
+
+        val body = byteArrayOf(0x53.toByte(), 0x00, 0x01, 0x00, 0x00, 0x00, 0x64) + tag
+        assertEquals(13, body.size)
+        val expected = body + byteArrayOf(xorOf(body, body.size).toByte())
+
+        val actual = encodeRekeyReq(oldPsk, 1u, 100u)
+
+        assertEquals(REKEY_REQ_SIZE, actual.size)
+        assertContentEquals(expected, actual)
+        // Literal golden (README §rekey vectors): header + era + counter + tag + XOR.
+        assertContentEquals(hex("53000100000064fdfe277d16235a"), actual)
+        assertEquals(xorOf(actual, REKEY_REQ_SIZE - 1), actual[REKEY_REQ_SIZE - 1].unsigned())
+    }
+
+    @Test
+    fun reqEraAndCounterLayOutBigEndian() = kotlinx.coroutines.test.runTest {
+        val psk = ByteArray(16) { it.toByte() }
+        val pkt = encodeRekeyReq(psk, 0x0102u, 0x01020304u)
+        assertEquals(0x53, pkt[0].unsigned())
+        assertEquals(0x01, pkt[1].unsigned())
+        assertEquals(0x02, pkt[2].unsigned())
+        assertEquals(0x01, pkt[3].unsigned())
+        assertEquals(0x02, pkt[4].unsigned())
+        assertEquals(0x03, pkt[5].unsigned())
+        assertEquals(0x04, pkt[6].unsigned())
+        assertEquals(xorOf(pkt, REKEY_REQ_SIZE - 1), pkt[REKEY_REQ_SIZE - 1].unsigned())
+    }
+
+    @Test
+    fun reqRejectsShortPsk() = kotlinx.coroutines.test.runTest {
+        var threw = false
+        try {
+            encodeRekeyReq(ByteArray(8), 1u, 1u)
+        } catch (e: IllegalArgumentException) {
+            threw = true
+        }
+        assertTrue(threw, "encodeRekeyReq must require a 16-byte PSK")
+    }
+
+    @Test
+    fun decodeAckGolden() = kotlinx.coroutines.test.runTest {
+        // Literal golden (README §rekey vectors): era=1 under the derived
+        // era-1 key, tag ed5f52335855, XOR 0x8b.
+        val pkt = hex("540001ed5f523358558b")
+        assertEquals(REKEY_ACK_SIZE, pkt.size)
+        val decoded = assertNotNull(decodeRekeyAck(pkt))
+        assertEquals(1u, decoded.first)
+        assertContentEquals(hex("ed5f52335855"), decoded.second)
+    }
+
+    @Test
+    fun decodeAckRoundTripsDerivedTag() = kotlinx.coroutines.test.runTest {
+        val newPsk = rekeyPsk(hex("00112233445566778899aabbccddeeff"), 1u)
+        val tag = rekeyAckTag(newPsk, 1u)
+        val body = byteArrayOf(0x54.toByte(), 0x00, 0x01) + tag
+        val pkt = body + byteArrayOf(xorOf(body, body.size).toByte())
+        val decoded = assertNotNull(decodeRekeyAck(pkt))
+        assertEquals(1u, decoded.first)
+        assertContentEquals(tag, decoded.second)
+    }
+
+    @Test
+    fun decodeAckRejects() {
+        val good = hex("540001ed5f523358558b")
+        assertNull(decodeRekeyAck(byteArrayOf()))
+        assertNull(decodeRekeyAck(good.copyOf(REKEY_ACK_SIZE - 1)))
+        assertNull(decodeRekeyAck(good + byteArrayOf(0x00)))
+        // Wrong header (a REKEY_REQ header on a 10-byte frame).
+        val badHeader = good.copyOf().also { it[0] = REKEY_REQ_HEADER.toByte() }
+        assertNull(decodeRekeyAck(badHeader))
+        // Corrupt checksum byte.
+        val badChecksum = good.copyOf().also { it[REKEY_ACK_SIZE - 1] = (it[REKEY_ACK_SIZE - 1] + 1).toByte() }
+        assertNull(decodeRekeyAck(badChecksum))
+        // Corrupt payload without fixing the checksum.
+        val badPayload = good.copyOf().also { it[4] = (it[4] + 1).toByte() }
+        assertNull(decodeRekeyAck(badPayload))
     }
 }

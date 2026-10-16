@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <esp_system.h>
 
 #include "behavior/coordinator.h"
 #include "behavior/motion_controller.h"
@@ -83,6 +84,10 @@ void setup() {
   LOG_I("BOOT", "desky v2 boot | MCU=%s cores=%d flash=%dMB psram=%d", MCU_NAME, MCU_NUM_CORES, MCU_FLASH_SIZE_MB,
         MCU_HAS_PSRAM);
   LOG_I("BOOT", "reset=%s sdk=%s rev=%d", FaultManager::resetReasonStr(), ESP.getSdkVersion(), ESP.getChipRevision());
+  // Correlation marker (log-only): random boot id joins app wall-clock
+  // markers (sessionReady/firstAlive/firstTelemetry) to this boot's robot
+  // millis() timeline. Logged once per reboot.
+  LOG_I("BOOT", "boot id=%08lx", static_cast<unsigned long>(esp_random()));
   LOG_I("BOOT", "cpu=%dMHz flash_chip=%dB", ESP.getCpuFreqMHz(), ESP.getFlashChipSize());
   // Speaker self-test in every env (incl. bench): the jingle only queues
   // here — the audio task synths it — so a silent bench still boots clean.

@@ -179,6 +179,33 @@ class PairingViewModelTest {
     }
 
     @Test
+    fun pairBlockedWhilePairedKeepsForgetEnabled() = runVmTest { main ->
+        // Bonded gate: Pair is disabled while a device is paired (only
+        // Forget + auto-retry offered) — no PAIR_REQ leaves the radio.
+        val repo = FakeDeviceRepository(testDevice())
+        val udp = FakeUdpSocketManager()
+        val viewModel = vm(repo, udp)
+        main.runCurrent()
+        assertNotNull(viewModel.state.value.pairedDevice)
+
+        viewModel.onPinChange("123456")
+        viewModel.onPair()
+        main.runCurrent()
+
+        val state = viewModel.state.value
+        assertFalse(state.isPairing, "blocked pair never enters the pairing state")
+        assertTrue(udp.sent.isEmpty(), "no PAIR_REQ over a live bond")
+        assertNull(state.error)
+        assertNotNull(state.pairedDevice)
+
+        // Forget stays enabled always: unpair still clears.
+        viewModel.onUnpair()
+        main.advanceUntilIdle()
+        assertNull(viewModel.state.value.pairedDevice)
+        assertEquals(1, repo.clearCalls)
+    }
+
+    @Test
     fun persistFailureSurfacesError() = runVmTest { main ->
         // Mokkery is genuinely simpler here: one throwing stub without a
         // dedicated fake subclass.
