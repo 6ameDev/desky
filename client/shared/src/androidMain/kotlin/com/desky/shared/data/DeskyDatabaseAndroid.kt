@@ -14,6 +14,9 @@ import com.desky.shared.data.db.DeskyDatabase
  * v2 -> v3 drops `pskHex`, adds `lastCounter`). This MUST be replaced with
  * a real `Migration` before real customers exist, or they lose their
  * pairing (and drive counter) on upgrade.
+ * TODO(tracking-issue): file the v2→v3 `Migration` tracking issue and link
+ * it here (see `DeskyDatabase` KDoc; firmware twin: NVS `kConfigVersion`
+ * wipe in `ConfigStore::begin`).
  */
 fun createDeskyDatabase(context: Context): DeskyDatabase {
     val dbFile = context.getDatabasePath(DATABASE_NAME)

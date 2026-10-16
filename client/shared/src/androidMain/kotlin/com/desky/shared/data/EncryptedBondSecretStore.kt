@@ -33,20 +33,25 @@ class EncryptedBondSecretStore(
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
         )
 
-    override suspend fun savePsk(deviceId: String, pskHex: String) =
+    // commit() (blocking, already on Dispatchers.IO) instead of apply()
+    // (async): a crash/power loss between apply()'s in-memory write and its
+    // async flush must not lose the freshly-paired bond PSK.
+    override suspend fun savePsk(deviceId: String, pskHex: String) {
         withContext(Dispatchers.IO) {
-            prefsFor(deviceId).edit().putString(PSK_VALUE_KEY, pskHex).apply()
+            prefsFor(deviceId).edit().putString(PSK_VALUE_KEY, pskHex).commit()
         }
+    }
 
     override suspend fun loadPsk(deviceId: String): String? =
         withContext(Dispatchers.IO) {
             prefsFor(deviceId).getString(PSK_VALUE_KEY, null)
         }
 
-    override suspend fun clear(deviceId: String) =
+    override suspend fun clear(deviceId: String) {
         withContext(Dispatchers.IO) {
-            prefsFor(deviceId).edit().remove(PSK_VALUE_KEY).apply()
+            prefsFor(deviceId).edit().remove(PSK_VALUE_KEY).commit()
         }
+    }
 
     /** File-name safe: keep alphanumerics plus `._-`, fold the rest to `_`. */
     private fun String.sanitized(): String =

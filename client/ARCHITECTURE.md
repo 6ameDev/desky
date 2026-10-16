@@ -93,7 +93,7 @@ graph LR
     subgraph Outbound["Drive (never pauses — defeats the 500 ms failsafe)"]
         J[Joystick / onStick] --> S[RobotControlUiState]
         S --> L["send loop (20 ms tick)"]
-        L --> U1[SendRobotControlCommandUseCase]
+        L --> U1[SendSignedControlUseCase]
         U1 --> SOCK[UdpSocketManager.send]
         SOCK --> R[robot :3333]
     end

@@ -92,6 +92,16 @@ void test_udp_wire_constants() {
   TEST_ASSERT_TRUE(udpstatus::kDriveV2Size == 16);
   TEST_ASSERT_EQUAL_UINT8(0x50, udpstatus::kPairReqHeader);
   TEST_ASSERT_TRUE(udpstatus::kPairReqSize == 12);
+  // M9 cross-check: the RX demux hard-codes the legacy 6B/0xAA shape instead
+  // of including udp_codec.h (see the comment above kDriveV2Header). Pin the
+  // copy to the canonical udp::kControlHeader/kControlSize so drift fails
+  // here. Single source of truth: shared/protocol (normative:
+  // embedded/src/middleware/udp_codec.h). (static_cast: rxKindInt is
+  // declared further below, after the classify tests.)
+  TEST_ASSERT_EQUAL_UINT8(udp::kControlHeader, 0xAA);
+  TEST_ASSERT_TRUE(udp::kControlSize == 6);
+  TEST_ASSERT_EQUAL(static_cast<int>(udpstatus::RxKind::kLegacy),
+                    static_cast<int>(udpstatus::classifyRx(udp::kControlSize, udp::kControlHeader)));
 }
 
 void test_udp_fresh_counter_greater_ok() {
@@ -223,7 +233,6 @@ void test_udp_classify_unbond() {
 void test_udp_unbond_tag_msg_golden() {
   uint8_t msg[udpstatus::kUnbondMsgLen];
   udpstatus::unbondTagMsg(1u, msg);
-  const uint8_t expected[10] = {0x55, 0x4E, 0x42, 0x4F, 0x4E,
-                                0x44, 0x00, 0x00, 0x00, 0x01};
+  const uint8_t expected[10] = {0x55, 0x4E, 0x42, 0x4F, 0x4E, 0x44, 0x00, 0x00, 0x00, 0x01};
   TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, msg, sizeof(expected));
 }

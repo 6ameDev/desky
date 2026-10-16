@@ -53,17 +53,19 @@ class DriveCounter(
      * on the wire; practically unreachable at 2^32 sends, fail-closed).
      */
     suspend fun next(): UInt? {
-        mutex.withLock {
-            val id = deviceId ?: return null
+        val (id, allocated, shouldPersist) = mutex.withLock {
+            val id = deviceId ?: return@withLock Triple<String?, UInt?, Boolean>(null, null, false)
             val allocated = lastSent + 1u
-            if (allocated == 0u) return null
+            if (allocated == 0u) return@withLock Triple(id, null, false)
             lastSent = allocated
             sincePersist++
-            if (sincePersist % COUNTER_PERSIST_EVERY == 0) {
-                deviceRepo.updateCounter(id, allocated)
-            }
-            return allocated
+            Triple(id, allocated, sincePersist % COUNTER_PERSIST_EVERY == 0)
         }
+        if (allocated == null) return null
+        if (shouldPersist && id != null) {
+            deviceRepo.updateCounter(id, allocated)
+        }
+        return allocated
     }
 
     /** Clear the era (unpair): the next [ensure] starts fresh. */

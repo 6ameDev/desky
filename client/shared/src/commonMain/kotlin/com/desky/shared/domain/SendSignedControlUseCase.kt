@@ -1,5 +1,7 @@
 package com.desky.shared.domain
 
+import kotlinx.coroutines.CancellationException
+
 /**
  * Encode [cmd] as an authenticated `DRIVE_V2` frame and send it to the
  * paired robot's address (pairing/auth Task 9).
@@ -21,6 +23,8 @@ class SendSignedControlUseCase(
         return try {
             udp.send(encodeSigned(cmd, counter, psk), device.ip, device.port)
             Outcome.Success(Unit)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Outcome.Failure("Failed to send control command: ${e.message}", e)
         }

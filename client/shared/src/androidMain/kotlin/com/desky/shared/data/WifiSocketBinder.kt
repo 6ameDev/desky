@@ -88,15 +88,17 @@ internal class WifiSocketBinder(context: Context) : UdpSocketBinder {
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             lastNetwork = network
-            wifiStale = false
             // Re-bind on every call: re-points the fd at the current network.
-            // Never throws out of a system callback: failure leaves the socket
-            // on its previous route (same as binder-absent behavior).
-            try {
-                synchronized(lock) { manager }.let { it?.bindToWifiNetwork(network) }
+            // Never throws out of a system callback, and wifiStale tracks the
+            // Boolean result (a swallowed inner failure used to lie): failure
+            // leaves the socket on its previous route (same as binder-absent
+            // behavior).
+            val bound = try {
+                synchronized(lock) { manager }?.bindToWifiNetwork(network) ?: false
             } catch (_: Exception) {
-                wifiStale = true
+                false
             }
+            wifiStale = !bound
         }
 
         override fun onLost(network: Network) {

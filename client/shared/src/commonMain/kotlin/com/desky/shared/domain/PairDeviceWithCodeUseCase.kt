@@ -30,12 +30,11 @@ val DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS: List<Long> = listOf(1000, 2000, 4000, 4000
  *
  * Retry policy: at most [attemptTimeoutsMs.size] `PAIR_REQ` datagrams leave
  * the app per [invoke] (default 5; total 15s, well inside the firmware 60s
- * redelivery window), so our own retries can never trip the firmware 5-try
- * lockout — and retries fire ONLY on silence: ANY reply (`PAIR_OK` or
- * `PAIR_ERR`) terminates the loop immediately, so same-code retries never
- * burn an extra firmware try on their own. The resends are byte-identical
- * (same code+nonce), hence idempotent: a duplicated request the robot
- * already answered just re-triggers the same reply.
+ * redelivery window). Retries fire ONLY on silence: ANY reply (`PAIR_OK` or
+ * `PAIR_ERR`) terminates the loop immediately. A resend after a lost reply
+ * may consume one firmware try, hence sends stay <= 5. The resends are
+ * byte-identical (same code+nonce), hence idempotent: a duplicated request
+ * the robot already answered just re-triggers the same reply.
  *
  * @param attemptTimeoutsMs per-send wait schedule in ms; sends == size.
  *   Must hold 1..5 positive entries (upper bound mirrors the firmware
@@ -173,6 +172,11 @@ class PairDeviceWithCodeUseCase(
     private fun mapPairError(reason: Int, retryS: Int): String = when (reason) {
         0 -> "Pairing failed: incorrect code"
         1 -> "Pairing failed: robot locked, retry in ${retryS}s"
+        // M11 spec freeze: wire reason 2 doubles as retry-with-fresh-code
+        // after a burned-code internal failure (firmware NVS/crypto fault
+        // post-tryCode kOk reuses not_in_window — see udp_server.h
+        // handlePairReq). The single-use code is spent either way, so pair
+        // again with the fresh display code. The wire reason MUST NOT change.
         2 -> "Pairing failed: code expired"
         3 -> "Pairing failed: robot already bonded"
         else -> "Pairing failed: robot rejected pairing (reason=$reason)"

@@ -192,6 +192,44 @@ class RobotControlViewModelTest {
         assertEquals(packet, state.telemetry)
     }
 
+    /**
+     * M2: telemetry silence past [TELEMETRY_TIMEOUT_MS] demotes Connected to
+     * Disconnected (virtual time: timeout / tickMs send-loop ticks); a fresh
+     * packet promotes again. The last packet stays visible throughout.
+     */
+    @Test
+    fun telemetrySilenceDemotesToDisconnectedAndRecoveryPromotes() = runVmTest { main ->
+        val (viewModel, _, udp, _) = setup(tickMs = 20)
+        main.runCurrent()
+
+        val packet = Telemetry(
+            pitchDeg = 3.1f,
+            rollDeg = -1.2f,
+            distanceMm = 900,
+            cliff = false,
+            driving = true,
+            mode = RobotMode.AUTONOMOUS,
+        )
+        udp.inbound.emit(UdpDatagram(TelemetryPacketCodec.encode(packet), "192.168.4.1", DEFAULT_UDP_PORT))
+        main.runCurrent()
+        assertEquals(Connectivity.Connected, viewModel.state.value.connectivity)
+
+        // ~1s of silence (50 ticks of the 100-tick / 2s budget): still linked.
+        main.advanceTimeBy(1000)
+        assertEquals(Connectivity.Connected, viewModel.state.value.connectivity)
+
+        // ~2.5s more silence (budget long exceeded): demoted, packet kept.
+        main.advanceTimeBy(2500)
+        val stale = viewModel.state.value
+        assertEquals(Connectivity.Disconnected, stale.connectivity)
+        assertEquals(packet, stale.telemetry)
+
+        // Fresh packet promotes again.
+        udp.inbound.emit(UdpDatagram(TelemetryPacketCodec.encode(packet), "192.168.4.1", DEFAULT_UDP_PORT))
+        main.runCurrent()
+        assertEquals(Connectivity.Connected, viewModel.state.value.connectivity)
+    }
+
     @Test
     fun unpairedShowsUntilTelemetry() = runVmTest { main ->
         val repo = FakeDeviceRepository(null)

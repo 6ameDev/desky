@@ -64,9 +64,12 @@ class PairingViewModel(
      */
     fun onPair() {
         if (_state.value.isPairing) return
+        // Snapshot the PIN before launch: the field stays enabled during
+        // pairing (UX-owned), so reading inside the coroutine could race an edit.
+        val code = _state.value.pin
         _state.update { it.copy(isPairing = true, pairingAttempt = 1, error = null) }
         viewModelScope.launch {
-            when (val result = pairUC(_state.value.pin) { a, _ ->
+            when (val result = pairUC(code) { a, _ ->
                 _state.update { it.copy(pairingAttempt = a) }
             }) {
                 is Outcome.Success ->

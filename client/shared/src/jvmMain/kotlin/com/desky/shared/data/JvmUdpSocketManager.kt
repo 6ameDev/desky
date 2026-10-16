@@ -17,6 +17,7 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.SocketException
 import java.net.SocketTimeoutException
+import kotlin.concurrent.Volatile
 
 /** Wake interval so a blocked `receive` notices cancellation/close. */
 private const val RECEIVE_TIMEOUT_MS = 500
@@ -48,6 +49,14 @@ internal class JvmDatagramSocketManager(
     private val _incoming = MutableSharedFlow<UdpDatagram>(extraBufferCapacity = 64)
     override val incoming: Flow<UdpDatagram> = _incoming.asSharedFlow()
 
+    /**
+     * Datagrams dropped because the 64-slot buffer was full. Diagnostic only:
+     * a drop means the consumer is behind, never a socket error.
+     */
+    @Volatile
+    var droppedIncoming = 0
+        private set
+
     private val receiveJob: Job
 
     init {
@@ -66,7 +75,11 @@ internal class JvmDatagramSocketManager(
                     if (!isActive || socket.isClosed) break else continue
                 }
                 val host = packet.address?.hostAddress ?: continue
-                _incoming.emit(UdpDatagram(packet.data.copyOf(packet.length), host, packet.port))
+                // tryEmit (never emit): a full buffer must drop, not suspend
+                // the receiver and stall pairing/telemetry reads.
+                if (!_incoming.tryEmit(UdpDatagram(packet.data.copyOf(packet.length), host, packet.port))) {
+                    droppedIncoming++
+                }
             }
         }
     }

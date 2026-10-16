@@ -59,9 +59,8 @@ void test_pair_fifth_try_locks_then_expires() {
 void test_pair_window_expiry_rejects() {
   pairing::Core core;
   TEST_ASSERT_TRUE(core.openWindow(0, kCode));
-  TEST_ASSERT_EQUAL(
-      static_cast<int>(pairing::Result::kNotInWindow),
-      static_cast<int>(core.tryCode(kCode, pairing::kCodeLen, pairing::kWindowMs + 1)));
+  TEST_ASSERT_EQUAL(static_cast<int>(pairing::Result::kNotInWindow),
+                    static_cast<int>(core.tryCode(kCode, pairing::kCodeLen, pairing::kWindowMs + 1)));
 }
 
 void test_pair_pre_window_rejects() {

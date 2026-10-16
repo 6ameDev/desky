@@ -9,8 +9,10 @@ import dev.mokkery.mock
 import dev.mokkery.verifySuspend
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 
 private fun testDevice() = PairedDevice(
@@ -99,6 +101,22 @@ class SendSignedControlUseCaseTest {
         assertTrue(failure.reason.isNotBlank())
         assertIs<IllegalStateException>(failure.cause)
     }
+
+    @Test
+    fun cancellationPropagatesInsteadOfFailure() = runTest {
+        val udp = mock<UdpSocketManager>()
+        everySuspend { udp.send(any(), any(), any()) } calls { throw CancellationException("cancelled") }
+
+        // Structured concurrency: cancellation must escape, never map to Outcome.Failure.
+        assertFailsWith<CancellationException> {
+            SendSignedControlUseCase(udp)(
+                testDevice(),
+                ControlCommand(RobotMode.MANUAL, 0f, 0f),
+                psk(),
+                1u,
+            )
+        }
+    }
 }
 
 class EmergencyStopUseCaseTest {
@@ -144,6 +162,17 @@ class EmergencyStopUseCaseTest {
         val failure = assertIs<Outcome.Failure>(result)
         assertTrue(failure.reason.isNotBlank())
         assertIs<IllegalStateException>(failure.cause)
+    }
+
+    @Test
+    fun cancellationPropagatesInsteadOfFailure() = runTest {
+        val udp = mock<UdpSocketManager>()
+        everySuspend { udp.send(any(), any(), any()) } calls { throw CancellationException("cancelled") }
+
+        // Must escape through both layers (sendSigned + estop), never map to Outcome.Failure.
+        assertFailsWith<CancellationException> {
+            EmergencyStopUseCase(SendSignedControlUseCase(udp))(testDevice(), psk(), 1u)
+        }
     }
 
     @Test

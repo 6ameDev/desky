@@ -165,9 +165,8 @@ inline bool isFreshCounter(uint32_t lastSeen, uint32_t got) {
 // incoming client nonce (4B) matches, and the bond is younger than
 // kRedeliveryMs (wrap-safe millis math). Null pointers -> false. Deliberately
 // local (no pairing.h include) so this top half stays stdint-only.
-inline bool shouldRedeliver(bool valid, const uint8_t* storedCode, const uint8_t* storedNonce,
-                             const uint8_t* inCode, const uint8_t* inNonce, uint32_t bondMs,
-                             uint32_t nowMs) {
+inline bool shouldRedeliver(bool valid, const uint8_t* storedCode, const uint8_t* storedNonce, const uint8_t* inCode,
+                            const uint8_t* inNonce, uint32_t bondMs, uint32_t nowMs) {
   if (!valid) {
     return false;
   }
@@ -611,8 +610,8 @@ class UdpServer {
     // Lost-PAIR_OK race: while bonded, an identical retry (same code +
     // client nonce) inside the redelivery window re-unicasts the cached
     // PAIR_OK. Checked BEFORE the already_bonded reply below.
-    if (bonded_ && udpstatus::shouldRedeliver(lastPair_.valid, lastPair_.code6, lastPair_.cliNonce4,
-                                              buf + 1, buf + 7, lastPair_.bondMs, nowMs)) {
+    if (bonded_ && udpstatus::shouldRedeliver(lastPair_.valid, lastPair_.code6, lastPair_.cliNonce4, buf + 1, buf + 7,
+                                              lastPair_.bondMs, nowMs)) {
       udp_.beginPacket(rip, rport);
       udp_.write(lastPair_.ok38, sizeof(lastPair_.ok38));
       udp_.endPacket();
@@ -627,8 +626,7 @@ class UdpServer {
     }
     const pairing::Result r = pairCore_.tryCode(buf + 1, pairing::kCodeLen, nowMs);
     if (r != pairing::Result::kOk) {
-      const uint8_t retryS =
-          (r == pairing::Result::kLocked) ? static_cast<uint8_t>(pairing::kLockoutMs / 1000u) : 0;
+      const uint8_t retryS = (r == pairing::Result::kLocked) ? static_cast<uint8_t>(pairing::kLockoutMs / 1000u) : 0;
       sendPairErr(rip, rport, pairing::toWireReason(r), retryS);
       dropFirst(firstPairDrop_, "pair err reason=%u (first of boot)", static_cast<unsigned>(pairing::toWireReason(r)));
       LOG_EVERY_N(10, "UDP", "pair err reason=%u", static_cast<unsigned>(pairing::toWireReason(r)));
@@ -716,6 +714,11 @@ class UdpServer {
       havePeer_ = true;
       LOG_I("UDP", "pair ok");
     } else {
+      // M11 spec freeze: the code is already burned (single-use), so an NVS
+      // or crypto failure after kOk reuses the not_in_window wire reason (2)
+      // instead of minting a new one. The client maps reason 2 to "expired"
+      // — read it here as retry-with-fresh-code: open a new window and pair
+      // again with the fresh display code. The wire reason MUST NOT change.
       sendPairErr(rip, rport, pairing::toWireReason(pairing::Result::kNotInWindow), 0);
       dropFirst(firstPairDrop_, "pair err internal (first of boot)");
       LOG_EVERY_N(10, "UDP", "pair err internal");

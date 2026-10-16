@@ -127,12 +127,12 @@ private fun getI16BE(bytes: ByteArray, at: Int): Short {
  * Pure byte math mirroring `udp::encodeControl` / `udp::decodeControl`.
  *
  * Legacy post-bond: the firmware drops `0xAA` drive datagrams once bonded,
- * so NOTHING in the app sends through [encode] anymore — it stays only as
- * the bench/test frame builder (telemetry-garbage fixtures, hello shape).
+ * so NOTHING in the app sends through [encode] anymore — bench/test frame
+ * builder, not for drive path (telemetry-garbage fixtures, hello shape).
  * All drive traffic goes through [encodeSigned].
  */
 object ControlPacketCodec {
-    fun encode(cmd: ControlCommand): ByteArray {
+    internal fun encode(cmd: ControlCommand): ByteArray {
         val out = ByteArray(CONTROL_SIZE)
         out[0] = CONTROL_HEADER.toByte()
         out[1] = cmd.mode.toBits().toByte()

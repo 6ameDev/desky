@@ -19,6 +19,11 @@ import java.net.InetAddress
 import java.net.SocketException
 import java.net.SocketTimeoutException
 import android.net.Network
+import android.util.Log
+import kotlin.concurrent.Volatile
+
+/** Log tag for socket-creation/binding failures (key material is never logged). */
+private const val TAG = "DatagramSocketManager"
 
 /** Wake interval so a blocked `receive` notices cancellation/close. */
 private const val RECEIVE_TIMEOUT_MS = 500
@@ -36,6 +41,13 @@ private const val MAX_DATAGRAM_BYTES = 64
  * [bindToWifiNetwork] on every `onAvailable`, which re-points this same fd at
  * the Wi-Fi network — rebind-only, so the ephemeral port never churns. See
  * `WifiSocketBinder` KDoc for the mobile-data root cause.
+ *
+ * Startup robustness: socket construction can throw `SocketException`, and
+ * this manager is built inside the Koin singleton graph on the app startup
+ * path — so the socket is nullable with a logged fallback instead of a
+ * throwing initializer. Null surfaces a closed/broken manager: the receive
+ * loop exits immediately and [send] fails fast with `IOException` (reported
+ * to the caller, never a startup crash).
  */
 actual fun createUdpSocketManager(scope: CoroutineScope): UdpSocketManager =
     DatagramSocketManager(scope)
@@ -43,9 +55,14 @@ actual fun createUdpSocketManager(scope: CoroutineScope): UdpSocketManager =
 internal class DatagramSocketManager(
     private val scope: CoroutineScope,
 ) : UdpSocketManager {
-    private val socket = DatagramSocket().apply {
-        broadcast = true
-        soTimeout = RECEIVE_TIMEOUT_MS
+    private val socket: DatagramSocket? = try {
+        DatagramSocket().apply {
+            broadcast = true
+            soTimeout = RECEIVE_TIMEOUT_MS
+        }
+    } catch (e: SocketException) {
+        Log.w(TAG, "UDP socket creation failed; manager unavailable", e)
+        null
     }
 
     private var wifiBinder: UdpSocketBinder? = null
@@ -53,33 +70,48 @@ internal class DatagramSocketManager(
     private val _incoming = MutableSharedFlow<UdpDatagram>(extraBufferCapacity = 64)
     override val incoming: Flow<UdpDatagram> = _incoming.asSharedFlow()
 
+    /**
+     * Datagrams dropped because the 64-slot buffer was full. Diagnostic only:
+     * a drop means the consumer is behind, never a socket error.
+     */
+    @Volatile
+    var droppedIncoming = 0
+        private set
+
     private val receiveJob: Job
 
     init {
         receiveJob = scope.launch(Dispatchers.IO) {
+            // Null socket (creation failed) -> broken manager: exit, no loop.
+            val s = socket ?: return@launch
             val buf = ByteArray(MAX_DATAGRAM_BYTES)
             while (isActive) {
                 val packet = DatagramPacket(buf, buf.size)
                 try {
-                    socket.receive(packet)
+                    s.receive(packet)
                 } catch (e: SocketTimeoutException) {
                     continue
                 } catch (e: SocketException) {
                     // Closed locally -> exit; transient error -> keep listening.
-                    if (socket.isClosed) break else continue
+                    if (s.isClosed) break else continue
                 } catch (e: IOException) {
-                    if (!isActive || socket.isClosed) break else continue
+                    if (!isActive || s.isClosed) break else continue
                 }
                 val host = packet.address?.hostAddress ?: continue
-                _incoming.emit(UdpDatagram(packet.data.copyOf(packet.length), host, packet.port))
+                // tryEmit (never emit): a full buffer must drop, not suspend
+                // the receiver and stall pairing/telemetry reads.
+                if (!_incoming.tryEmit(UdpDatagram(packet.data.copyOf(packet.length), host, packet.port))) {
+                    droppedIncoming++
+                }
             }
         }
     }
 
     override suspend fun send(bytes: ByteArray, host: String, port: Int) {
         withContext(Dispatchers.IO) {
+            val s = socket ?: throw IOException("UDP socket unavailable (creation failed)")
             val address = InetAddress.getByName(host)
-            socket.send(DatagramPacket(bytes, bytes.size, address, port))
+            s.send(DatagramPacket(bytes, bytes.size, address, port))
         }
     }
 
@@ -87,12 +119,18 @@ internal class DatagramSocketManager(
      * Pin [socket] to [network] (per-socket binding — no process-wide route
      * change). Called by [WifiSocketBinder] on every `onAvailable`; safe to
      * call repeatedly (re-points the fd) and safe after [close] (ignored).
+     *
+     * @return true when the fd was re-pointed; false when there is nothing to
+     *   bind (creation failed / already closed) or the bind threw.
      */
-    internal fun bindToWifiNetwork(network: Network) {
-        try {
-            network.bindSocket(socket)
+    internal fun bindToWifiNetwork(network: Network): Boolean {
+        return try {
+            val s = socket ?: return false
+            network.bindSocket(s)
+            true
         } catch (_: Exception) {
             // Socket already closed (close() won the race) — nothing to bind.
+            false
         }
     }
 
@@ -103,7 +141,7 @@ internal class DatagramSocketManager(
 
     override suspend fun close() {
         receiveJob.cancel()
-        socket.close()
+        socket?.close()
         wifiBinder?.detach()
         wifiBinder = null
     }

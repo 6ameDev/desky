@@ -1,5 +1,7 @@
 package com.desky.shared.domain
 
+import kotlinx.coroutines.CancellationException
+
 /**
  * Client-defined emergency-stop flag bit.
  *
@@ -25,6 +27,8 @@ class EmergencyStopUseCase(
         return try {
             val cmd = ControlCommand(RobotMode.MANUAL, 0f, 0f, ESTOP_FLAG)
             sendSigned(device, cmd, psk, counter)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Outcome.Failure("Failed to send emergency stop: ${e.message}", e)
         }

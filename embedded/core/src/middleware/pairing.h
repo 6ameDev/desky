@@ -65,13 +65,7 @@ inline bool constantTimeEqual6(const uint8_t* a, const uint8_t* b) {
 
 class Core {
  public:
-  Core()
-      : windowOpen_(false),
-        bonded_(false),
-        burned_(false),
-        tries_(0),
-        windowStartMs_(0),
-        lockoutStartMs_(0) {
+  Core() : windowOpen_(false), bonded_(false), burned_(false), tries_(0), windowStartMs_(0), lockoutStartMs_(0) {
     for (size_t i = 0; i < kCodeLen; ++i) {
       code_[i] = '0';
     }
@@ -231,8 +225,8 @@ inline bool deriveKek(const uint8_t code6[kCodeLen], const uint8_t clientNonce[k
   const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
   int rc = -1;
   if (md != nullptr) {
-    rc = mbedtls_hkdf(md, salt, sizeof(salt), code6, kCodeLen,
-                       reinterpret_cast<const unsigned char*>(kInfo), sizeof(kInfo) - 1, kekOut, kKekLen);
+    rc = mbedtls_hkdf(md, salt, sizeof(salt), code6, kCodeLen, reinterpret_cast<const unsigned char*>(kInfo),
+                      sizeof(kInfo) - 1, kekOut, kKekLen);
   }
   mbedtls_platform_zeroize(salt, sizeof(salt));
   if (rc != 0) {
@@ -248,9 +242,8 @@ inline bool deriveKek(const uint8_t code6[kCodeLen], const uint8_t clientNonce[k
 // or any mbedTLS error; gcm_free runs on all paths, and ct/tag outputs are
 // zeroized on failure (caller still owns psk/kek — const here — and must
 // zeroize its own copies after the send per the contract above).
-inline bool wrapPsk(const uint8_t psk[kPskLen], const uint8_t kek[kKekLen],
-                    const uint8_t clientNonce[kPairNonceLen], const uint8_t serverNonce[kPairNonceLen],
-                    uint8_t ctOut[kPskLen], uint8_t tagOut[kPairTagLen]) {
+inline bool wrapPsk(const uint8_t psk[kPskLen], const uint8_t kek[kKekLen], const uint8_t clientNonce[kPairNonceLen],
+                    const uint8_t serverNonce[kPairNonceLen], uint8_t ctOut[kPskLen], uint8_t tagOut[kPairTagLen]) {
   DESKY_ASSERT(psk != nullptr);
   DESKY_ASSERT(kek != nullptr);
   DESKY_ASSERT(clientNonce != nullptr);
@@ -283,8 +276,8 @@ inline bool wrapPsk(const uint8_t psk[kPskLen], const uint8_t kek[kKekLen],
   mbedtls_gcm_init(&ctx);
   int rc = mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, kek, 128);
   if (rc == 0) {
-    rc = mbedtls_gcm_crypt_and_tag(&ctx, MBEDTLS_GCM_ENCRYPT, kPskLen, iv, sizeof(iv), aad, sizeof(aad), psk,
-                                   ctOut, kPairTagLen, tagOut);
+    rc = mbedtls_gcm_crypt_and_tag(&ctx, MBEDTLS_GCM_ENCRYPT, kPskLen, iv, sizeof(iv), aad, sizeof(aad), psk, ctOut,
+                                   kPairTagLen, tagOut);
   }
   mbedtls_gcm_free(&ctx);
   mbedtls_platform_zeroize(iv, sizeof(iv));

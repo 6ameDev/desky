@@ -34,6 +34,15 @@ enum class Connectivity {
     Connected,
 }
 
+/**
+ * Telemetry link timeout: silence longer than this demotes
+ * [RobotControlUiState.connectivity] from [Connectivity.Connected] back to
+ * [Connectivity.Disconnected] (M2 — one packet used to latch Connected
+ * forever). Counted in send-loop ticks inside the ViewModel (timeout / tick),
+ * never wall-clock, so tests drive it with virtual time.
+ */
+const val TELEMETRY_TIMEOUT_MS = 2000L
+
 /** Drive-screen state (UDF: single [StateFlow] + explicit intents below). */
 data class RobotControlUiState(
     val throttle: Float = 0f,
@@ -53,6 +62,8 @@ data class RobotControlUiState(
  * child coroutines:
  * - telemetry collection, which promotes [RobotControlUiState.connectivity]
  *   to [Connectivity.Connected] and mirrors the packet mode/telemetry;
+ *   silence longer than [TELEMETRY_TIMEOUT_MS] demotes back to
+ *   [Connectivity.Disconnected] (the last packet stays visible);
  * - the command send loop, which transmits the latest stick position every
  *   [tickMs] and NEVER pauses while paired — the centered heartbeat defeats
  *   the robot's ~500 ms stale-command failsafe
@@ -73,9 +84,10 @@ data class RobotControlUiState(
  * A later unpair pauses the send loop until re-pair (the loop re-reads
  * [currentDevice] every tick) and drops the cached PSK plus the holder era,
  * so the next pairing reloads both fresh (one more vault read for the new
- * session). The session mutex serializes the loop tick against the
- * immediate e-stop frame so both share one strictly increasing counter
- * sequence.
+ * session). The session mutex serializes counter allocation between the
+ * loop tick and the immediate e-stop frame so both share one strictly
+ * increasing counter sequence; the actual network send always happens
+ * OUTSIDE the lock so a stalled send never blocks the other path.
  * [tickMs] is a constructor parameter so tests can drive virtual time.
  *
  * @param udp transport handle, kept for API symmetry with the use cases
@@ -98,6 +110,20 @@ class RobotControlViewModel(
 
     /** Last known pairing, tracked live: forgetting the device mid-session pauses sends. */
     private val currentDevice = MutableStateFlow<PairedDevice?>(null)
+
+    /**
+     * Send-loop ticks since the last telemetry packet — the M2 timeout
+     * basis. Reset by the telemetry collector, incremented once per paired
+     * send-loop iteration (one tick == one [tickMs], so the timeout is
+     * virtual-time friendly). Both coroutines run on `viewModelScope`
+     * (Main), so a plain var suffices — no suspend point sits between any
+     * read and the matching write.
+     */
+    private var ticksSinceTelemetry = 0
+
+    /** Silent send-loop ticks before Connected demotes to Disconnected. */
+    private val telemetryTimeoutTicks: Int =
+        maxOf(1, (TELEMETRY_TIMEOUT_MS / tickMs.coerceAtLeast(1)).toInt())
 
     /** Drive-session cache, guarded by [sessionMutex]. Null PSK = no session loaded. */
     private val sessionMutex = Mutex()
@@ -126,6 +152,7 @@ class RobotControlViewModel(
             deviceRepo.observePaired().filterNotNull().first()
             launch {
                 observeTelemetryUC().collect { telemetry ->
+                    ticksSinceTelemetry = 0
                     _state.update {
                         it.copy(
                             telemetry = telemetry,
@@ -146,8 +173,22 @@ class RobotControlViewModel(
                             pskMissingFor = null
                             driveCounter.reset()
                         }
+                        ticksSinceTelemetry = 0
                         delay(tickMs)
                         continue
+                    }
+                    // M2 telemetry timeout: one packet must not latch
+                    // Connected forever. Past the silence budget demote to
+                    // Disconnected (last packet stays visible); only ever
+                    // demotes FROM Connected, so the pre-telemetry Unpaired
+                    // state is untouched.
+                    if (ticksSinceTelemetry < telemetryTimeoutTicks) {
+                        ticksSinceTelemetry++
+                    }
+                    if (ticksSinceTelemetry >= telemetryTimeoutTicks &&
+                        _state.value.connectivity == Connectivity.Connected
+                    ) {
+                        _state.update { it.copy(connectivity = Connectivity.Disconnected) }
                     }
                     val snapshot = _state.value
                     val cmd = if (snapshot.eStopped) {
@@ -155,10 +196,25 @@ class RobotControlViewModel(
                     } else {
                         ControlCommand(snapshot.mode, snapshot.throttle, snapshot.steering, 0)
                     }
-                    when (val result = sessionMutex.withLock { sendFrameLocked(dev, cmd) }) {
-                        is Outcome.Success -> Unit
+                    // Allocate (psk, counter) under the session mutex, then
+                    // send OUTSIDE the lock: udp.send has unbounded latency
+                    // and must never stall the e-stop path behind a loop tick.
+                    val prepared = sessionMutex.withLock { sessionCounterLocked(dev) }
+                    val result = if (prepared == null) {
+                        missingPsk()
+                    } else {
+                        val (psk, next) = prepared
+                        sendUC(dev, cmd, psk, next)
+                    }
+                    when (result) {
+                        is Outcome.Success ->
+                            if (_state.value.error != null) {
+                                _state.update { it.copy(error = null) }
+                            }
                         is Outcome.Failure ->
-                            _state.update { it.copy(error = result.reason) }
+                            if (_state.value.error != result.reason) {
+                                _state.update { it.copy(error = result.reason) }
+                            }
                     }
                     delay(tickMs)
                 }
@@ -167,23 +223,15 @@ class RobotControlViewModel(
     }
 
     /**
-     * Sends one signed frame on the session, loading the session first when
-     * empty. Must hold [sessionMutex]. On a missing PSK (or an exhausted
-     * counter) the failure tells the user to re-pair (connectivity is forced
-     * back to Unpaired so the screen never claims a live link it cannot
-     * drive).
-     */
-    private suspend fun sendFrameLocked(dev: PairedDevice, cmd: ControlCommand): Outcome<Unit> {
-        val (psk, next) = sessionCounterLocked(dev) ?: return missingPsk()
-        return sendUC(dev, cmd, psk, next)
-    }
-
-    /**
      * Session load + counter allocation shared by the loop tick and the
      * immediate e-stop frame, so both consume one strictly increasing
      * sequence from the shared [DriveCounter]. Must hold [sessionMutex].
-     * Null = no PSK, or no counter available (caller reports [missingPsk]);
-     * the holder's `0u` exhaustion guard refuses to wrap (0 is never valid
+     * Returns null when there is no PSK or no counter available (caller
+     * reports [missingPsk] for the loop tick, or skips the immediate frame
+     * for e-stop — the loop sends the latched variant on its next tick).
+     * Never performs network I/O: callers send OUTSIDE the lock so a
+     * stalled send cannot block the other path's allocation.
+     * The holder's `0u` exhaustion guard refuses to wrap (0 is never valid
      * on the wire — practically unreachable: 2^32 sends).
      */
     private suspend fun sessionCounterLocked(dev: PairedDevice): Pair<ByteArray, UInt>? {
@@ -209,13 +257,17 @@ class RobotControlViewModel(
     }
 
     private fun missingPsk(): Outcome.Failure {
-        _state.update {
-            it.copy(
-                connectivity = Connectivity.Unpaired,
-                error = "Please re-pair to drive",
-            )
+        val message = "Please re-pair to drive"
+        val current = _state.value
+        if (current.connectivity != Connectivity.Unpaired || current.error != message) {
+            _state.update {
+                it.copy(
+                    connectivity = Connectivity.Unpaired,
+                    error = message,
+                )
+            }
         }
-        return Outcome.Failure("Please re-pair to drive")
+        return Outcome.Failure(message)
     }
 
     /** Stick deflection in -1..1 (clamped). Never clears a latched e-stop. */
@@ -240,10 +292,13 @@ class RobotControlViewModel(
         _state.update { it.copy(eStopped = true, throttle = 0f, steering = 0f) }
         viewModelScope.launch {
             val paired = currentDevice.value ?: return@launch
-            val result = sessionMutex.withLock {
-                val (psk, next) = sessionCounterLocked(paired) ?: return@withLock null
-                emergencyUC(paired, psk, next)
-            } ?: return@launch
+            // Allocate under the session mutex, send outside it: an
+            // in-flight loop send never blocks this immediate frame's
+            // allocation (and vice versa).
+            val prepared = sessionMutex.withLock { sessionCounterLocked(paired) }
+                ?: return@launch
+            val (psk, next) = prepared
+            val result = emergencyUC(paired, psk, next)
             if (result is Outcome.Failure) {
                 _state.update { it.copy(error = result.reason) }
             }

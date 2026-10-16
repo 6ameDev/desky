@@ -12,6 +12,12 @@
 //
 // First real keys: pairing/auth v1 bond (PSK + counter + bonded flag).
 // Later keys (motor trim, display brightness, ...) slot in below.
+//
+// M12: the version-mismatch clear in begin() and the app-side Room
+// fallbackToDestructiveMigration (DeskyDatabase KDoc) both wipe today.
+// TODO(tracking-issue): file the migration tracking issue, link it here,
+// and replace the wipe with a real v2->v3 Migration (firmware NVS +
+// app Room together) before real customers exist.
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -67,11 +73,17 @@ class ConfigStore {
       return false;
     }
     const size_t written = prefs.putBytes(kPskKey, psk, kPskLen);
-    prefs.putUInt(kCounterKey, counter);
-    prefs.putUChar(kBondedKey, 1);
+    const size_t counterWritten = prefs.putUInt(kCounterKey, counter);
+    const size_t bondedWritten = prefs.putUChar(kBondedKey, 1);
     prefs.end();
     if (written != kPskLen) {
       LOG_E("CONFIG", "psk write short (%u)", (unsigned)written);
+      return false;
+    }
+    // M10: putUInt/putUChar failures used to be ignored while saveBond still
+    // returned true (half-persisted bond). All three writes must succeed.
+    if (counterWritten == 0 || bondedWritten == 0) {
+      LOG_E("CONFIG", "bond counter/flag write failed (%u/%u)", (unsigned)counterWritten, (unsigned)bondedWritten);
       return false;
     }
     return true;
