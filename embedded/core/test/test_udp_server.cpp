@@ -26,9 +26,27 @@
 // shape + distinct claimed headers, pinned at COMPILE time on the host.
 // (The LastPair::ok39 == kPairOkSize pin lives in udp_server.h
 // firmware-side — both contexts covered. All goldens below stay green.)
+static_assert(udp::kControlHeader == 0xAA, "control header is 0xAA");
+static_assert(udp::kControlSize == 6, "control is 6B");
+static_assert(udp::kTelemetryHeader == 0xBB, "telemetry header is 0xBB");
+static_assert(sizeof(udp::ControlPacket) == 4, "ControlPacket is 4 payload bytes (wire 6B = hdr + 4 + XOR)");
+static_assert(sizeof(udp::TelemetryPacket) == 8, "TelemetryPacket is 8B padded (wire 9B = hdr + 7 fields + XOR)");
+static_assert(udpstatus::kPairReqHeader == 0x50, "PAIR_REQ header is 0x50");
+static_assert(udpstatus::kPairReqSize == 12, "PAIR_REQ is 12B");
+static_assert(udpstatus::kDriveV2Header == 0xAC, "DRIVE_V2 header is 0xAC");
+static_assert(udpstatus::kUnbondHeader == 0xAD, "UNBOND header is 0xAD");
+static_assert(udpstatus::kUnbondSize == 12, "UNBOND is 12B");
+static_assert(udpstatus::kRekeyReqHeader == 0x53, "REKEY_REQ header is 0x53");
+static_assert(udpstatus::kRekeyReqSize == 14, "REKEY_REQ is 14B");
+static_assert(udpstatus::kRekeyAckHeader == 0x54, "REKEY_ACK header is 0x54");
 static_assert(pairing::kPairOkSize == 39, "PAIR_OK is 39B (v1.1)");
 static_assert(pairing::kPairOkLegacySize == 38, "v1 PAIR_OK was 38B");
 static_assert(udpstatus::kRekeyAckSize == 10, "REKEY_ACK is 10B");
+// NOTE (M9): PAIR_OK header (0x51) lives in pairing.h ARDUINO-only glue
+// (kPairOkHeader, mbedTLS) and PAIR_ERR (0x52/4) is a firmware-only literal
+// in sendPairErr — neither has a host-visible constexpr, so both are pinned
+// as literals in test_udp_mirror_freeze / test_udp_pair_*_frame_golden below
+// (literals reviewed against the udp_codec.h freeze table + Codec.kt + README).
 static_assert(pairing::kRekeyAckSize == 10, "REKEY_ACK is 10B (pairing owner)");
 static_assert(udpstatus::kRekeyAckSize == pairing::kRekeyAckSize, "rekey ACK size single truth");
 static_assert(udpstatus::kAliveSize == 14, "ALIVE is 14B");
@@ -630,4 +648,233 @@ void test_telemetry_publish_edge_forces_early() {
   telemetry::encodeSnapshot(s, pkt);
   TEST_ASSERT_TRUE(tm.publish(pkt, true, 1001, send));  // Edge fires before cadence.
   TEST_ASSERT_EQUAL_UINT32(2, calls);
+}
+
+// ── M9 three-way mirror gate ─────────────────────────────────────────────
+// Literal freeze of every header/size in the udp_codec.h table (firmware
+// udp_server.h top half + pairing.h vs client domain/Codec.kt vs
+// shared/protocol/README.md). Host-visible constexprs are pinned against
+// literals; PAIR_OK header (0x51, ARDUINO-only kPairOkHeader) and PAIR_ERR
+// (0x52/4, firmware-only sendPairErr literal) are pinned as literals by the
+// golden frames below — the byte arrays literally contain 0x51/0x52, so any
+// renumber drifts the review, not silently passes.
+void test_udp_mirror_freeze() {
+  TEST_ASSERT_EQUAL_UINT8(0xAA, udp::kControlHeader);
+  TEST_ASSERT_EQUAL(6, static_cast<int>(udp::kControlSize));
+  TEST_ASSERT_EQUAL_UINT8(0xBB, udp::kTelemetryHeader);
+  TEST_ASSERT_EQUAL(9, static_cast<int>(udp::kTelemetrySize));
+  TEST_ASSERT_EQUAL_UINT8(0x50, udpstatus::kPairReqHeader);
+  TEST_ASSERT_EQUAL(12, static_cast<int>(udpstatus::kPairReqSize));
+  TEST_ASSERT_EQUAL(39, static_cast<int>(pairing::kPairOkSize));
+  TEST_ASSERT_EQUAL(38, static_cast<int>(pairing::kPairOkLegacySize));
+  TEST_ASSERT_EQUAL_UINT8(0xAC, udpstatus::kDriveV2Header);
+  TEST_ASSERT_EQUAL(16, static_cast<int>(udpstatus::kDriveV2Size));
+  TEST_ASSERT_EQUAL_UINT8(0xAD, udpstatus::kUnbondHeader);
+  TEST_ASSERT_EQUAL(12, static_cast<int>(udpstatus::kUnbondSize));
+  TEST_ASSERT_EQUAL_UINT8(0x53, udpstatus::kRekeyReqHeader);
+  TEST_ASSERT_EQUAL(14, static_cast<int>(udpstatus::kRekeyReqSize));
+  TEST_ASSERT_EQUAL_UINT8(0x54, udpstatus::kRekeyAckHeader);
+  TEST_ASSERT_EQUAL(10, static_cast<int>(udpstatus::kRekeyAckSize));
+  TEST_ASSERT_EQUAL_UINT8(0x55, udpstatus::kAliveHeader);
+  TEST_ASSERT_EQUAL(14, static_cast<int>(udpstatus::kAliveSize));
+  TEST_ASSERT_EQUAL_UINT8(0x56, udpstatus::kDisconnectHeader);
+  TEST_ASSERT_EQUAL(14, static_cast<int>(udpstatus::kDisconnectSize));
+  // TX-only sizes never collide with an RX shape (PAIR_OK 38/39, PAIR_ERR 4,
+  // REKEY_ACK 10): the RX demux must drop them on any length.
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(38, 0x51)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(39, 0x51)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(4, 0x52)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(10, 0x54)));
+}
+
+namespace {
+// XOR over bytes 0..len-2 must equal the last byte (the exact check the
+// firmware RX loop performs after classifyRx).
+bool mirrorXorOk(const uint8_t* b, size_t n) {
+  uint8_t x = 0;
+  for (size_t i = 0; i + 1 < n; ++i) {
+    x ^= b[i];
+  }
+  return x == b[n - 1];
+}
+}  // namespace
+
+// PAIR_REQ 12B [0x50|code6|cliNonce4|XOR]: code "123456" + nonce 01020304
+// (same fixed inputs as the Kotlin PairingPacketsTest golden).
+void test_udp_pair_req_frame_golden() {
+  const uint8_t frame[12] = {0x50, '1', '2', '3', '4', '5', '6', 0x01, 0x02, 0x03, 0x04, 0x53};
+  TEST_ASSERT_TRUE(mirrorXorOk(frame, sizeof(frame)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kPairReq), rxKindInt(udpstatus::classifyRx(sizeof(frame), frame[0])));
+  // Decode: code + nonce bytes sit at the documented offsets.
+  TEST_ASSERT_EQUAL_UINT8('1', frame[1]);
+  TEST_ASSERT_EQUAL_UINT8('6', frame[6]);
+  TEST_ASSERT_EQUAL_UINT8(0x01, frame[7]);
+  TEST_ASSERT_EQUAL_UINT8(0x04, frame[10]);
+  // Reject: truncated (11B), bad CRC (payload flip breaks the XOR), unknown ID.
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(11, 0x50)));
+  uint8_t bad[12];
+  for (size_t i = 0; i < sizeof(bad); ++i) {
+    bad[i] = frame[i];
+  }
+  bad[2] ^= 0xFF;
+  TEST_ASSERT_FALSE(mirrorXorOk(bad, sizeof(bad)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(12, 0x51)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(12, 0xFF)));
+}
+
+// PAIR_ERR 4B [0x52|reason|retry_s|XOR]: reason locked(1), retry 30s
+// (same golden as the Kotlin decodePairErrGolden). TX-only: never RX.
+void test_udp_pair_err_frame_golden() {
+  const uint8_t frame[4] = {0x52, 0x01, 0x1E, 0x4D};
+  TEST_ASSERT_TRUE(mirrorXorOk(frame, sizeof(frame)));
+  TEST_ASSERT_EQUAL_UINT8(0x52, frame[0]);  // Pins the sendPairErr literal.
+  TEST_ASSERT_EQUAL_UINT8(0x01, frame[1]);
+  TEST_ASSERT_EQUAL_UINT8(0x1E, frame[2]);
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(sizeof(frame), frame[0])));
+  // Reject: truncated, bad CRC, unknown ID at this length.
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(3, 0x52)));
+  uint8_t bad[4] = {0x52, 0x01, 0x1E, 0x00};
+  TEST_ASSERT_FALSE(mirrorXorOk(bad, sizeof(bad)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(4, 0xFF)));
+}
+
+// M11 additive reason 4 (internal_retry_fresh) PAIR_ERR golden:
+// 4B [0x52|0x04|0x00|0x56] (0x52^0x04^0x00 = 0x56). This is the exact wire
+// byte string UdpServer::handlePairReq sends on burn-failure after tryCode
+// kOk (saveBond/deriveKek/wrapPsk fail — code already burned single-use),
+// via pairing::toWireReason(pairing::Result::kInternal). Genuine
+// not_in_window still sends reason 2 via the tryCode path. TX-only: never RX.
+void test_udp_pair_err_reason4_frame_golden() {
+  TEST_ASSERT_EQUAL_UINT8(4, pairing::toWireReason(pairing::Result::kInternal));
+  const uint8_t frame[4] = {0x52, 0x04, 0x00, 0x56};
+  TEST_ASSERT_TRUE(mirrorXorOk(frame, sizeof(frame)));
+  TEST_ASSERT_EQUAL_UINT8(0x52, frame[0]);  // Pins the sendPairErr literal.
+  TEST_ASSERT_EQUAL_UINT8(0x04, frame[1]);
+  TEST_ASSERT_EQUAL_UINT8(0x00, frame[2]);
+  TEST_ASSERT_EQUAL_UINT8(0x56, frame[3]);
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(sizeof(frame), frame[0])));
+  // Reject: truncated, bad CRC, unknown ID at this length.
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(3, 0x52)));
+  uint8_t bad[4] = {0x52, 0x04, 0x00, 0x00};
+  TEST_ASSERT_FALSE(mirrorXorOk(bad, sizeof(bad)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(4, 0xFF)));
+}
+
+// DRIVE_V2 16B: mode 0x00, thr/str 0x80, flags 0x00, counter 1, frozen
+// drive_tag 3ec8b625c9c1 (README shared vector, psk 0011..eeff).
+void test_udp_drive_v2_frame_golden() {
+  const uint8_t frame[16] = {0xAC, 0x00, 0x80, 0x80, 0x00, 0x00, 0x00, 0x00,
+                             0x01, 0x3E, 0xC8, 0xB6, 0x25, 0xC9, 0xC1, 0xC0};
+  TEST_ASSERT_TRUE(mirrorXorOk(frame, sizeof(frame)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDriveV2), rxKindInt(udpstatus::classifyRx(sizeof(frame), frame[0])));
+  // Decode: sticks/mode/flags at legacy positions, counter BE bytes 5..8.
+  TEST_ASSERT_EQUAL_UINT8(0x00, frame[1]);
+  TEST_ASSERT_EQUAL_UINT8(0x80, frame[2]);
+  TEST_ASSERT_EQUAL_UINT8(0x80, frame[3]);
+  TEST_ASSERT_EQUAL_UINT8(0x00, frame[4]);
+  const uint32_t ctr = (static_cast<uint32_t>(frame[5]) << 24) | (static_cast<uint32_t>(frame[6]) << 16) |
+                       (static_cast<uint32_t>(frame[7]) << 8) | static_cast<uint32_t>(frame[8]);
+  TEST_ASSERT_EQUAL_UINT32(1, ctr);
+  // Reject: truncated, bad CRC, unknown ID at this length.
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(15, 0xAC)));
+  uint8_t bad[16];
+  for (size_t i = 0; i < sizeof(bad); ++i) {
+    bad[i] = frame[i];
+  }
+  bad[9] ^= 0xFF;
+  TEST_ASSERT_FALSE(mirrorXorOk(bad, sizeof(bad)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(16, 0xFF)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(16, 0x50)));
+}
+
+// UNBOND 12B [0xAD|ctrBE4|tag6|XOR]: counter 1 under psk 0011..eeff,
+// tag first6(HMAC-SHA256(psk, "UNBOND"||ctrBE4)) = 76125e465c6f.
+void test_udp_unbond_frame_golden() {
+  const uint8_t frame[12] = {0xAD, 0x00, 0x00, 0x00, 0x01, 0x76, 0x12, 0x5E, 0x46, 0x5C, 0x6F, 0xE3};
+  TEST_ASSERT_TRUE(mirrorXorOk(frame, sizeof(frame)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kUnbond), rxKindInt(udpstatus::classifyRx(sizeof(frame), frame[0])));
+  const uint32_t ctr = (static_cast<uint32_t>(frame[1]) << 24) | (static_cast<uint32_t>(frame[2]) << 16) |
+                       (static_cast<uint32_t>(frame[3]) << 8) | static_cast<uint32_t>(frame[4]);
+  TEST_ASSERT_EQUAL_UINT32(1, ctr);
+  // Reject: truncated, bad CRC, unknown ID at this length.
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(11, 0xAD)));
+  uint8_t bad[12];
+  for (size_t i = 0; i < sizeof(bad); ++i) {
+    bad[i] = frame[i];
+  }
+  bad[5] ^= 0xFF;
+  TEST_ASSERT_FALSE(mirrorXorOk(bad, sizeof(bad)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(12, 0xFF)));
+}
+
+// REKEY_REQ 14B + REKEY_ACK 10B (README §rekey vectors: era 1, counter 100,
+// psk 0011..eeff). The ACK is TX-only: the RX demux must drop it.
+void test_udp_rekey_frame_goldens() {
+  const uint8_t req[14] = {0x53, 0x00, 0x01, 0x00, 0x00, 0x00, 0x64, 0xFD, 0xFE, 0x27, 0x7D, 0x16, 0x23, 0x5A};
+  TEST_ASSERT_TRUE(mirrorXorOk(req, sizeof(req)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kRekeyReq), rxKindInt(udpstatus::classifyRx(sizeof(req), req[0])));
+  const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(req[1]) << 8) | static_cast<uint16_t>(req[2]));
+  TEST_ASSERT_EQUAL_UINT16(1, era);
+  const uint8_t ack[10] = {0x54, 0x00, 0x01, 0xED, 0x5F, 0x52, 0x33, 0x58, 0x55, 0x8B};
+  TEST_ASSERT_TRUE(mirrorXorOk(ack, sizeof(ack)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(sizeof(ack), ack[0])));
+  // Reject: truncated REQ, bad CRC on either frame, unknown ID at 14B/10B.
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(13, 0x53)));
+  uint8_t badReq[14];
+  for (size_t i = 0; i < sizeof(badReq); ++i) {
+    badReq[i] = req[i];
+  }
+  badReq[7] ^= 0xFF;
+  TEST_ASSERT_FALSE(mirrorXorOk(badReq, sizeof(badReq)));
+  uint8_t badAck[10];
+  for (size_t i = 0; i < sizeof(badAck); ++i) {
+    badAck[i] = ack[i];
+  }
+  badAck[9] ^= 0xFF;
+  TEST_ASSERT_FALSE(mirrorXorOk(badAck, sizeof(badAck)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0xFF)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(10, 0xFF)));
+}
+
+// ALIVE 14B + DISCONNECT 14B (README §alive vectors: era 1, counter 100,
+// psk 0011..eeff). Era/counter extraction mirrors handleAlive/handleDisconnect.
+void test_udp_alive_disconnect_frame_goldens() {
+  const uint8_t alive[14] = {0x55, 0x00, 0x01, 0x00, 0x00, 0x00, 0x64, 0xDD, 0x15, 0x2B, 0xAA, 0x54, 0xF7, 0xDA};
+  TEST_ASSERT_TRUE(mirrorXorOk(alive, sizeof(alive)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kAlive), rxKindInt(udpstatus::classifyRx(sizeof(alive), alive[0])));
+  const uint8_t disc[14] = {0x56, 0x00, 0x01, 0x00, 0x00, 0x00, 0x64, 0xCA, 0x90, 0xCA, 0x03, 0x90, 0x40, 0x70};
+  TEST_ASSERT_TRUE(mirrorXorOk(disc, sizeof(disc)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDisconnect), rxKindInt(udpstatus::classifyRx(sizeof(disc), disc[0])));
+  const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(alive[1]) << 8) | static_cast<uint16_t>(alive[2]));
+  TEST_ASSERT_EQUAL_UINT16(1, era);
+  const uint32_t ctr = (static_cast<uint32_t>(alive[3]) << 24) | (static_cast<uint32_t>(alive[4]) << 16) |
+                       (static_cast<uint32_t>(alive[5]) << 8) | static_cast<uint32_t>(alive[6]);
+  TEST_ASSERT_EQUAL_UINT32(100, ctr);
+  // Reject: truncated, bad CRC on either frame, unknown ID at 14B.
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(13, 0x55)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(13, 0x56)));
+  uint8_t badAlive[14];
+  for (size_t i = 0; i < sizeof(badAlive); ++i) {
+    badAlive[i] = alive[i];
+  }
+  badAlive[7] ^= 0xFF;
+  TEST_ASSERT_FALSE(mirrorXorOk(badAlive, sizeof(badAlive)));
+  uint8_t badDisc[14];
+  for (size_t i = 0; i < sizeof(badDisc); ++i) {
+    badDisc[i] = disc[i];
+  }
+  badDisc[13] ^= 0xFF;
+  TEST_ASSERT_FALSE(mirrorXorOk(badDisc, sizeof(badDisc)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0xFF)));
+}
+
+// PAIR_OK framing (TX-only, no RX decode): v1 38B vs v1.1 39B share header
+// 0x51; the GCM ct/tag are ARDUINO-only (mbedTLS) so no crypto golden lives
+// here — the sizes + RX-drop + Kotlin/bench cross-vectors are the gate.
+void test_udp_pair_ok_framing() {
+  TEST_ASSERT_EQUAL(39, static_cast<int>(pairing::kPairOkSize));
+  TEST_ASSERT_EQUAL(38, static_cast<int>(pairing::kPairOkLegacySize));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(38, 0x51)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(39, 0x51)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(38, 0xFF)));
 }

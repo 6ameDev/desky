@@ -233,6 +233,7 @@ class PairDeviceWithCodeUseCaseTest {
             Triple(1, 30, "locked"),
             Triple(2, 0, "expired"),
             Triple(3, 0, "already bonded"),
+            Triple(4, 0, "robot error, try a fresh code"),
         )
         for ((reason, retryS, fragment) in cases) {
             val deviceRepo = repo()
@@ -264,6 +265,43 @@ class PairDeviceWithCodeUseCaseTest {
 
         val failure = assertIs<Outcome.Failure>(result)
         assertTrue(failure.reason.contains("reason=9"), failure.reason)
+    }
+
+    @Test
+    fun reason4CopyDistinctFromExpired() = runTest {
+        // Direct pair: reason 4 (burn-failure) vs reason 2 (genuine expiry).
+        val udp4 = FakePairingUdp()
+        val r4 = pairWithReply(udp4, useCase(repo(), udp4), pairErr(4, 0))
+        val f4 = assertIs<Outcome.Failure>(r4)
+        assertTrue(f4.reason.contains("robot error, try a fresh code"), f4.reason)
+        assertTrue(!f4.reason.contains("expired"), "reason 4 must not read as expired: ${f4.reason}")
+        val udp2 = FakePairingUdp()
+        val r2 = pairWithReply(udp2, useCase(repo(), udp2), pairErr(2, 0))
+        val f2 = assertIs<Outcome.Failure>(r2)
+        assertTrue(f2.reason.contains("expired"), f2.reason)
+        assertEquals(1, udp4.sent.size, "no re-send on PAIR_ERR reason=4")
+    }
+
+    @Test
+    fun oldAppShowsGenericForReason4() = runTest {
+        // Interop old-app x new-robot: an old peer decodes any reason byte
+        // (same 4B framing) but maps only 0-3, so 4 must fall to generic.
+        // Replicate the pre-M11 mapping here (decode-level, real framing).
+        fun oldMap(reason: Int, retryS: Int): String = when (reason) {
+            0 -> "Pairing failed: incorrect code"
+            1 -> "Pairing failed: robot locked, retry in ${retryS}s"
+            2 -> "Pairing failed: code expired"
+            3 -> "Pairing failed: robot already bonded"
+            else -> "Pairing failed: robot rejected pairing (reason=$reason)"
+        }
+        val frame = pairErr(4, 0)
+        val decoded = PairingPacketCodec.decodePairErr(frame)
+        assertTrue(decoded != null, "old app decodes the 4B frame")
+        val (reason, retryS) = requireNotNull(decoded)
+        assertEquals(4, reason)
+        val copy = oldMap(reason, retryS)
+        assertTrue(copy.contains("reason=4"), copy)
+        assertTrue(!copy.contains("robot error"), "old app has no reason-4 copy: $copy")
     }
 
     @Test
@@ -309,6 +347,7 @@ class PairDeviceWithCodeUseCaseTest {
             pairErr(1, 30),
             pairErr(2, 0),
             pairErr(3, 0),
+            pairErr(4, 0),
             malformedErr,
         )
         for (reply in replies) {

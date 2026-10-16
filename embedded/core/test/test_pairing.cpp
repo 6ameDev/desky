@@ -226,5 +226,24 @@ void test_pair_core_bond_lifecycle() {
   TEST_ASSERT_EQUAL_UINT32(0, core.bondMs());
 }
 
+// M11 additive reason 4 (internal_retry_fresh): reasons 0-3 frozen (never
+// renumber; 0 keeps explicit 0 semantics, 2 keeps not_in_window for genuine
+// window expiry). Burn-failure after tryCode kOk (saveBond/deriveKek/wrapPsk
+// fail, code already burned) sends kInternal (4) via
+// UdpServer::handlePairReq — never 2. Old peers show generic for unknown.
+void test_pair_wire_reasons_frozen() {
+  TEST_ASSERT_EQUAL_UINT8(0, static_cast<uint8_t>(pairing::Result::kBadCode));
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<uint8_t>(pairing::Result::kLocked));
+  TEST_ASSERT_EQUAL_UINT8(2, static_cast<uint8_t>(pairing::Result::kNotInWindow));
+  TEST_ASSERT_EQUAL_UINT8(3, static_cast<uint8_t>(pairing::Result::kAlreadyBonded));
+  TEST_ASSERT_EQUAL_UINT8(4, static_cast<uint8_t>(pairing::Result::kInternal));
+  TEST_ASSERT_EQUAL_UINT8(0, pairing::toWireReason(pairing::Result::kBadCode));
+  TEST_ASSERT_EQUAL_UINT8(1, pairing::toWireReason(pairing::Result::kLocked));
+  TEST_ASSERT_EQUAL_UINT8(2, pairing::toWireReason(pairing::Result::kNotInWindow));
+  TEST_ASSERT_EQUAL_UINT8(3, pairing::toWireReason(pairing::Result::kAlreadyBonded));
+  TEST_ASSERT_EQUAL_UINT8(4, pairing::toWireReason(pairing::Result::kInternal));
+  TEST_ASSERT_EQUAL_UINT8(0xFF, pairing::toWireReason(pairing::Result::kOk));
+}
+
 // Runner lives in test_udp_codec.cpp (single main for the native-test
 // binary): the pairing tests are declared extern there.

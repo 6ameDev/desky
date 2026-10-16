@@ -178,13 +178,16 @@ class PairDeviceWithCodeUseCase(
     private fun mapPairError(reason: Int, retryS: Int): String = when (reason) {
         0 -> "Pairing failed: incorrect code"
         1 -> "Pairing failed: robot locked, retry in ${retryS}s"
-        // M11 spec freeze: wire reason 2 doubles as retry-with-fresh-code
-        // after a burned-code internal failure (firmware NVS/crypto fault
-        // post-tryCode kOk reuses not_in_window — see udp_server.h
-        // handlePairReq). The single-use code is spent either way, so pair
-        // again with the fresh display code. The wire reason MUST NOT change.
+        // Reason 2 is genuine window expiry (tryCode != kOk); the single-use
+        // code is spent, so pair again with the fresh display code.
         2 -> "Pairing failed: code expired"
         3 -> "Pairing failed: robot already bonded"
+        // M11 additive reason 4 (internal_retry_fresh): NVS/crypto failure
+        // after tryCode kOk (code already burned) — distinct from expired.
+        4 -> "Pairing failed: robot error, try a fresh code"
+        // Unknown reasons (incl. old-app × new-robot reason 4): generic,
+        // non-retryable (any PAIR_ERR terminates the send loop), raw int
+        // preserved for logs.
         else -> "Pairing failed: robot rejected pairing (reason=$reason)"
     }
 }

@@ -60,6 +60,30 @@ Decode rejects wrong header, wrong length, or bad checksum.
 
 ## Pairing + authenticated drive v1 (frozen by review 2026-10-15)
 
+Frozen wire table (M9 three-way mirror gate — normative source is
+`embedded/core/src/middleware/udp_codec.h`; mirrored in firmware
+`udp_server.h` top half + `pairing.h` and client `domain/Codec.kt`):
+
+| Header | Size | Message    | Direction  |
+| ------ | ---- | ---------- | ---------- |
+| `0xAA` | 6    | Control    | App->Robot |
+| `0xBB` | 9    | Telemetry  | Robot->App |
+| `0x50` | 12   | PAIR_REQ   | App->Robot |
+| `0x51` | 38   | PAIR_OK v1 | Robot->App |
+| `0x51` | 39   | PAIR_OK v1.1 | Robot->App |
+| `0x52` | 4    | PAIR_ERR   | Robot->App |
+| `0xAC` | 16   | DRIVE_V2   | App->Robot |
+| `0xAD` | 12   | UNBOND     | App->Robot |
+| `0x53` | 14   | REKEY_REQ  | App->Robot |
+| `0x54` | 10   | REKEY_ACK  | Robot->App |
+| `0x55` | 14   | ALIVE      | App->Robot |
+| `0x56` | 14   | DISCONNECT | App->Robot |
+
+Reserved: headers `0xAA`/`0xBB`/`0x50`/`0x51`/`0x52`/`0xAC`/`0xAD`/`0x53`/
+`0x54`/`0x55`/`0x56` are claimed — never reuse or renumber a header, never
+change a size, never repurpose a reserved byte. New messages claim a fresh
+header (Phase-2 `SET_RATE` must pick other values).
+
 Two tiers, decoupled: Tier 1 ephemeral pairing code proves physical
 presence; Tier 2 persistent PSK proves ownership on every drive packet.
 Rotation of Tier 1 never evicts an existing bond. Single owner: a new
@@ -90,6 +114,13 @@ info="desky-pair-v1", L=16)`.
 - `PAIR_ERR` Robot -> App, 4 bytes:
   `[0x52 | reason 1B | retry_s 1B | XOR]`
   reason: 0=bad_code, 1=locked, 2=not_in_window, 3=already_bonded.
+  reason 4=internal_retry_fresh ("robot error, use fresh code").
+  M11 additive addendum (additive-only, never renumber): reasons 0-3 are
+  frozen — 2 keeps its old not_in_window meaning (genuine window expiry
+  via tryCode); burn-failure after tryCode kOk (saveBond/deriveKek/wrapPsk
+  fail, code already burned single-use) sends 4, not 2. Old peers decode
+  any reason byte but map only 0-3, so 4 falls to their generic
+  "rejected (reason=4)" path — safe to roll out.
 - `DRIVE_V2` App -> Robot, 16 bytes @30-50Hz:
   `[0xAC | mode | thr | str | flags | counter 4B BE | tag 6B | XOR]`
   with `tag = first6(HMAC-SHA256(psk, counter||mode||thr||str||flags))`.

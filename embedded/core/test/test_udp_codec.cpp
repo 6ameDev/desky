@@ -240,6 +240,17 @@ void test_alive_disconnect_wire_consts();
 void test_alive_tag_msg_golden();
 void test_disconnect_tag_msg_golden();
 void test_pair_core_bond_lifecycle();
+void test_pair_wire_reasons_frozen();
+// M9 three-way mirror gate (defined in test_udp_server.cpp).
+void test_udp_mirror_freeze();
+void test_udp_pair_req_frame_golden();
+void test_udp_pair_err_frame_golden();
+void test_udp_pair_err_reason4_frame_golden();
+void test_udp_drive_v2_frame_golden();
+void test_udp_unbond_frame_golden();
+void test_udp_rekey_frame_goldens();
+void test_udp_alive_disconnect_frame_goldens();
+void test_udp_pair_ok_framing();
 
 int main() {
   UNITY_BEGIN();
@@ -385,5 +396,15 @@ int main() {
   RUN_TEST(test_alive_tag_msg_golden);
   RUN_TEST(test_disconnect_tag_msg_golden);
   RUN_TEST(test_pair_core_bond_lifecycle);
+  RUN_TEST(test_pair_wire_reasons_frozen);
+  RUN_TEST(test_udp_mirror_freeze);
+  RUN_TEST(test_udp_pair_req_frame_golden);
+  RUN_TEST(test_udp_pair_err_frame_golden);
+  RUN_TEST(test_udp_pair_err_reason4_frame_golden);
+  RUN_TEST(test_udp_drive_v2_frame_golden);
+  RUN_TEST(test_udp_unbond_frame_golden);
+  RUN_TEST(test_udp_rekey_frame_goldens);
+  RUN_TEST(test_udp_alive_disconnect_frame_goldens);
+  RUN_TEST(test_udp_pair_ok_framing);
   return UNITY_END();
 }

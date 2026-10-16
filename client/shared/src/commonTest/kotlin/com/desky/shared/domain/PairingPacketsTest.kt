@@ -133,14 +133,24 @@ class PairingPacketsTest {
         val pkt = byteArrayOf(0x52.toByte(), 0x01.toByte(), 0x1E.toByte(), 0x4D.toByte())
         assertEquals(xorOf(pkt, PAIR_ERR_SIZE - 1), pkt[PAIR_ERR_SIZE - 1].unsigned())
         assertEquals(1 to 30, PairingPacketCodec.decodePairErr(pkt))
-        // Every documented reason round-trips.
-        for (reason in 0..3) {
+        // Every documented reason round-trips (0-3 frozen, 4 M11 additive).
+        for (reason in 0..4) {
             val body = byteArrayOf(PAIR_ERR_HEADER.toByte(), reason.toByte(), 0x00.toByte())
             var xor = 0
             for (b in body) xor = xor xor (b.toInt() and 0xFF)
             val framed = body + byteArrayOf(xor.toByte())
             assertEquals(reason to 0, PairingPacketCodec.decodePairErr(framed), "reason=$reason")
         }
+    }
+
+    @Test
+    fun decodePairErrReason4Golden() {
+        // M11 additive reason 4 (internal_retry_fresh): bytes 52 04 00, XOR 0x56.
+        // Same bytes the firmware burn-failure branch sends (saveBond/deriveKek/
+        // wrapPsk fail after tryCode kOk); old 0-3 vectors still decode above.
+        val pkt = byteArrayOf(0x52.toByte(), 0x04.toByte(), 0x00.toByte(), 0x56.toByte())
+        assertEquals(xorOf(pkt, PAIR_ERR_SIZE - 1), pkt[PAIR_ERR_SIZE - 1].unsigned())
+        assertEquals(4 to 0, PairingPacketCodec.decodePairErr(pkt))
     }
     @Test
     fun decodePairErrRejects() {

@@ -257,6 +257,8 @@ suspend fun encodeSigned(cmd: ControlCommand, counter: UInt, psk: ByteArray): By
  * - `PAIR_ERR` Robot -> App, 4 bytes:
  *   `[0x52 | reason 1B | retry_s 1B | XOR]`
  *   (reason: 0=bad_code, 1=locked, 2=not_in_window, 3=already_bonded).
+ *   M11 additive reason 4=internal_retry_fresh ("robot error, use fresh
+ *   code"): reasons 0-3 frozen, never renumber; 2 keeps not_in_window.
  *
  * Pure byte math mirroring the firmware `middleware/pairing.h` layout.
  */

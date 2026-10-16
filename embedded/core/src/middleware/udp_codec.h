@@ -8,6 +8,29 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// ── Frozen wire table (M9 three-way mirror gate) ─────────────────────────
+// Normative freeze (shared/protocol/README.md §"Pairing + authenticated
+// drive v1"; mirrors: firmware udp_server.h top half + pairing.h, client
+// domain/Codec.kt WireConstants, README):
+//   0xAA /  6  Control     App->Robot  [hdr|mode|thr|str|flags|XOR]
+//   0xBB /  9  Telemetry   Robot->App  [hdr|pitchBE|rollBE|distBE|flags|XOR]
+//   0x50 / 12  PAIR_REQ    App->Robot  [hdr|code6|cliNonce4|XOR]
+//   0x51 / 38  PAIR_OK v1  Robot->App  [hdr|srvNonce4|ct16|tag16|XOR]
+//   0x51 / 39  PAIR_OK v1.1 Robot->App [hdr|srvNonce4|ct17|tag16|XOR]
+//   0x52 /  4  PAIR_ERR    Robot->App  [hdr|reason|retry_s|XOR]
+//   0xAC / 16  DRIVE_V2    App->Robot  [hdr|mode|thr|str|flags|ctrBE4|tag6|XOR]
+//   0xAD / 12  UNBOND      App->Robot  [hdr|ctrBE4|tag6|XOR]
+//   0x53 / 14  REKEY_REQ   App->Robot  [hdr|eraBE2|ctrBE4|tag6|XOR]
+//   0x54 / 10  REKEY_ACK   Robot->App  [hdr|eraBE2|tag6|XOR]
+//   0x55 / 14  ALIVE       App->Robot  [hdr|eraBE2|ctrBE4|tag6|XOR]
+//   0x56 / 14  DISCONNECT  App->Robot  [hdr|eraBE2|ctrBE4|tag6|XOR]
+// Reserved: headers 0xAA/0xBB/0x50/0x51/0x52/0xAC/0xAD/0x53/0x54/0x55/0x56
+// are claimed — never reuse or renumber a header, never change a size, never
+// repurpose a reserved byte. New messages claim a fresh header (Phase-2
+// SET_RATE must pick other values). Deliberate stdint-only duplication: this
+// table is mirrored (not included) in udp_server.h / pairing.h / Codec.kt /
+// README — drift must break the M9 gate tests, not silently pass.
+
 namespace udp {
 
 // Control packet: App -> Robot @30-50Hz, 6 bytes.

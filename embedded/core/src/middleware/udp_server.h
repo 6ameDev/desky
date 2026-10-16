@@ -727,8 +727,10 @@ class UdpServer {
   // XOR checked by the caller). Bonded -> PAIR_ERR already_bonded. Else
   // tryCode; kOk mints a fresh PSK with store-before-send ordering
   // (saveBond FIRST, then KEK->wrap->PAIR_OK unicast). Crypto/store failures
-  // after kOk answer PAIR_ERR not_in_window: the code is already burned, so
-  // the client must start over. Every reply is unicast to the requester.
+  // after kOk answer PAIR_ERR internal_retry_fresh (4, M11 additive): the
+  // code is already burned, so the client must pair again with a fresh
+  // display code. Genuine not_in_window (tryCode != kOk) still sends reason
+  // 2. Every reply is unicast to the requester.
   void handlePairReq(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs) {
     DESKY_ASSERT(buf != nullptr);
     if (buf == nullptr) {
@@ -845,12 +847,13 @@ class UdpServer {
       conn_.pinPeer(connection::ipToU32(rip[0], rip[1], rip[2], rip[3]));
       LOG_I("UDP", "pair ok");
     } else {
-      // M11 spec freeze: the code is already burned (single-use), so an NVS
-      // or crypto failure after kOk reuses the not_in_window wire reason (2)
-      // instead of minting a new one. The client maps reason 2 to "expired"
-      // — read it here as retry-with-fresh-code: open a new window and pair
-      // again with the fresh display code. The wire reason MUST NOT change.
-      sendPairErr(rip, rport, pairing::toWireReason(pairing::Result::kNotInWindow), 0);
+      // M11 additive reason 4 (internal_retry_fresh): the code is already
+      // burned (single-use), so an NVS or crypto failure after kOk
+      // (saveBond/deriveKek/wrapPsk) sends 4, not 2. The client maps 4 to
+      // "robot error, try a fresh code": open a new window and pair again
+      // with the fresh display code. Reasons 0-3 are frozen (never renumber;
+      // genuine not_in_window still sends 2 via the tryCode path above).
+      sendPairErr(rip, rport, pairing::toWireReason(pairing::Result::kInternal), 0);
       dropFirst(firstPairDrop_, "pair err internal (first of boot)");
       LOG_EVERY_N(10, "UDP", "pair err internal");
     }

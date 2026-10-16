@@ -197,12 +197,18 @@ inline void disconnectTagMsg(uint16_t era, uint32_t counter, uint8_t out16[kDisc
 
 // Wire reasons in shared/protocol/README.md §v1 (PAIR_ERR reason byte).
 // kOk is transport-internal (PAIR_OK); it never appears on the wire.
+// M11 additive reason 4 (kInternal = internal_retry_fresh): reasons 0-3 are
+// frozen (never renumber; 0=bad_code keeps explicit 0 semantics, 2 keeps
+// not_in_window for genuine window expiry). Burn-failure after tryCode kOk
+// (saveBond/deriveKek/wrapPsk fail, code already burned) sends 4. Old peers
+// show generic for unknown reasons.
 enum class Result : uint8_t {
   kOk = 0xFF,
   kBadCode = 0,
   kLocked = 1,
   kNotInWindow = 2,
   kAlreadyBonded = 3,
+  kInternal = 4,
 };
 
 inline uint8_t toWireReason(Result r) { return static_cast<uint8_t>(r); }
