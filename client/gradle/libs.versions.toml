@@ -1,11 +1,11 @@
 [versions]
 kotlin = "2.4.20"
-agp = "8.13.2"
+agp = "9.3.3"
 ksp = "2.3.12"
 room3 = "3.0.3"
 sqlite = "2.7.1"
 skie = "0.10.15"
-coroutines = "1.10.2"
+coroutines = "1.11.0"
 cryptography = "0.6.0"
 koin = "4.2.2"
 ktor = "3.6.0"
@@ -15,7 +15,7 @@ composeBom = "2026.04.01"
 navigation = "2.9.8"
 activity = "1.13.0"
 turbine = "1.2.1"
-mokkery = "3.4.2"
+mokkery = "3.5.1"
 
 [libraries]
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -55,7 +55,6 @@ skie-gradle-plugin = { group = "co.touchlab.skie", name = "gradle-plugin", versi
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-cocoapods = { id = "org.jetbrains.kotlin.native.cocoapods", version.ref = "kotlin" }
 android-application = { id = "com.android.application", version.ref = "agp" }

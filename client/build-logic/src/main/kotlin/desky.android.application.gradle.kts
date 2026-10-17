@@ -1,6 +1,7 @@
+// AGP 9+: built-in Kotlin (no kotlin-android plugin — AGP forbids it).
+// The `kotlin { compilerOptions }` block below is provided by AGP.
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
 }
 
 android {

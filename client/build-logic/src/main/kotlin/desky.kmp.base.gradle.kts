@@ -1,10 +1,20 @@
+// AGP 9+: KMP modules use com.android.kotlin.multiplatform.library —
+// com.android.library + kotlin-multiplatform together is rejected when
+// built-in Kotlin is enabled (the default).
 plugins {
     id("org.jetbrains.kotlin.multiplatform")
-    id("com.android.library")
+    id("com.android.kotlin.multiplatform.library")
 }
 
 kotlin {
-    androidTarget {
+    // AGP 9 KMP: android config lives in kotlin.android (namespace,
+    // compileSdk, minSdk flat — no defaultConfig wrapper). The old top-level
+    // android {} block is gone with com.android.library.
+    android {
+        namespace = "com.desky.shared"
+        compileSdk = 36
+        minSdk = 26
+
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
         }
@@ -22,18 +32,4 @@ kotlin {
     // iosX64 is also unrunnable on Apple-silicon hosts and deprecated upstream.
     iosArm64()
     iosSimulatorArm64()
-}
-
-android {
-    namespace = "com.desky.shared"
-    compileSdk = 36
-
-    defaultConfig {
-        minSdk = 26
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
 }
