@@ -577,7 +577,27 @@ class RobotControlViewModel(
                 pskMissingFor = dev.id
                 return null
             }
-            psk = hexToBytes(hex)
+            // Vault-hex guard: at-rest corruption (odd length / non-hex) throws
+            // inside hexToBytes — without this the send-loop coroutine dies on
+            // the first tick (ALIVE, drive, e-stop all share this choke).
+            // Wrong-length valid hex (e.g. "abcd" -> 2 bytes) is rejected too:
+            // encodeSigned requires the 16-byte bond PSK. All undecodable
+            // entries reuse the existing missing-PSK path (latched, one vault
+            // read per session; drive surfaces the re-pair copy, ALIVE and
+            // e-stop stay silent).
+            val decoded = try {
+                hexToBytes(hex)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            if (decoded == null || decoded.size != 16) {
+                logMarker("sessionPskUndecodable")
+                pskMissingFor = dev.id
+                return null
+            }
+            psk = decoded
             sessionPsk = psk
         }
         // Seed from Room on a fresh era only; a live era is a no-op, so the

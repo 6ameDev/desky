@@ -253,11 +253,11 @@ class RobotControlViewModelTest {
         main.runCurrent()
         viewModel.onStick(0.5f, 0f)
         main.runCurrent()
-        // 129 frames total (t=0..2560): the 128th successful send persists.
+        // 129 frames total (t=0..2560): the 128th allocation write-aheads to 256.
         main.advanceTimeBy(2561)
 
         assertEquals(129, udp.sent.size)
-        assertEquals(listOf(deviceId to 128u), repo.counterSaves)
+        assertEquals(listOf(deviceId to 256u), repo.counterSaves)
     }
 
     @Test
@@ -313,6 +313,131 @@ class RobotControlViewModelTest {
         assertEquals(Connectivity.Unpaired, state.connectivity)
         assertEquals("Session expired after long use — please re-pair", state.error)
         assertEquals(1, vault.loadCalls, "session cached: vault read once, loop idles")
+    }
+
+    /**
+     * Vault-hex guard: at-rest corruption ("ZZZ" — non-hex) reuses the
+     * missing-PSK path (Unpaired + repair copy, zero sends, one vault read)
+     * instead of throwing inside the send loop and killing the coroutine.
+     * The second advance proves the loop survived (still latched, still
+     * empty — a dead loop would never re-tick, an unlatched loop would
+     * re-read the vault). Re-pair with a good vault recovers (loadCalls==2).
+     */
+    @Test
+    fun corruptVaultPskIdlesWithRepairCopy() = runVmTest { main ->
+        val device = testDevice()
+        val (viewModel, repo, udp, vault) = setup(
+            repo = FakeDeviceRepository(device),
+            vault = FakeBondSecretStore().apply { seed(device.id, "ZZZ") },
+        )
+        main.runCurrent()
+        main.advanceTimeBy(101)
+
+        assertTrue(udp.sent.isEmpty(), "undecodable vault hex: no sends at all")
+        val state = viewModel.state.value
+        assertEquals(Connectivity.Unpaired, state.connectivity)
+        assertEquals("Please re-pair to drive", state.error)
+        assertEquals(1, vault.loadCalls, "undecodable PSK latched: vault read once, loop idles")
+
+        // Loop-death regression: a second window still ticks (latched, empty).
+        main.advanceTimeBy(500)
+        assertTrue(udp.sent.isEmpty(), "loop survived: still no sends")
+        assertEquals(1, vault.loadCalls, "loop survived: still latched, no vault re-read")
+        assertEquals("Please re-pair to drive", viewModel.state.value.error)
+
+        // Re-pair recovery: unpair clears the latch, a good vault reloads.
+        repo.emit(null)
+        main.runCurrent()
+        main.advanceTimeBy(101)
+        vault.seed(device.id, PSK_HEX)
+        repo.emit(testDevice())
+        main.runCurrent()
+        main.advanceTimeBy(21)
+        assertTrue(udp.sent.isNotEmpty(), "re-pair after corrupt vault resumes sends")
+        assertEquals(2, vault.loadCalls, "unpair cleared latch: re-pair re-reads the vault")
+    }
+
+    /**
+     * Vault-hex guard, `ALIVE` variant: with [useAlive] a corrupt vault sends
+     * neither `ALIVE` nor drive frames (zero sends of either type), latches
+     * the vault read, and the 2 Hz loop survives the second window.
+     * `ALIVE` skips silently — the drive section below owns the repair copy.
+     */
+    @Test
+    fun corruptVaultPskSkipsAliveSilently() = runVmTest { main ->
+        val device = testDevice()
+        val (viewModel, _, udp, vault) = setup(
+            repo = FakeDeviceRepository(device),
+            vault = FakeBondSecretStore().apply { seed(device.id, "ZZZ") },
+            useAlive = true,
+        )
+        main.runCurrent()
+        main.advanceTimeBy(501)
+
+        assertTrue(udp.sent.isEmpty(), "corrupt PSK: neither ALIVE nor drive sends")
+        assertEquals(Connectivity.Unpaired, viewModel.state.value.connectivity)
+        assertEquals("Please re-pair to drive", viewModel.state.value.error)
+        assertEquals(1, vault.loadCalls, "session cached: vault read once, loop idles")
+
+        // Second 500 ms window: still no ALIVE, still latched (loop alive).
+        main.advanceTimeBy(501)
+        assertTrue(udp.sent.isEmpty(), "loop survived: still no ALIVE")
+        assertEquals(1, vault.loadCalls, "loop survived: still latched")
+    }
+
+    /**
+     * Vault-hex guard, e-stop variant: the immediate e-stop frame skips
+     * silently on a corrupt vault (no throw, no send) and the error stays
+     * loop-owned (the immediate path never surfaces the missing-PSK copy —
+     * only exhaustion surfaces there).
+     */
+    @Test
+    fun estopOnCorruptVaultSkipsSilently() = runVmTest { main ->
+        val device = testDevice()
+        val (viewModel, _, udp, vault) = setup(
+            repo = FakeDeviceRepository(device),
+            vault = FakeBondSecretStore().apply { seed(device.id, "ZZZ") },
+        )
+        main.runCurrent()
+        promote(udp)
+        main.runCurrent()
+        udp.sent.clear()
+
+        viewModel.onEmergencyStop()
+        main.runCurrent()
+        main.advanceTimeBy(101)
+
+        assertTrue(viewModel.state.value.eStopped, "latch held even with no session")
+        assertTrue(udp.sent.isEmpty(), "corrupt vault: e-stop sends nothing, immediate or loop")
+        assertEquals(Connectivity.Unpaired, viewModel.state.value.connectivity)
+        assertEquals("Please re-pair to drive", viewModel.state.value.error)
+        assertEquals(1, vault.loadCalls, "vault read once: immediate + loop share the latch")
+    }
+
+    /**
+     * Vault-hex guard, valid-hex-wrong-length ("abcd" -> 2 bytes): rejected
+     * before sessionPsk caching exactly like non-hex — Unpaired + repair
+     * copy, zero sends, one vault read, loop survives.
+     */
+    @Test
+    fun shortVaultPskIdlesWithRepairCopy() = runVmTest { main ->
+        val device = testDevice()
+        val (viewModel, _, udp, vault) = setup(
+            repo = FakeDeviceRepository(device),
+            vault = FakeBondSecretStore().apply { seed(device.id, "abcd") },
+        )
+        main.runCurrent()
+        main.advanceTimeBy(101)
+
+        assertTrue(udp.sent.isEmpty(), "short vault hex: no sends at all")
+        val state = viewModel.state.value
+        assertEquals(Connectivity.Unpaired, state.connectivity)
+        assertEquals("Please re-pair to drive", state.error)
+        assertEquals(1, vault.loadCalls, "short PSK latched: vault read once, loop idles")
+
+        main.advanceTimeBy(500)
+        assertTrue(udp.sent.isEmpty(), "loop survived: still no sends")
+        assertEquals(1, vault.loadCalls, "loop survived: still latched, no vault re-read")
     }
 
     @Test
@@ -485,7 +610,7 @@ class RobotControlViewModelTest {
         main.advanceTimeBy(149 * 20 + 1)
 
         assertEquals(150, udp.sent.size)
-        assertEquals(listOf(deviceId to 128u), repo.counterSaves)
+        assertEquals(listOf(deviceId to 256u), repo.counterSaves)
 
         // Forget WITHOUT further persists: the holder still holds 150 live.
         val forget = ForgetDeviceUseCase(repo, vault, udp, GetBondPskUseCase(vault, repo), holder)

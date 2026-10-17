@@ -11,8 +11,8 @@ import kotlinx.coroutines.sync.withLock
  * signed `UNBOND` (via [ForgetDeviceUseCase]) — so [next] always exceeds the
  * robot's `lastCounter`. The robot lags or equals the app, never leads: each
  * allocation is `lastSent + 1` from the live in-memory era, never from the
- * Room watermark (which is persisted only every [persistEvery]
- * allocations and therefore stale in between).
+ * Room watermark (which leads the live sequence by up to one [persistEvery]
+ * cadence — write-ahead, so an unclean kill restarts ahead of the robot).
  *
  * Era: one device at a time. [ensure] adopts a new era when the device id
  * differs (seeding `lastSent` from Room's persisted watermark) and is a
@@ -60,29 +60,46 @@ class DriveCounter(
     /**
      * Allocate the next counter (`lastSent + 1`), persisting to Room every
      * [persistEvery]th allocation (the era's negotiated cadence, default
-     * [COUNTER_PERSIST_EVERY]). Null when there is no era yet
-     * (caller skips the send), at the [EXHAUSTION_GATE] (fail-closed: latches
-     * [exhausted], never allocates the gate value or beyond — so 0 and the
-     * wrap-adjacent half-range-ambiguous region are unreachable), or on wrap
-     * (`next == 0u` — 0 is never valid on the wire; unreachable behind the
-     * gate, kept as defense-in-depth).
+     * [COUNTER_PERSIST_EVERY]). The cadence persist is write-ahead:
+     * `min(lastSent + persistEvery, EXHAUSTION_GATE - 1)` — one full cadence
+     * ahead of the live sequence, so an unclean kill loses nothing (restart
+     * allocates `disk + 1` > robot's `lastSeen`; waste per kill <= cadence).
+     * Live sends still carry `lastSent + 1` (no jump in normal operation).
+     * Null when there is no era yet (caller skips the send), at the
+     * [EXHAUSTION_GATE] (fail-closed: latches [exhausted], never allocates
+     * the gate value or beyond — so 0 and the wrap-adjacent
+     * half-range-ambiguous region are unreachable), or on wrap (`next == 0u`
+     * — 0 is never valid on the wire; unreachable behind the gate, kept as
+     * defense-in-depth).
      */
     suspend fun next(): UInt? {
-        val (id, allocated, shouldPersist) = mutex.withLock {
-            val id = deviceId ?: return@withLock Triple<String?, UInt?, Boolean>(null, null, false)
+        val (id, allocated, toPersist) = mutex.withLock {
+            val id = deviceId ?: return@withLock Triple<String?, UInt?, UInt?>(null, null, null)
             val allocated = lastSent + 1u
-            if (allocated == 0u) return@withLock Triple(id, null, false)
+            if (allocated == 0u) return@withLock Triple(id, null, null)
             if (allocated >= EXHAUSTION_GATE) {
                 exhausted = true
-                return@withLock Triple<String?, UInt?, Boolean>(id, null, false)
+                return@withLock Triple<String?, UInt?, UInt?>(id, null, null)
             }
             lastSent = allocated
             sincePersist++
-            Triple(id, allocated, sincePersist % persistEvery == 0)
+            val cadence = persistEvery
+            val toPersist = if (sincePersist % cadence == 0) {
+                // ULong math: allocated + 1024 can exceed UInt.MAX near the
+                // gate (UInt would wrap to a small value and rewind the disk).
+                // Clamp: the write-ahead watermark never reaches the gate —
+                // the Tier-2 gate check above owns exhaustion and never
+                // allocates the gate value.
+                val ahead = allocated.toULong() + cadence.toULong()
+                if (ahead >= EXHAUSTION_GATE.toULong()) EXHAUSTION_GATE - 1u else ahead.toUInt()
+            } else {
+                null
+            }
+            Triple(id, allocated, toPersist)
         }
         if (allocated == null) return null
-        if (shouldPersist && id != null) {
-            deviceRepo.updateCounter(id, allocated)
+        if (toPersist != null && id != null) {
+            deviceRepo.updateCounter(id, toPersist)
         }
         return allocated
     }

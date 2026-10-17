@@ -87,7 +87,7 @@ header (Phase-2 `SET_RATE` must pick other values).
 Two tiers, decoupled: Tier 1 ephemeral pairing code proves physical
 presence; Tier 2 persistent PSK proves ownership on every drive packet.
 Rotation of Tier 1 never evicts an existing bond. Single owner: a new
-bond evicts the old; re-pair only via 10s button hold (clears bond).
+bond evicts the old; re-pair only via 10s button hold (clears bond). <!-- TODO(PHYSICAL-TRIGGER): button-vs-power-cycle decision pending — implements the 10s-hold promise; see DECISION-ISSUE. -->
 
 Constants: code = 6 ASCII digits (`esp_random`, CSPRNG); single-use,
 5-min window, 5 bad tries -> 30s lockout; PSK = 16 bytes (`esp_random`);

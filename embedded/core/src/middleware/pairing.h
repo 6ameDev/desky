@@ -6,6 +6,7 @@
 // Task 3 NVS + Task 4 HKDF/AES-GCM delivery). Rotation of the code never
 // evicts an existing bond; single owner (a new bond requires an explicit
 // clearBond, e.g. the 10s button hold).
+// TODO(PHYSICAL-TRIGGER): button-vs-power-cycle decision pending — implements the 10s-hold promise; see DECISION-ISSUE. HW per hardware/INTERFACE.md §0: through-hole only, no SMD.
 //
 // Structure mirrors udp_server.h / coordinator.h: this header is Arduino-free
 // pure logic (stdint/stddef only) so host Unity tests include it directly.
@@ -297,6 +298,7 @@ class Core {
 
   // Explicit unpair / 10s-hold factory reset (Task 3 persists it). Never
   // implicit: rotation or reboot must not call this.
+  // TODO(PHYSICAL-TRIGGER): button-vs-power-cycle decision pending — implements the 10s-hold promise; see DECISION-ISSUE.
   void clearBond() {
     bonded_ = false;
     burned_ = false;

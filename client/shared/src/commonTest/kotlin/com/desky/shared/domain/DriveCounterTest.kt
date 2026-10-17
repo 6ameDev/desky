@@ -59,12 +59,13 @@ class DriveCounterTest {
 
         repeat(127) { holder.next() }
         assertEquals(emptyList(), repo.counterSaves)
+        // Write-ahead: the 128th allocation persists 128 + 128, not 128.
         assertEquals(128u, holder.next())
-        assertEquals(listOf("desky-1" to 128u), repo.counterSaves)
+        assertEquals(listOf("desky-1" to 256u), repo.counterSaves)
 
         repeat(127) { holder.next() }
         assertEquals(256u, holder.next())
-        assertEquals(listOf("desky-1" to 128u, "desky-1" to 256u), repo.counterSaves)
+        assertEquals(listOf("desky-1" to 256u, "desky-1" to 384u), repo.counterSaves)
     }
 
     @Test
@@ -76,12 +77,13 @@ class DriveCounterTest {
 
         repeat(15) { holder.next() }
         assertEquals(emptyList(), repo.counterSaves)
+        // Write-ahead: allocation 16 persists 16 + 16.
         assertEquals(16u, holder.next())
-        assertEquals(listOf("desky-1" to 16u), repo.counterSaves)
+        assertEquals(listOf("desky-1" to 32u), repo.counterSaves)
 
         repeat(15) { holder.next() }
         assertEquals(32u, holder.next())
-        assertEquals(listOf("desky-1" to 16u, "desky-1" to 32u), repo.counterSaves)
+        assertEquals(listOf("desky-1" to 32u, "desky-1" to 48u), repo.counterSaves)
     }
 
     @Test
@@ -288,5 +290,107 @@ class DriveCounterTest {
         assertFalse(near.needsRekey(), "margin edge not yet reached")
         near.next()
         assertTrue(near.needsRekey(), "at GATE - MARGIN: rotate now")
+    }
+
+    /**
+     * Write-ahead headroom uses the live negotiated cadence, not hardcoded
+     * 128: allocation N persists N + livePersistEvery.
+     */
+    @Test
+    fun writeAheadUsesLivePersistEvery() = runTest {
+        for (cadence in listOf(8, 16, 64, 128, 1024)) {
+            val repo = FakeDeviceRepository()
+            val holder = DriveCounter(repo)
+            holder.ensure("desky-1", 0u, persistEvery = cadence)
+            repeat(cadence - 1) { holder.next() }
+            assertEquals(cadence.toUInt(), holder.next(), "cadence=$cadence")
+            assertEquals(
+                listOf("desky-1" to (cadence.toUInt() + cadence.toUInt())),
+                repo.counterSaves,
+                "persist = lastSent + live persistEvery (cadence=$cadence)",
+            )
+        }
+    }
+
+    /**
+     * Kill-sim: restart from the write-ahead watermark allocates disk + 1,
+     * strictly above every counter the robot could have seen — zero drops,
+     * waste bounded by one cadence.
+     */
+    @Test
+    fun killSimRestartHasZeroDrops() = runTest {
+        for (cadence in listOf(16, 128, 1024)) {
+            val repo = FakeDeviceRepository()
+            val holder = DriveCounter(repo)
+            holder.ensure("desky-1", 0u, persistEvery = cadence)
+            // Drive past the first cadence persist plus a few unpersisted frames.
+            repeat(cadence + 5) { holder.next() }
+            val disk = repo.counterSaves.last().second
+            val robotLastSeen = holder.current()!!
+            assertTrue(disk >= robotLastSeen, "cadence=$cadence: disk leads live")
+
+            // Simulate an unclean kill: fresh holder re-adopts the disk watermark.
+            val restarted = DriveCounter(repo)
+            restarted.ensure("desky-1", disk)
+            val resumed = restarted.next()
+            assertEquals(disk + 1u, resumed, "cadence=$cadence: restart allocates disk+1")
+            assertTrue(resumed!! > robotLastSeen, "cadence=$cadence: zero drops")
+            assertTrue(resumed - robotLastSeen <= cadence.toUInt() + 1u, "cadence=$cadence: waste <= N+1")
+        }
+    }
+
+    /**
+     * Gate clamp: a write-ahead persist that would reach the gate clamps to
+     * GATE-1, never allocates the gate value, and the Tier-2 gate check
+     * still owns exhaustion.
+     */
+    @Test
+    fun writeAheadClampsAtGate() = runTest {
+        for (cadence in listOf(16, 1024)) {
+            val repo = FakeDeviceRepository()
+            val holder = DriveCounter(repo)
+            // Seed so the first cadence persist lands past the gate.
+            val gateMinusOne = DriveCounter.EXHAUSTION_GATE - 1u
+            val start = gateMinusOne - cadence.toUInt() - 5u
+            holder.ensure("desky-1", start, persistEvery = cadence)
+            repeat(cadence - 1) { holder.next() }
+            val allocated = holder.next()
+            assertEquals(start + cadence.toUInt(), allocated)
+            assertEquals(
+                listOf("desky-1" to gateMinusOne),
+                repo.counterSaves,
+                "cadence=$cadence: write-ahead clamps to GATE-1",
+            )
+            assertFalse(holder.isExhausted(), "cadence=$cadence: clamp alone does not exhaust")
+            // Drain to the gate: allocation refuses, latch sticks, gate never sent.
+            while (holder.next() != null) {
+                // Drain live allocations up to GATE-1.
+            }
+            assertTrue(holder.isExhausted(), "cadence=$cadence: Tier-2 gate still latches")
+            assertEquals(gateMinusOne, holder.current())
+            assertNull(holder.next(), "cadence=$cadence: latch sticks")
+        }
+    }
+
+    /**
+     * Flush after write-ahead still persists the exact live watermark on
+     * graceful paths (collapse-ahead is safe: disk == robot's lastSeen, so
+     * restart is still disk+1 with zero drops).
+     */
+    @Test
+    fun flushAfterWriteAheadPersistsExact() = runTest {
+        val repo = FakeDeviceRepository()
+        val holder = DriveCounter(repo)
+        holder.ensure("desky-1", 0u, persistEvery = 16)
+        repeat(16) { holder.next() }
+        assertEquals(listOf("desky-1" to 32u), repo.counterSaves, "write-ahead first")
+        repeat(4) { holder.next() }
+        assertEquals(20u, holder.current())
+        holder.flush()
+        assertEquals(
+            listOf("desky-1" to 32u, "desky-1" to 20u),
+            repo.counterSaves,
+            "flush persists the exact live watermark",
+        )
     }
 }

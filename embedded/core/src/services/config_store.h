@@ -199,6 +199,7 @@ class ConfigStore {
 
   // Explicit unpair / 10s-hold factory reset. Removes bond keys only (never
   // nvs_flash_erase); schema version is preserved so no re-migration runs.
+  // TODO(PHYSICAL-TRIGGER): button-vs-power-cycle decision pending — implements the 10s-hold promise; see DECISION-ISSUE.
   // The in-memory pairing::Core::clearBond() must be called alongside this.
   static bool clearBond() {
     Preferences prefs;
