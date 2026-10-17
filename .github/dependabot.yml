@@ -3,8 +3,19 @@ updates:
   - package-ecosystem: "gradle"
     directory: "/client"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      routine-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      # AGP majors move by hand, paired with the Gradle wrapper (AGP 8.x
+      # cannot run on Gradle 9). Security fixes still arrive separately via
+      # Dependabot security updates, independent of this schedule.
+      - dependency-name: "com.android.tools.build:gradle"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
