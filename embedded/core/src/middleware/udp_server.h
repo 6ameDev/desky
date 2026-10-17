@@ -270,6 +270,7 @@ inline bool shouldRedeliver(bool valid, const uint8_t* storedCode, const uint8_t
 #include "hal/mpu6500_driver.h"
 #include "hal/vl53l0x_driver.h"
 #include "middleware/pairing.h"
+#include "middleware/qr_pairing.h"
 #include "middleware/sensor_fusion.h"
 #include "middleware/udp_codec.h"
 #include "services/config_store.h"
@@ -446,8 +447,40 @@ class UdpServer {
       return false;
     }
     LOG_I("UDP", "pair window open code=%c%c%c%c%c%c", code[0], code[1], code[2], code[3], code[4], code[5]);
+    // QR bitmap for this window's code: encoded in ALL builds (release
+    // included) into qrBitmap_ for future consumers (head link); the serial
+    // row dump below stays DEBUG-only (Tier-A regression path, zero-cost in
+    // release). No heap/String; fixed stack buffers only. Encode failure is
+    // impossible for validated digits (openWindow above accepted them) but
+    // the bitmap is still gated on success by construction.
+    qrBitmapValid_ = qr::encode6Digits(code, qrBitmap_);
+#if LOG_LEVEL <= LOG_LEVEL_DEBUG
+    // Tier-A hex dump of the V1-L bitmap for this code, one `QR row=NN:HHHHHH`
+    // line per row for the serial capture script. Same call site covers both
+    // window-open paths (boot begin() + post-UNBOND reopen, both funnel here).
+    if (qrBitmapValid_) {
+      for (int y = 0; y < qr::kSize; ++y) {
+        uint8_t row[qr::kRowBytes];
+        qr::rowBytes(qrBitmap_, y, row);
+        char hex[2 * qr::kRowBytes + 1];
+        for (int i = 0; i < qr::kRowBytes; ++i) {
+          hex[2 * i] = "0123456789ABCDEF"[row[i] >> 4];
+          hex[2 * i + 1] = "0123456789ABCDEF"[row[i] & 0x0Fu];
+        }
+        hex[2 * qr::kRowBytes] = '\0';
+        LOG_D("UDP", "QR row=%02d:%s", y, hex);
+      }
+    }
+#endif
     return true;
   }
+
+  // Read-only access to the cached window QR bitmap for future consumers
+  // (head link). Valid only while a pairing window is open; check
+  // qrBitmapValid() first, then read qr::kModules bytes via qrBitmap().
+  bool qrBitmapValid() const { return qrBitmapValid_; }
+
+  const uint8_t* qrBitmap() const { return qrBitmap_; }
 
   // Explicit unpair / 10s-hold factory reset hook (Task 10 bench procedure;
   // no button wired yet): clears the NVS bond + in-memory Core + key
@@ -469,6 +502,7 @@ class UdpServer {
     mbedtls_platform_zeroize(lastPair_.srvNonce4, sizeof(lastPair_.srvNonce4));
     mbedtls_platform_zeroize(lastPair_.ok39, sizeof(lastPair_.ok39));
     lastPair_.bondMs = 0;
+    qrBitmapValid_ = false;  // No open window after an unpair/reset.
     return ConfigStore::clearBond();
   }
 
@@ -829,6 +863,7 @@ class UdpServer {
       lastCounter_ = 0;
       era_ = 0;  // Fresh pair starts era 0 (saveBond persists it).
       bonded_ = true;
+      qrBitmapValid_ = false;         // Code burned: the window is consumed.
       pairCore_.onPairBonded(nowMs);  // PairingExchange forward (same point, same order; idempotent).
       // Cache the reply BEFORE the stack zeroizes below: an identical retry
       // inside kRedeliveryMs re-unicasts these bytes (RAM-only redelivery).
@@ -1349,6 +1384,14 @@ class UdpServer {
   uint16_t era_;
   uint32_t validCount_;
   uint32_t maxVerifyUs_;
+  // Cached QR bitmap of the CURRENT open window's code (V1 21x21,
+  // qr::kModules; see the normative payload contract in
+  // shared/protocol/README.md §"Pairing QR"). Encoded on every window open
+  // in ALL builds (release included) so future consumers (head link) read it
+  // without re-encoding; the serial row dump stays DEBUG-only. Invalid
+  // whenever no window is open (bonded, burned, or cleared).
+  uint8_t qrBitmap_[qr::kModules] = {};
+  bool qrBitmapValid_ = false;
   // Last PAIR_OK redelivery cache (RAM-only, never persisted): an identical
   // PAIR_REQ (same code + client nonce) inside kRedeliveryMs re-unicasts the
   // cached bytes. Invalidated on reboot (begin both paths), clearBond, and

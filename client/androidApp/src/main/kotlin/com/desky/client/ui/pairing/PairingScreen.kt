@@ -30,6 +30,7 @@ import org.koin.androidx.compose.koinViewModel
 fun PairingScreen(
     onPaired: () -> Unit,
     onOpenControls: () -> Unit,
+    onOpenScan: () -> Unit,
     vm: PairingViewModel = koinViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -42,6 +43,7 @@ fun PairingScreen(
         onPair = vm::onPair,
         onUnpair = vm::onUnpair,
         onOpenControls = onOpenControls,
+        onOpenScan = onOpenScan,
     )
 }
 
@@ -52,6 +54,7 @@ fun PairingContent(
     onPair: () -> Unit,
     onUnpair: () -> Unit,
     onOpenControls: () -> Unit,
+    onOpenScan: () -> Unit,
 ) {
     Scaffold { padding ->
         Column(
@@ -84,6 +87,15 @@ fun PairingContent(
                     } else "Pair",
                 )
             }
+            // QR shortcut next to the manual field (manual entry stays
+            // forever): decoded digits feed the identical onPair path.
+            OutlinedButton(
+                onClick = onOpenScan,
+                enabled = state.pairedDevice == null,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Scan QR")
+            }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             state.pairedDevice?.let { device ->
                 Text("Paired: ${device.alias}")
@@ -113,6 +125,7 @@ private fun PairingContentPreview() {
             onPair = {},
             onUnpair = {},
             onOpenControls = {},
+            onOpenScan = {},
         )
     }
 }

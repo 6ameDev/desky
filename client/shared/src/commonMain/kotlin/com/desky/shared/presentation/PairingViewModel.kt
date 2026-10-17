@@ -7,6 +7,7 @@ import com.desky.shared.domain.ForgetDeviceUseCase
 import com.desky.shared.domain.Outcome
 import com.desky.shared.domain.PairedDevice
 import com.desky.shared.domain.PairDeviceWithCodeUseCase
+import com.desky.shared.domain.QrCodeParser
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -95,5 +96,25 @@ class PairingViewModel(
                     _state.update { it.copy(error = result.reason) }
             }
         }
+    }
+
+    /**
+     * QR-scan shortcut feeding the identical [onPair] path as the manual
+     * field (auto-pair on valid scan; the manual field stays as fallback
+     * forever). The camera layer stops after the first valid decode and
+     * ignores frames while [PairingUiState.isPairing]; this intent guards
+     * the same window so a duplicate callback while a pairing is in flight
+     * is a no-op. Invalid payloads reuse the [PairingUiState.error] field
+     * (no new state).
+     */
+    fun onQrScanned(raw: String) {
+        if (_state.value.isPairing) return
+        val code = QrCodeParser.parse(raw)
+        if (code == null) {
+            _state.update { it.copy(error = "QR isn't a Desky code — try again") }
+            return
+        }
+        _state.update { it.copy(pin = code, error = null) }
+        onPair()
     }
 }

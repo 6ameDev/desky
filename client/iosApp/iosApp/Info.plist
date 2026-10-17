@@ -22,6 +22,8 @@
 	<true/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>desky talks to your robot over the local network (UDP telemetry, drive commands and pairing). Access is needed to find and control the robot.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>desky uses the camera only to scan the pairing QR on the robot display. You can always type the 6-digit code instead.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIRequiredDeviceCapabilities</key>

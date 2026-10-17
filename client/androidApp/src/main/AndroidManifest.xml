@@ -11,11 +11,19 @@
          only the single UDP socket is pinned via Network.bindSocket(). -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <!-- Runtime (dangerous): QR pairing shortcut. Requested from ScanQrScreen
+         with a rationale path (camera only reads the Desky QR); the manual
+         6-digit field always works without it. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
         android:name=".DeskyApp"
         android:label="Desky"
         android:theme="@android:style/Theme.Material.NoActionBar">
+        <!-- Bundled ML Kit barcode model ships in the APK: no Play
+             module download, scans work offline (incl. on the no-internet
+             robot AP). No DEPENDENCIES meta-data needed for bundled. -->
         <activity
             android:name=".MainActivity"
             android:exported="true">

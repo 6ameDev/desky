@@ -252,6 +252,15 @@ void test_udp_rekey_frame_goldens();
 void test_udp_alive_disconnect_frame_goldens();
 void test_udp_pair_ok_framing();
 
+// QR pairing bitmap (Phase 0), defined in test_qr_pairing.cpp.
+void test_qr_size_is_21();
+void test_qr_golden_encodes();
+void test_qr_finder_patterns_three_corners();
+void test_qr_timing_patterns();
+void test_qr_deterministic_reencode_equal();
+void test_qr_rejects_null_short_nondigit();
+void test_qr_row_bytes_msb_first();
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_control_golden_vector);
@@ -406,5 +415,12 @@ int main() {
   RUN_TEST(test_udp_rekey_frame_goldens);
   RUN_TEST(test_udp_alive_disconnect_frame_goldens);
   RUN_TEST(test_udp_pair_ok_framing);
+  RUN_TEST(test_qr_size_is_21);
+  RUN_TEST(test_qr_golden_encodes);
+  RUN_TEST(test_qr_finder_patterns_three_corners);
+  RUN_TEST(test_qr_timing_patterns);
+  RUN_TEST(test_qr_deterministic_reencode_equal);
+  RUN_TEST(test_qr_rejects_null_short_nondigit);
+  RUN_TEST(test_qr_row_bytes_msb_first);
   return UNITY_END();
 }
