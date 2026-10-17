@@ -121,3 +121,5 @@ You must explicitly track, announce, and manage your progress through these 5 ph
 - **Don't trust `rotation` — draw with dots.** The bridge's rotation unit/pivot is
   unreliable (identical values rendered flat, then steep, then flung). For angled
   indicators, lerp dotted segments along the path instead.
+- **Layer names carry hierarchy, titles stay clean.** Prefix layers (`main-home`,
+  `cap-main-home`); caption text shows short name (`Home`).
