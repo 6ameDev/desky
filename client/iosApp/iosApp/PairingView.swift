@@ -27,6 +27,10 @@ final class PairingViewState: ObservableObject {
 struct PairingView: View {
     @StateObject private var state: PairingViewState
     @Binding var selection: DeskyTab
+    // Hint-only: PairingViewModel owns no ALIVE loop, so the rejoin knock
+    // has no target here — the knock fires from ControlView (plus its
+    // onAppear covers pairing -> controls navigation).
+    @ObservedObject private var wifi = WifiRejoinMonitor.shared
 
     private func pairingLabel(_ snapshot: PairingUiState) -> String {
         guard snapshot.isPairing else { return "Pair" }
@@ -43,7 +47,12 @@ struct PairingView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Pair with Desky").font(.title2).bold()
-            SecureField("Pairing code", text: Binding(
+            if !wifi.isOnWifi {
+                Text("Not on Wi-Fi — join the desky Wi-Fi in Settings to pair.")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+            TextField("Pairing code", text: Binding(
                 get: { state.snapshot.pin },
                 set: { state.onPinChange($0) }
             ))

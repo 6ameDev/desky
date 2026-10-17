@@ -116,8 +116,12 @@ class ConfigStore {
       LOG_E("CONFIG", "nvs open failed (saveCounter)");
       return false;
     }
-    prefs.putUInt(kCounterKey, counter);
+    const size_t written = prefs.putUInt(kCounterKey, counter);
     prefs.end();
+    if (written == 0) {
+      LOG_E("CONFIG", "counter write failed");
+      return false;
+    }
     return true;
   }
 

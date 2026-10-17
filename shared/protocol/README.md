@@ -53,7 +53,7 @@ Decode rejects wrong header, wrong length, or bad checksum.
 ## Transport
 
 - UDP port `3333` (see scripts for the registration-hello / unicast convention).
-- Robot AP `desky-<last4 MAC>` + common pass = transport only (zero security).
+- Robot AP `desky` + common pass = transport only (zero security).
   App uses fixed `192.168.4.1:3333`; no IP input.
 - Robot failsafes to stop ~500ms after the last control datagram.
 - Telemetry Robot -> App is unicast-only while bonded and alive (`kAliveMs` 5s), silent otherwise — subnet broadcast deleted, pre-bond silent.

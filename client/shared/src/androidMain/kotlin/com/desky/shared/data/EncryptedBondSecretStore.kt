@@ -24,6 +24,11 @@ class EncryptedBondSecretStore(
 ) : BondSecretStore {
     private val appContext = context.applicationContext
 
+    // HOLD: MasterKeys.getOrCreate (security-crypto 1.0.0) is deprecated, but
+    // so is its replacement MasterKey — the whole security-crypto line is
+    // deprecated upstream. The real fix is a vault rewrite with migration
+    // (separate task); pre-ship there are no users to migrate, so hold.
+    @Suppress("DEPRECATION")
     private fun prefsFor(deviceId: String) =
         EncryptedSharedPreferences.create(
             "bond_${deviceId.sanitized()}",

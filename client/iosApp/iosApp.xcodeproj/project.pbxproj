@@ -12,6 +12,7 @@
 		A1B2C3D400000112 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D400000102 /* PairingView.swift */; };
 		A1B2C3D400000113 /* ControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D400000103 /* ControlView.swift */; };
 		A1B2C3D400000114 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D400000104 /* SettingsView.swift */; };
+		A1B2C3D400000115 /* WifiRejoinMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D400000107 /* WifiRejoinMonitor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -21,6 +22,7 @@
 		A1B2C3D400000102 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
 		A1B2C3D400000103 /* ControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlView.swift; sourceTree = "<group>"; };
 		A1B2C3D400000104 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		A1B2C3D400000107 /* WifiRejoinMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WifiRejoinMonitor.swift; sourceTree = "<group>"; };
 		A1B2C3D400000105 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A1B2C3D400000106 /* iosApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iosApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C7305E57646EB12D88B5DE34 /* Pods-iosApp.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-iosApp.release.xcconfig"; path = "Target Support Files/Pods-iosApp/Pods-iosApp.release.xcconfig"; sourceTree = "<group>"; };
@@ -65,6 +67,7 @@
 				A1B2C3D400000102 /* PairingView.swift */,
 				A1B2C3D400000103 /* ControlView.swift */,
 				A1B2C3D400000104 /* SettingsView.swift */,
+				A1B2C3D400000107 /* WifiRejoinMonitor.swift */,
 				A1B2C3D400000105 /* Info.plist */,
 			);
 			path = iosApp;
@@ -201,6 +204,7 @@
 				A1B2C3D400000112 /* PairingView.swift in Sources */,
 				A1B2C3D400000113 /* ControlView.swift in Sources */,
 				A1B2C3D400000114 /* SettingsView.swift in Sources */,
+				A1B2C3D400000115 /* WifiRejoinMonitor.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

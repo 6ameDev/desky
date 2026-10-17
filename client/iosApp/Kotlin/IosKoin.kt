@@ -7,8 +7,34 @@ import com.desky.shared.presentation.RobotControlViewModel
 import com.desky.shared.presentation.SettingsViewModel
 import org.koin.core.Koin
 import org.koin.core.context.startKoin
+import platform.Foundation.NSLock
 
 private var iosKoin: Koin? = null
+
+/**
+ * Guards [initKoinForIos] and the three ViewModel accessors below.
+ *
+ * Swift callers are `@MainActor`, but that does not constrain Kotlin/Native
+ * threads: Koin callbacks / background workers can enter these accessors off
+ * the main thread, so the plain check-then-set on the nullable caches above
+ * would race (double `startKoin` / duplicate VM instances + duplicate
+ * heartbeat loops). All four accessors serialize on this lock; no API or
+ * behavior change.
+ *
+ * `NSLock` rather than `synchronized`: Kotlin's `synchronized` is JVM-only
+ * and does not resolve on Kotlin/Native (verified: `Unresolved reference
+ * 'synchronized'` in `:shared:compileKotlinIosSimulatorArm64`).
+ */
+private val lock = NSLock()
+
+private inline fun <T> guarded(block: () -> T): T {
+    lock.lock()
+    try {
+        return block()
+    } finally {
+        lock.unlock()
+    }
+}
 
 /**
  * iOS entry point (T8). Starts Koin exactly once and returns the [Koin]
@@ -28,8 +54,8 @@ private var iosKoin: Koin? = null
  * it ships inside the `shared` framework/pod. `client/shared/src` is frozen
  * for other tasks; nothing under it was touched.
  */
-fun initKoinForIos(): Koin {
-    iosKoin?.let { return it }
+fun initKoinForIos(): Koin = guarded {
+    iosKoin?.let { return@guarded it }
     val koin = startKoin {
         modules(
             dataModule(createDeskyDatabase(), createBondSecretStore()),
@@ -38,7 +64,7 @@ fun initKoinForIos(): Koin {
         )
     }.koin
     iosKoin = koin
-    return koin
+    return@guarded koin
 }
 
 /**
@@ -59,17 +85,17 @@ private var sharedPairingVm: PairingViewModel? = null
 private var sharedControlVm: RobotControlViewModel? = null
 private var sharedSettingsVm: SettingsViewModel? = null
 
-fun Koin.pairingViewModel(): PairingViewModel {
-    sharedPairingVm?.let { return it }
-    return get<PairingViewModel>().also { sharedPairingVm = it }
+fun Koin.pairingViewModel(): PairingViewModel = guarded {
+    sharedPairingVm?.let { return@guarded it }
+    return@guarded get<PairingViewModel>().also { sharedPairingVm = it }
 }
 
-fun Koin.robotControlViewModel(): RobotControlViewModel {
-    sharedControlVm?.let { return it }
-    return get<RobotControlViewModel>().also { sharedControlVm = it }
+fun Koin.robotControlViewModel(): RobotControlViewModel = guarded {
+    sharedControlVm?.let { return@guarded it }
+    return@guarded get<RobotControlViewModel>().also { sharedControlVm = it }
 }
 
-fun Koin.settingsViewModel(): SettingsViewModel {
-    sharedSettingsVm?.let { return it }
-    return get<SettingsViewModel>().also { sharedSettingsVm = it }
+fun Koin.settingsViewModel(): SettingsViewModel = guarded {
+    sharedSettingsVm?.let { return@guarded it }
+    return@guarded get<SettingsViewModel>().also { sharedSettingsVm = it }
 }
