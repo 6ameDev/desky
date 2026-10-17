@@ -22,11 +22,13 @@ final class PairingViewState: ObservableObject {
     func onPinChange(_ pin: String) { vm.onPinChange(pin: pin) }
     func onPair() { vm.onPair() }
     func onUnpair() { vm.onUnpair() }
+    func onQrScanned(_ raw: String) { vm.onQrScanned(raw: raw) }
 }
 
 struct PairingView: View {
     @StateObject private var state: PairingViewState
     @Binding var selection: DeskyTab
+    @State private var showScan = false
     // Hint-only: PairingViewModel owns no ALIVE loop, so the rejoin knock
     // has no target here — the knock fires from ControlView (plus its
     // onAppear covers pairing -> controls navigation).
@@ -65,6 +67,11 @@ struct PairingView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(state.snapshot.isPairing)
+            // QR shortcut next to the manual field (manual entry stays
+            // forever): decoded digits feed the identical onPair path.
+            Button("Scan QR") { showScan = true }
+                .buttonStyle(.bordered)
+                .disabled(state.snapshot.pairedDevice != nil)
             if let error = state.snapshot.error {
                 Text(error).foregroundColor(.red)
             }
@@ -88,6 +95,9 @@ struct PairingView: View {
         }
         .onChange(of: state.snapshot.pairedDevice?.id) { newId in
             if newId != nil { selection = .control }
+        }
+        .sheet(isPresented: $showScan) {
+            ScanQrView(state: state)
         }
     }
 }

@@ -89,6 +89,25 @@ presence; Tier 2 persistent PSK proves ownership on every drive packet.
 Rotation of Tier 1 never evicts an existing bond. Single owner: a new
 bond evicts the old; re-pair only via 10s button hold (clears bond). <!-- TODO(PHYSICAL-TRIGGER): button-vs-power-cycle decision pending — implements the 10s-hold promise; see DECISION-ISSUE. -->
 
+### Pairing QR display contract (normative for firmware + app)
+
+The 6-digit code is ALSO rendered as a QR code (robot display) and scanned
+by the app (Scan QR → auto-pair). Payload contract — both sides must agree,
+neither side may extend unilaterally:
+
+- Payload = the bare 6 ASCII digits, nothing else (no URL, no scheme, no
+  whitespace, no checksum suffix). The app parser (`QrCodeParser`, shared
+  KMP) accepts exactly `^\d{6}$` and rejects everything else.
+- QR encoding: numeric mode, ECC LOW, Version 1 minimum (21×21). The 6-digit
+  payload always fits V1; the encoder may emit a larger version only if the
+  payload contract above ever grows (it hasn't).
+- Wire/bond semantics unchanged: scanning is a code-entry shortcut — the
+  decoded digits feed the identical `PAIR_REQ` path (validation, single-use
+  burn, 5-min window, 5-try lockout all apply as specified below).
+- Firmware (`middleware/qr_pairing.h` + `UdpServer::qrBitmap()`) owns the
+  bitmap; the golden vector is code `123456` → the 21 pinned rows in
+  `scripts/qr_pair_check.py` (`GOLDEN_123456`, Tier-A cross-decoded SCAN-OK).
+
 Constants: code = 6 ASCII digits (`esp_random`, CSPRNG); single-use,
 5-min window, 5 bad tries -> 30s lockout; PSK = 16 bytes (`esp_random`);
 counter = 32-bit BE, first drive packet uses 1 (0 is reserved as the bond

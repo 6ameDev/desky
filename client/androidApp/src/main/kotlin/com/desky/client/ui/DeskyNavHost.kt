@@ -7,10 +7,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.desky.client.ui.control.ControlScreen
 import com.desky.client.ui.pairing.PairingScreen
+import com.desky.client.ui.scan.ScanQrScreen
 import com.desky.client.ui.settings.SettingsScreen
+import com.desky.shared.presentation.PairingViewModel
 import com.desky.shared.presentation.SessionGateViewModel
 import org.koin.androidx.compose.koinViewModel
 
@@ -18,7 +21,11 @@ object DeskyRoutes {
     const val PAIRING = "pairing"
     const val CONTROL = "control"
     const val SETTINGS = "settings"
+    const val SCAN = "scan"
 }
+
+/** SavedStateHandle key carrying the decoded QR string SCAN -> PAIRING. */
+private const val SCAN_RESULT_KEY = "qr_raw"
 
 @Composable
 fun DeskyNavHost(
@@ -35,8 +42,24 @@ fun DeskyNavHost(
         }
     }
     NavHost(navController = navController, startDestination = DeskyRoutes.PAIRING) {
-        composable(DeskyRoutes.PAIRING) {
+        composable(DeskyRoutes.PAIRING) { entry ->
+            // Single VM owner for pairing (ScanQrScreen never mints one):
+            // the scan result round-trips through SavedStateHandle so the
+            // decoded code feeds this VM's onQrScanned (auto-pair path).
+            // Consumed via current-entry observation (no getStateFlow: the
+            // resolved lifecycle 2.10 split artifact doesn't export it):
+            // refires on first composition (no-op, key absent) and on every
+            // return from SCAN.
+            val vm: PairingViewModel = koinViewModel()
+            val currentEntry by navController.currentBackStackEntryAsState()
+            LaunchedEffect(currentEntry?.id) {
+                if (currentEntry?.destination?.route == DeskyRoutes.PAIRING) {
+                    val raw: String? = entry.savedStateHandle.remove(SCAN_RESULT_KEY)
+                    if (raw != null) vm.onQrScanned(raw)
+                }
+            }
             PairingScreen(
+                vm = vm,
                 onPaired = {
                     navController.navigate(DeskyRoutes.CONTROL) {
                         popUpTo(DeskyRoutes.PAIRING) { inclusive = true }
@@ -47,6 +70,20 @@ fun DeskyNavHost(
                         popUpTo(DeskyRoutes.PAIRING) { inclusive = true }
                     }
                 },
+                onOpenScan = {
+                    navController.navigate(DeskyRoutes.SCAN)
+                },
+            )
+        }
+        composable(DeskyRoutes.SCAN) {
+            ScanQrScreen(
+                onQrResult = { raw ->
+                    navController.previousBackStackEntry
+                        ?.savedStateHandle
+                        ?.set(SCAN_RESULT_KEY, raw)
+                    navController.popBackStack()
+                },
+                onClose = { navController.popBackStack() },
             )
         }
         composable(DeskyRoutes.CONTROL) {
