@@ -27,6 +27,7 @@ import com.desky.shared.domain.TelemetryPacketCodec
 import com.desky.shared.domain.UdpDatagram
 import com.desky.shared.domain.hexToBytes
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -49,19 +50,23 @@ class RobotControlViewModelTest {
         holder: DriveCounter = DriveCounter(repo),
         useAlive: Boolean = false,
         binder: FakeUdpSocketBinder = FakeUdpSocketBinder(),
+        wireForget: Boolean = false,
     ): Quad {
         val sendSigned = SendSignedControlUseCase(udp)
+        val getPsk = GetBondPskUseCase(vault, repo)
+        val forgetUC = if (wireForget) ForgetDeviceUseCase(repo, vault, udp, getPsk, holder) else null
         val viewModel = RobotControlViewModel(
             sendSigned,
             ObserveTelemetryUseCase(udp),
             EmergencyStopUseCase(sendSigned),
             repo,
-            GetBondPskUseCase(vault, repo),
+            getPsk,
             udp,
             holder,
             tickMs,
             aliveUC = if (useAlive) AliveUseCase(udp) else null,
             socketBinder = binder,
+            forgetUC = forgetUC,
         )
         return Quad(viewModel, repo, udp, vault, holder, binder)
     }
@@ -278,17 +283,30 @@ class RobotControlViewModelTest {
     @Test
     fun missingPskErrorsWithZeroSends() = runVmTest { main ->
         // Paired, but the vault is empty: keyless bond, never legacy frames.
-        val (viewModel, _, udp, vault) = setup(
+        // Forget wired: the broken row converges via repo clear -> gate fires.
+        val (viewModel, repo, udp, vault) = setup(
             vault = FakeBondSecretStore(),
+            wireForget = true,
         )
         main.runCurrent()
         main.advanceTimeBy(101)
+        main.runCurrent()
 
         assertTrue(udp.sent.isEmpty(), "no unsigned fallback, no sends at all")
         val state = viewModel.state.value
         assertEquals(Connectivity.Unpaired, state.connectivity)
         assertEquals("Please re-pair to drive", state.error)
-        assertEquals(1, vault.loadCalls, "missing PSK latched: vault read once, loop idles")
+        // 2 vault reads: the session load (latched miss) + forget's UNBOND
+        // probe (also a miss, send skipped) — both one-shot.
+        assertEquals(2, vault.loadCalls, "session miss + forget UNBOND probe, then latched")
+        assertNull(repo.observePaired().first(), "broken row converged: repo cleared")
+        assertEquals(1, repo.clearCalls, "forget fired once")
+
+        // Forget-once latch: a second window issues no further clears.
+        main.advanceTimeBy(500)
+        main.runCurrent()
+        assertEquals(1, repo.clearCalls, "forget-once latch: no per-tick clears")
+        assertEquals(2, vault.loadCalls, "still latched, no vault re-read")
     }
 
     /**
@@ -301,18 +319,29 @@ class RobotControlViewModelTest {
     @Test
     fun sessionExpiredSurfacesRepair() = runVmTest { main ->
         val device = testDevice().copy(lastCounter = DriveCounter.EXHAUSTION_GATE - 1u)
-        val (viewModel, _, udp, vault) = setup(
+        val (viewModel, repo, udp, vault) = setup(
             repo = FakeDeviceRepository(device),
             vault = FakeBondSecretStore().apply { seed(device.id, PSK_HEX) },
+            wireForget = true,
         )
         main.runCurrent()
         main.advanceTimeBy(101)
+        main.runCurrent()
 
         assertTrue(udp.sent.isEmpty(), "exhausted counter: no sends at all")
         val state = viewModel.state.value
         assertEquals(Connectivity.Unpaired, state.connectivity)
         assertEquals("Session expired after long use — please re-pair", state.error)
-        assertEquals(1, vault.loadCalls, "session cached: vault read once, loop idles")
+        // 2 vault reads: the session load + forget's UNBOND probe (null
+        // counter allocation skips the send) — both one-shot.
+        assertEquals(2, vault.loadCalls, "session load + forget UNBOND probe, then latched")
+        assertNull(repo.observePaired().first(), "exhausted session converged: repo cleared")
+        assertEquals(1, repo.clearCalls, "forget fired once")
+
+        // Forget-once latch: a second window issues no further clears.
+        main.advanceTimeBy(500)
+        main.runCurrent()
+        assertEquals(1, repo.clearCalls, "forget-once latch: no per-tick clears")
     }
 
     /**

@@ -22,6 +22,7 @@ import com.desky.shared.domain.UdpSocketBinder
 import com.desky.shared.domain.UdpSocketManager
 import com.desky.shared.presentation.PairingViewModel
 import com.desky.shared.presentation.RobotControlViewModel
+import com.desky.shared.presentation.SessionGateViewModel
 import com.desky.shared.presentation.SettingsViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -84,6 +85,7 @@ val presentationModule: Module = module {
     // binding, the ALIVE/DISCONNECT knock stays inert without an AliveUseCase
     // binding, and the AP-rejoin knock stays inert without a UdpSocketBinder
     // binding (JVM/iOS — getOrNull, tests, legacy graphs).
-    viewModel { RobotControlViewModel(get(), get(), get(), get(), get(), get(), get(), rekeyUC = getOrNull<RekeyUseCase>(), aliveUC = getOrNull<AliveUseCase>(), socketBinder = getOrNull<UdpSocketBinder>()) }
+    viewModel { RobotControlViewModel(get(), get(), get(), get(), get(), get(), get(), rekeyUC = getOrNull<RekeyUseCase>(), aliveUC = getOrNull<AliveUseCase>(), socketBinder = getOrNull<UdpSocketBinder>(), forgetUC = get()) }
     viewModel { SettingsViewModel(get(), get(), get()) }
+    viewModel { SessionGateViewModel(get()) }
 }

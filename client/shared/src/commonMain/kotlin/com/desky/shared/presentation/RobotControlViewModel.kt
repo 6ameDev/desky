@@ -8,6 +8,7 @@ import com.desky.shared.domain.DriveCounter
 import com.desky.shared.domain.ESTOP_FLAG
 import com.desky.shared.domain.AliveUseCase
 import com.desky.shared.domain.EmergencyStopUseCase
+import com.desky.shared.domain.ForgetDeviceUseCase
 import com.desky.shared.domain.GetBondPskUseCase
 import com.desky.shared.domain.ObserveTelemetryUseCase
 import com.desky.shared.domain.Outcome
@@ -218,6 +219,18 @@ class RobotControlViewModel(
      * collapse idempotently to one `ALIVE`.
      */
     private val socketBinder: UdpSocketBinder? = null,
+    /**
+     * Broken-row convergence (nav-guard Task 2): null in tests/legacy call
+     * sites (missing/exhausted surfaces stay local-only); production DI
+     * passes the shared [ForgetDeviceUseCase]. On the missing-PSK and
+     * session-exhausted paths the VM fires forget-once per device (latched
+     * like [pskMissingFor], so per-tick clears never happen) — the repo
+     * emits null and the global [SessionGateViewModel] fence navigates to
+     * Pairing. `UNBOND` best-effort inside is already null-safe (missing PSK
+     * or exhausted counter skips the send). Disconnected (link-down) never
+     * forgets — only Unpaired/missing/exhausted converge.
+     */
+    private val forgetUC: ForgetDeviceUseCase? = null,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(RobotControlUiState())
@@ -315,6 +328,14 @@ class RobotControlViewModel(
      * session, missing or not); cleared on unpair so a re-pair reloads.
      */
     private var pskMissingFor: String? = null
+    /**
+     * Forget-once latch for the broken-row convergence above: device id
+     * whose missing/exhausted forget already fired. Set synchronously
+     * before the `viewModelScope` launch so per-tick calls collapse to one
+     * repo clear; cleared on unpair (same place as [pskMissingFor]) so a
+     * re-pair can converge again.
+     */
+    private var forgetFiredFor: String? = null
 
     /**
      * Correlation markers (log-only, no behavior change): sessionReady /
@@ -413,6 +434,7 @@ class RobotControlViewModel(
                         sessionMutex.withLock {
                             sessionPsk = null
                             pskMissingFor = null
+                            forgetFiredFor = null
                             driveCounter.reset()
                         }
                         rekeyInFlight = false
@@ -529,7 +551,7 @@ class RobotControlViewModel(
                         // PSK: distinct copy — the former needs an explicit
                         // re-pair, and no UNBOND counter is consumed after it
                         // (ForgetDeviceUseCase skips the send on null).
-                        if (driveCounter.isExhausted()) sessionExpired() else missingPsk()
+                        if (driveCounter.isExhausted()) sessionExpired(dev) else missingPsk(dev)
                     } else {
                         val (psk, next) = prepared
                         sendUC(dev, cmd, psk, next)
@@ -645,7 +667,7 @@ class RobotControlViewModel(
         rekeyInFlight = true
     }
 
-    private fun missingPsk(): Outcome.Failure {
+    private fun missingPsk(dev: PairedDevice): Outcome.Failure {
         val message = "Please re-pair to drive"
         val current = _state.value
         if (current.connectivity != Connectivity.Unpaired || current.error != message) {
@@ -656,6 +678,7 @@ class RobotControlViewModel(
                 )
             }
         }
+        maybeForget(dev)
         return Outcome.Failure(message)
     }
 
@@ -667,7 +690,7 @@ class RobotControlViewModel(
      * from [missingPsk]: the bond exists, the session just aged out after
      * long use — an explicit re-pair starts a fresh era.
      */
-    private fun sessionExpired(): Outcome.Failure {
+    private fun sessionExpired(dev: PairedDevice): Outcome.Failure {
         val message = "Session expired after long use — please re-pair"
         val current = _state.value
         if (current.connectivity != Connectivity.Unpaired || current.error != message) {
@@ -678,7 +701,34 @@ class RobotControlViewModel(
                 )
             }
         }
+        maybeForget(dev)
         return Outcome.Failure(message)
+    }
+
+    /**
+     * Broken-row convergence fire-once: clears the Room row (vault entry
+     * included) via [forgetUC] so the repo emits null and the session gate
+     * fires. Latched per device id — per-tick missing/exhausted calls
+     * collapse to a single clear. Null [forgetUC] (tests/legacy graphs) is
+     * a no-op. Failures surface as [Outcome.Failure] inside the use case,
+     * never as throws (except cancellation), so the launched child just
+     * ignores the result — the local Unpaired copy above already surfaced.
+     */
+    private fun maybeForget(dev: PairedDevice) {
+        val forget = forgetUC ?: return
+        if (forgetFiredFor == dev.id) return
+        forgetFiredFor = dev.id
+        viewModelScope.launch {
+            try {
+                forget()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Swallowed: the Unpaired copy above already surfaced; a
+                // failed clear retries on the next session (latch resets on
+                // unpair, and the copy persists regardless).
+            }
+        }
     }
 
     /**
@@ -750,7 +800,7 @@ class RobotControlViewModel(
                 // Exhausted era: surface the repair copy here too (the loop
                 // tick would on its next pass); a missing PSK stays silent —
                 // the loop owns that copy.
-                if (driveCounter.isExhausted()) sessionExpired()
+                if (driveCounter.isExhausted()) sessionExpired(paired)
                 return@launch
             }
             val (psk, next) = prepared
@@ -869,6 +919,7 @@ class RobotControlViewModel(
             try {
                 sessionPsk = null
                 pskMissingFor = null
+                forgetFiredFor = null
             } finally {
                 sessionMutex.unlock()
             }
