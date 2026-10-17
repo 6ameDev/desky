@@ -90,6 +90,14 @@ internal class PosixUdpSocketManager(
     private val _incoming = MutableSharedFlow<UdpDatagram>(extraBufferCapacity = 64)
     override val incoming: Flow<UdpDatagram> = _incoming.asSharedFlow()
 
+    /**
+     * Datagrams dropped because the 64-slot buffer was full. Diagnostic only:
+     * a drop means the consumer is behind, never a socket error.
+     */
+    @Volatile
+    var droppedIncoming = 0
+        private set
+
     private val receiveJob: Job
 
     init {
@@ -97,7 +105,11 @@ internal class PosixUdpSocketManager(
             while (isActive && !closed) {
                 val datagram = receiveOne()
                 if (closed || !isActive) break
-                if (datagram != null) _incoming.emit(datagram)
+                // tryEmit (never emit): a full buffer must drop, not suspend
+                // the receiver and stall pairing/telemetry reads.
+                if (datagram != null && !_incoming.tryEmit(datagram)) {
+                    droppedIncoming++
+                }
             }
         }
     }

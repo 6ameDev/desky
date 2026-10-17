@@ -23,10 +23,14 @@ final class ControlViewState: ObservableObject {
     }
     func onEmergencyStop() { vm.onEmergencyStop() }
     func onReleaseEmergency() { vm.onReleaseEmergency() }
+    // Rejoin knock target: forces the ALIVE clock due (idempotent
+    // due-flag, same path Android's `networkAvailable` flow takes).
+    func onForeground() { vm.onForeground() }
 }
 
 struct ControlView: View {
     @StateObject private var state: ControlViewState
+    @ObservedObject private var wifi = WifiRejoinMonitor.shared
 
     init(vm: RobotControlViewModel) {
         _state = StateObject(wrappedValue: ControlViewState(vm: vm))
@@ -35,6 +39,11 @@ struct ControlView: View {
     var body: some View {
         VStack(spacing: 12) {
             Text("Controls").font(.title2).bold()
+            if !wifi.isOnWifi {
+                Text("Not on Wi-Fi — join the desky Wi-Fi in Settings to drive.")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
             TelemetryBar(snapshot: state.snapshot)
             JoystickPad { throttle, steering in
                 state.onStick(throttle: throttle, steering: steering)
@@ -54,6 +63,14 @@ struct ControlView: View {
         }
         .padding()
         .task { await state.collect() }
+        // Mirror Android's ON_RESUME knock: entering the tab forces ALIVE
+        // due so a rejoin that happened while on another tab still
+        // re-pins immediately. `.wifiRejoined` covers rejoins while this
+        // tab is visible; both funnel into the same idempotent flag.
+        .onAppear { state.onForeground() }
+        .onReceive(NotificationCenter.default.publisher(for: .wifiRejoined)) { _ in
+            state.onForeground()
+        }
     }
 }
 

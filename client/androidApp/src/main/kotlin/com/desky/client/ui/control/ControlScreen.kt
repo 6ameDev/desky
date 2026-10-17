@@ -25,10 +25,14 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -51,6 +55,25 @@ fun ControlScreen(
     vm: RobotControlViewModel = koinViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    // Screen-scope lifecycle: leaving Controls = goodbye (flush + DISCONNECT 2x
+    // + pause via onBackground), returning = immediate ALIVE + resume via
+    // onForeground. Scoped to this composable's LifecycleOwner so other screens
+    // are unaffected (NOT ProcessLifecycleOwner — app-wide would pause while the
+    // user is merely on Settings). Rapid pause/resume needs no extra debounce
+    // here: onForeground's ALIVE due-flag is idempotent (bursts collapse to one
+    // ALIVE) and the background-pause flag is a plain boolean.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, vm) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> vm.onBackground()
+                Lifecycle.Event.ON_RESUME -> vm.onForeground()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     ControlContent(
         state = state,
         onStick = vm::onStick,
@@ -90,12 +113,18 @@ fun ControlContent(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             TelemetryBar(state)
-            JoystickPad(onStick = onStick)
+            // Disconnected gate (mirrors the ViewModel no-op guards on
+            // onStick/onEmergencyStop/onReleaseEmergency): the robot's
+            // ~500 ms stale-command failsafe is already stopping it, and the
+            // ALIVE knock underneath re-enables on the first telemetry.
+            val controlsEnabled = state.connectivity != Connectivity.Disconnected
+            JoystickPad(onStick = onStick, enabled = controlsEnabled)
             if (state.eStopped) {
-                OutlinedButton(onClick = onReleaseEmergency) { Text("Release E-STOP") }
+                OutlinedButton(onClick = onReleaseEmergency, enabled = controlsEnabled) { Text("Release E-STOP") }
             } else {
                 Button(
                     onClick = onEmergencyStop,
+                    enabled = controlsEnabled,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error,
                     ),
@@ -133,36 +162,42 @@ fun JoystickPad(
     modifier: Modifier = Modifier,
     padSizeDp: Int = 192,
     knobSizeDp: Int = 64,
+    /** Disconnected gate: while false, gestures move nothing and send nothing. */
+    enabled: Boolean = true,
 ) {
     var knob by remember { mutableStateOf(Offset.Zero) }
     Box(
         modifier = modifier
             .size(padSizeDp.dp)
             .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
-            .pointerInput(Unit) {
+            .pointerInput(enabled) {
                 detectDragGestures(
                     onDragStart = { offset ->
-                        val radius = size.width / 2f
-                        val centered = offset - Offset(radius, radius)
-                        val clamped = clampToRadius(centered, radius)
-                        knob = clamped
-                        onStick(-clamped.y / radius, clamped.x / radius)
+                        if (enabled) {
+                            val radius = size.width / 2f
+                            val centered = offset - Offset(radius, radius)
+                            val clamped = clampToRadius(centered, radius)
+                            knob = clamped
+                            onStick(-clamped.y / radius, clamped.x / radius)
+                        }
                     },
                     onDrag = { change, _ ->
-                        change.consume()
-                        val radius = size.width / 2f
-                        val centered = change.position - Offset(radius, radius)
-                        val clamped = clampToRadius(centered, radius)
-                        knob = clamped
-                        onStick(-clamped.y / radius, clamped.x / radius)
+                        if (enabled) {
+                            change.consume()
+                            val radius = size.width / 2f
+                            val centered = change.position - Offset(radius, radius)
+                            val clamped = clampToRadius(centered, radius)
+                            knob = clamped
+                            onStick(-clamped.y / radius, clamped.x / radius)
+                        }
                     },
                     onDragEnd = {
                         knob = Offset.Zero
-                        onStick(0f, 0f)
+                        if (enabled) onStick(0f, 0f)
                     },
                     onDragCancel = {
                         knob = Offset.Zero
-                        onStick(0f, 0f)
+                        if (enabled) onStick(0f, 0f)
                     },
                 )
             },

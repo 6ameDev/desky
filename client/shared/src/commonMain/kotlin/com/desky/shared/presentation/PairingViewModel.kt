@@ -16,11 +16,15 @@ import kotlinx.coroutines.launch
 /**
  * Pairing screen state (unidirectional data flow: single [StateFlow] +
  * explicit intents below).
+ *
+ * The robot endpoint is fixed (`192.168.4.1:3333` — pairing/auth v1), so
+ * there is no IP/host field: [pin] holds the 6-digit pairing code shown on
+ * the robot display.
  */
 data class PairingUiState(
-    val ip: String = "",
     val pin: String = "",
     val isPairing: Boolean = false,
+    val pairingAttempt: Int = 1,
     val pairedDevice: PairedDevice? = null,
     val error: String? = null,
 )
@@ -49,10 +53,6 @@ class PairingViewModel(
         }
     }
 
-    fun onIpChange(ip: String) {
-        _state.update { it.copy(ip = ip, error = null) }
-    }
-
     fun onPinChange(pin: String) {
         _state.update { it.copy(pin = pin, error = null) }
     }
@@ -61,16 +61,27 @@ class PairingViewModel(
      * Starts pairing. Guards re-entry via [PairingUiState.isPairing]: the flag
      * is set synchronously (before the coroutine is even scheduled), so a
      * second tap while a pairing is in flight is a no-op.
+     *
+     * Bonded gate: while [PairingUiState.pairedDevice] is non-null the Pair
+     * button is disabled (the UI binds `enabled` to this too) — only Forget
+     * ([onUnpair], always enabled) plus the screen's auto-retry are offered,
+     * so a second bond can never be stacked over a live one.
      */
     fun onPair() {
         if (_state.value.isPairing) return
-        _state.update { it.copy(isPairing = true, error = null) }
+        if (_state.value.pairedDevice != null) return
+        // Snapshot the PIN before launch: the field stays enabled during
+        // pairing (UX-owned), so reading inside the coroutine could race an edit.
+        val code = _state.value.pin
+        _state.update { it.copy(isPairing = true, pairingAttempt = 1, error = null) }
         viewModelScope.launch {
-            when (val result = pairUC(_state.value.ip, _state.value.pin)) {
+            when (val result = pairUC(code) { a, _ ->
+                _state.update { it.copy(pairingAttempt = a) }
+            }) {
                 is Outcome.Success ->
-                    _state.update { it.copy(isPairing = false, pairedDevice = result.data) }
+                    _state.update { it.copy(isPairing = false, pairingAttempt = 1, pairedDevice = result.data) }
                 is Outcome.Failure ->
-                    _state.update { it.copy(isPairing = false, error = result.reason) }
+                    _state.update { it.copy(isPairing = false, pairingAttempt = 1, error = result.reason) }
             }
         }
     }
@@ -79,7 +90,7 @@ class PairingViewModel(
         viewModelScope.launch {
             when (val result = forgetUC()) {
                 is Outcome.Success ->
-                    _state.update { it.copy(pairedDevice = null, error = null) }
+                    _state.update { it.copy(pairedDevice = null, pairingAttempt = 1, error = null) }
                 is Outcome.Failure ->
                     _state.update { it.copy(error = result.reason) }
             }

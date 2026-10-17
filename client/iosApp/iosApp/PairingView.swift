@@ -19,7 +19,6 @@ final class PairingViewState: ObservableObject {
         }
     }
 
-    func onIpChange(_ ip: String) { vm.onIpChange(ip: ip) }
     func onPinChange(_ pin: String) { vm.onPinChange(pin: pin) }
     func onPair() { vm.onPair() }
     func onUnpair() { vm.onUnpair() }
@@ -28,6 +27,17 @@ final class PairingViewState: ObservableObject {
 struct PairingView: View {
     @StateObject private var state: PairingViewState
     @Binding var selection: DeskyTab
+    // Hint-only: PairingViewModel owns no ALIVE loop, so the rejoin knock
+    // has no target here — the knock fires from ControlView (plus its
+    // onAppear covers pairing -> controls navigation).
+    @ObservedObject private var wifi = WifiRejoinMonitor.shared
+
+    private func pairingLabel(_ snapshot: PairingUiState) -> String {
+        guard snapshot.isPairing else { return "Pair" }
+        return snapshot.pairingAttempt <= 1
+            ? "Pairing…"
+            : "Pairing… (attempt \(snapshot.pairingAttempt))"
+    }
 
     init(vm: PairingViewModel, selection: Binding<DeskyTab>) {
         _state = StateObject(wrappedValue: PairingViewState(vm: vm))
@@ -37,21 +47,20 @@ struct PairingView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Pair with Desky").font(.title2).bold()
-            TextField("Robot IP", text: Binding(
-                get: { state.snapshot.ip },
-                set: { state.onIpChange($0) }
-            ))
-            .textFieldStyle(.roundedBorder)
-            // numbersAndPunctuation, not decimalPad: IPs need dots (192.168.4.1).
-            .keyboardType(.numbersAndPunctuation)
-            .autocorrectionDisabled(true)
-            .textInputAutocapitalization(.never)
-            SecureField("PIN", text: Binding(
+            if !wifi.isOnWifi {
+                Text("Not on Wi-Fi — join the desky Wi-Fi in Settings to pair.")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+            TextField("Pairing code", text: Binding(
                 get: { state.snapshot.pin },
                 set: { state.onPinChange($0) }
             ))
             .textFieldStyle(.roundedBorder)
-            Button(state.snapshot.isPairing ? "Pairing…" : "Pair") {
+            .keyboardType(.numberPad)
+            .autocorrectionDisabled(true)
+            .textInputAutocapitalization(.never)
+            Button(pairingLabel(state.snapshot)) {
                 state.onPair()
             }
             .buttonStyle(.borderedProminent)

@@ -18,6 +18,10 @@ final class SharedGraph: ObservableObject {
         pairingVM = koin.pairingViewModel()
         controlVM = koin.robotControlViewModel()
         settingsVM = koin.settingsViewModel()
+        // App-scope Wi-Fi rejoin monitor (TASK 4.ii): started once here so
+        // it outlives any single tab; views observe `.wifiRejoined` /
+        // `isOnWifi` on the shared singleton. Monitor-only, no Kotlin API.
+        WifiRejoinMonitor.shared.start()
     }
 }
 

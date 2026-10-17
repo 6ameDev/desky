@@ -4,15 +4,23 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.desky.shared.domain.ControlCommand
 import com.desky.shared.domain.DeviceRepository
+import com.desky.shared.domain.DriveCounter
 import com.desky.shared.domain.ESTOP_FLAG
+import com.desky.shared.domain.AliveUseCase
 import com.desky.shared.domain.EmergencyStopUseCase
+import com.desky.shared.domain.ForgetDeviceUseCase
+import com.desky.shared.domain.GetBondPskUseCase
 import com.desky.shared.domain.ObserveTelemetryUseCase
 import com.desky.shared.domain.Outcome
 import com.desky.shared.domain.PairedDevice
+import com.desky.shared.domain.RekeyUseCase
 import com.desky.shared.domain.RobotMode
-import com.desky.shared.domain.SendRobotControlCommandUseCase
+import com.desky.shared.domain.SendSignedControlUseCase
 import com.desky.shared.domain.Telemetry
+import com.desky.shared.domain.UdpSocketBinder
 import com.desky.shared.domain.UdpSocketManager
+import com.desky.shared.domain.hexToBytes
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,6 +29,10 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlin.concurrent.Volatile
+import kotlin.math.abs
 
 /** Link state of the control screen. */
 enum class Connectivity {
@@ -28,6 +40,61 @@ enum class Connectivity {
     Unpaired,
     Connected,
 }
+
+/**
+ * Telemetry link timeout: silence longer than this demotes
+ * [RobotControlUiState.connectivity] from [Connectivity.Connected] back to
+ * [Connectivity.Disconnected] (M2 — one packet used to latch Connected
+ * forever). Counted in send-loop ticks inside the ViewModel (timeout / tick),
+ * never wall-clock, so tests drive it with virtual time.
+ */
+const val TELEMETRY_TIMEOUT_MS = 2000L
+
+/**
+ * Idle heartbeat period: while the sticks sit centered (and the e-stop is
+ * clear) the send loop transmits only this often instead of every [tickMs].
+ * 200 ms is far below the robot's ~500 ms stale-command failsafe
+ * ([STALE_MS][com.desky.shared.domain.STALE_MS]) — a 2.5x margin — so the
+ * failsafe can never trip, while radio/CPU/battery cost drops ~10x at rest.
+ * Any stick deflection, latched e-stop, or stick activity within the last
+ * [IDLE_HEARTBEAT_MS] restores full-rate ([tickMs]) sends immediately.
+ */
+const val IDLE_HEARTBEAT_MS = 200L
+
+/**
+ * Telemetry UI coalescing window: the robot streams telemetry at ~15 Hz
+ * ([CFG_TELEMETRY_HZ][com.desky.shared.domain.CFG_TELEMETRY_HZ]), but the
+ * screen only needs ~5 Hz. Every packet still resets the link timeout and
+ * promotes [RobotControlUiState.connectivity] to [Connectivity.Connected]
+ * (cheap logic path), while the heavy `telemetry`/`mode` copy into [_state]
+ * — which recomposes the whole screen — happens at most once per
+ * [TELEMETRY_UI_MS], or immediately on a high-value edge (mode flip, cliff
+ * bit flip, driving bit flip). Counted in send-loop ticks (virtual-time
+ * friendly, like the idle heartbeat); same 200 ms value as
+ * [IDLE_HEARTBEAT_MS] by design, but a separate constant so the two rates
+ * can diverge.
+ */
+const val TELEMETRY_UI_MS = 200L
+
+/**
+ * `ALIVE` keepalive period: while paired (session ready) the send loop
+ * transmits one signed `ALIVE` (`0x55`) this often on its OWN tick clock
+ * ([ticksSinceAlive]), independent of the drive idle heartbeat above. 2 Hz
+ * is far inside the robot's 5 s alive window
+ * (`kAliveMs` — a 10x margin), so telemetry keeps flowing unicast even
+ * when the sticks sit centered and the drive loop idles to ~5 Hz. A valid
+ * `ALIVE` consumes the shared counter exactly like drive (monotonic
+ * preserved). Fire-and-forget: the robot never replies — steady telemetry
+ * is the ACK, and send errors never touch the error banner.
+ */
+const val ALIVE_INTERVAL_MS = 500L
+
+/**
+ * Stick deflection above this magnitude counts as active driving (full
+ * 50 Hz). Below it the sticks read as centered (stick noise/rest never holds
+ * the radio at full rate).
+ */
+const val STICK_ACTIVE_THRESHOLD = 0.02f
 
 /** Drive-screen state (UDF: single [StateFlow] + explicit intents below). */
 data class RobotControlUiState(
@@ -41,34 +108,129 @@ data class RobotControlUiState(
 )
 
 /**
- * Drives the robot-control screen.
+ * Drives the robot-control screen (pairing/auth Task 9: every frame is an
+ * authenticated `DRIVE_V2` datagram).
  *
  * On init the VM waits for the first non-null pairing, then starts two
  * child coroutines:
  * - telemetry collection, which promotes [RobotControlUiState.connectivity]
- *   to [Connectivity.Connected] and mirrors the packet mode/telemetry;
- * - the command send loop, which transmits the latest stick position every
- *   [tickMs] and NEVER pauses — the centered heartbeat defeats the robot's
- *   ~500 ms stale-command failsafe ([STALE_MS][com.desky.shared.domain.STALE_MS]).
- *   While [RobotControlUiState.eStopped] is latched the loop sends centered
- *   sticks with [ESTOP_FLAG].
+ *   to [Connectivity.Connected] on EVERY packet (cheap logic path: timeout
+ *   reset + Connected promotion stay snappy at the full 15 Hz) but copies
+ *   the packet mode/telemetry into state at most every [TELEMETRY_UI_MS]
+ *   (~5 Hz) or on a high-value edge (mode flip, cliff bit flip, driving
+ *   bit flip), so the screen recomposes at ~5 Hz instead of 15 Hz;
+ *   silence longer than [TELEMETRY_TIMEOUT_MS] demotes back to
+ *   [Connectivity.Disconnected] (the last packet stays visible);
+ * - the command send loop, which transmits the latest stick position at
+ *   full rate (every [tickMs], 50 Hz) while driving and idles down to one
+ *   heartbeat every [IDLE_HEARTBEAT_MS] (~5 Hz) on centered sticks — either
+ *   way the heartbeat defeats the robot's ~500 ms stale-command failsafe
+ *   ([STALE_MS][com.desky.shared.domain.STALE_MS]). While
+ *   [RobotControlUiState.eStopped] is latched the loop sends centered
+ *   sticks with [ESTOP_FLAG] at full rate.
  *
- * A missing pairing surfaces as [Connectivity.Unpaired] until telemetry
- * arrives; a later unpair pauses the send loop until re-pair.
- * [tickMs] is a constructor parameter so tests can drive virtual
- * time.
+ * Drive session: after the first pairing the loop loads the bond PSK via
+ * [GetBondPskUseCase] ONCE and caches it in memory, seeding the shared
+ * [DriveCounter] from the Room row (`lastCounter`), so the first wire
+ * packet uses counter 1 after a fresh pair. Each send allocates the next
+ * counter from the holder (which persists to Room every 128th allocation).
+ * A missing PSK surfaces [Connectivity.Unpaired] + "Please re-pair to
+ * drive" and sends NOTHING (never legacy frames); the miss is latched per
+ * device so the vault is still read at most once (the idle loop does not
+ * retry).
  *
- * @param udp transport handle, kept for API symmetry with the use cases
- *   (future direct-socket needs, e.g. lifecycle close); the VM itself only
- *   talks to the robot through the use cases.
+ * A later unpair pauses the send loop until re-pair (the loop re-reads
+ * [currentDevice] every tick) and drops the cached PSK plus the holder era,
+ * so the next pairing reloads both fresh (one more vault read for the new
+ * session). The session mutex serializes counter allocation between the
+ * loop tick and the immediate e-stop frame so both share one strictly
+ * increasing counter sequence; the actual network send always happens
+ * OUTSIDE the lock so a stalled send never blocks the other path.
+ * [tickMs] is a constructor parameter so tests can drive virtual time.
+ *
+ * Robot alive rule (`ALIVE` / `DISCONNECT`, null [aliveUC] keeps both
+ * inert): once the session is ready the loop also transmits one signed
+ * `ALIVE` immediately and then every [ALIVE_INTERVAL_MS] on its own tick
+ * clock (independent of the drive idle heartbeat above) — each `ALIVE`
+ * allocates from the same shared [DriveCounter], so the monotonic sequence
+ * is preserved and telemetry keeps flowing unicast inside the robot's 5 s
+ * alive window. `ALIVE` results never touch [_state] (telemetry is the
+ * ACK). [onBackground] sends `DISCONNECT` 2x fire-and-forget (bond kept)
+ * before pausing; [onForeground] forces the `ALIVE` clock due so the next
+ * tick knocks immediately.
+ *
+ * Disconnected gating: while [RobotControlUiState.connectivity] is
+ * [Connectivity.Disconnected], [onStick], [onEmergencyStop], and
+ * [onReleaseEmergency] are no-ops (early return — no state change, latched
+ * error kept). The drive send loop and the `ALIVE` knock keep running
+ * underneath; the first telemetry promotes back to [Connectivity.Connected]
+ * via the existing path and re-enables input.
+ *
+ * Lifecycle / ownership (no behavior change while driving):
+ * - the telemetry + send loops are children of `viewModelScope` and stop
+ *   automatically in [onCleared] (the robot's ~500 ms stale-command failsafe
+ *   covers the stop);
+ * - [onBackground]/[onForeground] pause/resume the send loop when the
+ *   control screen leaves/returns (flag checked each tick: skips send +
+ *   counter alloc, still delays). Unpair pauses the same way.
+ *
+ * @param udp transport handle, kept for API symmetry with the use cases;
+ *   the VM itself only talks to the robot through the use cases and MUST
+ *   NOT close it. Ownership: the socket is a Koin app-scope singleton
+ *   (see `dataModule`), closed only by the app scope (`DeskyApp`), never
+ *   by a ViewModel — closing it here would break every other screen.
  */
 class RobotControlViewModel(
-    private val sendUC: SendRobotControlCommandUseCase,
+    private val sendUC: SendSignedControlUseCase,
     private val observeTelemetryUC: ObserveTelemetryUseCase,
     private val emergencyUC: EmergencyStopUseCase,
     private val deviceRepo: DeviceRepository,
+    private val getBondPskUC: GetBondPskUseCase,
     private val udp: UdpSocketManager,
+    private val driveCounter: DriveCounter,
     private val tickMs: Long = 20,
+    /**
+     * Tier-1 silent auto-rekey trigger (stub this pass — see [maybeRekey]):
+     * null in tests/legacy call sites (rekey checking inert); production
+     * DI passes the shared [RekeyUseCase]. Follow-up tunes the background
+     * launch + session-cache refresh so the rotation fires proactively at
+     * [DriveCounter.needsRekey] with zero send-loop stall.
+     */
+    private val rekeyUC: RekeyUseCase? = null,
+    /**
+     * Robot alive rule keepalive (see [ALIVE_INTERVAL_MS]): null in
+     * tests/legacy call sites (`ALIVE`/`DISCONNECT` inert — drive counters
+     * and background behavior stay exactly as before); production DI
+     * passes the shared [AliveUseCase]. When present the send loop
+     * transmits one signed `ALIVE` immediately on the first paired tick
+     * (session ready) and then every [ALIVE_INTERVAL_MS] on its own tick
+     * clock, and [onBackground] sends `DISCONNECT` 2x fire-and-forget.
+     */
+    private val aliveUC: AliveUseCase? = null,
+    /**
+     * AP-rejoin signal (see [UdpSocketBinder.networkAvailable]): null in
+     * tests/legacy call sites and on JVM/iOS (no binder — iOS has no
+     * `NWPathMonitor` binder yet, so rejoin there relies on the steady 2 Hz
+     * cadence); production Android DI passes the shared `WifiSocketBinder`.
+     * When present the VM collects it and forces the `ALIVE` clock due, so
+     * the next tick knocks immediately like [onForeground] (without
+     * clearing the background pause). The Android 1 s debounce suffices —
+     * no ViewModel debounce: repeated due-flags before the next tick
+     * collapse idempotently to one `ALIVE`.
+     */
+    private val socketBinder: UdpSocketBinder? = null,
+    /**
+     * Broken-row convergence (nav-guard Task 2): null in tests/legacy call
+     * sites (missing/exhausted surfaces stay local-only); production DI
+     * passes the shared [ForgetDeviceUseCase]. On the missing-PSK and
+     * session-exhausted paths the VM fires forget-once per device (latched
+     * like [pskMissingFor], so per-tick clears never happen) — the repo
+     * emits null and the global [SessionGateViewModel] fence navigates to
+     * Pairing. `UNBOND` best-effort inside is already null-safe (missing PSK
+     * or exhausted counter skips the send). Disconnected (link-down) never
+     * forgets — only Unpaired/missing/exhausted converge.
+     */
+    private val forgetUC: ForgetDeviceUseCase? = null,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(RobotControlUiState())
@@ -77,7 +239,144 @@ class RobotControlViewModel(
     /** Last known pairing, tracked live: forgetting the device mid-session pauses sends. */
     private val currentDevice = MutableStateFlow<PairedDevice?>(null)
 
+    /**
+     * Background pause flag for [onBackground]/[onForeground]. Checked once
+     * per send-loop tick: while true the tick skips vault/counter/send and
+     * just delays (no counter allocated, session cache kept so resume needs
+     * no vault re-read). Volatile so a background call from any thread is
+     * visible to the Main loop without a lock.
+     */
+    @Volatile
+    private var backgroundPaused = false
+
+    /**
+     * Send-loop ticks since the last telemetry packet — the M2 timeout
+     * basis. Reset by the telemetry collector, incremented once per paired
+     * send-loop iteration (one tick == one [tickMs], so the timeout is
+     * virtual-time friendly). Both coroutines run on `viewModelScope`
+     * (Main), so a plain var suffices — no suspend point sits between any
+     * read and the matching write.
+     */
+    private var ticksSinceTelemetry = 0
+
+    /** Silent send-loop ticks before Connected demotes to Disconnected. */
+    private val telemetryTimeoutTicks: Int =
+        maxOf(1, (TELEMETRY_TIMEOUT_MS / tickMs.coerceAtLeast(1)).toInt())
+
+    /**
+     * Idle-heartbeat gating, counted in send-loop ticks (virtual-time
+     * friendly, like [ticksSinceTelemetry]). [ticksSinceActivity] resets on
+     * every actively-driven tick (stick deflection, latched e-stop, or a
+     * deflected [onStick] between ticks) and caps at [idleTickEvery], so the
+     * 200 ms after any activity stays full-rate; [ticksSinceIdleSend] spaces
+     * the ~5 Hz heartbeats once idle. Both run on `viewModelScope` (Main),
+     * so plain vars suffice — see [ticksSinceTelemetry].
+     */
+    private var ticksSinceActivity = 0
+    private var ticksSinceIdleSend = 0
+
+    /** Paired-loop ticks per idle heartbeat ([IDLE_HEARTBEAT_MS] / [tickMs]). */
+    private val idleTickEvery: Int =
+        maxOf(1, (IDLE_HEARTBEAT_MS / tickMs.coerceAtLeast(1)).toInt())
+
+    /** Paired-loop ticks per `ALIVE` keepalive ([ALIVE_INTERVAL_MS] / [tickMs]). */
+    private val aliveTickEvery: Int =
+        maxOf(1, (ALIVE_INTERVAL_MS / tickMs.coerceAtLeast(1)).toInt())
+
+    /**
+     * Send-loop ticks since the last `ALIVE` keepalive — the 2 Hz clock.
+     * Incremented once per paired, non-backgrounded send-loop iteration
+     * (virtual-time friendly, like [ticksSinceTelemetry]) and fully
+     * independent of the drive idle heartbeat above: `ALIVE` goes out even
+     * on ticks where the drive loop idles to a skip. Starts due (==
+     * [aliveTickEvery]) so the first paired tick — vault + Room + socket
+     * done, session ready — transmits immediately; [onForeground], the AP-
+     * rejoin collector, and the unpair reset force it due again for the same
+     * immediate reason. Runs
+     * on `viewModelScope` (Main), so a plain var suffices — see
+     * [ticksSinceTelemetry].
+     */
+    private var ticksSinceAlive: Int = aliveTickEvery
+
+    /** Paired-loop ticks per telemetry UI copy ([TELEMETRY_UI_MS] / [tickMs]). */
+    private val telemetryUiEvery: Int =
+        maxOf(1, (TELEMETRY_UI_MS / tickMs.coerceAtLeast(1)).toInt())
+
+    /**
+     * Send-loop ticks since the last telemetry UI copy — the ~5 Hz
+     * coalescing clock. Reset by the telemetry collector on every UI copy,
+     * incremented once per paired send-loop iteration (virtual-time
+     * friendly). Starts due so the first packet paints immediately. Runs
+     * on `viewModelScope` (Main), so a plain var suffices — see
+     * [ticksSinceTelemetry].
+     */
+    private var ticksSinceTelemetryUi = 10_000
+
+    /** Drive-session cache, guarded by [sessionMutex]. Null PSK = no session loaded. */
+    private val sessionMutex = Mutex()
+    private var sessionPsk: ByteArray? = null
+    /**
+     * Tier-1 rekey in-flight guard for [maybeRekey]: while true a rotation
+     * attempt is outstanding (or recently finished) — the per-tick check
+     * skips re-firing. Runs on `viewModelScope` (Main), so a plain var
+     * suffices — see [ticksSinceTelemetry].
+     */
+    private var rekeyInFlight = false
+    /**
+     * Device id whose vault lookup already came back empty. The loop idles
+     * for it (no per-tick vault reads — the vault is read at most once per
+     * session, missing or not); cleared on unpair so a re-pair reloads.
+     */
+    private var pskMissingFor: String? = null
+    /**
+     * Forget-once latch for the broken-row convergence above: device id
+     * whose missing/exhausted forget already fired. Set synchronously
+     * before the `viewModelScope` launch so per-tick calls collapse to one
+     * repo clear; cleared on unpair (same place as [pskMissingFor]) so a
+     * re-pair can converge again.
+     */
+    private var forgetFiredFor: String? = null
+
+    /**
+     * Correlation markers (log-only, no behavior change): sessionReady /
+     * firstAliveSent / firstTelemetrySeen, each once per session, reset on
+     * unpair. Wall-clock comes from the platform log timestamp (logcat /
+     * stdout); the robot side logs the same names with `millis()` + boot-id,
+     * so a session's app/robot timelines join on the shared marker names +
+     * counter values. Never log key material (PSK/nonce); counters/era/mode
+     * are safe.
+     */
+    private var loggedSessionReady = false
+    private var loggedFirstAlive = false
+    private var loggedFirstTelemetry = false
+
+    /**
+     * App-side correlation marker sink. commonMain has no shared logger
+     * (androidMain uses `android.util.Log`; commonMain has none), so plain
+     * `println` — visible in logcat, JVM stdout, and the iOS console —
+     * with a `RobotControl` tag prefix.
+     */
+    private fun logMarker(msg: String) {
+        println("RobotControl $msg")
+    }
+
     init {
+        // AP rejoin (Android `WifiSocketBinder.onAvailable`, debounced):
+        // force the `ALIVE` clock due so the next send-loop tick knocks
+        // immediately, same as [onForeground] but without resuming a
+        // background pause. Unconditional by design: while unpaired the
+        // unpair branch already holds the clock due, and while backgrounded
+        // the loop skips `ALIVE` anyway — the flag simply waits for the next
+        // foreground tick. Idempotent: a flap burst before the next tick
+        // collapses to one `ALIVE` (the Android 1 s debounce already drops
+        // the connect/re-validate burst).
+        socketBinder?.let { binder ->
+            viewModelScope.launch {
+                binder.networkAvailable.collect {
+                    ticksSinceAlive = aliveTickEvery
+                }
+            }
+        }
         viewModelScope.launch {
             deviceRepo.observePaired().collect { paired ->
                 currentDevice.value = paired
@@ -94,30 +393,178 @@ class RobotControlViewModel(
             deviceRepo.observePaired().filterNotNull().first()
             launch {
                 observeTelemetryUC().collect { telemetry ->
-                    _state.update {
-                        it.copy(
-                            telemetry = telemetry,
-                            mode = telemetry.mode,
-                            connectivity = Connectivity.Connected,
-                        )
+                    // Logic path (every packet, cheap): the link is alive.
+                    ticksSinceTelemetry = 0
+                    if (!loggedFirstTelemetry) {
+                        loggedFirstTelemetry = true
+                        logMarker("firstTelemetrySeen mode=${telemetry.mode}")
+                    }
+                    val prev = _state.value
+                    // UI path (gated, expensive): copy telemetry/mode only
+                    // when due or high-value, so a 15 Hz stream recomposes
+                    // at ~5 Hz. Promotion from non-Connected always paints
+                    // (fresh packet after silence must be visible); edges
+                    // (mode/cliff/driving flips) paint immediately even
+                    // inside the window. Otherwise skip [_state] entirely —
+                    // already Connected means "ensure Connected" is a no-op.
+                    val highValueChange = prev.telemetry == null ||
+                        prev.mode != telemetry.mode ||
+                        prev.telemetry.mode != telemetry.mode ||
+                        prev.telemetry.cliff != telemetry.cliff ||
+                        prev.telemetry.driving != telemetry.driving
+                    val timeDue = ticksSinceTelemetryUi >= telemetryUiEvery
+                    if (prev.connectivity != Connectivity.Connected || highValueChange || timeDue) {
+                        ticksSinceTelemetryUi = 0
+                        _state.update {
+                            it.copy(
+                                telemetry = telemetry,
+                                mode = telemetry.mode,
+                                connectivity = Connectivity.Connected,
+                            )
+                        }
                     }
                 }
             }
             launch {
                 while (true) {
                     val dev = currentDevice.value
-                    if (dev != null) {
-                        val snapshot = _state.value
-                        val cmd = if (snapshot.eStopped) {
-                            ControlCommand(snapshot.mode, 0f, 0f, ESTOP_FLAG)
-                        } else {
-                            ControlCommand(snapshot.mode, snapshot.throttle, snapshot.steering, 0)
+                    if (dev == null) {
+                        // Paused AND cache dropped: re-pair reloads PSK +
+                        // counter fresh (a new vault read for the new session).
+                        sessionMutex.withLock {
+                            sessionPsk = null
+                            pskMissingFor = null
+                            forgetFiredFor = null
+                            driveCounter.reset()
                         }
-                        when (val result = sendUC(dev, cmd)) {
-                            is Outcome.Success -> Unit
-                            is Outcome.Failure ->
+                        rekeyInFlight = false
+                        ticksSinceTelemetry = 0
+                        ticksSinceActivity = 0
+                        ticksSinceIdleSend = 0
+                        ticksSinceTelemetryUi = telemetryUiEvery
+                        // Re-pair knocks immediately (first paired tick due).
+                        ticksSinceAlive = aliveTickEvery
+                        // New session: correlation markers fire once again.
+                        loggedSessionReady = false
+                        loggedFirstAlive = false
+                        loggedFirstTelemetry = false
+                        delay(tickMs)
+                        continue
+                    }
+                    // M2 telemetry timeout: one packet must not latch
+                    // Connected forever. Past the silence budget demote to
+                    // Disconnected (last packet stays visible); only ever
+                    // demotes FROM Connected, so the pre-telemetry Unpaired
+                    // state is untouched. The UI coalescing clock advances
+                    // on the same wall ticks so the ~5 Hz gate runs on
+                    // virtual time.
+                    if (ticksSinceTelemetry < telemetryTimeoutTicks) {
+                        ticksSinceTelemetry++
+                    }
+                    if (ticksSinceTelemetryUi < telemetryUiEvery) {
+                        ticksSinceTelemetryUi++
+                    }
+                    if (ticksSinceTelemetry >= telemetryTimeoutTicks &&
+                        _state.value.connectivity == Connectivity.Connected
+                    ) {
+                        _state.update { it.copy(connectivity = Connectivity.Disconnected) }
+                    }
+                    // Background pause: skip vault/counter/send, keep the
+                    // tick delay. Session cache is kept (unlike unpair), so
+                    // resume needs no vault re-read and counters stay gapless.
+                    if (backgroundPaused) {
+                        delay(tickMs)
+                        continue
+                    }
+                    // `ALIVE` keepalive (own 2 Hz clock, before the drive
+                    // idle gate so it stays independent of it): due ticks
+                    // allocate one shared counter via the session helper
+                    // and transmit fire-and-forget — the result is
+                    // deliberately ignored (telemetry is the ACK; a lost
+                    // keepalive never touches the error banner). A null
+                    // allocation (missing PSK / exhausted era) skips
+                    // silently: the drive section below owns both surfaces.
+                    // Null [aliveUC] (tests/legacy graphs) skips the alloc
+                    // too, so legacy counter sequences are untouched.
+                    // Increment-first (same idiom as the telemetry timeout
+                    // above), so the steady period is exactly
+                    // [aliveTickEvery] ticks: due at tick N means the next
+                    // due tick is N + aliveTickEvery.
+                    if (ticksSinceAlive < aliveTickEvery) {
+                        ticksSinceAlive++
+                    }
+                    val aliveDue = ticksSinceAlive >= aliveTickEvery
+                    if (aliveDue) {
+                        ticksSinceAlive = 0
+                    }
+                    if (aliveDue && aliveUC != null) {
+                        val alivePrepared = sessionMutex.withLock { sessionCounterLocked(dev) }
+                        if (alivePrepared != null) {
+                            val (alivePsk, aliveCounter) = alivePrepared
+                            aliveUC(dev, alivePsk, dev.era, aliveCounter)
+                            if (!loggedFirstAlive) {
+                                loggedFirstAlive = true
+                                logMarker("firstAliveSent era=${dev.era} ctr=$aliveCounter")
+                            }
+                        }
+                    }
+                    val snapshot = _state.value
+                    // Idle heartbeat: centered + e-stop-clear + no activity
+                    // in the last IDLE_HEARTBEAT_MS idles to ~5 Hz; anything
+                    // else sends every tick. Telemetry counting above stays
+                    // on wall ticks (it already ran), and skipped ticks
+                    // allocate NO counter (DriveCounter.next only runs on a
+                    // real send) and leave a latched error untouched.
+                    val driveActive = snapshot.eStopped ||
+                        abs(snapshot.throttle) > STICK_ACTIVE_THRESHOLD ||
+                        abs(snapshot.steering) > STICK_ACTIVE_THRESHOLD
+                    if (driveActive) {
+                        ticksSinceActivity = 0
+                    } else if (ticksSinceActivity < idleTickEvery) {
+                        ticksSinceActivity++
+                    }
+                    val fullRate = driveActive || ticksSinceActivity < idleTickEvery
+                    if (fullRate) {
+                        ticksSinceIdleSend = 0
+                    } else {
+                        ticksSinceIdleSend++
+                        if (ticksSinceIdleSend < idleTickEvery) {
+                            delay(tickMs)
+                            continue
+                        }
+                        ticksSinceIdleSend = 0
+                    }
+                    val cmd = if (snapshot.eStopped) {
+                        ControlCommand(snapshot.mode, 0f, 0f, ESTOP_FLAG)
+                    } else {
+                        ControlCommand(snapshot.mode, snapshot.throttle, snapshot.steering, 0)
+                    }
+                    // Allocate (psk, counter) under the session mutex, then
+                    // send OUTSIDE the lock: udp.send has unbounded latency
+                    // and must never stall the e-stop path behind a loop tick.
+                    // Tier-1 rekey probe first (stub: no-op unless the era is
+                    // within REKEY_MARGIN of the gate — see maybeRekey).
+                    maybeRekey(dev)
+                    val prepared = sessionMutex.withLock { sessionCounterLocked(dev) }
+                    val result = if (prepared == null) {
+                        // Exhaustion (fail-closed counter gate) vs. missing
+                        // PSK: distinct copy — the former needs an explicit
+                        // re-pair, and no UNBOND counter is consumed after it
+                        // (ForgetDeviceUseCase skips the send on null).
+                        if (driveCounter.isExhausted()) sessionExpired(dev) else missingPsk(dev)
+                    } else {
+                        val (psk, next) = prepared
+                        sendUC(dev, cmd, psk, next)
+                    }
+                    when (result) {
+                        is Outcome.Success ->
+                            if (_state.value.error != null) {
+                                _state.update { it.copy(error = null) }
+                            }
+                        is Outcome.Failure ->
+                            if (_state.value.error != result.reason) {
                                 _state.update { it.copy(error = result.reason) }
-                        }
+                            }
                     }
                     delay(tickMs)
                 }
@@ -125,41 +572,363 @@ class RobotControlViewModel(
         }
     }
 
-    /** Stick deflection in -1..1 (clamped). Never clears a latched e-stop. */
+    /**
+     * Session load + counter allocation shared by the loop tick and the
+     * immediate e-stop frame, so both consume one strictly increasing
+     * sequence from the shared [DriveCounter]. Must hold [sessionMutex].
+     * Returns null when there is no PSK or no counter available (caller
+     * reports [missingPsk] for the loop tick, or skips the immediate frame
+     * for e-stop — the loop sends the latched variant on its next tick).
+     * Never performs network I/O: callers send OUTSIDE the lock so a
+     * stalled send cannot block the other path's allocation.
+     * The holder's fail-closed gate ([DriveCounter.EXHAUSTION_GATE]) refuses
+     * to allocate at/above the gate (latching [DriveCounter.isExhausted] —
+     * 0 is never valid on the wire and the wrap-adjacent region stays
+     * unused); callers tell exhaustion apart from a missing PSK via the
+     * latch and report [sessionExpired] instead of [missingPsk].
+     */
+    private suspend fun sessionCounterLocked(dev: PairedDevice): Pair<ByteArray, UInt>? {
+        var psk = sessionPsk
+        if (psk == null) {
+            // Missing-PSK latch: the loop idles for this device instead of
+            // reading the vault every tick (at most one vault read per
+            // session, keyless or not).
+            if (pskMissingFor == dev.id) return null
+            val hex = getBondPskUC()
+            if (hex == null) {
+                pskMissingFor = dev.id
+                return null
+            }
+            // Vault-hex guard: at-rest corruption (odd length / non-hex) throws
+            // inside hexToBytes — without this the send-loop coroutine dies on
+            // the first tick (ALIVE, drive, e-stop all share this choke).
+            // Wrong-length valid hex (e.g. "abcd" -> 2 bytes) is rejected too:
+            // encodeSigned requires the 16-byte bond PSK. All undecodable
+            // entries reuse the existing missing-PSK path (latched, one vault
+            // read per session; drive surfaces the re-pair copy, ALIVE and
+            // e-stop stay silent).
+            val decoded = try {
+                hexToBytes(hex)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            if (decoded == null || decoded.size != 16) {
+                logMarker("sessionPskUndecodable")
+                pskMissingFor = dev.id
+                return null
+            }
+            psk = decoded
+            sessionPsk = psk
+        }
+        // Seed from Room on a fresh era only; a live era is a no-op, so the
+        // watermark (and the negotiated persist cadence + rekey era) can
+        // never be rewound mid-session.
+        driveCounter.ensure(dev.id, dev.lastCounter, dev.persistEvery, dev.era)
+        val next = driveCounter.next() ?: return null
+        if (!loggedSessionReady) {
+            loggedSessionReady = true
+            logMarker("sessionReady id=${dev.id} era=${dev.era} ctr=$next")
+        }
+        return psk to next
+    }
+
+    /**
+     * Tier-1 silent auto-rekey trigger STUB (this pass): called once per
+     * send-loop tick before counter allocation. When the shared
+     * [DriveCounter] reports [DriveCounter.needsRekey] (counter within
+     * [DriveCounter.REKEY_MARGIN] of the fail-closed gate) the rotation
+     * should fire silently in the background — no UI except a debug log —
+     * and on success refresh [sessionPsk] from the vault (the [RekeyUseCase]
+     * already persisted vault + Room + holder; this VM's in-memory session
+     * cache is the only stale copy) so the next drive uses the new key
+     * gaplessly.
+     *
+     * STUB SCOPE: this pass only probes [needsRekey] (one mutex read — zero
+     * behavior change when false or when [rekeyUC] is null, so all 107
+     * existing tests stay green) and records the trigger; it does NOT
+     * launch the exchange yet. FOLLOW-UP (auto-trigger tuning): background-
+     * launch `rekeyUC()` from `viewModelScope` guarded by [rekeyInFlight]
+     * (never inline — the 3x 1 s ACK wait must not stall the 20 ms send
+     * loop or the robot's 500 ms failsafe trips), refresh [sessionPsk]
+     * under [sessionMutex] on success, clear [rekeyInFlight] + back off on
+     * failure (Tier-2 repair copy owns the gate — never surface rekey
+     * failure to the screen).
+     */
+    private suspend fun maybeRekey(dev: PairedDevice) {
+        val rekey = rekeyUC ?: return
+        if (rekeyInFlight) return
+        if (!driveCounter.needsRekey()) return
+        // Trigger point reached (counter within REKEY_MARGIN of the gate):
+        // park here until the follow-up wires the background launch above.
+        // Intentionally silent — no state/error change (a debug log lands
+        // with the launch patch, where a log backend exists).
+        rekeyInFlight = true
+    }
+
+    private fun missingPsk(dev: PairedDevice): Outcome.Failure {
+        val message = "Please re-pair to drive"
+        val current = _state.value
+        if (current.connectivity != Connectivity.Unpaired || current.error != message) {
+            _state.update {
+                it.copy(
+                    connectivity = Connectivity.Unpaired,
+                    error = message,
+                )
+            }
+        }
+        maybeForget(dev)
+        return Outcome.Failure(message)
+    }
+
+    /**
+     * Tier-2 exhaustion surface: the shared [DriveCounter] hit
+     * [EXHAUSTION_GATE][DriveCounter.EXHAUSTION_GATE] and refuses to allocate
+     * (fail-closed — no counter is consumed, so the loop and
+     * [ForgetDeviceUseCase]'s `UNBOND` both skip their sends). Distinct copy
+     * from [missingPsk]: the bond exists, the session just aged out after
+     * long use — an explicit re-pair starts a fresh era.
+     */
+    private fun sessionExpired(dev: PairedDevice): Outcome.Failure {
+        val message = "Session expired after long use — please re-pair"
+        val current = _state.value
+        if (current.connectivity != Connectivity.Unpaired || current.error != message) {
+            _state.update {
+                it.copy(
+                    connectivity = Connectivity.Unpaired,
+                    error = message,
+                )
+            }
+        }
+        maybeForget(dev)
+        return Outcome.Failure(message)
+    }
+
+    /**
+     * Broken-row convergence fire-once: clears the Room row (vault entry
+     * included) via [forgetUC] so the repo emits null and the session gate
+     * fires. Latched per device id — per-tick missing/exhausted calls
+     * collapse to a single clear. Null [forgetUC] (tests/legacy graphs) is
+     * a no-op. Failures surface as [Outcome.Failure] inside the use case,
+     * never as throws (except cancellation), so the launched child just
+     * ignores the result — the local Unpaired copy above already surfaced.
+     */
+    private fun maybeForget(dev: PairedDevice) {
+        val forget = forgetUC ?: return
+        if (forgetFiredFor == dev.id) return
+        forgetFiredFor = dev.id
+        viewModelScope.launch {
+            try {
+                forget()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Swallowed: the Unpaired copy above already surfaced; a
+                // failed clear retries on the next session (latch resets on
+                // unpair, and the copy persists regardless).
+            }
+        }
+    }
+
+    /**
+     * Stick deflection in -1..1 (clamped) with center deadband + distinct
+     * check: values with abs below [STICK_ACTIVE_THRESHOLD] snap to 0f, and
+     * a call whose snapped values equal the current state skips [_state]
+     * entirely (touch events arrive at 60-120 Hz; the send loop samples
+     * every [tickMs], so steady holds would otherwise recompose ~80-90%
+     * needlessly). Never clears a latched e-stop. A deflected (snapped)
+     * call marks stick activity immediately, so even a blip that recenters
+     * before the next loop tick holds the loop at full rate for
+     * [IDLE_HEARTBEAT_MS] (the loop re-derives activity from the latched
+     * state every tick regardless).
+     *
+     * Disconnected gate: while [RobotControlUiState.connectivity] is
+     * [Connectivity.Disconnected] this is a no-op (early return — no state
+     * change, latched error kept). The `ALIVE` knock keeps going underneath
+     * and the first telemetry re-enables via the existing promotion path.
+     */
     fun onStick(throttle: Float, steering: Float) {
+        if (_state.value.connectivity == Connectivity.Disconnected) return
+        val snappedThrottle = throttle.coerceIn(-1f, 1f).let {
+            if (abs(it) < STICK_ACTIVE_THRESHOLD) 0f else it
+        }
+        val snappedSteering = steering.coerceIn(-1f, 1f).let {
+            if (abs(it) < STICK_ACTIVE_THRESHOLD) 0f else it
+        }
+        if (abs(snappedThrottle) > STICK_ACTIVE_THRESHOLD ||
+            abs(snappedSteering) > STICK_ACTIVE_THRESHOLD
+        ) {
+            ticksSinceActivity = 0
+        }
+        val current = _state.value
+        // distinctUntilChanged: e-stop is never touched here, so throttle +
+        // steering equality alone means no visible change — skip the update.
+        if (current.throttle == snappedThrottle && current.steering == snappedSteering) return
         _state.update {
             it.copy(
-                throttle = throttle.coerceIn(-1f, 1f),
-                steering = steering.coerceIn(-1f, 1f),
+                throttle = snappedThrottle,
+                steering = snappedSteering,
             )
         }
     }
 
     /**
-     * Latches the e-stop: sticks center, an estop frame goes out immediately
-     * via [emergencyUC], and the send loop keeps transmitting
-     * centered+[ESTOP_FLAG] until [onReleaseEmergency].
+     * Latches the e-stop: sticks center, a signed estop frame goes out
+     * immediately via [emergencyUC] (sharing the session counter with the
+     * loop tick under [sessionMutex]), and the send loop keeps transmitting
+     * centered+[ESTOP_FLAG] until [onReleaseEmergency]. When no session is
+     * loaded yet the immediate frame is skipped — the loop sends the latched
+     * variant on its next tick.
+     *
+     * Disconnected gate: while [RobotControlUiState.connectivity] is
+     * [Connectivity.Disconnected] this is a no-op (early return — no latch,
+     * no frame, latched error kept). E-stop included: with no link the
+     * robot's ~500 ms stale-command failsafe is already stopping it, and a
+     * frame the robot drops as stale would only fake confidence.
      */
     fun onEmergencyStop() {
+        if (_state.value.connectivity == Connectivity.Disconnected) return
         _state.update { it.copy(eStopped = true, throttle = 0f, steering = 0f) }
         viewModelScope.launch {
             val paired = currentDevice.value ?: return@launch
-            when (val result = emergencyUC(paired)) {
-                is Outcome.Success -> Unit
-                is Outcome.Failure ->
-                    _state.update { it.copy(error = result.reason) }
+            // Allocate under the session mutex, send outside it: an
+            // in-flight loop send never blocks this immediate frame's
+            // allocation (and vice versa).
+            val prepared = sessionMutex.withLock { sessionCounterLocked(paired) }
+            if (prepared == null) {
+                // Exhausted era: surface the repair copy here too (the loop
+                // tick would on its next pass); a missing PSK stays silent —
+                // the loop owns that copy.
+                if (driveCounter.isExhausted()) sessionExpired(paired)
+                return@launch
+            }
+            val (psk, next) = prepared
+            val result = emergencyUC(paired, psk, next)
+            if (result is Outcome.Failure) {
+                _state.update { it.copy(error = result.reason) }
             }
         }
     }
 
+    /**
+     * Releases a latched e-stop. Disconnected gate (same as [onStick] /
+     * [onEmergencyStop]): while [RobotControlUiState.connectivity] is
+     * [Connectivity.Disconnected] this is a no-op, so a latch held across
+     * a link loss stays latched until telemetry re-enables.
+     */
     fun onReleaseEmergency() {
+        if (_state.value.connectivity == Connectivity.Disconnected) return
         _state.update { it.copy(eStopped = false) }
     }
 
-    // No explicit cancel: the telemetry + send loops are children of
-    // viewModelScope, so they are cancelled automatically here. The robot's
-    // own ~500 ms stale-command failsafe covers the stop.
+    /**
+     * Pause sending while the control screen is in the background (leaving
+     * the room turns off the lights). The next send-loop tick skips
+     * vault/counter/send and just delays; the session cache is kept, so
+     * [onForeground] resumes with no vault re-read and gapless counters.
+     * Telemetry collection and the timeout counter keep running.
+     *
+     * Best-effort watermark flush (Layer A): fire-and-forget
+     * [DriveCounter.flush] so a later kill loses nothing (one extra Room
+     * write acceptable). Errors are swallowed — background must never crash.
+     *
+     * Best-effort `DISCONNECT` goodbye (robot alive rule): when [aliveUC]
+     * is present and a session is loaded, one shared counter is allocated
+     * and the resulting frame goes out 2x byte-identical (same counter —
+     * one allocation, like `UNBOND`'s 3x in [ForgetDeviceUseCase]) at the
+     * stored device endpoint — the firmware never replies. Every send error
+     * is swallowed (a missing PSK or an exhausted counter skips the send);
+     * cancellation is never swallowed.
+     */
+    fun onBackground() {
+        backgroundPaused = true
+        viewModelScope.launch {
+            try {
+                driveCounter.flush()
+            } catch (_: Exception) {
+                // Swallowed: backgrounding must never crash.
+            }
+            sendDisconnectBestEffort()
+        }
+    }
+
+    /**
+     * Best-effort signed `DISCONNECT` (see [onBackground]): null [aliveUC]
+     * (tests/legacy graphs), no paired device, a null PSK, or a null
+     * counter allocation all skip the send; every transmit error is
+     * swallowed so backgrounding always completes. Cancellation is never
+     * swallowed.
+     */
+    private suspend fun sendDisconnectBestEffort() {
+        val alive = aliveUC ?: return
+        val dev = currentDevice.value ?: return
+        try {
+            // One allocation under the session mutex (same order as the
+            // loop tick: session-then-holder), sent outside it.
+            val prepared = sessionMutex.withLock { sessionCounterLocked(dev) } ?: return
+            val (psk, counter) = prepared
+            repeat(MAX_DISCONNECT_SENDS) {
+                try {
+                    alive.sendDisconnect(dev, psk, dev.era, counter)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // UDP loss / dead socket: the robot's 5 s alive window
+                    // expires on its own; the local pause already happened.
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // Malformed vault hex and friends: pause regardless.
+        }
+    }
+
+    /**
+     * Resume sending after [onBackground]. Forces the `ALIVE` clock due so
+     * the next send-loop tick knocks immediately (re-pinning the robot's
+     * unicast peer without waiting a full [ALIVE_INTERVAL_MS]).
+     */
+    fun onForeground() {
+        backgroundPaused = false
+        ticksSinceAlive = aliveTickEvery
+    }
+
+    /**
+     * Loops are children of `viewModelScope`, so they are cancelled
+     * automatically here (explicit cancel unnecessary — the robot's own
+     * ~500 ms stale-command failsafe covers the stop).
+     *
+     * Best-effort session drop, synchronously only: clears the VM-local
+     * [sessionPsk]/[pskMissingFor] when the session mutex is uncontended
+     * ([Mutex.tryLock]), otherwise skips (memory is reclaimed with the VM
+     * anyway — never suspend or leak a coroutine from `onCleared`).
+     * Deliberately does NOT close [udp] (app-scope Koin singleton owned by
+     * `DeskyApp` — closing it here would break every other screen) and does
+     * NOT reset the shared [driveCounter] (its live era must survive the VM
+     * so the next session keeps a strictly increasing sequence; resetting
+     * to the stale Room watermark would look like a replay to the robot).
+     *   No flush here either: `onCleared` cannot suspend, so the graceful
+     *   watermark path is [onBackground] (callers background before destroy);
+     *   a kill without background still falls back to the 128-cadence
+     *   watermark.
+     */
     override fun onCleared() {
+        if (sessionMutex.tryLock()) {
+            try {
+                sessionPsk = null
+                pskMissingFor = null
+                forgetFiredFor = null
+            } finally {
+                sessionMutex.unlock()
+            }
+        }
         super.onCleared()
+    }
+
+    companion object {
+        /** Fire-and-forget `DISCONNECT` transmissions (no reply ever comes back). */
+        const val MAX_DISCONNECT_SENDS = 2
     }
 }

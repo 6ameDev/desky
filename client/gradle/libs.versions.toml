@@ -6,9 +6,11 @@ room3 = "3.0.3"
 sqlite = "2.7.1"
 skie = "0.10.15"
 coroutines = "1.10.2"
+cryptography = "0.6.0"
 koin = "4.2.2"
 ktor = "3.6.0"
 lifecycle = "2.8.7"
+securityCrypto = "1.0.0"
 composeBom = "2026.04.01"
 navigation = "2.9.8"
 activity = "1.13.0"
@@ -27,6 +29,7 @@ room3-runtime = { group = "androidx.room3", name = "room3-runtime", version.ref 
 room3-compiler = { group = "androidx.room3", name = "room3-compiler", version.ref = "room3" }
 sqlite-bundled = { group = "androidx.sqlite", name = "sqlite-bundled", version.ref = "sqlite" }
 lifecycle-viewmodel = { group = "androidx.lifecycle", name = "lifecycle-viewmodel", version.ref = "lifecycle" }
+security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
 lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
 activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activity" }
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -40,6 +43,8 @@ koin-androidx-compose = { group = "io.insert-koin", name = "koin-androidx-compos
 turbine = { group = "app.cash.turbine", name = "turbine", version.ref = "turbine" }
 mokkery-core = { group = "dev.mokkery", name = "mokkery-core", version.ref = "mokkery" }
 kotlin-test = { group = "org.jetbrains.kotlin", name = "kotlin-test", version.ref = "kotlin" }
+cryptography-core = { group = "dev.whyoleg.cryptography", name = "cryptography-core", version.ref = "cryptography" }
+cryptography-provider-optimal = { group = "dev.whyoleg.cryptography", name = "cryptography-provider-optimal", version.ref = "cryptography" }
 # Plugin implementation artifacts: build-logic's compile classpath for convention
 # plugins (precompiled script plugins apply these by bare id(); versions stay here).
 kotlin-gradle-plugin = { group = "org.jetbrains.kotlin", name = "kotlin-gradle-plugin", version.ref = "kotlin" }

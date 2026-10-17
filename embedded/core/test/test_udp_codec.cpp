@@ -4,6 +4,7 @@
 #include <unity.h>
 
 #include "../src/middleware/udp_codec.h"
+#include "../src/middleware/udp_server.h"
 
 void setUp() {}
 void tearDown() {}
@@ -71,6 +72,22 @@ void test_telemetry_rejects_bad_header_checksum() {
   buf[0] = 0xBB;
   buf[udp::kTelemetrySize - 1] ^= 0xFF;
   TEST_ASSERT_FALSE(udp::decodeTelemetry(buf, sizeof(buf), pkt));
+}
+
+// ALIVE/DISCONNECT (robot alive rule): the new 0x55/0x56 headers never
+// collide with the frozen control/telemetry headers owned by this codec,
+// and their 14B size matches neither the 6B control nor the 9B telemetry
+// shape — so neither legacy decode path can ever accept one.
+void test_codec_alive_disconnect_headers_distinct() {
+  TEST_ASSERT_TRUE(udp::kControlHeader != udpstatus::kAliveHeader);
+  TEST_ASSERT_TRUE(udp::kControlHeader != udpstatus::kDisconnectHeader);
+  TEST_ASSERT_TRUE(udp::kTelemetryHeader != udpstatus::kAliveHeader);
+  TEST_ASSERT_TRUE(udp::kTelemetryHeader != udpstatus::kDisconnectHeader);
+  TEST_ASSERT_TRUE(udpstatus::kAliveHeader != udpstatus::kDisconnectHeader);
+  TEST_ASSERT_TRUE(udpstatus::kAliveSize != udp::kControlSize);
+  TEST_ASSERT_TRUE(udpstatus::kAliveSize != udp::kTelemetrySize);
+  TEST_ASSERT_TRUE(udpstatus::kDisconnectSize != udp::kControlSize);
+  TEST_ASSERT_TRUE(udpstatus::kDisconnectSize != udp::kTelemetrySize);
 }
 
 // Sensor fusion tests, defined in test_sensor_fusion.cpp (pio test links all
@@ -156,12 +173,84 @@ void test_status_flags_unpack_round_trip();
 void test_pack_command_center_edges();
 void test_telemetry_round_trip_with_flags_set();
 void test_deg_to_decideg_edges_and_clamp();
+// Pairing/auth v1 RX demux (Task 5), defined in test_udp_server.cpp.
+void test_udp_wire_constants();
+void test_udp_fresh_counter_greater_ok();
+void test_udp_fresh_counter_equal_older_reject();
+void test_udp_fresh_counter_wrap_accept();
+void test_udp_fresh_counter_half_range_reject();
+void test_udp_classify_table();
+void test_udp_classify_wrong_header_or_size_drops();
+void test_udp_redeliver_same_true();
+void test_udp_redeliver_different_nonce_false();
+void test_udp_redeliver_different_code_false();
+void test_udp_redeliver_expired_false();
+void test_udp_redeliver_invalid_or_null_false();
+void test_udp_redeliver_millis_wrap_true();
+void test_udp_unbond_wire_constants();
+void test_udp_classify_unbond();
+void test_udp_unbond_tag_msg_golden();
+void test_udp_rekey_wire_constants();
+void test_udp_classify_rekey();
+void test_udp_alive_disconnect_wire_constants();
+void test_udp_classify_alive_disconnect();
+void test_udp_claimed_headers_distinct();
+void test_udp_alive_fresh_inside_window();
+void test_udp_alive_stale_past_window();
+void test_udp_alive_fresh_millis_wrap();
+void test_udp_telemetry_gate_unicast_when_bonded_alive();
+void test_udp_telemetry_gate_silent_when_stale();
+void test_udp_telemetry_gate_silent_when_no_peer();
+void test_udp_telemetry_gate_silent_pre_bond();
+void test_udp_telemetry_gate_wrap();
+void test_udp_frozen_sizes();
+void test_conn_ip_u32_roundtrip();
+void test_conn_initial_cleared();
+void test_conn_markalive_pins_and_alive();
+void test_conn_markalive_rejects_unverified();
+void test_conn_refresh_then_clear();
+void test_conn_pin_peer_no_stamp();
+void test_conn_isalive_wrap_safe();
+void test_tokens_move_transfers_validity();
+void test_telemetry_encode_snapshot_golden();
+void test_telemetry_publish_sends_when_due();
+void test_telemetry_publish_silent_without_gate();
+void test_telemetry_publish_holds_cadence();
+void test_telemetry_publish_edge_forces_early();
 
 // I2S audio DSP + meter policy, defined in test_audio.cpp.
 void test_audio_dual_mono32_top_justified();
 void test_audio_chime_shape_and_decay();
 void test_audio_int24_unpack_top24_in_32();
 void test_audio_rms_and_louder_side();
+
+// Pairing core (Tier 1 enrolment gate), defined in test_pairing.cpp.
+void test_pair_golden_accept_burns_once();
+void test_pair_bad_code_counts_tries();
+void test_pair_fifth_try_locks_then_expires();
+void test_pair_window_expiry_rejects();
+void test_pair_pre_window_rejects();
+void test_pair_malformed_input_is_bad_code();
+void test_pair_persist_every_guard();
+void test_pair_wrap_layout_consts();
+void test_rekey_wire_consts();
+void test_rekey_tag_msg_golden();
+void test_rekey_ack_tag_msg_golden();
+void test_alive_disconnect_wire_consts();
+void test_alive_tag_msg_golden();
+void test_disconnect_tag_msg_golden();
+void test_pair_core_bond_lifecycle();
+void test_pair_wire_reasons_frozen();
+// M9 three-way mirror gate (defined in test_udp_server.cpp).
+void test_udp_mirror_freeze();
+void test_udp_pair_req_frame_golden();
+void test_udp_pair_err_frame_golden();
+void test_udp_pair_err_reason4_frame_golden();
+void test_udp_drive_v2_frame_golden();
+void test_udp_unbond_frame_golden();
+void test_udp_rekey_frame_goldens();
+void test_udp_alive_disconnect_frame_goldens();
+void test_udp_pair_ok_framing();
 
 int main() {
   UNITY_BEGIN();
@@ -171,6 +260,7 @@ int main() {
   RUN_TEST(test_telemetry_golden_vector);
   RUN_TEST(test_telemetry_decode_round_trip_negative);
   RUN_TEST(test_telemetry_rejects_bad_header_checksum);
+  RUN_TEST(test_codec_alive_disconnect_headers_distinct);
   RUN_TEST(test_flat_rest_no_cliff_near_zero_tilt);
   RUN_TEST(test_nose_up_45_pitch_tracks_identity);
   RUN_TEST(test_nose_up_45_pitch_tracks_swapped);
@@ -244,9 +334,77 @@ int main() {
   RUN_TEST(test_pack_command_center_edges);
   RUN_TEST(test_telemetry_round_trip_with_flags_set);
   RUN_TEST(test_deg_to_decideg_edges_and_clamp);
+  RUN_TEST(test_udp_wire_constants);
+  RUN_TEST(test_udp_fresh_counter_greater_ok);
+  RUN_TEST(test_udp_fresh_counter_equal_older_reject);
+  RUN_TEST(test_udp_fresh_counter_wrap_accept);
+  RUN_TEST(test_udp_fresh_counter_half_range_reject);
+  RUN_TEST(test_udp_classify_table);
+  RUN_TEST(test_udp_classify_wrong_header_or_size_drops);
+  RUN_TEST(test_udp_redeliver_same_true);
+  RUN_TEST(test_udp_redeliver_different_nonce_false);
+  RUN_TEST(test_udp_redeliver_different_code_false);
+  RUN_TEST(test_udp_redeliver_expired_false);
+  RUN_TEST(test_udp_redeliver_invalid_or_null_false);
+  RUN_TEST(test_udp_redeliver_millis_wrap_true);
+  RUN_TEST(test_udp_unbond_wire_constants);
+  RUN_TEST(test_udp_classify_unbond);
+  RUN_TEST(test_udp_unbond_tag_msg_golden);
+  RUN_TEST(test_udp_rekey_wire_constants);
+  RUN_TEST(test_udp_classify_rekey);
+  RUN_TEST(test_udp_alive_disconnect_wire_constants);
+  RUN_TEST(test_udp_classify_alive_disconnect);
+  RUN_TEST(test_udp_claimed_headers_distinct);
+  RUN_TEST(test_udp_alive_fresh_inside_window);
+  RUN_TEST(test_udp_alive_stale_past_window);
+  RUN_TEST(test_udp_alive_fresh_millis_wrap);
+  RUN_TEST(test_udp_telemetry_gate_unicast_when_bonded_alive);
+  RUN_TEST(test_udp_telemetry_gate_silent_when_stale);
+  RUN_TEST(test_udp_telemetry_gate_silent_when_no_peer);
+  RUN_TEST(test_udp_telemetry_gate_silent_pre_bond);
+  RUN_TEST(test_udp_telemetry_gate_wrap);
+  RUN_TEST(test_udp_frozen_sizes);
+  RUN_TEST(test_conn_ip_u32_roundtrip);
+  RUN_TEST(test_conn_initial_cleared);
+  RUN_TEST(test_conn_markalive_pins_and_alive);
+  RUN_TEST(test_conn_markalive_rejects_unverified);
+  RUN_TEST(test_conn_refresh_then_clear);
+  RUN_TEST(test_conn_pin_peer_no_stamp);
+  RUN_TEST(test_conn_isalive_wrap_safe);
+  RUN_TEST(test_tokens_move_transfers_validity);
+  RUN_TEST(test_telemetry_encode_snapshot_golden);
+  RUN_TEST(test_telemetry_publish_sends_when_due);
+  RUN_TEST(test_telemetry_publish_silent_without_gate);
+  RUN_TEST(test_telemetry_publish_holds_cadence);
+  RUN_TEST(test_telemetry_publish_edge_forces_early);
   RUN_TEST(test_audio_dual_mono32_top_justified);
   RUN_TEST(test_audio_chime_shape_and_decay);
   RUN_TEST(test_audio_int24_unpack_top24_in_32);
   RUN_TEST(test_audio_rms_and_louder_side);
+  RUN_TEST(test_pair_golden_accept_burns_once);
+  RUN_TEST(test_pair_bad_code_counts_tries);
+  RUN_TEST(test_pair_fifth_try_locks_then_expires);
+  RUN_TEST(test_pair_window_expiry_rejects);
+  RUN_TEST(test_pair_pre_window_rejects);
+  RUN_TEST(test_pair_malformed_input_is_bad_code);
+  RUN_TEST(test_pair_persist_every_guard);
+  RUN_TEST(test_pair_wrap_layout_consts);
+  RUN_TEST(test_rekey_wire_consts);
+  RUN_TEST(test_rekey_tag_msg_golden);
+  RUN_TEST(test_rekey_ack_tag_msg_golden);
+  RUN_TEST(test_alive_disconnect_wire_consts);
+  RUN_TEST(test_alive_tag_msg_golden);
+  RUN_TEST(test_disconnect_tag_msg_golden);
+  RUN_TEST(test_pair_core_bond_lifecycle);
+  RUN_TEST(test_pair_wire_reasons_frozen);
+  RUN_TEST(test_udp_mirror_freeze);
+  RUN_TEST(test_udp_pair_req_frame_golden);
+  RUN_TEST(test_udp_pair_err_frame_golden);
+  RUN_TEST(test_udp_pair_err_reason4_frame_golden);
+  RUN_TEST(test_udp_drive_v2_frame_golden);
+  RUN_TEST(test_udp_unbond_frame_golden);
+  RUN_TEST(test_udp_rekey_frame_goldens);
+  RUN_TEST(test_udp_alive_disconnect_frame_goldens);
+  RUN_TEST(test_udp_pair_ok_framing);
   return UNITY_END();
 }

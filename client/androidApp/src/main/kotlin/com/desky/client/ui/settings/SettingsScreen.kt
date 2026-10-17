@@ -23,7 +23,6 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,13 +44,9 @@ private fun String.isValidFloatInput(): Boolean = isEmpty() || matches(FloatInpu
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
-    onUnpaired: () -> Unit,
     vm: SettingsViewModel = koinViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
-    LaunchedEffect(state.unpaired) {
-        if (state.unpaired) onUnpaired()
-    }
     SettingsContent(
         state = state,
         onSpeedLimit = vm::onSpeedLimit,

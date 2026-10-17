@@ -1,11 +1,13 @@
 package com.desky.shared.presentation
 
 import com.desky.shared.domain.DEFAULT_UDP_PORT
+import com.desky.shared.domain.BondSecretStore
 import com.desky.shared.domain.DeviceRepository
 import com.desky.shared.domain.PairedDevice
 import com.desky.shared.domain.RobotConfig
 import com.desky.shared.domain.SettingsRepository
 import com.desky.shared.domain.UdpDatagram
+import com.desky.shared.domain.UdpSocketBinder
 import com.desky.shared.domain.UdpSocketManager
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +15,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.TestScope
@@ -27,13 +31,15 @@ fun testDevice(ip: String = "192.168.4.1") = PairedDevice(
     authToken = "token",
 )
 
-/** Hand-written fake: controllable pairing with save/clear counters. */
+/** Hand-written fake: controllable pairing with save/clear/counter counters. */
 class FakeDeviceRepository(initial: PairedDevice? = null) : DeviceRepository {
     private val flow = MutableStateFlow(initial)
     var saveCalls = 0
     var clearCalls = 0
     var saveError: Throwable? = null
     var clearError: Throwable? = null
+    /** Every (deviceId, counter) persisted via [updateCounter], in order. */
+    val counterSaves = mutableListOf<Pair<String, UInt>>()
 
     override fun observePaired(): Flow<PairedDevice?> = flow
 
@@ -49,8 +55,51 @@ class FakeDeviceRepository(initial: PairedDevice? = null) : DeviceRepository {
         flow.value = null
     }
 
+    override suspend fun updateCounter(deviceId: String, counter: UInt) {
+        counterSaves += deviceId to counter
+        val current = flow.value
+        if (current?.id == deviceId) flow.value = current.copy(lastCounter = counter)
+    }
+
+    /** Every (deviceId, counter, era) persisted via [updateRekey], in order. */
+    val rekeySaves = mutableListOf<Triple<String, UInt, UShort>>()
+
+    override suspend fun updateRekey(deviceId: String, counter: UInt, era: UShort) {
+        rekeySaves += Triple(deviceId, counter, era)
+        val current = flow.value
+        if (current?.id == deviceId) flow.value = current.copy(lastCounter = counter, era = era)
+    }
+
     fun emit(device: PairedDevice?) {
         flow.value = device
+    }
+}
+
+/** Hand-written fake vault: in-memory map mirroring [BondSecretStore] semantics. */
+class FakeBondSecretStore : BondSecretStore {
+    private val vault = mutableMapOf<String, String>()
+    var saveCalls = 0
+    var loadCalls = 0
+    var clearCalls = 0
+
+    override suspend fun savePsk(deviceId: String, pskHex: String) {
+        saveCalls++
+        vault[deviceId] = pskHex
+    }
+
+    override suspend fun loadPsk(deviceId: String): String? {
+        loadCalls++
+        return vault[deviceId]
+    }
+
+    override suspend fun clear(deviceId: String) {
+        clearCalls++
+        vault.remove(deviceId)
+    }
+
+    /** Pre-load an entry without counting a [savePsk] call. */
+    fun seed(deviceId: String, pskHex: String) {
+        vault[deviceId] = pskHex
     }
 }
 
@@ -94,6 +143,28 @@ class FakeUdpSocketManager : UdpSocketManager {
     }
 
     override suspend fun close() = Unit
+}
+
+/**
+ * Hand-written fake binder: non-suspending rejoin signal mirroring the
+ * production `WifiSocketBinder` contract (`MutableSharedFlow(
+ * extraBufferCapacity = 1)` + `tryEmit`). `attach`/`detach` are no-ops;
+ * tests fire [emitNetworkAvailable] directly (no 1 s debounce here — the
+ * debounce lives in the Android binder; the VM collapses bursts
+ * idempotently, so a flap still yields one `ALIVE`).
+ */
+class FakeUdpSocketBinder : UdpSocketBinder {
+    private val _networkAvailable = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    override val networkAvailable: SharedFlow<Unit> = _networkAvailable.asSharedFlow()
+
+    override fun attach(manager: UdpSocketManager) = Unit
+
+    override fun detach() = Unit
+
+    /** Non-suspending, like the production `onAvailable` path. */
+    fun emitNetworkAvailable() {
+        _networkAvailable.tryEmit(Unit)
+    }
 }
 
 /**

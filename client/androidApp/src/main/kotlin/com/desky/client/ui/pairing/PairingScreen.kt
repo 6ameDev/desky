@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -16,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -36,7 +38,6 @@ fun PairingScreen(
     }
     PairingContent(
         state = state,
-        onIpChange = vm::onIpChange,
         onPinChange = vm::onPinChange,
         onPair = vm::onPair,
         onUnpair = vm::onUnpair,
@@ -47,7 +48,6 @@ fun PairingScreen(
 @Composable
 fun PairingContent(
     state: PairingUiState,
-    onIpChange: (String) -> Unit,
     onPinChange: (String) -> Unit,
     onPair: () -> Unit,
     onUnpair: () -> Unit,
@@ -63,25 +63,26 @@ fun PairingContent(
         ) {
             Text("Pair with Desky", style = MaterialTheme.typography.headlineSmall)
             OutlinedTextField(
-                value = state.ip,
-                onValueChange = onIpChange,
-                label = { Text("Robot IP") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
                 value = state.pin,
                 onValueChange = onPinChange,
-                label = { Text("PIN") },
+                label = { Text("Pairing code") },
                 singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth(),
             )
             Button(
                 onClick = onPair,
-                enabled = !state.isPairing,
+                // Bonded gate (mirrors PairingViewModel.onPair): while a
+                // device is paired only Forget is offered, never a re-pair
+                // over the live bond.
+                enabled = !state.isPairing && state.pairedDevice == null,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(if (state.isPairing) "Pairing…" else "Pair")
+                Text(
+                    if (state.isPairing) {
+                        if (state.pairingAttempt <= 1) "Pairing…" else "Pairing… (attempt ${state.pairingAttempt})"
+                    } else "Pair",
+                )
             }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             state.pairedDevice?.let { device ->
@@ -101,15 +102,13 @@ private fun PairingContentPreview() {
     MaterialTheme {
         PairingContent(
             state = PairingUiState(
-                ip = "192.168.1.42",
-                pin = "1234",
+                pin = "123456",
                 pairedDevice = PairedDevice(
                     id = "1",
-                    ip = "192.168.1.42",
-                    authToken = "token",
+                    ip = "192.168.4.1",
+                    authToken = "psk-v1",
                 ),
             ),
-            onIpChange = {},
             onPinChange = {},
             onPair = {},
             onUnpair = {},
