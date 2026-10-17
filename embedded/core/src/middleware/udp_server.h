@@ -432,7 +432,8 @@ class UdpServer {
   // LOG_I code line IS the display for now). Refused while bonded (single
   // owner: clearBond() first — rotation never evicts). Public for the Task
   // 10 bench procedure (10s-hold factory reset path).
-  // TODO(PHYSICAL-TRIGGER): button-vs-power-cycle decision pending — implements the 10s-hold promise; see DECISION-ISSUE.
+  // TODO(PHYSICAL-TRIGGER): button-vs-power-cycle decision pending — implements the 10s-hold promise; see
+  // DECISION-ISSUE.
   bool openPairingWindow() {
     if (bonded_) {
       return false;
@@ -452,7 +453,8 @@ class UdpServer {
   // no button wired yet): clears the NVS bond + in-memory Core + key
   // material. The next begin() (or openPairingWindow()) starts fresh.
   // Also invalidates the PAIR_OK redelivery cache (+zeroizes its secrets).
-  // TODO(PHYSICAL-TRIGGER): button-vs-power-cycle decision pending — implements the 10s-hold promise; see DECISION-ISSUE.
+  // TODO(PHYSICAL-TRIGGER): button-vs-power-cycle decision pending — implements the 10s-hold promise; see
+  // DECISION-ISSUE.
   bool clearBond() {
     pairCore_.clearBond();
     bonded_ = false;
