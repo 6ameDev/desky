@@ -15,7 +15,7 @@ composeBom = "2026.04.01"
 navigation = "2.9.8"
 activity = "1.13.0"
 turbine = "1.2.1"
-mokkery = "3.4.2"
+mokkery = "3.5.1"
 
 [libraries]
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
