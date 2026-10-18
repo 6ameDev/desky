@@ -49,8 +49,11 @@ void test_qr_payload_len_pins_link_contract();
 void test_qr_geometry_fits_panel();
 void test_qr_module_msb_first_row_major();
 void test_qr_module_fail_closed();
+void test_qr_e2e_encode_pack_display_identity();
+void test_qr_bug_signature_first63_unpacked_differs();
 void test_qr_face_id_appended_not_renumbered();
 void test_cli_qr_and_qr_clear();
+void test_qr_pairing_window_order_head();
 void test_empty_table_suppresses_nothing();
 void test_quirk_line_matches_with_sdk_prefix();
 void test_other_gpio_errors_still_print();
@@ -59,6 +62,25 @@ void test_null_and_empty_input_never_match();
 void test_rejects_bad_rules();
 void test_table_full_rejects_overflow();
 void test_clear_resets_policy();
+
+// Command LITERALS (literal wire bytes -> decode -> mapCmd + CLI + shared
+// value table), defined in test_command_literals.cpp.
+void test_cmd_literals_oled_wire_values();
+void test_cmd_literals_camctl_wire_values();
+void test_cmd_literals_face_ids_and_clamp();
+void test_cmd_literals_cli_equivalence();
+void test_cmd_literals_tampered_frames_reject();
+void test_headapply_value_table();
+// Shared codec vocabulary guards (literals -> pack/unpack -> rejects).
+void test_cmd_literals_shared_codec_oled();
+void test_cmd_literals_shared_codec_camctl();
+void test_cmd_literals_shared_codec_face();
+
+// Link FRAG X-WIRE mirror (same seam as core's test_link_frag_xwire.cpp),
+// defined in test_link_frag_xwire.cpp.
+void test_link_frag_xwire_geometry();
+void test_link_frag_xwire_round_trip_all_sizes();
+void test_link_frag_xwire_rejects_disorder_without_corruption();
 
 int main() {
   UNITY_BEGIN();
@@ -104,8 +126,11 @@ int main() {
   RUN_TEST(test_qr_geometry_fits_panel);
   RUN_TEST(test_qr_module_msb_first_row_major);
   RUN_TEST(test_qr_module_fail_closed);
+  RUN_TEST(test_qr_e2e_encode_pack_display_identity);
+  RUN_TEST(test_qr_bug_signature_first63_unpacked_differs);
   RUN_TEST(test_qr_face_id_appended_not_renumbered);
   RUN_TEST(test_cli_qr_and_qr_clear);
+  RUN_TEST(test_qr_pairing_window_order_head);
   RUN_TEST(test_empty_table_suppresses_nothing);
   RUN_TEST(test_quirk_line_matches_with_sdk_prefix);
   RUN_TEST(test_other_gpio_errors_still_print);
@@ -114,5 +139,17 @@ int main() {
   RUN_TEST(test_rejects_bad_rules);
   RUN_TEST(test_table_full_rejects_overflow);
   RUN_TEST(test_clear_resets_policy);
+  RUN_TEST(test_cmd_literals_oled_wire_values);
+  RUN_TEST(test_cmd_literals_camctl_wire_values);
+  RUN_TEST(test_cmd_literals_face_ids_and_clamp);
+  RUN_TEST(test_cmd_literals_cli_equivalence);
+  RUN_TEST(test_cmd_literals_tampered_frames_reject);
+  RUN_TEST(test_headapply_value_table);
+  RUN_TEST(test_cmd_literals_shared_codec_oled);
+  RUN_TEST(test_cmd_literals_shared_codec_camctl);
+  RUN_TEST(test_cmd_literals_shared_codec_face);
+  RUN_TEST(test_link_frag_xwire_geometry);
+  RUN_TEST(test_link_frag_xwire_round_trip_all_sizes);
+  RUN_TEST(test_link_frag_xwire_rejects_disorder_without_corruption);
   return UNITY_END();
 }

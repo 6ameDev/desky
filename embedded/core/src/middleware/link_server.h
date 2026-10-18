@@ -66,6 +66,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "common/udp_send.h"
+
 // The frozen codec namespace `link` collides with POSIX ::link() (declared
 // via the WiFi/lwIP stack: IPAddress.h -> lwIP opt.h -> toolchain unistd.h ->
 // newlib sys/unistd.h) in any Arduino TU, and the codec itself must not be
@@ -291,8 +293,18 @@ class LinkServer {
   uint32_t bytesRx() const { return bytesRx_; }
   uint32_t lastFps() const { return lastFps_; }
   uint32_t udpRx() const { return udpRx_; }
+  uint32_t udpDrop() const { return udpDrop_; }
+  uint32_t hbRx() const { return hbRx_; }
   uint32_t cmdRx() const { return cmdRx_; }
+  uint32_t ackRx() const { return ackRx_; }
+  uint32_t ackTx() const { return ackTx_; }
+  uint32_t hbAckTx() const { return hbAckTx_; }
   uint32_t qrTx() const { return qrTx_; }
+  uint32_t txFail() const { return txFail_; }
+  uint32_t tcpDrop() const { return tcpDrop_; }
+  uint16_t lastSeq() const { return lastSeq_; }
+  uint32_t lastBootId() const { return lastBootId_; }
+  uint16_t txSeq() const { return txSeq_; }
 
   // HB-pinned head peer (snapshotCmd-style accessor): unicast target for
   // core->head frames. False while no head has checked in. Benign
@@ -312,6 +324,8 @@ class LinkServer {
   // under lock, never touches sockets, so it cannot disturb the UDP RX
   // tick). The link task unicasts it once to the HB-pinned head. Null or
   // pre-begin (no mutex) -> false, fail-closed.
+  // Producer vocabulary note: the future stageFace/stageOled/stageCam MUST
+  // pack via link::packOled/packCamCtl/unpack* (literal-byte tests pin the wire).
   bool stageQrBitmap(const uint8_t qr63[linkcode::kQrBitmapLen]) {
     if (qr63 == nullptr || mutex_ == nullptr) {
       return false;
@@ -361,6 +375,7 @@ class LinkServer {
       ++ticks;
       if (ticks % (5000u / kLoopMs) == 0) {
         Diagnostics::logWatermarks("LINK");
+        logLinkAccounting();
       }
     }
   }
@@ -375,6 +390,27 @@ class LinkServer {
       first = false;
       LOG_I("LINK", fmt, args...);
     }
+  }
+
+  // 5s link accounting (unconditional LOG_I: survives release, where
+  // LOG_EVERY_N vanishes). Counters only + peer address + seq domains — never
+  // payload bytes. ~140B: fits the 192B log line with the logger prefix.
+  void logLinkAccounting() {
+    char peer[24] = "none";
+    if (haveHeadPeer_) {
+      snprintf(peer, sizeof(peer), "%u.%u.%u.%u:%u", static_cast<unsigned>(headIp_[0]),
+               static_cast<unsigned>(headIp_[1]), static_cast<unsigned>(headIp_[2]), static_cast<unsigned>(headIp_[3]),
+               static_cast<unsigned>(headPort_));
+    }
+    LOG_I("LINK",
+          "acct udp=%lu/%lu hb=%lu cmd=%lu ack=%lu/%lu ha=%lu qr=%lu fail=%lu frm=%lu B=%lu fps=%lu tcp=%lu "
+          "peer=%s sq=%u boot=%08lx tx=%u",
+          static_cast<unsigned long>(udpRx_), static_cast<unsigned long>(udpDrop_), static_cast<unsigned long>(hbRx_),
+          static_cast<unsigned long>(cmdRx_), static_cast<unsigned long>(ackRx_), static_cast<unsigned long>(ackTx_),
+          static_cast<unsigned long>(hbAckTx_), static_cast<unsigned long>(qrTx_), static_cast<unsigned long>(txFail_),
+          static_cast<unsigned long>(framesRx_), static_cast<unsigned long>(bytesRx_),
+          static_cast<unsigned long>(lastFps_), static_cast<unsigned long>(tcpDrop_), peer,
+          static_cast<unsigned>(lastSeq_), static_cast<unsigned long>(lastBootId_), static_cast<unsigned>(txSeq_));
   }
 
   // UDP: drain every pending datagram; decode via the codec, then demux by
@@ -576,9 +612,11 @@ class LinkServer {
     if (n == 0) {
       return;
     }
-    udp_.beginPacket(ip, port);
-    udp_.write(out, n);
-    udp_.endPacket();
+    if (!udpsend::udpSendChecked(udp_, ip, port, out, n)) {
+      ++txFail_;
+      LOG_W("LINK", "udp send fail what=%s len=%u", "ack", static_cast<unsigned>(n));
+      return;
+    }
     ++ackTx_;
   }
 
@@ -635,9 +673,11 @@ class LinkServer {
       LOG_EVERY_N(20, "LINK", "qr encode failed seq=%u", static_cast<unsigned>(seq));
       return;
     }
-    udp_.beginPacket(peer, port);
-    udp_.write(out, n);
-    udp_.endPacket();
+    if (!udpsend::udpSendChecked(udp_, peer, port, out, n)) {
+      ++txFail_;
+      LOG_W("LINK", "udp send fail what=%s len=%u", "qr", static_cast<unsigned>(n));
+      return;
+    }
     ++qrTx_;
     LOG_I("LINK", "qr sent seq=%u len=%u", static_cast<unsigned>(seq), static_cast<unsigned>(sizeof(staged)));
   }
@@ -655,9 +695,11 @@ class LinkServer {
     if (n == 0) {
       return;
     }
-    udp_.beginPacket(ip, port);
-    udp_.write(out, n);
-    udp_.endPacket();
+    if (!udpsend::udpSendChecked(udp_, ip, port, out, n)) {
+      ++txFail_;
+      LOG_W("LINK", "udp send fail what=%s len=%u", "hb_ack", static_cast<unsigned>(n));
+      return;
+    }
     ++hbAckTx_;
     LOG_EVERY_N(20, "LINK", "hb_ack tx seq=%u", static_cast<unsigned>(txSeq_ - 1));
   }
@@ -826,6 +868,7 @@ class LinkServer {
   uint32_t ackTx_ = 0;
   uint32_t hbAckTx_ = 0;
   uint32_t qrTx_ = 0;
+  uint32_t txFail_ = 0;
   uint32_t framesRx_ = 0;
   uint32_t bytesRx_ = 0;
   uint32_t lastFps_ = 0;

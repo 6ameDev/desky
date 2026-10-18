@@ -20,6 +20,31 @@
 
 #include "head_context.h"
 
+// ── Arduino-free command-value table (host-testable) ───────────────────────
+// The pure value mapping PowerManager::apply() enforces below. apply() calls
+// these so firmware and host tests share one definition (behavior-identical
+// by construction): OLED accepts exactly the DisplayState range 0..2,
+// CAM is a nonzero gate, FACE clamps downstream (never blanks on bad input).
+namespace headapply {
+
+// OLED arg must be a DisplayState value (0..2); false = apply LOG_Ws and
+// keeps state.
+inline bool resolveOled(int32_t arg, DisplayState& out) {
+  if (arg < static_cast<int32_t>(OLED_OFF) || arg > static_cast<int32_t>(OLED_ON)) {
+    return false;
+  }
+  out = static_cast<DisplayState>(arg);
+  return true;
+}
+
+// CAM arg is a boolean gate: nonzero -> on, zero -> off.
+inline CameraState resolveCam(int32_t arg) { return (arg != 0) ? CAM_ON : CAM_OFF; }
+
+// FACE arg clamps downstream: out-of-range -> BOOT.
+inline uint8_t resolveFace(int32_t arg) { return clampFace(arg); }
+
+}  // namespace headapply
+
 #ifdef ARDUINO
 // ── Firmware: power-matrix owner ───────────────────────────────────────────
 
@@ -56,7 +81,7 @@ class PowerManager {
   void apply(const PowerCommand& cmd) {
     switch (cmd.target) {
       case CmdTarget::CAM: {
-        const CameraState want = resolveCamCommand(camState_, cmd.arg != 0);
+        const CameraState want = headapply::resolveCam(cmd.arg);
         if (want != camState_) {
           camState_ = want;
           if (cam_ != nullptr) {
@@ -68,7 +93,7 @@ class PowerManager {
         break;
       }
       case CmdTarget::FACE: {
-        faceId_ = clampFace(cmd.arg);
+        faceId_ = headapply::resolveFace(cmd.arg);
         if (disp_ != nullptr) {
           disp_->showFace(faceId_);
         }
@@ -81,11 +106,12 @@ class PowerManager {
         break;
       }
       case CmdTarget::OLED: {
-        if (cmd.arg < static_cast<int32_t>(OLED_OFF) || cmd.arg > static_cast<int32_t>(OLED_ON)) {
+        DisplayState want = OLED_OFF;
+        if (!headapply::resolveOled(cmd.arg, want)) {
           LOG_W("PWR", "bad oled arg=%ld (want 0..2)", static_cast<long>(cmd.arg));
           break;
         }
-        oledState_ = resolveOledCommand(oledState_, static_cast<DisplayState>(cmd.arg));
+        oledState_ = resolveOledCommand(oledState_, want);
         if (disp_ != nullptr) {
           disp_->setPowerState(oledState_ != OLED_OFF);
           disp_->setDim(oledState_ == OLED_DIM);

@@ -8,5 +8,5 @@
 *.env
 .env
 
-docs/
+# Owner-managed bench scripts (never `git add`; see scripts/*.py headers)
 scripts/
