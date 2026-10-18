@@ -69,3 +69,32 @@ firmware touch; photo of the artifact BEFORE theorizing; simulation of the
 bug shape BEFORE the fix; regression test pinned to an independently
 decoded golden BEFORE closing. No firmware was modified until the OLED
 photo + simulation agreed.
+
+## 9. Head OTA (HTTP pull, `ota <url>`)
+
+Wireless flashing for the single ESP32-CAM head (4MB flash, Arduino,
+board=esp32cam, NO SPIFFS): `partitions_ota_nospiffs.csv` tiles
+0x10000..0x400000 exactly (nvs 20KB + otadata 8KB + ota_0/ota_1 ~1.94MB each
++ coredump 64KB), and `OtaUpdater` (`src/middleware/ota_client.h`) pulls a
+plain-HTTP image into the inactive slot. No TLS by design (closed AP, cert
+theater); integrity is the optional `X-Firmware-Sha256` manifest plus the
+0xE9 magic + Content-Length-vs-slot checks. `fb_count=1` is load-bearing
+(double-buffered frames + an OTA write pump is a crash combo), and no head
+image ships without the OTA client (standing rule in the ota header).
+
+- ONE-TIME USB ERASE SESSION (human runs this once, then USB retires): the
+  partition move invalidates any existing flash, so erase first —
+  `cd embedded/head && pio run -e desky-head -t erase && pio run -e desky-head -t upload`
+  (prove with `Hash of data verified` + `Hard resetting`), then
+  `pio device monitor --baud 115200` for the BOOT banner.
+- TORN-DOWNLOAD SAFETY: the updater writes the inactive slot only; any
+  short/stall/magic/manifest/commit failure calls `Update.abort()` and the
+  next boot runs the old image. A partial stream can never commit.
+- USB-RECOVERY BACKSTOP: if an OTA wedges (bad-but-bootable image with no
+  rollback — Arduino default, no mark-valid yet), reflash over USB with the
+  `upload` half of the sequence above (no erase needed unless the table
+  itself changes again).
+- NO-AUTO-ROLLBACK STATUS: `Update.end()` commits unconditionally; there is
+  no valid-marking or self-test-then-confirm. A mark-valid stub (boot-count +
+  confirm gate) is future work — do not mistake a successful `Update.end()`
+  for a health-checked image.

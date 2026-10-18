@@ -135,10 +135,12 @@ class PowerManager {
       case CmdTarget::HELP:
       case CmdTarget::LINK:
       case CmdTarget::SNAP:
+      case CmdTarget::OTA:
       case CmdTarget::INVALID:
-        // STATUS/HELP/LINK/SNAP are answered by the CLI door itself (LINK
-        // prints the WiFi status line, SNAP queues a JPEG still); INVALID
-        // never reaches apply (doors reject at parse). Guarded, not silent.
+        // STATUS/HELP/LINK/SNAP/OTA are answered by the CLI door itself (LINK
+        // prints the WiFi status line, SNAP queues a JPEG still, OTA starts
+        // the pull updater); INVALID never reaches apply (doors reject at
+        // parse). Guarded, not silent.
         LOG_W("PWR", "apply ignored (no state change)");
         break;
     }

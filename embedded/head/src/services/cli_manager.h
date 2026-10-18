@@ -15,6 +15,13 @@
 //                         misses/frames sent, via LinkClient::logStatus)
 //   snap                  queue one JPEG still head->core over TCP (stills-
 //                         first: 1 frame per trigger, never continuous)
+//   ota <url>             pull an OTA image over plain HTTP and reboot into
+//                         it (works link up OR down — standalone; link state
+//                         is logged alongside, never required). URL form:
+//                         http://host[:port]/path (https/ftp rejected,
+//                         '@' rejected — credentials never ride or log).
+//                         Standing rule: never ship without the OTA client
+//                         (see middleware/ota_client.h).
 //   qr                    show the bench QR demo pattern (exercises the QR
 //                         show/clear path with no link)
 //   qr clear              clear the QR show mode (any `face` also clears it)
@@ -140,6 +147,17 @@ inline bool parseLine(const char* line, PowerCommand& out) {
     out.arg = 0;
     return true;
   }
+  // OTA carries a URL arg: parseLine only checks verb + non-empty tail (the
+  // full grammar lives in ota::parseUrl, single-sourced at dispatch/start).
+  if (strncmp(p, "ota", 3) == 0 && (p[3] == ' ' || p[3] == '\t')) {
+    const char* rest = skipSpaces(p + 3);
+    if (*rest == '\0' || *rest == '\r' || *rest == '\n') {
+      return false;
+    }
+    out.target = CmdTarget::OTA;
+    out.arg = 0;
+    return true;
+  }
   if (strncmp(p, "qr", 2) == 0 && (p[2] == ' ' || p[2] == '\t' || p[2] == '\0' || p[2] == '\r' || p[2] == '\n')) {
     const char* rest = skipSpaces(p + 2);
     if (*rest == '\0' || *rest == '\r' || *rest == '\n') {
@@ -176,6 +194,7 @@ inline bool parseLine(const char* line, PowerCommand& out) {
 
 #include "common/logger.h"
 #include "config.h"
+#include "middleware/ota_client.h"
 #include "middleware/wifi_link.h"
 #include "services/power_manager.h"
 
@@ -187,7 +206,7 @@ inline bool parseLine(const char* line, PowerCommand& out) {
 
 class CliManager {
  public:
-  CliManager() : power_(nullptr), link_(nullptr), lineLen_(0) {}
+  CliManager() : power_(nullptr), link_(nullptr), ota_(nullptr), lineLen_(0) {}
 
   void begin(PowerManager* power) {
     power_ = power;
@@ -198,9 +217,13 @@ class CliManager {
   // never owned; main() attaches after both clients are begun.
   void attachLink(LinkClient* link) { link_ = link; }
 
+  // OTA door for the `ota <url>` verb. Stored, never owned; main() attaches
+  // the updater (the standing rule: a head image without it is unflashable).
+  void attachOta(OtaUpdater* ota) { ota_ = ota; }
+
   // Drain Serial into a fixed buffer; each newline parses and dispatches.
-  // STATUS/HELP are answered here; everything else lands in the ONE command
-  // table (PowerManager::apply, which logs the result).
+  // STATUS/HELP are answered here; LINK/SNAP/OTA fan out to their clients;
+  // everything else lands in the ONE command table (PowerManager::apply).
   void poll() {
     while (Serial.available() > 0) {
       const char c = static_cast<char>(Serial.read());
@@ -208,7 +231,7 @@ class CliManager {
         lineBuf_[lineLen_] = '\0';
         PowerCommand cmd;
         if (headcmd::parseLine(lineBuf_, cmd)) {
-          dispatch(cmd);
+          dispatch(cmd, lineBuf_);
         } else if (lineLen_ > 0) {
           LOG_W("CLI", "unknown cmd (try help)");
         }
@@ -225,7 +248,7 @@ class CliManager {
   }
 
  private:
-  void dispatch(const PowerCommand& cmd) {
+  void dispatch(const PowerCommand& cmd, const char* line) {
     if (power_ == nullptr) {
       return;
     }
@@ -248,6 +271,15 @@ class CliManager {
       } else {
         LOG_W("CLI", "link not attached");
       }
+    } else if (cmd.target == CmdTarget::OTA) {
+      if (ota_ != nullptr && line != nullptr) {
+        // URL rides the raw line (parseLine checked verb + non-empty tail);
+        // ota::parseUrl owns the grammar, single-sourced with host tests.
+        const char* verb = headcmd::skipSpaces(line);
+        ota_->start(headcmd::skipSpaces(verb + 3));
+      } else {
+        LOG_W("CLI", "ota not attached");
+      }
     } else {
       power_->apply(cmd);
     }
@@ -255,12 +287,13 @@ class CliManager {
 
   void printHelp() {
     LOG_I("CLI",
-          "cmds: cam on|off | face <boot|happy|sad|blink|alert|0-4> | oled on|dim|off | status | link | snap | qr "
-          "| qr clear | help");
+          "cmds: cam on|off | face <boot|happy|sad|blink|alert|0-4> | oled on|dim|off | status | link | snap | ota "
+          "<url> | qr | qr clear | help");
   }
 
   PowerManager* power_;
   LinkClient* link_;
+  OtaUpdater* ota_;
   char lineBuf_[CFG_CLI_LINE_LEN];
   size_t lineLen_;
 };

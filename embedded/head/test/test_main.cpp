@@ -82,6 +82,23 @@ void test_link_frag_xwire_geometry();
 void test_link_frag_xwire_round_trip_all_sizes();
 void test_link_frag_xwire_rejects_disorder_without_corruption();
 
+// OTA pull client pure top half (URL parse, version, validation, state
+// machine) + CLI `ota <url>` verb, defined in test_ota_client.cpp.
+void test_ota_parse_plain_host();
+void test_ota_parse_port_and_deep_path();
+void test_ota_parse_bare_host_defaults_path();
+void test_ota_parse_rejects();
+void test_ota_version_orders();
+void test_ota_magic();
+void test_ota_fits_slot();
+void test_ota_stream_gate();
+void test_ota_manifest_matches();
+void test_ota_bytes_to_hex();
+void test_ota_state_happy_path();
+void test_ota_state_verify_fail_and_abort();
+void test_ota_state_rejects_bad_events();
+void test_cli_ota_verb();
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_face_names_match_ids);
@@ -151,5 +168,19 @@ int main() {
   RUN_TEST(test_link_frag_xwire_geometry);
   RUN_TEST(test_link_frag_xwire_round_trip_all_sizes);
   RUN_TEST(test_link_frag_xwire_rejects_disorder_without_corruption);
+  RUN_TEST(test_ota_parse_plain_host);
+  RUN_TEST(test_ota_parse_port_and_deep_path);
+  RUN_TEST(test_ota_parse_bare_host_defaults_path);
+  RUN_TEST(test_ota_parse_rejects);
+  RUN_TEST(test_ota_version_orders);
+  RUN_TEST(test_ota_magic);
+  RUN_TEST(test_ota_fits_slot);
+  RUN_TEST(test_ota_stream_gate);
+  RUN_TEST(test_ota_manifest_matches);
+  RUN_TEST(test_ota_bytes_to_hex);
+  RUN_TEST(test_ota_state_happy_path);
+  RUN_TEST(test_ota_state_verify_fail_and_abort);
+  RUN_TEST(test_ota_state_rejects_bad_events);
+  RUN_TEST(test_cli_ota_verb);
   return UNITY_END();
 }
