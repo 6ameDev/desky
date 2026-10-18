@@ -12,6 +12,8 @@
 #include "hal/mpu6500_driver.h"
 #include "hal/tcrt5000_driver.h"
 #include "hal/vl53l0x_driver.h"
+#include "middleware/link_server.h"
+#include "middleware/qr_pairing.h"
 #include "middleware/sensor_task.h"
 #include "middleware/udp_server.h"
 #include "services/audio_manager.h"
@@ -31,6 +33,7 @@ Coordinator g_coordinator;
 SensorTask g_sensor;
 AudioManager g_audio;
 UdpServer g_udp;
+LinkServer g_link;
 I2CManager g_i2c;
 Mpu6500Driver g_mpu(g_i2c);
 Vl53l0xDriver g_tof(g_i2c);
@@ -74,6 +77,12 @@ void setup() {
 #else
   const bool udpOk = g_udp.begin(&g_coordinator, &g_tof, &g_mpu);
   DESKY_ASSERT(udpOk);
+  // Link endpoint (H2.2, B-link sockets only): never bricks driving — a bind
+  // or task failure only warns and the boot continues headless.
+  const bool linkOk = g_link.begin();
+  if (!linkOk) {
+    LOG_W("LINK", "link endpoint failed, continuing headless");
+  }
 #endif
   LOG_I("BOOT", "sensors ready tof=%dmm mpu=0x%02X", g_tof.distanceMm(), g_mpu.address());
   LOG_I("BOOT", "tcrt fwd pin=%d raw=%u gnd=%u rev pin=%d raw=%u gnd=%u", CFG_TCRT_FWD_PIN, g_tcrtFwd.rawCount(),
@@ -97,6 +106,24 @@ void setup() {
 
 void loop() {
   FaultManager::watchdogFeed();
+#if !DESKY_NO_WIFI
+  // H2.5 QR bridge (policy side only): pack the open window's bitmap to
+  // the 63B wire payload and stage it for the link task, which unicasts it
+  // once to the HB-pinned head. Packing is load-bearing: qrBitmap() is the
+  // unpacked 441B module array, and staging it raw renders two dotted
+  // columns on the head (bench-proven 2026-10-18) — only the packed form
+  // is a scannable QRBITMAP. No head linked -> the stage waits silently
+  // (the serial QR row= dump stays the dev path). Window closed -> drop
+  // the stage for the next window.
+  if (g_udp.qrBitmapValid()) {
+    uint8_t packed[qr::kPackedLen];
+    if (g_udp.qrBitmapPacked(packed)) {
+      g_link.stageQrBitmap(packed);
+    }
+  } else {
+    g_link.clearQr();
+  }
+#endif
   LOG_D("MAIN", "desky v2 skeleton alive");
   Diagnostics::logWatermarks();
   delay(2000);

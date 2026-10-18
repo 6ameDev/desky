@@ -90,17 +90,29 @@ class PowerManager {
           disp_->setPowerState(oledState_ != OLED_OFF);
           disp_->setDim(oledState_ == OLED_DIM);
           if (oledState_ != OLED_OFF) {
-            disp_->showFace(faceId_);  // Repaint the stored face on every ON/DIM.
+            disp_->repaint();  // Repaint the live mode (QR survives ON/DIM; FACE clears it).
           }
         }
         LOG_I("PWR", "oled=%s", oledStateName(oledState_));
         break;
       }
+      case CmdTarget::QR:
+        // Bench door (`qr` = show demo, `qr clear` = clear): QR show mode
+        // visible in status below. A link QR arrives via showQr(), not here.
+        if (cmd.arg != 0) {
+          showQrDemo();
+        } else {
+          clearQr();
+        }
+        break;
       case CmdTarget::STATUS:
       case CmdTarget::HELP:
+      case CmdTarget::LINK:
+      case CmdTarget::SNAP:
       case CmdTarget::INVALID:
-        // STATUS/HELP are answered by the CLI door itself; INVALID never
-        // reaches apply (doors reject at parse). Guarded, not silent.
+        // STATUS/HELP/LINK/SNAP are answered by the CLI door itself (LINK
+        // prints the WiFi status line, SNAP queues a JPEG still); INVALID
+        // never reaches apply (doors reject at parse). Guarded, not silent.
         LOG_W("PWR", "apply ignored (no state change)");
         break;
     }
@@ -110,10 +122,32 @@ class PowerManager {
     const uint32_t frames = (cam_ != nullptr) ? cam_->frames() : 0;
     const uint32_t dropped = (cam_ != nullptr) ? cam_->dropped() : 0;
     const size_t lastBytes = (cam_ != nullptr) ? cam_->lastSizeBytes() : 0;
-    LOG_I("PWR", "cam=%s oled=%s face=%s frames=%lu drops=%lu last=%uB fps=%lum", camStateName(camState_),
-          oledStateName(oledState_), faceName(faceId_), (unsigned long)frames, (unsigned long)dropped,
-          (unsigned)lastBytes, (unsigned long)((cam_ != nullptr) ? cam_->fpsMilli() : 0));
+    LOG_I("PWR", "cam=%s oled=%s face=%s qr=%s frames=%lu drops=%lu last=%uB fps=%lum", camStateName(camState_),
+          oledStateName(oledState_), faceName(faceId_), qrActive() ? "on" : "off", (unsigned long)frames,
+          (unsigned long)dropped, (unsigned)lastBytes, (unsigned long)((cam_ != nullptr) ? cam_->fpsMilli() : 0));
   }
+
+  // H2.5 QR handoff: the LinkClient hands the 63B link bitmap here; the
+  // renderer copies + paints under its own present/enabled/dim gates.
+  void showQr(const uint8_t* qr63) {
+    if (disp_ != nullptr) {
+      disp_->showQr(qr63);
+    }
+  }
+
+  void showQrDemo() {
+    if (disp_ != nullptr) {
+      disp_->showQrDemo();
+    }
+  }
+
+  void clearQr() {
+    if (disp_ != nullptr) {
+      disp_->clearQr("cli");
+    }
+  }
+
+  bool qrActive() const { return disp_ != nullptr && disp_->qrActive(); }
 
   CameraState camState() const { return camState_; }
   DisplayState oledState() const { return oledState_; }
@@ -128,7 +162,7 @@ class PowerManager {
       disp_->setPowerState(oledState_ != OLED_OFF);
       disp_->setDim(oledState_ == OLED_DIM);
       if (oledState_ != OLED_OFF) {
-        disp_->showFace(faceId_);
+        disp_->repaint();
       }
     }
   }

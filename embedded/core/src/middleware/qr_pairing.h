@@ -270,4 +270,21 @@ inline void rowBytes(const uint8_t modules[kModules], int y, uint8_t out[kRowByt
   }
 }
 
+// Wire payload length: 21 rows x 3 packed bytes = 63B (the QRBITMAP
+// contract — link_codec.h kQrBitmapLen; kept in sync by
+// test_qr_packed_matches_golden_rows, never redefined here).
+constexpr int kPackedLen = kSize * kRowBytes;
+
+// Packs the whole 21x21 bitmap into the 63B wire payload (row-major
+// MSB-first: payload[y * kRowBytes + i] is row y's ith packed byte).
+// No-op on null input/output. Null-safe, no heap — the caller owns `out`.
+inline void packBitmap(const uint8_t modules[kModules], uint8_t out[kPackedLen]) {
+  if (modules == nullptr || out == nullptr) {
+    return;
+  }
+  for (int y = 0; y < kSize; ++y) {
+    rowBytes(modules, y, out + y * kRowBytes);
+  }
+}
+
 }  // namespace qr

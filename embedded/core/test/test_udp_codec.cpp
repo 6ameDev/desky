@@ -260,6 +260,44 @@ void test_qr_timing_patterns();
 void test_qr_deterministic_reencode_equal();
 void test_qr_rejects_null_short_nondigit();
 void test_qr_row_bytes_msb_first();
+void test_qr_packed_matches_golden_rows();
+
+// Link frame codec (B-link core<->head), defined in test_link_codec.cpp.
+void test_link_face_golden_encode();
+void test_link_face_golden_decode();
+void test_link_hb_golden_encode();
+void test_link_hb_golden_decode();
+void test_link_rejects_bad_magic();
+void test_link_rejects_bad_crc();
+void test_link_rejects_length_mismatch();
+void test_link_null_safety();
+void test_link_encode_rejects_bad_args();
+void test_link_decode_rejects_bad_frag_and_unknown_type();
+void test_link_qr_exact63_accept();
+void test_link_qr_rejects_62_and_64();
+void test_link_jpeg_max_boundary();
+void test_link_fixed_type_lengths();
+void test_link_round_trip_all_types();
+void test_link_hb_ack_ack_pack();
+void test_link_fresh_seq_golden();
+void test_link_fresh_seq_wrap();
+void test_link_mtu_helpers();
+void test_link_reassembly_in_order();
+void test_link_reassembly_duplicate_reject();
+void test_link_reassembly_total_mismatch_reject();
+void test_link_reassembly_overlap_and_gap_reject();
+void test_link_reassembly_overflow_reject();
+void test_link_phone_wire_headers_distinct();
+
+// Link endpoint helpers (H2.2 core link task), defined in test_link_server.cpp.
+void test_linkserver_first_frame_fresh();
+void test_linkserver_duplicate_stale_fresh();
+void test_linkserver_pull_framing();
+void test_linkserver_type_names();
+void test_linkserver_qr_gate_once_per_window_with_peer();
+void test_linkserver_qr_pin_rule();
+void test_linkserver_qr_frame_63_round_trip();
+void test_linkserver_boot_epoch_resync_gate();
 
 int main() {
   UNITY_BEGIN();
@@ -422,5 +460,39 @@ int main() {
   RUN_TEST(test_qr_deterministic_reencode_equal);
   RUN_TEST(test_qr_rejects_null_short_nondigit);
   RUN_TEST(test_qr_row_bytes_msb_first);
+  RUN_TEST(test_qr_packed_matches_golden_rows);
+  RUN_TEST(test_link_face_golden_encode);
+  RUN_TEST(test_link_face_golden_decode);
+  RUN_TEST(test_link_hb_golden_encode);
+  RUN_TEST(test_link_hb_golden_decode);
+  RUN_TEST(test_link_rejects_bad_magic);
+  RUN_TEST(test_link_rejects_bad_crc);
+  RUN_TEST(test_link_rejects_length_mismatch);
+  RUN_TEST(test_link_null_safety);
+  RUN_TEST(test_link_encode_rejects_bad_args);
+  RUN_TEST(test_link_decode_rejects_bad_frag_and_unknown_type);
+  RUN_TEST(test_link_qr_exact63_accept);
+  RUN_TEST(test_link_qr_rejects_62_and_64);
+  RUN_TEST(test_link_jpeg_max_boundary);
+  RUN_TEST(test_link_fixed_type_lengths);
+  RUN_TEST(test_link_round_trip_all_types);
+  RUN_TEST(test_link_hb_ack_ack_pack);
+  RUN_TEST(test_link_fresh_seq_golden);
+  RUN_TEST(test_link_fresh_seq_wrap);
+  RUN_TEST(test_link_mtu_helpers);
+  RUN_TEST(test_link_reassembly_in_order);
+  RUN_TEST(test_link_reassembly_duplicate_reject);
+  RUN_TEST(test_link_reassembly_total_mismatch_reject);
+  RUN_TEST(test_link_reassembly_overlap_and_gap_reject);
+  RUN_TEST(test_link_reassembly_overflow_reject);
+  RUN_TEST(test_link_phone_wire_headers_distinct);
+  RUN_TEST(test_linkserver_first_frame_fresh);
+  RUN_TEST(test_linkserver_duplicate_stale_fresh);
+  RUN_TEST(test_linkserver_pull_framing);
+  RUN_TEST(test_linkserver_type_names);
+  RUN_TEST(test_linkserver_qr_gate_once_per_window_with_peer);
+  RUN_TEST(test_linkserver_qr_pin_rule);
+  RUN_TEST(test_linkserver_qr_frame_63_round_trip);
+  RUN_TEST(test_linkserver_boot_epoch_resync_gate);
   return UNITY_END();
 }
