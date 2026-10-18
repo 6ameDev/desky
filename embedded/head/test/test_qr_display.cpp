@@ -7,11 +7,42 @@
 // `qr clear` CLI bench verbs. The firmware paint path (drawQr) is
 // compile-tested by the desky-head build, not here.
 
+#include <string.h>
 #include <unity.h>
 
+#include "../../core/src/middleware/pairing.h"
+#include "../../core/src/middleware/qr_pairing.h"
+#include "../include/config.h"
 #include "../src/middleware/face_renderer.h"
 #include "../src/middleware/wifi_link.h"
 #include "../src/services/cli_manager.h"
+
+// 63B "123456" packed golden, duplicated from the canonical core vector in
+// embedded/core/test/test_qr_pairing.cpp (test_qr_packed_matches_golden_rows,
+// itself pinned against scripts/qr_pair_check.py GOLDEN_123456 SCAN-OK).
+// Duplicated here (not shared) so the head E2E stays self-contained; the
+// core test is canonical on any drift.
+namespace {
+const uint8_t kGolden123456[63] = {0xFE, 0x5B, 0xF8, 0x82, 0x72, 0x08, 0xBA, 0xDA, 0xE8, 0xBA, 0x52, 0xE8, 0xBA,
+                                   0x2A, 0xE8, 0x82, 0x0A, 0x08, 0xFE, 0xAB, 0xF8, 0x00, 0xD8, 0x00, 0xEF, 0xF6,
+                                   0x20, 0xA0, 0xC2, 0x08, 0x22, 0xA8, 0xC0, 0x7D, 0xE2, 0x48, 0xBA, 0x4A, 0x98,
+                                   0x00, 0xB5, 0x50, 0xFE, 0xF7, 0x20, 0x82, 0xBD, 0xC0, 0xBA, 0xB7, 0x28, 0xBA,
+                                   0x02, 0x30, 0xBA, 0xE8, 0x88, 0x82, 0xA2, 0x20, 0xFE, 0xCA, 0xA8};
+
+bool headFinderOk(const uint8_t* qr63, int fx, int fy) {
+  for (int dy = 0; dy < 7; ++dy) {
+    for (int dx = 0; dx < 7; ++dx) {
+      const bool edge = dx == 0 || dx == 6 || dy == 0 || dy == 6;
+      const bool core = dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4;
+      const uint8_t want = (edge || core) ? 1 : 0;
+      if (qrdisplay::moduleAt(qr63, fx + dx, fy + dy) != want) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+}  // namespace
 
 void test_qr_payload_len_pins_link_contract() {
   TEST_ASSERT_EQUAL_size_t(63, qrdisplay::kQrLen);
@@ -59,6 +90,46 @@ void test_qr_module_fail_closed() {
   TEST_ASSERT_EQUAL_UINT8(0, qrdisplay::moduleAt(qr, 0, 21));
 }
 
+void test_qr_e2e_encode_pack_display_identity() {
+  // P0-1 end-to-end identity: core encode -> pack -> head moduleAt equals
+  // core getModule over all 441 modules, and the packed bytes equal the
+  // "123456" golden literal above.
+  const uint8_t code[6] = {'1', '2', '3', '4', '5', '6'};
+  uint8_t modules[qr::kModules];
+  TEST_ASSERT_TRUE(qr::encode6Digits(code, modules));
+  uint8_t packed[qr::kPackedLen];
+  qr::packBitmap(modules, packed);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(kGolden123456, packed, sizeof(packed));
+  for (int y = 0; y < qr::kSize; ++y) {
+    for (int x = 0; x < qr::kSize; ++x) {
+      TEST_ASSERT_EQUAL_UINT8(qr::getModule(modules, x, y), qrdisplay::moduleAt(packed, x, y));
+    }
+  }
+}
+
+void test_qr_bug_signature_first63_unpacked_differs() {
+  // P0-2 bug-signature negative fixture: the fixed 2026-10-18 bug staged
+  // the first 63 UNPACKED module bytes as the 63B packed wire payload (two
+  // dotted columns on the OLED). That misinterpretation must NOT reproduce
+  // the finder row — proving this fixture discriminates the bug.
+  const uint8_t code[6] = {'1', '2', '3', '4', '5', '6'};
+  uint8_t modules[qr::kModules];
+  TEST_ASSERT_TRUE(qr::encode6Digits(code, modules));
+  uint8_t packed[qr::kPackedLen];
+  qr::packBitmap(modules, packed);
+  uint8_t bug[sizeof(packed)];
+  for (size_t i = 0; i < sizeof(bug); ++i) {
+    bug[i] = modules[i];  // first-63 unpacked bytes as if packed
+  }
+  // The bug payload differs from the golden packed payload ...
+  TEST_ASSERT_FALSE(memcmp(bug, packed, sizeof(bug)) == 0);
+  TEST_ASSERT_FALSE(memcmp(bug, kGolden123456, sizeof(bug)) == 0);
+  // ... and the true payload carries the finder while the bug one does not.
+  TEST_ASSERT_TRUE(headFinderOk(packed, 0, 0));
+  TEST_ASSERT_TRUE(headFinderOk(kGolden123456, 0, 0));
+  TEST_ASSERT_FALSE(headFinderOk(bug, 0, 0));
+}
+
 void test_qr_face_id_appended_not_renumbered() {
   TEST_ASSERT_EQUAL_UINT8(5, FACE_QR);
   TEST_ASSERT_EQUAL_UINT8(6, FACE_COUNT);
@@ -83,4 +154,14 @@ void test_cli_qr_and_qr_clear() {
   TEST_ASSERT_FALSE(headcmd::parseLine("qr clear now", cmd));
   TEST_ASSERT_FALSE(headcmd::parseLine("QR", cmd));  // CLI dialect stays lowercase
   TEST_ASSERT_FALSE(headcmd::parseLine("qrx", cmd));
+}
+
+void test_qr_pairing_window_order_head() {
+  // Head mirror of core test_units_qr_pairing_window_order, pinning the
+  // REAL head macro (include/config.h) instead of the core-side literal:
+  // the QR show (120s) must clear well before the core pairing window
+  // (300s, pairing::kWindowMs) expires — QR-clears-before-expiry BY DESIGN.
+  TEST_ASSERT_EQUAL_UINT32(120000, static_cast<uint32_t>(CFG_FACE_QR_TIMEOUT_MS));
+  TEST_ASSERT_EQUAL_UINT32(300000, pairing::kWindowMs);
+  TEST_ASSERT_TRUE(static_cast<uint32_t>(CFG_FACE_QR_TIMEOUT_MS) < pairing::kWindowMs);
 }

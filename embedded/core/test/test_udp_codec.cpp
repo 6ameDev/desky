@@ -251,6 +251,7 @@ void test_udp_unbond_frame_golden();
 void test_udp_rekey_frame_goldens();
 void test_udp_alive_disconnect_frame_goldens();
 void test_udp_pair_ok_framing();
+void test_udp_pack_qr_bitmap_bridge();
 
 // QR pairing bitmap (Phase 0), defined in test_qr_pairing.cpp.
 void test_qr_size_is_21();
@@ -261,9 +262,13 @@ void test_qr_deterministic_reencode_equal();
 void test_qr_rejects_null_short_nondigit();
 void test_qr_row_bytes_msb_first();
 void test_qr_packed_matches_golden_rows();
+void test_qr_pack_equals_rowbytes_concat();
+void test_qr_rs_syndrome_zero();
+void test_qr_boundary_goldens_self_consistent();
 
 // Link frame codec (B-link core<->head), defined in test_link_codec.cpp.
 void test_link_face_golden_encode();
+void test_link_crc16_standard_vector();
 void test_link_face_golden_decode();
 void test_link_hb_golden_encode();
 void test_link_hb_golden_decode();
@@ -289,6 +294,12 @@ void test_link_reassembly_overlap_and_gap_reject();
 void test_link_reassembly_overflow_reject();
 void test_link_phone_wire_headers_distinct();
 
+// Link command vocabulary (producer side: future stageFace/stageOled/stageCam
+// MUST pack through these), defined in test_link_cmd_vocab.cpp.
+void test_link_cmd_vocab_oled_literal_round_trip();
+void test_link_cmd_vocab_camctl_literal_round_trip();
+void test_link_cmd_vocab_face_literal_range();
+
 // Link endpoint helpers (H2.2 core link task), defined in test_link_server.cpp.
 void test_linkserver_first_frame_fresh();
 void test_linkserver_duplicate_stale_fresh();
@@ -298,6 +309,32 @@ void test_linkserver_qr_gate_once_per_window_with_peer();
 void test_linkserver_qr_pin_rule();
 void test_linkserver_qr_frame_63_round_trip();
 void test_linkserver_boot_epoch_resync_gate();
+
+// Telemetry X-WIRE (literal producer bytes -> real consumer + independent
+// parse), defined in test_telemetry_xwire.cpp.
+void test_telemetry_xwire_encode_matches_literals();
+void test_telemetry_xwire_independent_field_parse();
+void test_telemetry_xwire_literals_are_live_frames();
+
+// Link FRAG X-WIRE (head fragSlice -> encode -> pull -> decode -> reassemble),
+// defined in test_link_frag_xwire.cpp.
+void test_link_frag_xwire_geometry();
+void test_link_frag_xwire_round_trip_all_sizes();
+void test_link_frag_xwire_rejects_disorder_without_corruption();
+
+// Checked UDP send helper (shared/common/udp_send.h), defined in test_udp_send.cpp.
+void test_udpsend_all_ok_true();
+void test_udpsend_begin_fail_false();
+void test_udpsend_short_write_false();
+void test_udpsend_end_fail_false();
+void test_udpsend_all_fail_false();
+
+// Cross-constant relations table (gap 9), defined in test_units_table.cpp.
+void test_units_qr_pairing_window_order();
+void test_units_telemetry_rate_product();
+void test_units_alive_stale_fence();
+void test_units_linkdown_cadence();
+void test_units_rekey_margin_seconds();
 
 int main() {
   UNITY_BEGIN();
@@ -453,6 +490,7 @@ int main() {
   RUN_TEST(test_udp_rekey_frame_goldens);
   RUN_TEST(test_udp_alive_disconnect_frame_goldens);
   RUN_TEST(test_udp_pair_ok_framing);
+  RUN_TEST(test_udp_pack_qr_bitmap_bridge);
   RUN_TEST(test_qr_size_is_21);
   RUN_TEST(test_qr_golden_encodes);
   RUN_TEST(test_qr_finder_patterns_three_corners);
@@ -461,6 +499,10 @@ int main() {
   RUN_TEST(test_qr_rejects_null_short_nondigit);
   RUN_TEST(test_qr_row_bytes_msb_first);
   RUN_TEST(test_qr_packed_matches_golden_rows);
+  RUN_TEST(test_qr_pack_equals_rowbytes_concat);
+  RUN_TEST(test_qr_rs_syndrome_zero);
+  RUN_TEST(test_qr_boundary_goldens_self_consistent);
+  RUN_TEST(test_link_crc16_standard_vector);
   RUN_TEST(test_link_face_golden_encode);
   RUN_TEST(test_link_face_golden_decode);
   RUN_TEST(test_link_hb_golden_encode);
@@ -486,6 +528,9 @@ int main() {
   RUN_TEST(test_link_reassembly_overlap_and_gap_reject);
   RUN_TEST(test_link_reassembly_overflow_reject);
   RUN_TEST(test_link_phone_wire_headers_distinct);
+  RUN_TEST(test_link_cmd_vocab_oled_literal_round_trip);
+  RUN_TEST(test_link_cmd_vocab_camctl_literal_round_trip);
+  RUN_TEST(test_link_cmd_vocab_face_literal_range);
   RUN_TEST(test_linkserver_first_frame_fresh);
   RUN_TEST(test_linkserver_duplicate_stale_fresh);
   RUN_TEST(test_linkserver_pull_framing);
@@ -494,5 +539,21 @@ int main() {
   RUN_TEST(test_linkserver_qr_pin_rule);
   RUN_TEST(test_linkserver_qr_frame_63_round_trip);
   RUN_TEST(test_linkserver_boot_epoch_resync_gate);
+  RUN_TEST(test_telemetry_xwire_encode_matches_literals);
+  RUN_TEST(test_telemetry_xwire_independent_field_parse);
+  RUN_TEST(test_telemetry_xwire_literals_are_live_frames);
+  RUN_TEST(test_link_frag_xwire_geometry);
+  RUN_TEST(test_link_frag_xwire_round_trip_all_sizes);
+  RUN_TEST(test_link_frag_xwire_rejects_disorder_without_corruption);
+  RUN_TEST(test_udpsend_all_ok_true);
+  RUN_TEST(test_udpsend_begin_fail_false);
+  RUN_TEST(test_udpsend_short_write_false);
+  RUN_TEST(test_udpsend_end_fail_false);
+  RUN_TEST(test_udpsend_all_fail_false);
+  RUN_TEST(test_units_qr_pairing_window_order);
+  RUN_TEST(test_units_telemetry_rate_product);
+  RUN_TEST(test_units_alive_stale_fence);
+  RUN_TEST(test_units_linkdown_cadence);
+  RUN_TEST(test_units_rekey_margin_seconds);
   return UNITY_END();
 }

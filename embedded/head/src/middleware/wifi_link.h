@@ -56,6 +56,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "common/udp_send.h"
 #include "head_context.h"
 
 // The frozen codec namespace `link` collides with POSIX ::link() (declared
@@ -145,28 +146,39 @@ inline const char* typeName(uint8_t type) {
 }
 
 // Codec frame -> ONE command-table PowerCommand (FACE/OLED/CAMCTL only).
-// Value-checked (codec checks lengths, never values): OLED mode must be
-// 0..2 (mapped onto the head DisplayState order, which differs from the wire
-// order), CAMCTL 0/1. False = not a command frame or bad value (caller drops;
-// QRBITMAP/JPEG/HB/HB_ACK/ACK/unknown never map here).
+// Value-checked through the shared codec vocabulary (linkcode::unpackFace /
+// unpackOled / unpackCamCtl — the wire values ARE the vocabulary, validated
+// once in link/link_codec.h): OLED wire 0/1/2 maps onto the head DisplayState
+// order (which inverts the wire order — see the note on unpackOled, never
+// re-derived here), CAMCTL 0/1. False = not a command frame or bad value
+// (caller drops; QRBITMAP/JPEG/HB/HB_ACK/ACK/unknown never map here).
 inline bool mapCmd(uint8_t type, const uint8_t* payload, uint16_t len, PowerCommand& out) {
   if (len > 0 && payload == nullptr) {
     return false;
   }
   switch (type) {
-    case linkcode::kTypeFace:
+    case linkcode::kTypeFace: {
       if (len != linkcode::kFaceLen) {
         return false;
       }
+      uint8_t id = 0;
+      if (!linkcode::unpackFace(payload[0], id)) {
+        return false;
+      }
       out.target = CmdTarget::FACE;
-      out.arg = static_cast<int32_t>(payload[0]);  // clamped downstream by apply/clampFace
+      out.arg = static_cast<int32_t>(id);  // clamped downstream by apply/clampFace
       return true;
-    case linkcode::kTypeOled:
+    }
+    case linkcode::kTypeOled: {
       if (len != linkcode::kOledLen) {
         return false;
       }
+      uint8_t mode = 0;
+      if (!linkcode::unpackOled(payload[0], mode)) {
+        return false;
+      }
       out.target = CmdTarget::OLED;
-      switch (payload[0]) {
+      switch (mode) {
         case linkcode::kOledOn:
           out.arg = static_cast<int32_t>(OLED_ON);
           break;
@@ -177,19 +189,22 @@ inline bool mapCmd(uint8_t type, const uint8_t* payload, uint16_t len, PowerComm
           out.arg = static_cast<int32_t>(OLED_OFF);
           break;
         default:
-          return false;
+          return false;  // unreachable: unpackOled accepted only the three above
       }
       return true;
-    case linkcode::kTypeCamCtl:
+    }
+    case linkcode::kTypeCamCtl: {
       if (len != linkcode::kCamCtlLen) {
         return false;
       }
-      if (payload[0] != linkcode::kCamOff && payload[0] != linkcode::kCamOn) {
+      uint8_t wire = 0;
+      if (!linkcode::unpackCamCtl(payload[0], wire)) {
         return false;
       }
       out.target = CmdTarget::CAM;
-      out.arg = (payload[0] == linkcode::kCamOn) ? 1 : 0;
+      out.arg = (wire == linkcode::kCamOn) ? 1 : 0;
       return true;
+    }
     default:
       return false;
   }
@@ -431,13 +446,21 @@ class LinkClient {
 
   // CLI `link` / `status` door: one counters-only line (never payload bytes).
   void logStatus() const {
-    LOG_I("LINK", "link state=%s assoc=%d rssi=%d ch=%u hb=%lu/%lu miss=%u cmd=%lu qr=%lu still=%lu/%lu",
-          linkUp_ ? "up" : "down", associated_ ? 1 : 0, static_cast<int>(lastRssi_),
-          static_cast<unsigned>(lastChannel_), static_cast<unsigned long>(hbSent_),
-          static_cast<unsigned long>(hbAckRx_), static_cast<unsigned>(hbSinceAck_), static_cast<unsigned long>(cmdRx_),
-          static_cast<unsigned long>(qrRx_), static_cast<unsigned long>(framesSent_),
-          static_cast<unsigned long>(stillDrop_));
+    LOG_I(
+        "LINK",
+        "link state=%s assoc=%d rssi=%d ch=%u hb=%lu/%lu miss=%u cmd=%lu qr=%lu still=%lu/%lu fail=%lu "
+        "ackT=%lu drop=%lu tx=%u boot=%08lx",
+        linkUp_ ? "up" : "down", associated_ ? 1 : 0, static_cast<int>(lastRssi_), static_cast<unsigned>(lastChannel_),
+        static_cast<unsigned long>(hbSent_), static_cast<unsigned long>(hbAckRx_), static_cast<unsigned>(hbSinceAck_),
+        static_cast<unsigned long>(cmdRx_), static_cast<unsigned long>(qrRx_), static_cast<unsigned long>(framesSent_),
+        static_cast<unsigned long>(stillDrop_), static_cast<unsigned long>(txFail_), static_cast<unsigned long>(ackTx_),
+        static_cast<unsigned long>(udpDrop_), static_cast<unsigned>(txSeq_), static_cast<unsigned long>(bootId_));
   }
+
+  // Checked-send failures (udpsend::udpSendChecked false): rare/backpressure
+  // class, WARNed at every occurrence (release-visible). Benign tear-tolerant
+  // read; loop context only, never ISR.
+  uint32_t txFail() const { return txFail_; }
 
  private:
   // Security-drop logging (bench lesson, same idiom as core's link_server.h):
@@ -626,9 +649,11 @@ class LinkClient {
     if (n == 0) {
       return;
     }
-    udp_.beginPacket(ip, port);
-    udp_.write(txBuf_, n);
-    udp_.endPacket();
+    if (!udpsend::udpSendChecked(udp_, ip, port, txBuf_, n)) {
+      ++txFail_;
+      LOG_W("LINK", "udp send fail what=%s len=%u", "ack", static_cast<unsigned>(n));
+      return;
+    }
     ++ackTx_;
   }
 
@@ -645,9 +670,13 @@ class LinkClient {
     if (n == 0) {
       return;
     }
-    udp_.beginPacket(CFG_LINK_HOST, CFG_LINK_UDP_PORT);
-    udp_.write(txBuf_, n);
-    udp_.endPacket();
+    if (!udpsend::udpSendChecked(udp_, CFG_LINK_HOST, CFG_LINK_UDP_PORT, txBuf_, n)) {
+      ++txFail_;
+      // Never ACKed: counts as missed so the ~3s link-down watch stays live.
+      ++hbSinceAck_;
+      LOG_W("LINK", "udp send fail what=%s len=%u", "hb", static_cast<unsigned>(n));
+      return;
+    }
     ++hbSent_;
     ++hbSinceAck_;
   }
@@ -762,6 +791,7 @@ class LinkClient {
   uint32_t framesSent_;
   uint32_t stillDrop_;
   uint32_t udpDrop_;
+  uint32_t txFail_ = 0;
   bool firstAssocFail_;
   bool firstHb_;
   bool firstDrop_;

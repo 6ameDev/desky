@@ -46,7 +46,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "common/udp_send.h"
 #include "middleware/connection_manager.h"
+#include "middleware/qr_pairing.h"
 
 // Fallback keeps the host tests + firmware compiling if config keys drift;
 // in-project include/config.h always wins (same pattern as pairing.h).
@@ -239,6 +241,18 @@ inline bool shouldRedeliver(bool valid, const uint8_t* storedCode, const uint8_t
     }
   }
   return (nowMs - bondMs) < kRedeliveryMs;
+}
+
+// QR pack bridge (host-testable): valid window packs via qr::packBitmap;
+// closed-window/null never touches `out` (fail-closed). The firmware
+// UdpServer::qrBitmapPacked() below delegates here so the valid→pack→stage
+// bridge is unit-covered without ARDUINO.
+inline bool packQrBitmap(bool valid, const uint8_t* modules, uint8_t* out) {
+  if (!valid || modules == nullptr || out == nullptr) {
+    return false;
+  }
+  qr::packBitmap(modules, out);
+  return true;
 }
 
 }  // namespace udpstatus
@@ -488,12 +502,13 @@ class UdpServer {
   const uint8_t* qrBitmap() const { return qrBitmap_; }
 
   bool qrBitmapPacked(uint8_t out[qr::kPackedLen]) const {
-    if (!qrBitmapValid_ || out == nullptr) {
-      return false;
-    }
-    qr::packBitmap(qrBitmap_, out);
-    return true;
+    return udpstatus::packQrBitmap(qrBitmapValid_, qrBitmap_, out);
   }
+
+  // Send-failure accounting: every UDP unicast goes through
+  // udpsend::udpSendChecked; failures bump txFail_ + LOG_W (release-visible).
+  // Benign tear-tolerant read like the LinkServer counters; task only.
+  uint32_t txFail() const { return txFail_; }
 
   // Explicit unpair / 10s-hold factory reset hook (Task 10 bench procedure;
   // no button wired yet): clears the NVS bond + in-memory Core + key
@@ -792,10 +807,12 @@ class UdpServer {
     // PAIR_OK. Checked BEFORE the already_bonded reply below.
     if (bonded_ && udpstatus::shouldRedeliver(lastPair_.valid, lastPair_.code6, lastPair_.cliNonce4, buf + 1, buf + 7,
                                               lastPair_.bondMs, nowMs)) {
-      udp_.beginPacket(rip, rport);
-      udp_.write(lastPair_.ok39, sizeof(lastPair_.ok39));
-      udp_.endPacket();
-      LOG_I("UDP", "pair redeliver");
+      if (!udpsend::udpSendChecked(udp_, rip, rport, lastPair_.ok39, sizeof(lastPair_.ok39))) {
+        ++txFail_;
+        LOG_W("UDP", "udp send fail what=%s len=%u", "pair_redeliver", static_cast<unsigned>(sizeof(lastPair_.ok39)));
+      } else {
+        LOG_I("UDP", "pair redeliver");
+      }
       return;
     }
     if (bonded_) {
@@ -1260,9 +1277,10 @@ class UdpServer {
       xorSum ^= out[i];
     }
     out[sizeof(out) - 1] = xorSum;
-    udp_.beginPacket(ip, port);
-    udp_.write(out, sizeof(out));
-    udp_.endPacket();
+    if (!udpsend::udpSendChecked(udp_, ip, port, out, sizeof(out))) {
+      ++txFail_;
+      LOG_W("UDP", "udp send fail what=%s len=%u", "rekey_ack", static_cast<unsigned>(sizeof(out)));
+    }
   }
 
   void sendPairErr(const IPAddress& ip, uint16_t port, uint8_t reason, uint8_t retryS) {
@@ -1271,9 +1289,10 @@ class UdpServer {
     out[1] = reason;
     out[2] = retryS;
     out[3] = static_cast<uint8_t>(out[0] ^ out[1] ^ out[2]);
-    udp_.beginPacket(ip, port);
-    udp_.write(out, sizeof(out));
-    udp_.endPacket();
+    if (!udpsend::udpSendChecked(udp_, ip, port, out, sizeof(out))) {
+      ++txFail_;
+      LOG_W("UDP", "udp send fail what=%s len=%u", "pair_err", static_cast<unsigned>(sizeof(out)));
+    }
   }
 
   // PAIR_OK 39B unicast (moved VERBATIM out of handlePairReq): consumes the
@@ -1285,9 +1304,10 @@ class UdpServer {
     if (!receipt.valid()) {
       return;
     }
-    udp_.beginPacket(ip, port);
-    udp_.write(ok39, pairing::kPairOkSize);
-    udp_.endPacket();
+    if (!udpsend::udpSendChecked(udp_, ip, port, ok39, pairing::kPairOkSize)) {
+      ++txFail_;
+      LOG_W("UDP", "udp send fail what=%s len=%u", "pair_ok", static_cast<unsigned>(pairing::kPairOkSize));
+    }
   }
 
   void sendTelemetry(uint32_t nowMs) {
@@ -1354,9 +1374,10 @@ class UdpServer {
       return;
     }
     telem_.publish(tp, gateOk, nowMs, [this](const uint8_t* buf, size_t len) {
-      udp_.beginPacket(peerIp_, peerPort_);
-      udp_.write(buf, len);
-      udp_.endPacket();
+      if (!udpsend::udpSendChecked(udp_, peerIp_, peerPort_, buf, len)) {
+        ++txFail_;
+        LOG_W("UDP", "udp send fail what=%s len=%u", "telemetry", static_cast<unsigned>(len));
+      }
     });
   }
 
@@ -1397,6 +1418,10 @@ class UdpServer {
   uint16_t era_;
   uint32_t validCount_;
   uint32_t maxVerifyUs_;
+  // Checked-send failures (udpsend::udpSendChecked false): rare/backpressure
+  // class, WARNed at every occurrence (release-visible). Task-written, benign
+  // tear-tolerant read via txFail().
+  uint32_t txFail_ = 0;
   // Cached QR bitmap of the CURRENT open window's code (V1 21x21,
   // qr::kModules; see the normative payload contract in
   // shared/protocol/README.md §"Pairing QR"). Encoded on every window open

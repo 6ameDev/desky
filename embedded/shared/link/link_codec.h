@@ -60,8 +60,10 @@ constexpr size_t kHbLen = 10;  // rssi i8 | channel u8 | freeHeap u32BE | bootId
 constexpr size_t kHbAckLen = 5;  // channel u8 | era/resync u32BE.
 constexpr size_t kAckLen = 2;    // acked seq u16BE.
 
-// OLED modes / camera states. Semantic range is enforced downstream (face id
-// is clamped downstream too); the codec checks lengths only, never values.
+// OLED modes / camera states. Value validation lives in the pack/unpack
+// helpers below (OLED/CAMCTL accept exactly their wire sets; FACE rides
+// map-then-clamp with its range decision documented on unpackFace); the
+// frame codec above checks lengths only, never values.
 constexpr uint8_t kOledOn = 0;
 constexpr uint8_t kOledDim = 1;
 constexpr uint8_t kOledOff = 2;
@@ -339,6 +341,84 @@ inline bool unpackAck(const uint8_t* in, size_t len, uint16_t& ackedSeq) {
     return false;
   }
   ackedSeq = getU16BE(in);
+  return true;
+}
+
+// ── Command value vocabulary (OLED/CAMCTL/FACE) ────────────────────────────
+// The wire values ARE the vocabulary: pack/unpack are identity-with-
+// validation (wire byte in, same byte out), the entity's job is single-point
+// validation + documentation so no consumer hand-rolls the mapping again.
+// Both sides MUST call these — the future core stageFace/stageOled/stageCam
+// producers on the way out, the head mapCmd consumer on the way in. A
+// renumber is a deliberate test-updating decision: literal-byte tests pin the
+// values on both sides (core test_link_cmd_vocab.cpp, head
+// test_command_literals.cpp).
+inline bool packOled(uint8_t mode, uint8_t& wireOut) {
+  switch (mode) {
+    case kOledOn:
+    case kOledDim:
+    case kOledOff:
+      wireOut = mode;
+      return true;
+    default:
+      return false;
+  }
+}
+
+// NOTE (documented once, here — do not re-derive elsewhere): the wire order
+// 0=ON,1=DIM,2=OFF is the INVERSE of the head DisplayState order
+// (OLED_OFF=0,OLED_DIM=1,OLED_ON=2 in head_context.h). unpackOled validates
+// the wire byte only and returns it unchanged — the wire->DisplayState flip
+// happens in the consumer (head mapCmd), never by re-deriving constants here.
+// Passing a DisplayState raw puts inverted values on the wire.
+inline bool unpackOled(uint8_t wire, uint8_t& modeOut) {
+  switch (wire) {
+    case kOledOn:
+    case kOledDim:
+    case kOledOff:
+      modeOut = wire;
+      return true;
+    default:
+      return false;
+  }
+}
+
+inline bool packCamCtl(uint8_t mode, uint8_t& wireOut) {
+  switch (mode) {
+    case kCamOff:
+    case kCamOn:
+      wireOut = mode;
+      return true;
+    default:
+      return false;
+  }
+}
+
+inline bool unpackCamCtl(uint8_t wire, uint8_t& modeOut) {
+  switch (wire) {
+    case kCamOff:
+    case kCamOn:
+      modeOut = wire;
+      return true;
+    default:
+      return false;
+  }
+}
+
+// FACE ids ride the wire as the raw id byte: the full u8 domain maps
+// (identity passthrough, clamped downstream by the head's clampFace). This
+// preserves the map-then-clamp contract — mapCmd accepts every 1B FACE frame
+// and apply resolves out-of-range ids to BOOT, so accept/reject here never
+// drifts from the consumer. Range decision mirrored from head_context.h:
+// FACE_BOOT(0)..FACE_ALERT(4) are the display ids; FACE_QR(5) is excluded (QR
+// mode is entered only via showQr, never via a FACE id) and anything at/above
+// FACE_COUNT(6) falls back to BOOT downstream. No head include here — the
+// codec stays stdint-only; this comment is the single reference for the
+// mirrored range. Always true: unlike OLED/CAMCTL there is no wire-vs-
+// internal inversion for FACE (valid ids match 1:1), so no byte is
+// rejectable at this seam.
+inline bool unpackFace(uint8_t wire, uint8_t& idOut) {
+  idOut = wire;
   return true;
 }
 

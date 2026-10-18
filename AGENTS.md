@@ -72,6 +72,15 @@ Core envs: `desky` (dev/debug), `desky-release` (field), `native-test`
   reintroduce a bare `[env]` (it auto-inherits into every env).
 - Strictness is split by design (`-Wall` everywhere, `-Werror` src-only);
   library warnings are third-party noise, never chase them.
+- Every new cross-seam contract (phone↔robot, core↔head, firmware↔bench-script,
+  NVS-schema) ships in the same change with host cross-seam tests pinning both
+  ends: shared-codec golden vectors plus each peer's encode/decode/framing/
+  epoch/seq-gate edge in that sibling's `native-test` suite — and where two
+  sides must agree on a value vocabulary, the contract lives once as shared
+  pure functions both sides call (never mirrored constants), with literal-byte
+  tests pinning the values. Bench-mirror seams additionally carry `--selftest`
+  goldens (mandatory, runs with no hardware). A future change must fail on the
+  laptop before it can wedge the link on hardware.
 
 ## Hardware notes (READ BEFORE touching USB)
 

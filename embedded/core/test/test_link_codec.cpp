@@ -13,6 +13,13 @@
 
 #include "link/link_codec.h"
 
+void test_link_crc16_standard_vector() {
+  // WS4: CRC16-CCITT-FALSE standard check — ASCII "123456789" -> 0x29B1
+  // (the canonical published vector for poly 0x1021 / init 0xFFFF).
+  const uint8_t msg[9] = {'1', '2', '3', '4', '5', '6', '7', '8', '9'};
+  TEST_ASSERT_EQUAL_UINT16(0x29B1, link::crc16Ccitt(msg, sizeof(msg)));
+}
+
 void test_link_face_golden_encode() {
   const uint8_t payload[1] = {0x02};
   uint8_t out[link::kMaxFrame] = {};

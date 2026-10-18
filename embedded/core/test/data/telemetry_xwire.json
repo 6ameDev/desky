@@ -1,0 +1,41 @@
+{
+  "protocol": "desky-udp-telemetry-v1",
+  "layout": "[hdr 0xBB | pitchBE i16 decideg | rollBE i16 decideg | distBE u16 mm | flags | XOR]",
+  "flags": {
+    "cliff": "bit0 (1 = hazard latched)",
+    "driving": "bit1 (1 = last commanded v/omega nonzero and fresh)",
+    "mode": "bits2-3 (0 MANUAL, 1 AUTONOMOUS, 2 LOW_POWER, 3 EMERGENCY)",
+    "reserved": "bits4-7 always 0"
+  },
+  "note": "Literal bytes produced by the real firmware encoder (telemetry::encodeSnapshot + udp::encodeTelemetry); the host test test_telemetry_xwire.cpp pastes the same bytes verbatim and parses them field-by-field. Any scale/rounding/clamp/endianness/bit-layout drift breaks that test.",
+  "vectors": [
+    {
+      "name": "neg_pitch_manual",
+      "snapshot": {"mode": 0, "cliff": false, "driving": false, "pitchDeg": -12.3, "rollDeg": 4.5, "distMm": 300},
+      "fields": {"pitch": -123, "roll": 45, "distanceMm": 300, "statusFlags": 0},
+      "bytes": [187, 255, 133, 0, 45, 1, 44, 0, 193],
+      "bytes_hex": "BBFF85002D012C00C1"
+    },
+    {
+      "name": "maxdist_auto_both",
+      "snapshot": {"mode": 1, "cliff": true, "driving": true, "pitchDeg": 45.6, "rollDeg": -0.5, "distMm": 65535},
+      "fields": {"pitch": 456, "roll": -5, "distanceMm": 65535, "statusFlags": 7},
+      "bytes": [187, 1, 200, 255, 251, 255, 255, 7, 113],
+      "bytes_hex": "BB01C8FFFBFFFF0771"
+    },
+    {
+      "name": "lowpower_cliff",
+      "snapshot": {"mode": 2, "cliff": true, "driving": false, "pitchDeg": 0.0, "rollDeg": -179.9, "distMm": 0},
+      "fields": {"pitch": 0, "roll": -1799, "distanceMm": 0, "statusFlags": 9},
+      "bytes": [187, 0, 0, 248, 249, 0, 0, 9, 179],
+      "bytes_hex": "BB0000F8F9000009B3"
+    },
+    {
+      "name": "emergency_clamp",
+      "snapshot": {"mode": 3, "cliff": false, "driving": true, "pitchDeg": 4000.0, "rollDeg": 0.0, "distMm": 1234},
+      "fields": {"pitch": 32767, "roll": 0, "distanceMm": 1234, "statusFlags": 14},
+      "bytes": [187, 127, 255, 0, 0, 4, 210, 14, 227],
+      "bytes_hex": "BB7FFF000004D20EE3"
+    }
+  ]
+}
