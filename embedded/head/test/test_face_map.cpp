@@ -34,7 +34,8 @@ void test_face_id_from_name_rejects() {
 }
 
 void test_face_clamp_valid_passthrough() {
-  for (int i = 0; i < static_cast<int>(FACE_COUNT); ++i) {
+  // QR mode is never entered via a FACE id, so the valid range stops at FACE_QR.
+  for (int i = 0; i < static_cast<int>(FACE_QR); ++i) {
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(i), clampFace(i));
   }
 }
@@ -42,6 +43,7 @@ void test_face_clamp_valid_passthrough() {
 void test_face_clamp_falls_back_to_boot() {
   TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, clampFace(-1));
   TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, clampFace(static_cast<int>(FACE_COUNT)));
+  TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, clampFace(static_cast<int>(FACE_QR)));  // QR excluded
   TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, clampFace(99));
 }
 

@@ -475,12 +475,25 @@ class UdpServer {
     return true;
   }
 
-  // Read-only access to the cached window QR bitmap for future consumers
-  // (head link). Valid only while a pairing window is open; check
-  // qrBitmapValid() first, then read qr::kModules bytes via qrBitmap().
+  // Read-only access to the cached window QR bitmap. Two views:
+  // - qrBitmap(): the UNPACKED 441B module array (0 = light, 1 = dark,
+  //   row-major) — the serial `QR row=` dump packs it per row. This is NOT
+  //   the wire format: staging these raw bytes as a 63B QRBITMAP renders
+  //   two dotted columns on the head (bench-proven 2026-10-18).
+  // - qrBitmapPacked(): the 63B wire payload (packed MSB-first rows) for
+  //   LinkServer::stageQrBitmap. Valid only while a pairing window is open;
+  //   check qrBitmapValid() first. False on null out or closed window.
   bool qrBitmapValid() const { return qrBitmapValid_; }
 
   const uint8_t* qrBitmap() const { return qrBitmap_; }
+
+  bool qrBitmapPacked(uint8_t out[qr::kPackedLen]) const {
+    if (!qrBitmapValid_ || out == nullptr) {
+      return false;
+    }
+    qr::packBitmap(qrBitmap_, out);
+    return true;
+  }
 
   // Explicit unpair / 10s-hold factory reset hook (Task 10 bench procedure;
   // no button wired yet): clears the NVS bond + in-memory Core + key

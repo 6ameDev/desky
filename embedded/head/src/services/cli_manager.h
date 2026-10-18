@@ -10,7 +10,14 @@
 //   cam on|off            camera power gate (sensor deinit/re-init)
 //   face <id>             0 boot, 1 happy, 2 sad, 3 blink, 4 alert (or name)
 //   oled on|dim|off       display matrix row
-//   status                power + camera stats snapshot
+//   status                power + camera stats snapshot + LINK status line
+//   link                  WiFi link status line only (state/assoc/rssi/HB
+//                         misses/frames sent, via LinkClient::logStatus)
+//   snap                  queue one JPEG still head->core over TCP (stills-
+//                         first: 1 frame per trigger, never continuous)
+//   qr                    show the bench QR demo pattern (exercises the QR
+//                         show/clear path with no link)
+//   qr clear              clear the QR show mode (any `face` also clears it)
 //   help                  this reference
 // Lowercase verbs only (humans); the UART link door speaks UPPERCASE.
 // No String/heap anywhere in the path (static line buffer, strncmp math).
@@ -123,6 +130,30 @@ inline bool parseLine(const char* line, PowerCommand& out) {
     }
     return false;
   }
+  if (wordIs(p, "link", 4)) {
+    out.target = CmdTarget::LINK;
+    out.arg = 0;
+    return true;
+  }
+  if (wordIs(p, "snap", 4)) {
+    out.target = CmdTarget::SNAP;
+    out.arg = 0;
+    return true;
+  }
+  if (strncmp(p, "qr", 2) == 0 && (p[2] == ' ' || p[2] == '\t' || p[2] == '\0' || p[2] == '\r' || p[2] == '\n')) {
+    const char* rest = skipSpaces(p + 2);
+    if (*rest == '\0' || *rest == '\r' || *rest == '\n') {
+      out.target = CmdTarget::QR;
+      out.arg = 1;
+      return true;
+    }
+    if (wordIs(rest, "clear", 5)) {
+      out.target = CmdTarget::QR;
+      out.arg = 0;
+      return true;
+    }
+    return false;
+  }
   if (wordIs(p, "status", 6)) {
     out.target = CmdTarget::STATUS;
     out.arg = 0;
@@ -145,6 +176,7 @@ inline bool parseLine(const char* line, PowerCommand& out) {
 
 #include "common/logger.h"
 #include "config.h"
+#include "middleware/wifi_link.h"
 #include "services/power_manager.h"
 
 // Fallbacks keep this header compilable if config keys ever drift; in-project
@@ -155,12 +187,16 @@ inline bool parseLine(const char* line, PowerCommand& out) {
 
 class CliManager {
  public:
-  CliManager() : power_(nullptr), lineLen_(0) {}
+  CliManager() : power_(nullptr), link_(nullptr), lineLen_(0) {}
 
   void begin(PowerManager* power) {
     power_ = power;
     printHelp();
   }
+
+  // Live-path door for the LINK status line + `snap` still trigger. Stored,
+  // never owned; main() attaches after both clients are begun.
+  void attachLink(LinkClient* link) { link_ = link; }
 
   // Drain Serial into a fixed buffer; each newline parses and dispatches.
   // STATUS/HELP are answered here; everything else lands in the ONE command
@@ -195,18 +231,36 @@ class CliManager {
     }
     if (cmd.target == CmdTarget::STATUS) {
       power_->status();
+      if (link_ != nullptr) {
+        link_->logStatus();
+      }
     } else if (cmd.target == CmdTarget::HELP) {
       printHelp();
+    } else if (cmd.target == CmdTarget::LINK) {
+      if (link_ != nullptr) {
+        link_->logStatus();
+      } else {
+        LOG_W("CLI", "link not attached");
+      }
+    } else if (cmd.target == CmdTarget::SNAP) {
+      if (link_ != nullptr) {
+        link_->requestStill();
+      } else {
+        LOG_W("CLI", "link not attached");
+      }
     } else {
       power_->apply(cmd);
     }
   }
 
   void printHelp() {
-    LOG_I("CLI", "cmds: cam on|off | face <boot|happy|sad|blink|alert|0-4> | oled on|dim|off | status | help");
+    LOG_I("CLI",
+          "cmds: cam on|off | face <boot|happy|sad|blink|alert|0-4> | oled on|dim|off | status | link | snap | qr "
+          "| qr clear | help");
   }
 
   PowerManager* power_;
+  LinkClient* link_;
   char lineBuf_[CFG_CLI_LINE_LEN];
   size_t lineLen_;
 };

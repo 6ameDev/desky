@@ -19,7 +19,11 @@ enum FaceId : uint8_t {
   FACE_SAD = 2,
   FACE_BLINK = 3,  // line eyes — also the DIM-mode resting face
   FACE_ALERT = 4,  // wide eyes + O mouth
-  FACE_COUNT = 5,
+  // QR bitmap show mode (H2.5, appended — existing ids never renumber).
+  // Entered ONLY via FaceRenderer::showQr(); never via a FACE id: clampFace
+  // maps it back to BOOT, and it has no CLI face name (bench uses `qr`).
+  FACE_QR = 5,
+  FACE_COUNT = 6,
 };
 
 inline const char* faceName(uint8_t id) {
@@ -34,6 +38,8 @@ inline const char* faceName(uint8_t id) {
       return "blink";
     case FACE_ALERT:
       return "alert";
+    case FACE_QR:
+      return "qr";
     default:
       return "unknown";
   }
@@ -63,8 +69,10 @@ inline uint8_t faceIdFromName(const char* name) {
 }
 
 // Any out-of-range id falls back to BOOT (never blank the face on bad input).
+// FACE_QR is excluded too: the QR mode is entered only via showQr(), so a
+// numeric FACE id can never land on it (any FACE command clears QR instead).
 inline uint8_t clampFace(int id) {
-  if (id < 0 || id >= static_cast<int>(FACE_COUNT)) {
+  if (id < 0 || id >= static_cast<int>(FACE_COUNT) || id == static_cast<int>(FACE_QR)) {
     return FACE_BOOT;
   }
   return static_cast<uint8_t>(id);
@@ -119,7 +127,7 @@ inline DisplayState resolveOledCommand(DisplayState cur, DisplayState want) {
 // USB serial CLI (lowercase verbs, laptop terminal) and the UART link stub
 // (uppercase verbs, S3 side) each parse a line into a PowerCommand and call
 // the single PowerManager::apply() entry point. Framing/CRC is task 3.
-enum class CmdTarget : uint8_t { CAM, FACE, OLED, STATUS, HELP, INVALID };
+enum class CmdTarget : uint8_t { CAM, FACE, OLED, STATUS, HELP, INVALID, LINK, SNAP, QR };
 
 struct PowerCommand {
   CmdTarget target = CmdTarget::INVALID;

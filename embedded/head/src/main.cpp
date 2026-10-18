@@ -11,6 +11,7 @@
 #include "head_context.h"
 #include "middleware/face_renderer.h"
 #include "middleware/link_stub.h"
+#include "middleware/wifi_link.h"
 #include "services/cli_manager.h"
 #include "services/event_bus.h"
 #include "services/power_manager.h"
@@ -45,6 +46,7 @@ Ssd1306Display g_panel(g_i2c);
 FaceRenderer g_display(g_panel);
 PowerManager g_power;
 LinkStub g_link;
+LinkClient g_wifi;
 CliManager g_cli;
 EventBus::Subscription g_sub;
 uint32_t g_lastCamMs = 0;
@@ -74,8 +76,10 @@ void setup() {
   const bool oledOk = g_display.init();
   (void)oledOk;  // NEVER asserted: absent OLED is the normal on-MB state.
   g_power.begin(&g_cam, &g_display);
-  g_link.begin(&g_power);  // PARKED stub (retained for switch-back).
+  g_link.begin(&g_power);          // PARKED stub (retained for switch-back).
+  g_wifi.begin(&g_power, &g_cam);  // Live path: WiFi STA link client.
   g_cli.begin(&g_power);
+  g_cli.attachLink(&g_wifi);      // LINK status line + `snap` still trigger.
   g_sub = EventBus::subscribe();  // Settles before any publish (loop only).
   g_lastCamMs = millis();
   g_lastAliveMs = millis();
@@ -91,6 +95,8 @@ void loop() {
   g_cli.poll();   // USB door (human).
   g_link.poll();  // UART door (S3 verbs into the same command table).
   g_link.heartbeatTick();
+  g_wifi.poll();           // Live path: UDP commands/HB_ACK + TCP stills + assoc retry.
+  g_wifi.heartbeatTick();  // Live path: 1Hz HB + 3-miss link-down watch.
   const uint32_t now = millis();
   if (now - g_lastCamMs >= CFG_CAMERA_POLL_MS) {  // Wrap-safe elapsed gate.
     g_lastCamMs = now;
@@ -102,8 +108,8 @@ void loop() {
   }
   if (now - g_lastAliveMs >= 5000) {
     g_lastAliveMs = now;
-    LOG_I("HEAD", "alive cam=%s oled=%s face=%s", camStateName(g_power.camState()), oledStateName(g_power.oledState()),
-          faceName(g_power.faceId()));
+    LOG_I("HEAD", "alive cam=%s oled=%s face=%s qr=%s", camStateName(g_power.camState()),
+          oledStateName(g_power.oledState()), faceName(g_power.faceId()), g_power.qrActive() ? "on" : "off");
     Diagnostics::logWatermarks("HEAD");
   }
 }

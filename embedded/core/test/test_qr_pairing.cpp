@@ -110,5 +110,32 @@ void test_qr_row_bytes_msb_first() {
   }
 }
 
+void test_qr_packed_matches_golden_rows() {
+  // Wire contract: packBitmap("123456") must equal the Phase-0 golden rows
+  // (qr_pair_check.py GOLDEN_123456 — independently cross-decoded SCAN-OK).
+  // Regression for the 2026-10-18 head render bug: staging the first 63
+  // UNPACKED module bytes as the 63B QRBITMAP lit only columns 7 and 15
+  // on the OLED (two dotted bars, unscannable) instead of this payload.
+  static const uint8_t kGoldenRows[qr::kPackedLen] = {
+      0xFE, 0x5B, 0xF8, 0x82, 0x72, 0x08, 0xBA, 0xDA, 0xE8, 0xBA, 0x52, 0xE8, 0xBA, 0x2A, 0xE8, 0x82,
+      0x0A, 0x08, 0xFE, 0xAB, 0xF8, 0x00, 0xD8, 0x00, 0xEF, 0xF6, 0x20, 0xA0, 0xC2, 0x08, 0x22, 0xA8,
+      0xC0, 0x7D, 0xE2, 0x48, 0xBA, 0x4A, 0x98, 0x00, 0xB5, 0x50, 0xFE, 0xF7, 0x20, 0x82, 0xBD, 0xC0,
+      0xBA, 0xB7, 0x28, 0xBA, 0x02, 0x30, 0xBA, 0xE8, 0x88, 0x82, 0xA2, 0x20, 0xFE, 0xCA, 0xA8};
+  uint8_t m[qr::kModules];
+  TEST_ASSERT_TRUE(qr::encode6Digits(kGolden, m));
+  uint8_t packed[qr::kPackedLen];
+  qr::packBitmap(m, packed);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(kGoldenRows, packed, qr::kPackedLen);
+  // Null-safe no-ops (fail-closed, never crashes the call site).
+  for (size_t i = 0; i < qr::kPackedLen; ++i) {
+    packed[i] = 0xA5;
+  }
+  qr::packBitmap(nullptr, packed);
+  qr::packBitmap(m, nullptr);
+  for (size_t i = 0; i < qr::kPackedLen; ++i) {
+    TEST_ASSERT_EQUAL_UINT8(0xA5, packed[i]);
+  }
+}
+
 // Runner lives in test_udp_codec.cpp (single main for the native-test
 // binary): the QR tests are declared extern there.

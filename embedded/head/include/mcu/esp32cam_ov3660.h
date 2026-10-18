@@ -76,6 +76,10 @@
 // - UART0 (module TX0/RX0 via MB) is RESERVED — Serial (USB CLI) only.
 // - GPIO0 (XCLK!) + GPIO16 (PSRAM CS): camera/flash use — NEVER reuse.
 // - GPIO34-39 (camera Y6-Y9): input-only, no pullups — camera use only.
-// - WiFi stays OFF on head (no radio init anywhere in this firmware).
+// - WiFi is ON for the B-link (STA only against the core AP, modem-sleep
+//   between HBs, NO SoftAP on head; channel follows the AP — never selected
+//   here). Camera data/clock pins are digital-only (no ADC2 use anywhere, so
+//   no ADC2-vs-WiFi conflict). Star 5V rail budgets module + camera + OLED +
+//   radio peak together.
 // - Star 5V power assumed: module + camera + OLED peak together, and the
 //   camera+display pair is power-hungry (see head power manager).

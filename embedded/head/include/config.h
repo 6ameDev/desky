@@ -19,6 +19,23 @@
 #define CFG_LINK_BAUD 115200
 #define CFG_LINK_HEARTBEAT_MS 1000
 
+// Link WiFi client (head STA -> core AP; WiFi ON for the link — STA only,
+// modem-sleep between HBs, no AP on head). See src/middleware/wifi_link.h +
+// the MCU-adjacent WiFi comment in include/mcu/esp32cam_ov3660.h.
+#define CFG_LINK_SSID "desky"
+#define CFG_LINK_PASS "desky1234"
+#define CFG_LINK_HOST "192.168.4.1"
+#define CFG_LINK_UDP_PORT 3334
+#define CFG_LINK_TCP_PORT 3335
+// Link-down rule: this many missed HB ACKs (~1s each) before re-associate.
+#define CFG_LINK_MAX_MISSED 3
+// Association retry throttle while the AP is absent (every USB run).
+#define CFG_LINK_ASSOC_RETRY_MS 5000
+// Association attempt timeout: WiFi.begin() is async, so a started attempt
+// gets this long to reach WL_CONNECTED before we disconnect + start fresh.
+// Must exceed the normal scan+handshake time (1-3s) with margin.
+#define CFG_LINK_ASSOC_TIMEOUT_MS 10000
+
 // USB serial CLI (laptop terminal on the MB board)
 #define CFG_CLI_BAUD 115200
 #define CFG_CLI_LINE_LEN 64
@@ -27,6 +44,10 @@
 #define CFG_FACE_FPS 25
 #define CFG_FACE_FPS_DIM 5
 
+// Face QR show mode (H2.5): a rendered pairing bitmap stays until a FACE
+// command arrives or this timeout elapses (FACE-command-or-120s-timeout).
+#define CFG_FACE_QR_TIMEOUT_MS 120000
+
 // Face render task (classic ESP32: noisy display work off the Arduino loop;
 // priority stored as an offset — config.h itself stays FreeRTOS-free so
 // Arduino-free headers keep compiling on host).
@@ -34,7 +55,7 @@
 #define CFG_FACE_PRIORITY_OFFSET 2
 #define CFG_FACE_CORE 0
 
-// Camera: QVGA JPEG stills, grab-and-drop at the poll rate (no streaming —
-// WiFi stays OFF on head).
+// Camera: QVGA JPEG stills, grab-and-drop at the poll rate (no continuous
+// streaming — on-demand stills only, uploaded over the WiFi link by `snap`).
 #define CFG_CAMERA_POLL_MS 500
 #define CFG_CAMERA_JPEG_QUALITY 12

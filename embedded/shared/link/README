@@ -1,8 +1,104 @@
-# shared/link — core<->head link codec (PARKED, placeholder).
+# shared/link — core<->head link frame codec (B-link)
 
-Wired UART is parked: no TX/RX copper on either carrier (wireless TBD).
-Firmware link code (`head/src/middleware/link_stub.h`, `CFG_LINK_*`,
-`MCU_LINK_*`) is retained for switch-back.
+Header-only, Arduino-free frame codec: `link_codec.h` (namespace `link`).
+Pure byte math in the `middleware/` style — data transformation only, no
+peripheral lifecycle — shared by firmware (future socket transport) and
+host Unity tests (`core/test/test_link_codec.cpp`).
 
-Normative protocol source: `core/src/middleware/udp_codec.h`
-(core<->app UDP contract — unrelated to this link).
+Normative wire source: `link_codec.h` itself. Phone-wire contracts
+(`core/src/middleware/udp_codec.h`, `shared/protocol/README.md`) are
+unrelated to this wire.
+
+## Frame layout
+
+All multi-byte fields big-endian. Total = 10 + payload bytes.
+
+| Offset | Size | Field   | Meaning                                                  |
+| ------ | ---- | ------- | -------------------------------------------------------- |
+| 0      | 1    | magic   | `0x4C` (`'L'`, `kMagic`) — frame sync byte               |
+| 1      | 1    | type    | Frame type (see type table)                              |
+| 2..3   | 2    | seq     | Sequence number `u16BE` (`isFreshSeq` wrap-aware check)   |
+| 4..5   | 2    | frag    | Fragment locator `u16BE`: **idx hi, total lo**           |
+| 6..7   | 2    | len     | Payload length `u16BE` (0..1024)                         |
+| 8..    | len  | payload | Type-defined bytes                                       |
+| 8+len  | 2    | CRC16   | CRC16-CCITT-FALSE (`poly 0x1021, init 0xFFFF`) `u16BE`    |
+
+over all preceding bytes.
+
+Frag packing, exactly: `frag = (idx << 8) | total`. Unfragmented frames
+use `idx=0, total=1`. `fragTotal` is a `u8` (max 255 fragments); a payload
+needing more fragments must use larger per-frame payloads (up to 1024B).
+
+`decodeFrame` validates magic, exact length (no truncation, no trailing
+garbage), frag bounds (`total >= 1`, `idx < total`), the per-type length
+contract, then CRC. Unknown types are rejected — the contract is frozen;
+new types require a codec bump on both sides.
+
+## Type table
+
+| Type   | Name     | Dir         | Payload (exact length, BE multi-byte)              |
+| ------ | -------- | ----------- | -------------------------------------------------- |
+| `0x01` | FACE     | core->head  | Face id `u8` (1B; clamped downstream, not here)    |
+| `0x02` | OLED     | core->head  | Mode `u8` (1B): 0=ON 1=DIM 2=OFF                   |
+| `0x03` | CAMCTL   | core->head  | Camera `u8` (1B): 0=off 1=on                      |
+| `0x04` | QRBITMAP | core->head  | V1 21x21 packed rows, MSB-first (exactly 63B)      |
+| `0x10` | JPEG     | core->head  | Raw JPEG bytes (0..1024B)                          |
+| `0x20` | HB       | head->core  | `rssi i8` + `channel u8` + `freeHeap u32BE` + `bootId u32BE` (10B) |
+| `0x21` | HB_ACK   | core->head  | `channel u8` + `era/resync u32BE` (5B)              |
+| `0x22` | ACK      | either      | Acked seq `u16BE` (2B)                             |
+
+### Boot epoch + seq resync rule (normative)
+
+`bootId` is a per-boot random `u32` drawn by the head at startup
+(`esp_random()` in `begin()`, never reseeded) and sent in every HB. The
+core resyncs on any changed-or-first-seen epoch: accept any seq as fresh,
+pin the peer, ACK. Same-epoch frames keep the wrap-aware
+strictly-greater gate; pre-epoch 6B HBs (no `bootId`) are rejected as
+malformed.
+
+Rationale: without the epoch, a head reboot (or any tx-seq reset)
+replays low seqs the core drops as stale *forever* — an unrecoverable
+flap loop every ~9s (bench-proven 2026-10-18: head re-associated,
+core logged `drop link stale HB`, zero ACKs, forever). Replaying an old
+epoch's frame only buys one idempotent HB_ACK (counters only), which is
+acceptable under the transport-only trust model (same as the AP
+passphrase). The head tx domain is monotonic within a boot and must
+NEVER be reset on re-associate — only a reboot (new epoch) restarts it.
+
+API (`link::`): `encodeFrame(type, seq, payload, len, fragIdx, fragTotal,
+outBuf, outLen)` returns encoded bytes or 0 on error; `decodeFrame(buf,
+len, out)` fills a `Frame` view into the input buffer; `isFreshSeq`
+mirrors the `udpstatus::isFreshCounter` wrap idiom for `u16` seq;
+`packHb/unpackHb`, `packHbAck/unpackHbAck`, `packAck/unpackAck` for the
+typed payloads; `Reassembler` for fragments. All bounds-checked,
+null-safe, no heap — fixed caller-owned buffers at every call site.
+
+QR coupling note: the codec takes generic bytes plus an explicit 63B
+length check and never includes `qr_pairing.h`, so it stays decoupled
+from the QR encoder. 63B = 3 packed bytes/row x 21 rows.
+
+## MTU / fragmentation rule
+
+Max single-frame payload: **1024B** (`kMaxPayload`, frame 1034B). A
+transport may impose a smaller MTU later; per-frame payloads must then
+shrink — the codec reports the need, the transport does the splitting:
+
+- `maxPayloadFor(mtu)` — largest payload fitting `mtu` (0 when even
+  header+CRC do not fit).
+- `needsFrag(payloadLen, mtu)` — true when the payload needs splitting.
+- `fragCount(payloadLen, mtu)` — frame count for the split.
+- `Reassembler` — strict in-order append into a caller buffer:
+  duplicates, gaps/out-of-order, total mismatches, and overflows are
+  rejected without mutating state.
+
+## Non-reuse + transport statements (normative)
+
+- Phone-wire headers `0xAA`/`0xBB`/`0x50`/`0x51`/`0x52`/`0xAC`/`0xAD`/
+  `0x53`/`0x54`/`0x55`/`0x56` are **never reused or renumbered** on the
+  link wire. The link magic `0x4C` is disjoint from all of them, and link
+  type bytes live at offset 1 — no phone-wire parser can accept a link
+  frame and vice versa. Pinned by
+  `test_link_phone_wire_headers_distinct`.
+- **ESP-NOW is NOT a transport for this codec — sockets only**, per the
+  approved B-link decision. Transports come later; this codec only frames
+  bytes.
