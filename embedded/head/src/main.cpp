@@ -11,6 +11,7 @@
 #include "head_context.h"
 #include "middleware/face_renderer.h"
 #include "middleware/link_stub.h"
+#include "middleware/ota_client.h"
 #include "middleware/wifi_link.h"
 #include "services/cli_manager.h"
 #include "services/event_bus.h"
@@ -47,6 +48,8 @@ FaceRenderer g_display(g_panel);
 PowerManager g_power;
 LinkStub g_link;
 LinkClient g_wifi;
+OtaUpdater g_ota;  // Standing rule: never ship without the OTA client (see
+                   // middleware/ota_client.h) — no USB door exists in the field.
 CliManager g_cli;
 EventBus::Subscription g_sub;
 uint32_t g_lastCamMs = 0;
@@ -80,6 +83,7 @@ void setup() {
   g_wifi.begin(&g_power, &g_cam);  // Live path: WiFi STA link client.
   g_cli.begin(&g_power);
   g_cli.attachLink(&g_wifi);      // LINK status line + `snap` still trigger.
+  g_cli.attachOta(&g_ota);        // `ota <url>` pull updater (standalone).
   g_sub = EventBus::subscribe();  // Settles before any publish (loop only).
   g_lastCamMs = millis();
   g_lastAliveMs = millis();
@@ -97,8 +101,11 @@ void loop() {
   g_link.heartbeatTick();
   g_wifi.poll();           // Live path: UDP commands/HB_ACK + TCP stills + assoc retry.
   g_wifi.heartbeatTick();  // Live path: 1Hz HB + 3-miss link-down watch.
+  g_ota.poll();            // OTA body pump (no-op unless `ota <url>` started one).
   const uint32_t now = millis();
-  if (now - g_lastCamMs >= CFG_CAMERA_POLL_MS) {  // Wrap-safe elapsed gate.
+  // Camera grab suspended during OTA (OtaUpdater::active()): a JPEG grab
+  // mid-flash contends PSRAM/flash cache with the Update write pump.
+  if (!g_ota.active() && now - g_lastCamMs >= CFG_CAMERA_POLL_MS) {  // Wrap-safe elapsed gate.
     g_lastCamMs = now;
     g_cam.update();  // Grab-and-drop still (no-op while camera off).
   }

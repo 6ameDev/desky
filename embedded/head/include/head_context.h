@@ -127,7 +127,9 @@ inline DisplayState resolveOledCommand(DisplayState cur, DisplayState want) {
 // USB serial CLI (lowercase verbs, laptop terminal) and the UART link stub
 // (uppercase verbs, S3 side) each parse a line into a PowerCommand and call
 // the single PowerManager::apply() entry point. Framing/CRC is task 3.
-enum class CmdTarget : uint8_t { CAM, FACE, OLED, STATUS, HELP, INVALID, LINK, SNAP, QR };
+// OTA carries its URL via the raw CLI line (re-parsed at dispatch), not via
+// arg — the int32 has no room for a URL and OTA never rides the UART wire.
+enum class CmdTarget : uint8_t { CAM, FACE, OLED, STATUS, HELP, INVALID, LINK, SNAP, QR, OTA };
 
 struct PowerCommand {
   CmdTarget target = CmdTarget::INVALID;

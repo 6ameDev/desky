@@ -36,6 +36,14 @@
 // Must exceed the normal scan+handshake time (1-3s) with margin.
 #define CFG_LINK_ASSOC_TIMEOUT_MS 10000
 
+// OTA pull (see src/middleware/ota_client.h + partitions_ota_nospiffs.csv):
+// each app slot is 0x1F0000 — the hard ceiling ota::fitsSlot() enforces.
+// The head ships no image without the OTA client (standing rule, see the
+// ota header); USB is the recovery backstop only.
+#define CFG_OTA_SLOT_BYTES 0x1F0000
+// Stall timeout for the OTA body pump (no bytes for this long -> abort).
+#define CFG_OTA_TIMEOUT_MS 15000
+
 // USB serial CLI (laptop terminal on the MB board)
 #define CFG_CLI_BAUD 115200
 #define CFG_CLI_LINE_LEN 64

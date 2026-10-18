@@ -1,0 +1,21 @@
+# desky-head OTA partition table (NO SPIFFS) — 4MB classic ESP32 (0x400000).
+# One-time USB erase session required when moving off the default single-app
+# table (offsets move, so a dirty flash would boot garbage — see the OTA
+# section in embedded/docs/link-learnings.md). After that, `ota <url>` owns
+# updates; USB is the recovery backstop only.
+#
+# Tiling 0x10000..0x400000 (exact, no gaps, no overlaps — verify by addition):
+#   nvs      0x9000  + 0x5000   (20KB)  = 0xE000
+#   otadata  0xE000  + 0x2000   (8KB)   = 0x10000
+#   ota_0    0x10000 + 0x1F0000 (~1.94MB) = 0x200000
+#   ota_1    0x200000 + 0x1F0000 (~1.94MB) = 0x3F0000
+#   coredump 0x3F0000 + 0x10000 (64KB)  = 0x400000 (end of 4MB flash)
+# Each app slot (0x1F0000 = 2031616B) must hold the whole firmware image;
+# CFG_OTA_SLOT_BYTES mirrors that size and ota::fitsSlot() enforces it.
+# NO spiffs: the head serves no web UI and every KB stays with the app slots.
+# nvs, Type, SubType, Offset, Size, Flags
+nvs,data,nvs,0x9000,0x5000,
+otadata,data,ota,0xe000,0x2000,
+app0,app,ota_0,0x10000,0x1F0000,
+app1,app,ota_1,0x200000,0x1F0000,
+coredump,data,coredump,0x3F0000,0x10000,

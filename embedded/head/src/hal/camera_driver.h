@@ -138,6 +138,12 @@ class CameraDriver : public ISensor {
     cfg.pixel_format = PIXFORMAT_JPEG;
     cfg.frame_size = FRAMESIZE_QVGA;
     cfg.jpeg_quality = CFG_CAMERA_JPEG_QUALITY;
+    // Load-bearing: fb_count=1, forever. OTA writes flash while the camera
+    // owns PSRAM frame buffers — double-buffered frames + an OTA write pump
+    // is a crash combo (PSRAM/flash-cache contention on the classic ESP32).
+    // The OTA path additionally suspends the periodic grab via
+    // OtaUpdater::active() (see main.cpp); a second frame buffer would
+    // defeat that suspension. Never raise without re-proving OTA + snap.
     cfg.fb_count = 1;
     const esp_err_t err = esp_camera_init(&cfg);
     if (err != ESP_OK) {
