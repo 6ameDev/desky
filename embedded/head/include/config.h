@@ -43,6 +43,11 @@
 #define CFG_OTA_SLOT_BYTES 0x1F0000
 // Stall timeout for the OTA body pump (no bytes for this long -> abort).
 #define CFG_OTA_TIMEOUT_MS 15000
+// Running image version (monotonic u32): the carrier manifest
+// (GET /head-version) compares against this via otamanifest::shouldPull —
+// bump on every release or the carrier pull-gate treats the image as current
+// and never pulls. Pinned literally by host tests.
+#define HEAD_FW_VERSION 5
 
 // USB serial CLI (laptop terminal on the MB board)
 #define CFG_CLI_BAUD 115200
@@ -55,6 +60,11 @@
 // Face QR show mode (H2.5): a rendered pairing bitmap stays until a FACE
 // command arrives or this timeout elapses (FACE-command-or-120s-timeout).
 #define CFG_FACE_QR_TIMEOUT_MS 120000
+
+// Face OTA progress mode (carrier trigger): the fill bar + alert face clear
+// on any FACE command or when this timeout elapses since the last progress
+// update (same FACE-command-or-timeout house rule as QR above).
+#define CFG_FACE_OTA_TIMEOUT_MS 120000
 
 // Face render task (classic ESP32: noisy display work off the Arduino loop;
 // priority stored as an offset — config.h itself stays FreeRTOS-free so

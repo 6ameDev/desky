@@ -98,3 +98,71 @@ image ships without the OTA client (standing rule in the ota header).
   no valid-marking or self-test-then-confirm. A mark-valid stub (boot-count +
   confirm gate) is future work — do not mistake a successful `Update.end()`
   for a health-checked image.
+
+## 10. Carrier OTA (core stages, head pulls, no head console)
+
+Wireless head update with NO head USB: the core sends a URL-in-frame link
+command (`kTypeOta = 0x05`, 1..128B URL bytes, no NUL — additive codec bump,
+old heads drop it as unknown per §5's frozen gate) and the head pulls it
+with the existing `OtaUpdater` entry (URL grammar, state machine, manifest,
+WDT, camera-suspend — reused, never duplicated). The OLED shows a minimal
+fill bar (FETCH proportion, VERIFY/COMMIT full, no text); abort/failure
+shows the alert face, then times back to the stored face. Any FACE command
+clears the bar (same house rule as the QR show mode).
+
+Carrier procedure (laptop joins the core AP `desky`):
+
+1. Build the head image (`cd embedded/head && make build`), then
+   `POST http://192.168.4.1:8080/head.bin` with the `firmware.bin` bytes
+   (PSRAM staging, 2MB cap; expect `staged bytes=N`).
+2. Check `GET http://192.168.4.1:8080/head-version` (`version=/size=/sha256=`
+   lines — bump the staged version when the image changes).
+3. On the CORE serial: `otahead http://192.168.4.1:8080/head.bin [version]`
+   (single arg reuses the staged version). Expect
+   `otahead staged len=32 version=N` (length only — URLs never log).
+4. The link task unicasts one OTA frame to the HB-pinned head (`LINK ota
+   sent seq=N len=32`); the head ACKs, fetches the sibling `/head-version`
+   manifest, and pulls only when the manifest version is NEWER than the
+   running `HEAD_FW_VERSION` (else `OTA up to date`, no pull).
+5. Watch the OLED bar, then the stored face, then the head reboot into the
+   new slot. The HB resumes with a fresh boot epoch, so the core resyncs
+   instead of wedging as stale (§7 fingerprints still apply while down).
+- TORN-DOWNLOAD REPEAT: any short/stall/magic/manifest/commit failure aborts
+  (old image boots, alert face + timeout back); just re-run `otahead` — the
+  `clearOta`/re-stage gate keeps one send per command and duplicates re-ACK
+  without re-triggering an in-flight download.
+- NO-AUTO-ROLLBACK UNCHANGED: a bad-but-bootable image stays booted (see
+  §9); USB reflash from the erase-session procedure is still the backstop.
+
+## 11. Version rides the upload; every stage re-arms (2026-10-19 fix)
+
+Two defects found while the carrier trigger printed `staged len=0`:
+
+- The manifest version used to arrive via a SECOND channel (the `otahead
+  <url> [version]` console token) while the bytes arrived via POST. The two
+  could disagree silently (new bytes + stale label = head declines as
+  "up to date"). Now the version rides `POST /head.bin?version=N`
+  exclusively (missing keeps the label, malformed rejects the upload with
+  previous bytes + label preserved); the verb is URL-only and prints the
+  STORED label re-read, never the parsed token.
+- The stage latch was one-shot per boot (second `otahead` staged nothing
+  while logging success). Now every valid stage replaces + re-arms; the
+  head's in-flight guard absorbs duplicates, so latest-command-wins is safe.
+- Standing lesson, paid for twice: a log line must report stored state,
+  never input intent — and a null attach must WARN, never skip silently.
+
+## 12. Build-time version sidecar kills operator-supplied labels (2026-10-19)
+
+The `?version=` fix still trusted the operator to type the right number.
+Closed properly: `embedded/head/tools/gen_fw_manifest.py` (tracked build
+input, post-action on `firmware.bin`) reads `HEAD_FW_VERSION` from
+`include/config.h` — the macro stays the single source, never duplicated —
+and writes `firmware.manifest` (same wire format: version/size/sha256 over
+the built bytes; fails the build loudly on unparseable macro, empty image,
+or slot overflow). Untracked `embedded/scripts/ota_head_upload.py` POSTs
+with `?version=<manifest>`, then GETs the served manifest back and asserts
+served == built (version AND size AND sha256) before blessing the stage.
+After this, a staged label differing from the built firmware is
+structurally impossible — no discipline, no memory, no `--force-version`
+escape hatch (deliberately absent). Release ritual: bump macro → build
+(sidecar appears) → run uploader (asserts itself) → trigger.

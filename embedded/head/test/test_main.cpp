@@ -82,6 +82,16 @@ void test_link_frag_xwire_geometry();
 void test_link_frag_xwire_round_trip_all_sizes();
 void test_link_frag_xwire_rejects_disorder_without_corruption();
 
+// Carrier OTA consumer (kTypeOta bump + OLED progress + version gate),
+// defined in test_link_ota.cpp.
+void test_link_ota_producer_bytes_to_updater_exact();
+void test_link_ota_literal_contract();
+void test_link_ota_duplicate_reack_and_stale_drop_cases();
+void test_link_ota_old_head_drops_as_unknown();
+void test_otadisplay_geometry_and_fill();
+void test_otadisplay_state_transitions();
+void test_link_ota_version_vocabulary_and_gate();
+
 // OTA pull client pure top half (URL parse, version, validation, state
 // machine) + CLI `ota <url>` verb, defined in test_ota_client.cpp.
 void test_ota_parse_plain_host();
@@ -168,6 +178,13 @@ int main() {
   RUN_TEST(test_link_frag_xwire_geometry);
   RUN_TEST(test_link_frag_xwire_round_trip_all_sizes);
   RUN_TEST(test_link_frag_xwire_rejects_disorder_without_corruption);
+  RUN_TEST(test_link_ota_producer_bytes_to_updater_exact);
+  RUN_TEST(test_link_ota_literal_contract);
+  RUN_TEST(test_link_ota_duplicate_reack_and_stale_drop_cases);
+  RUN_TEST(test_link_ota_old_head_drops_as_unknown);
+  RUN_TEST(test_otadisplay_geometry_and_fill);
+  RUN_TEST(test_otadisplay_state_transitions);
+  RUN_TEST(test_link_ota_version_vocabulary_and_gate);
   RUN_TEST(test_ota_parse_plain_host);
   RUN_TEST(test_ota_parse_port_and_deep_path);
   RUN_TEST(test_ota_parse_bare_host_defaults_path);

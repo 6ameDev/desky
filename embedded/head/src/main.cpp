@@ -84,6 +84,8 @@ void setup() {
   g_cli.begin(&g_power);
   g_cli.attachLink(&g_wifi);      // LINK status line + `snap` still trigger.
   g_cli.attachOta(&g_ota);        // `ota <url>` pull updater (standalone).
+  g_wifi.attachOta(&g_ota);       // Carrier door: link OTA frame -> updater entry.
+  g_ota.attachFace(&g_display);   // Updater progress -> OLED bar/alert.
   g_sub = EventBus::subscribe();  // Settles before any publish (loop only).
   g_lastCamMs = millis();
   g_lastAliveMs = millis();

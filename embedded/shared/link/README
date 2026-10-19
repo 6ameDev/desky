@@ -42,6 +42,7 @@ new types require a codec bump on both sides.
 | `0x02` | OLED     | core->head  | Mode `u8` (1B): 0=ON 1=DIM 2=OFF                   |
 | `0x03` | CAMCTL   | core->head  | Camera `u8` (1B): 0=off 1=on                      |
 | `0x04` | QRBITMAP | core->head  | V1 21x21 packed rows, MSB-first (exactly 63B)      |
+| `0x05` | OTA      | core->head  | OTA pull URL bytes, no NUL (1..128B)               |
 | `0x10` | JPEG     | core->head  | Raw JPEG bytes (0..1024B)                          |
 | `0x20` | HB       | head->core  | `rssi i8` + `channel u8` + `freeHeap u32BE` + `bootId u32BE` (10B) |
 | `0x21` | HB_ACK   | core->head  | `channel u8` + `era/resync u32BE` (5B)              |

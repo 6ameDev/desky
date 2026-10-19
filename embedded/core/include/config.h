@@ -159,3 +159,15 @@
 #define CFG_LINK_CORE 0
 // Link task tick: UDP drain + TCP stream pump + WDT feed period.
 #define CFG_LINK_LOOP_MS 10
+
+// Carrier OTA staging (head pull over the core AP): plain-HTTP server on the
+// pinned ESPAsyncWebServer dep (see src/middleware/ota_staging.h) + the
+// `otahead` console verb (see src/services/cli_manager.h). No new lib_deps.
+#define CFG_OTA_STAGE_PORT 8080
+// PSRAM staging cap for POST /head.bin (head slot is 0x1F0000; margin above).
+#define CFG_OTA_STAGE_MAX_BYTES 0x200000
+
+// USB serial CLI (laptop terminal): the `otahead` carrier door. Line fits
+// verb + 128B URL + optional version.
+#define CFG_CLI_BAUD 115200
+#define CFG_CLI_LINE_LEN 160

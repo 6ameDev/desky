@@ -13,10 +13,12 @@
 #include "hal/tcrt5000_driver.h"
 #include "hal/vl53l0x_driver.h"
 #include "middleware/link_server.h"
+#include "middleware/ota_staging.h"
 #include "middleware/qr_pairing.h"
 #include "middleware/sensor_task.h"
 #include "middleware/udp_server.h"
 #include "services/audio_manager.h"
+#include "services/cli_manager.h"
 #include "services/config_store.h"
 #include "services/event_bus.h"
 
@@ -34,6 +36,8 @@ SensorTask g_sensor;
 AudioManager g_audio;
 UdpServer g_udp;
 LinkServer g_link;
+OtaStaging g_otaStage;  // Carrier head-image staging (POST /head.bin + GETs).
+CoreCli g_cli;          // Minimal USB door: `otahead <url> [version]` only.
 I2CManager g_i2c;
 Mpu6500Driver g_mpu(g_i2c);
 Vl53l0xDriver g_tof(g_i2c);
@@ -83,7 +87,17 @@ void setup() {
   if (!linkOk) {
     LOG_W("LINK", "link endpoint failed, continuing headless");
   }
+  // Carrier OTA staging (pinned AsyncWebServer, no new deps): same never-
+  // brick rule — a staging failure only warns, the `otahead` verb then fails
+  // closed at stage time.
+  const bool otaStageOk = g_otaStage.begin();
+  if (!otaStageOk) {
+    LOG_W("OTA", "staging server failed, continuing without it");
+  }
 #endif
+  // Minimal USB door (carrier `otahead` trigger): always live, even in bench
+  // mode (the stage then fails closed — link task never started).
+  g_cli.begin(&g_link);
   LOG_I("BOOT", "sensors ready tof=%dmm mpu=0x%02X", g_tof.distanceMm(), g_mpu.address());
   LOG_I("BOOT", "tcrt fwd pin=%d raw=%u gnd=%u rev pin=%d raw=%u gnd=%u", CFG_TCRT_FWD_PIN, g_tcrtFwd.rawCount(),
         g_tcrtFwd.groundPresent() ? 1u : 0u, CFG_TCRT_REV_PIN, g_tcrtRev.rawCount(),
@@ -106,6 +120,9 @@ void setup() {
 
 void loop() {
   FaultManager::watchdogFeed();
+  // Minimal USB door (carrier `otahead` trigger): polled every loop; the
+  // stage waits silently for the link task, never blocks driving.
+  g_cli.poll();
 #if !DESKY_NO_WIFI
   // H2.5 QR bridge (policy side only): pack the open window's bitmap to
   // the 63B wire payload and stage it for the link task, which unicasts it
