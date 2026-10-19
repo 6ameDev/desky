@@ -51,6 +51,59 @@ inline uint8_t moduleAt(const uint8_t* qr63, int x, int y) {
 
 }  // namespace qrdisplay
 
+// ── OTA progress mode geometry + state (Arduino-free, host-tested) ─────────
+// Carrier-triggered pull display: a minimal fill bar (no text), then an
+// alert face on failure. The bar is centered on the 128x64 panel (same panel
+// size as qrdisplay — referenced, never redefined): 100x10 outline + 1px
+// border, inner fill grows with pct. Any FACE command clears the mode and a
+// fail/timeout falls back to the stored face (the QR show/clear house rule).
+namespace otadisplay {
+constexpr int kBarX0 = 14;
+constexpr int kBarY0 = 27;
+constexpr int kBarW = 100;
+constexpr int kBarH = 10;
+
+inline bool fitsPanel() {
+  return kBarX0 >= 0 && kBarY0 >= 0 && kBarX0 + kBarW <= qrdisplay::kPanelW && kBarY0 + kBarH <= qrdisplay::kPanelH;
+}
+
+// Inner fill width for pct 0..100 (clamped): 2px border each side.
+inline int fillW(uint8_t pct) {
+  if (pct > 100) {
+    pct = 100;
+  }
+  return (kBarW - 4) * pct / 100;
+}
+
+// Overlay state: inactive by default; show() arms (or refreshes) the bar,
+// markFailed() flips a live bar to the alert face, hide() clears to the
+// stored face. Failed-without-show still shows (any updater failure lands on
+// the alert face, never silently).
+struct Progress {
+  bool active = false;
+  bool failed = false;
+  uint8_t pct = 0;
+};
+
+inline void show(Progress& p, uint8_t pct) {
+  p.active = true;
+  p.failed = false;
+  p.pct = (pct > 100) ? 100 : pct;
+}
+
+inline void markFailed(Progress& p) {
+  p.active = true;
+  p.failed = true;
+}
+
+inline void hide(Progress& p) {
+  p.active = false;
+  p.failed = false;
+  p.pct = 0;
+}
+
+}  // namespace otadisplay
+
 #ifdef ARDUINO
 // ── Firmware: face renderer ─────────────────────────────────────────────────
 
@@ -81,6 +134,9 @@ inline uint8_t moduleAt(const uint8_t* qr63, int x, int y) {
 #endif
 #ifndef CFG_FACE_QR_TIMEOUT_MS
 #define CFG_FACE_QR_TIMEOUT_MS 120000
+#endif
+#ifndef CFG_FACE_OTA_TIMEOUT_MS
+#define CFG_FACE_OTA_TIMEOUT_MS 120000
 #endif
 
 class FaceRenderer : public IActuator {
@@ -121,16 +177,22 @@ class FaceRenderer : public IActuator {
 
   // SHOW_FACE{id} API: stores (clamped) and paints immediately when live;
   // the render task repaints at the matrix cadence either way. Any FACE
-  // command clears an active QR show mode (the H2.5 show-until rule).
+  // command clears an active QR show mode (the H2.5 show-until rule) and an
+  // active OTA progress mode (same house rule — one live overlay at a time).
   void showFace(uint8_t id) {
     const bool wasQr = qrActive_;
+    const bool wasOta = ota_.active;
     qrActive_ = false;
+    otadisplay::hide(ota_);
     faceId_ = clampFace(static_cast<int>(id));
     if (panel_.present() && enabled_) {
       drawFace(faceId_);
     }
     if (wasQr) {
       LOG_I("FACE", "qr cleared (face)");
+    }
+    if (wasOta) {
+      LOG_I("FACE", "ota cleared (face)");
     }
   }
 
@@ -148,6 +210,10 @@ class FaceRenderer : public IActuator {
     }
     for (size_t i = 0; i < qrdisplay::kQrLen; ++i) {
       qrBuf_[i] = qr63[i];
+    }
+    if (ota_.active) {
+      otadisplay::hide(ota_);  // one live overlay: QR wins over OTA here
+      LOG_I("FACE", "ota cleared (qr)");
     }
     qrActive_ = true;
     qrShownMs_ = millis();
@@ -188,14 +254,77 @@ class FaceRenderer : public IActuator {
 
   bool qrActive() const { return qrActive_; }
 
-  // Repaints the live mode (QR when active, else the stored face) — used
-  // when power/DIM returns without changing the face id, so a QR survives
-  // ON/DIM while any FACE command still clears it.
+  // OTA progress mode (carrier trigger): the updater drives this — showOta
+  // arms/refreshes the fill bar (FETCH: fill proportion, VERIFY/COMMIT:
+  // full bar), failOta flips to the alert face, hideOta clears to the stored
+  // face on success. Any FACE command or the timeout clears (same house rule
+  // as QR). Minimal bar, NO text rendering. Respects the present()/enabled_
+  // gates exactly like drawFace/drawQr.
+  void showOta(uint8_t pct) {
+    if (qrActive_) {
+      qrActive_ = false;  // one live overlay: OTA wins over QR
+    }
+    otadisplay::show(ota_, pct);
+    otaMs_ = millis();
+    if (panel_.present() && enabled_) {
+      drawOtaBar();
+    }
+    LOG_I("FACE", "ota progress pct=%u", static_cast<unsigned>(ota_.pct));
+  }
+
+  // Updater success: clear to the stored face (the reboot follows).
+  void hideOta() {
+    if (!ota_.active) {
+      return;
+    }
+    otadisplay::hide(ota_);
+    if (panel_.present() && enabled_) {
+      drawFace(faceId_);
+    }
+    LOG_I("FACE", "ota done");
+  }
+
+  // Updater abort/failure: alert face now, timeout back to the stored face.
+  void failOta() {
+    otadisplay::markFailed(ota_);
+    otaMs_ = millis();
+    if (panel_.present() && enabled_) {
+      drawFace(FACE_ALERT);
+    }
+    LOG_W("FACE", "ota failed (alert)");
+  }
+
+  bool otaActive() const { return ota_.active; }
+  bool otaFailed() const { return ota_.failed; }
+  uint8_t otaPct() const { return ota_.pct; }
+
+  // Clears the OTA mode (timeout path). No-op when no OTA is up, so only
+  // real transitions log. Repaints the stored face when live.
+  void clearOta(const char* why = "cli") {
+    if (!ota_.active) {
+      return;
+    }
+    otadisplay::hide(ota_);
+    if (panel_.present() && enabled_) {
+      drawFace(faceId_);
+    }
+    LOG_I("FACE", "ota cleared (%s)", why != nullptr ? why : "cli");
+  }
+
+  // Repaints the live mode (OTA bar/alert, else QR when active, else the
+  // stored face) — used when power/DIM returns without changing the face id,
+  // so an overlay survives ON/DIM while any FACE command still clears it.
   void repaint() {
     if (!panel_.present() || !enabled_) {
       return;
     }
-    if (qrActive_) {
+    if (ota_.active) {
+      if (ota_.failed) {
+        drawFace(FACE_ALERT);
+      } else {
+        drawOtaBar();
+      }
+    } else if (qrActive_) {
       drawQr();
     } else {
       drawFace(faceId_);
@@ -218,7 +347,15 @@ class FaceRenderer : public IActuator {
     for (;;) {
       // Never WDT-subscribed, so no feed needed; never halts.
       if (self->enabled_ && self->panel_.present()) {
-        if (self->qrActive_ && (millis() - self->qrShownMs_ >= static_cast<uint32_t>(CFG_FACE_QR_TIMEOUT_MS))) {
+        if (self->ota_.active && (millis() - self->otaMs_ >= static_cast<uint32_t>(CFG_FACE_OTA_TIMEOUT_MS))) {
+          self->clearOta("timeout");  // Wrap-safe elapsed gate; logs the clear.
+        } else if (self->ota_.active) {
+          if (self->ota_.failed) {
+            self->drawFace(FACE_ALERT);
+          } else {
+            self->drawOtaBar();
+          }
+        } else if (self->qrActive_ && (millis() - self->qrShownMs_ >= static_cast<uint32_t>(CFG_FACE_QR_TIMEOUT_MS))) {
           self->clearQr("timeout");  // Wrap-safe elapsed gate; logs the clear.
         } else if (self->qrActive_) {
           self->drawQr();
@@ -267,8 +404,25 @@ class FaceRenderer : public IActuator {
         display.drawLine(54, 48, 74, 48, SSD1306_WHITE);
         break;
     }
-    display.setCursor(0, 56);
-    display.print(faceName(id));
+    display.display();
+  }
+
+  // OTA progress paint: cleared panel, 1px outline + fill-proportion inner
+  // bar (no text — counters ride the serial logs, never the pixels). Gated
+  // on present() like drawFace (absent OLED on-MB is normal, never assert);
+  // the caller also gates on enabled_, and dim_ only changes cadence +
+  // contrast via setDim, never the pixels here.
+  void drawOtaBar() {
+    if (!panel_.present()) {
+      return;
+    }
+    auto& display = panel_.gfx();
+    display.clearDisplay();
+    display.drawRect(otadisplay::kBarX0, otadisplay::kBarY0, otadisplay::kBarW, otadisplay::kBarH, SSD1306_WHITE);
+    const int fill = otadisplay::fillW(ota_.pct);
+    if (fill > 0) {
+      display.fillRect(otadisplay::kBarX0 + 2, otadisplay::kBarY0 + 2, fill, otadisplay::kBarH - 4, SSD1306_WHITE);
+    }
     display.display();
   }
 
@@ -313,6 +467,12 @@ class FaceRenderer : public IActuator {
   volatile bool qrActive_ = false;
   uint8_t qrBuf_[qrdisplay::kQrLen] = {};
   volatile uint32_t qrShownMs_ = 0;
+  // OTA progress mode state (carrier trigger): overlay state + last-update
+  // timestamp for the FACE-command-or-timeout rule. Set from the loop task
+  // (updater progress hooks), read by the Core 0 render task — same
+  // tear-tolerant shape as the QR state above.
+  otadisplay::Progress ota_;
+  volatile uint32_t otaMs_ = 0;
 };
 
 #endif  // ARDUINO

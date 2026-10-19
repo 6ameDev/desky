@@ -47,6 +47,18 @@ void test_link_cmd_vocab_camctl_literal_round_trip() {
   TEST_ASSERT_FALSE(link::unpackCamCtl(0x02, mode));
 }
 
+void test_link_cmd_vocab_ota_literal_length() {
+  // Carrier OTA vocabulary literal: type byte 0x05, payload 1..128B (the
+  // wire contract the core producer stages and the head consumer pulls).
+  TEST_ASSERT_EQUAL_UINT8(0x05, link::kTypeOta);
+  TEST_ASSERT_TRUE(link::isKnownType(0x05));
+  TEST_ASSERT_TRUE(link::isValidPayloadLen(0x05, 1));
+  TEST_ASSERT_TRUE(link::isValidPayloadLen(0x05, 32));
+  TEST_ASSERT_TRUE(link::isValidPayloadLen(0x05, 128));
+  TEST_ASSERT_FALSE(link::isValidPayloadLen(0x05, 0));
+  TEST_ASSERT_FALSE(link::isValidPayloadLen(0x05, 129));
+}
+
 void test_link_cmd_vocab_face_literal_range() {
   uint8_t id = 0xFF;
   for (uint8_t lit = 0x00; lit <= 0x04; ++lit) {

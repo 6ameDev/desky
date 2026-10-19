@@ -40,6 +40,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "link/ota_manifest.h"
+
 namespace ota {
 
 // ESP32 boot image magic (first byte of a valid app image). Tested as the
@@ -316,6 +318,7 @@ inline bool step(State& s, Event e) {
 #include "common/fault_manager.h"
 #include "common/logger.h"
 #include "config.h"
+#include "middleware/face_renderer.h"
 
 // Fallbacks keep this header compiling if config keys ever drift; in-project
 // include/config.h always wins (same pattern as core's coordinator.h).
@@ -338,15 +341,60 @@ inline bool step(State& s, Event e) {
 
 class OtaUpdater {
  public:
-  OtaUpdater() : state_(ota::State::kIdle), total_(0), received_(0), lastRxMs_(0), lastPct_(0), manifestSet_(false) {
+  OtaUpdater()
+      : face_(nullptr),
+        state_(ota::State::kIdle),
+        total_(0),
+        received_(0),
+        lastRxMs_(0),
+        lastPct_(0),
+        manifestSet_(false) {
     manifest_[0] = '\0';
   }
+
+  // Progress door for the OLED bar (carrier trigger): the updater drives
+  // FaceRenderer::showOta/hideOta/failOta through this pointer (FETCH fill,
+  // VERIFY/COMMIT full bar, success hides, abort/failure alerts). Stored,
+  // never owned; main() attaches after both are begun. Null-safe throughout.
+  void attachFace(FaceRenderer* face) { face_ = face; }
 
   // Main-loop camera gate: while active, loop() skips CameraDriver::update()
   // (grab suspended — a JPEG grab mid-flash contends PSRAM/flash cache with
   // the single fb_count=1 buffer; see camera_driver.h). The sensor stays
   // powered (no deinit/re-init cycle); only the periodic grab is paused.
   bool active() const { return state_ != ota::State::kIdle; }
+
+  // Carrier entry: pull only when the staged manifest says the image is
+  // newer than the running HEAD_FW_VERSION. Manifest convention: the bin URL
+  // ends in "/head.bin" and the manifest rides the sibling "/head-version"
+  // path (derived by the shared otamanifest helper, single-sourced). No
+  // manifest convention (other URLs) -> direct start() pull. A derivable but
+  // unfetchable/unparsable manifest refuses the pull (fail-closed — the
+  // operator repeats the trigger); an up-to-date manifest logs and skips
+  // (not an error). Never logs URL bytes (versions + counters only).
+  bool startIfNewer(const char* url) {
+    if (active()) {
+      LOG_W("OTA", "busy state=%s, ignored", ota::stateName(state_));
+      return false;
+    }
+    char murl[otamanifest::kUrlMax + 1];
+    if (!otamanifest::manifestUrlFor(url, murl)) {
+      return start(url);
+    }
+    otamanifest::Manifest man;
+    if (!fetchManifest(murl, man)) {
+      LOG_W("OTA", "no manifest, refused");
+      return false;
+    }
+    if (!otamanifest::shouldPull(man.version, static_cast<uint32_t>(HEAD_FW_VERSION))) {
+      LOG_I("OTA", "up to date version=%lu size=%lu", static_cast<unsigned long>(man.version),
+            static_cast<unsigned long>(man.size));
+      return false;
+    }
+    LOG_I("OTA", "update version=%lu size=%lu", static_cast<unsigned long>(man.version),
+          static_cast<unsigned long>(man.size));
+    return start(url);
+  }
 
   // Start an OTA from a plain-http URL. Works standalone — requires nothing
   // (link up OR down; association is the STA torrent below, not the B-link),
@@ -442,6 +490,7 @@ class OtaUpdater {
     lastPct_ = 0;
     received_ = 0;
     ota::step(state_, ota::Event::kStart);
+    faceShow(0);  // FETCH: bar starts empty, fills per 10% step below
     LOG_I("OTA", "fetch bytes=%u manifest=%d", static_cast<unsigned>(total_), manifestSet_ ? 1 : 0);
     return true;
   }
@@ -479,6 +528,7 @@ class OtaUpdater {
       const uint32_t pct = (received_ * 100u) / total_;
       if (pct >= lastPct_ + 10u) {
         lastPct_ = pct - (pct % 10u);
+        faceShow(static_cast<uint8_t>(lastPct_));  // FETCH: fill proportion
         LOG_I("OTA", "progress bytes=%u/%u pct=%u", static_cast<unsigned>(received_), static_cast<unsigned>(total_),
               static_cast<unsigned>(lastPct_));
       }
@@ -502,36 +552,13 @@ class OtaUpdater {
  private:
   // Blocking line read (start() only, never the pump): '\n'-terminated,
   // '\r' stripped, capped, 5s deadline with WDT feeds.
-  bool readLine(char* buf, size_t cap) {
-    size_t n = 0;
-    const uint32_t t0 = millis();
-    while (true) {
-      while (client_.available() == 0) {
-        if ((millis() - t0) >= 5000) {
-          return false;
-        }
-        delay(1);
-        FaultManager::watchdogFeed();
-      }
-      const int c = client_.read();
-      if (c < 0) {
-        continue;
-      }
-      if (c == '\n') {
-        break;
-      }
-      if (c != '\r' && n + 1 < cap) {
-        buf[n++] = static_cast<char>(c);
-      }
-    }
-    buf[n] = '\0';
-    return true;
-  }
+  bool readLine(char* buf, size_t cap) { return readLineFrom(client_, buf, cap); }
 
   // VERIFY -> COMMIT: manifest (when sent) then Update.end(). Success
   // reboots into the new slot; anything else aborts (old image boots).
   void finish() {
     ota::step(state_, ota::Event::kStreamEnd);  // -> VERIFY
+    faceShow(100);                              // VERIFY: full bar
 #if OTA_HAVE_SHA256
     uint8_t digest[32];
     mbedtls_sha256_finish(&sha_, digest);
@@ -542,6 +569,7 @@ class OtaUpdater {
       LOG_W("OTA", "manifest mismatch, discarded");
       Update.abort();
       ota::step(state_, ota::Event::kVerifyFail);
+      faceFail();  // alert face, timeout back to the stored face
       client_.stop();
       return;
     }
@@ -550,8 +578,10 @@ class OtaUpdater {
       LOG_I("OTA", "no manifest, size+magic only");
     }
     ota::step(state_, ota::Event::kVerifyOk);  // -> COMMIT
+    faceShow(100);                             // COMMIT: full bar
     if (Update.end(true)) {
       ota::step(state_, ota::Event::kCommitOk);
+      faceHide();  // success: stored face (the reboot follows)
       LOG_I("OTA", "ok bytes=%u rebooting", static_cast<unsigned>(received_));
       client_.stop();
       delay(100);
@@ -559,6 +589,7 @@ class OtaUpdater {
     } else {
       LOG_W("OTA", "commit fail");
       ota::step(state_, ota::Event::kCommitFail);
+      faceFail();  // alert face, timeout back to the stored face
       client_.stop();
     }
   }
@@ -566,9 +597,130 @@ class OtaUpdater {
   void fail() {
     Update.abort();
     ota::step(state_, ota::Event::kAbort);
+    faceFail();  // alert face, timeout back to the stored face
     client_.stop();
   }
 
+  // Manifest fetch for the carrier pull-gate (startIfNewer above):
+  // plain-HTTP GET of the sibling /head-version text, Content-Length
+  // required (manifests are tiny; chunked refused like the image path),
+  // parsed by the shared otamanifest contract. Blocking with WDT feeds
+  // (trigger context only, never the body pump). False on any failure
+  // (fail-closed at the call site). Never logs URL bytes.
+  bool fetchManifest(const char* murl, otamanifest::Manifest& man) {
+    man.version = 0;
+    man.size = 0;
+    man.sha[0] = '\0';
+    if (murl == nullptr) {
+      return false;
+    }
+    // Re-validate the derived URL through the full grammar (single-sourced
+    // with the CLI door) — never fetch a URL parseUrl rejects.
+    ota::Url parts;
+    if (!ota::parseUrl(murl, parts)) {
+      return false;
+    }
+    WiFiClient mc;
+    mc.setTimeout(3000);
+    if (mc.connect(parts.host, parts.port, 5000) != 1) {
+      return false;
+    }
+    char req[256];
+    snprintf(req, sizeof(req), "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n", parts.path, parts.host);
+    mc.print(req);
+    char line[192];
+    if (!readLineFrom(mc, line, sizeof(line))) {
+      mc.stop();
+      return false;
+    }
+    if (strncmp(line, "HTTP/", 5) != 0 || strstr(line, " 200 ") == nullptr) {
+      mc.stop();
+      return false;
+    }
+    uint32_t length = 0;
+    while (readLineFrom(mc, line, sizeof(line))) {
+      if (line[0] == '\0') {
+        break;  // blank line: end of headers
+      }
+      if (strncmp(line, "Content-Length:", 15) == 0 || strncmp(line, "content-length:", 15) == 0) {
+        length = static_cast<uint32_t>(strtoul(line + 15, nullptr, 10));
+      }
+    }
+    if (length == 0 || length >= otamanifest::kManifestCap) {
+      mc.stop();
+      return false;
+    }
+    char body[otamanifest::kManifestCap];
+    size_t got = 0;
+    const uint32_t t0 = millis();
+    while (got < length) {
+      while (mc.available() == 0) {
+        if (!mc.connected() || (millis() - t0) >= 5000) {
+          mc.stop();
+          return false;
+        }
+        delay(1);
+        FaultManager::watchdogFeed();
+      }
+      const int c = mc.read();
+      if (c < 0) {
+        continue;
+      }
+      body[got++] = static_cast<char>(c);
+      FaultManager::watchdogFeed();
+    }
+    mc.stop();
+    body[got] = '\0';
+    return otamanifest::parseManifest(body, man);
+  }
+
+  // Blocking line read on any WiFiClient (start() + fetchManifest share it).
+  bool readLineFrom(WiFiClient& c, char* buf, size_t cap) {
+    size_t n = 0;
+    const uint32_t t0 = millis();
+    while (true) {
+      while (c.available() == 0) {
+        if ((millis() - t0) >= 5000) {
+          return false;
+        }
+        delay(1);
+        FaultManager::watchdogFeed();
+      }
+      const int ch = c.read();
+      if (ch < 0) {
+        continue;
+      }
+      if (ch == '\n') {
+        break;
+      }
+      if (ch != '\r' && n + 1 < cap) {
+        buf[n++] = static_cast<char>(ch);
+      }
+    }
+    buf[n] = '\0';
+    return true;
+  }
+
+  // OLED progress hooks (null-safe): the bar lives only while attached.
+  void faceShow(uint8_t pct) {
+    if (face_ != nullptr) {
+      face_->showOta(pct);
+    }
+  }
+
+  void faceHide() {
+    if (face_ != nullptr) {
+      face_->hideOta();
+    }
+  }
+
+  void faceFail() {
+    if (face_ != nullptr) {
+      face_->failOta();
+    }
+  }
+
+  FaceRenderer* face_;
   ota::State state_;
   WiFiClient client_;
   uint32_t total_;

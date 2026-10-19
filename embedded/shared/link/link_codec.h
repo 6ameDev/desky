@@ -32,10 +32,19 @@ constexpr size_t kMaxFrame = kOverhead + kMaxPayload;  // 1034: largest single f
 
 // ── Frame types ─────────────────────────────────────────────────────────────
 // Directions: core->head display/control, head->core heartbeat, either ACK.
+//
+// BUMP RULE (additive only, both sides together): a new type takes the next
+// free value, gets a length contract below, and joins isKnownType +
+// isValidPayloadLen + both typeName tables (core link_server.h, head
+// wifi_link.h). Existing values are NEVER renumbered and existing length
+// contracts NEVER change — every golden vector below stays byte-identical.
+// A peer that predates the bump rejects the new type as unknown (the frozen
+// decode gate), so mixed fleets degrade to drop-as-unknown, never misparse.
 constexpr uint8_t kTypeFace = 0x01;      // core->head, 1B: face id u8 (clamped downstream).
 constexpr uint8_t kTypeOled = 0x02;      // core->head, 1B: mode 0=ON 1=DIM 2=OFF.
 constexpr uint8_t kTypeCamCtl = 0x03;    // core->head, 1B: 0=off 1=on.
 constexpr uint8_t kTypeQrBitmap = 0x04;  // core->head, 63B: V1 21x21 packed rows, MSB-first.
+constexpr uint8_t kTypeOta = 0x05;       // core->head, 1..128B: OTA pull URL bytes, no NUL.
 constexpr uint8_t kTypeJpeg = 0x10;      // core->head, 0..1024B: raw JPEG bytes.
 constexpr uint8_t kTypeHb = 0x20;        // head->core, 10B: heartbeat + boot epoch.
 constexpr uint8_t kTypeHbAck = 0x21;     // core->head, 5B: heartbeat ack.
@@ -49,6 +58,13 @@ constexpr size_t kCamCtlLen = 1;
 // MSB-first. Generic bytes only: the codec never includes qr_pairing.h —
 // the 63B length check is the only coupling to the QR encoder.
 constexpr size_t kQrBitmapLen = 63;
+// OTA URL: raw URL bytes (no NUL terminator), 1..128B. The grammar above the
+// length (printable ASCII, no '@'/whitespace) lives once in
+// link/ota_manifest.h (otamanifest::isValidOtaUrlBytes) so both sides call
+// it — never mirrored here. Range shape mirrors the JPEG contract (bounded
+// variable length); 128B fits any http://host[:port]/path the carrier uses.
+constexpr size_t kOtaUrlMinLen = 1;
+constexpr size_t kOtaUrlMaxLen = 128;
 constexpr size_t kHbLen = 10;  // rssi i8 | channel u8 | freeHeap u32BE | bootId u32BE.
 // bootId is a per-boot random epoch (esp_random at head startup): the core
 // accepts ANY seq on a bootId change (fresh epoch resync) and gates
@@ -119,6 +135,7 @@ inline bool isKnownType(uint8_t type) {
     case kTypeOled:
     case kTypeCamCtl:
     case kTypeQrBitmap:
+    case kTypeOta:
     case kTypeJpeg:
     case kTypeHb:
     case kTypeHbAck:
@@ -141,6 +158,8 @@ inline bool isValidPayloadLen(uint8_t type, uint16_t len) {
       return len == 1;
     case kTypeQrBitmap:
       return len == kQrBitmapLen;
+    case kTypeOta:
+      return len >= kOtaUrlMinLen && len <= kOtaUrlMaxLen;
     case kTypeJpeg:
       return len <= kMaxPayload;
     case kTypeHb:

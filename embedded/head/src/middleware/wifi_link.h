@@ -58,6 +58,7 @@
 
 #include "common/udp_send.h"
 #include "head_context.h"
+#include "link/ota_manifest.h"
 
 // The frozen codec namespace `link` collides with POSIX ::link() (declared
 // via the WiFi/lwIP stack) in any Arduino TU, and the codec itself must not
@@ -132,6 +133,8 @@ inline const char* typeName(uint8_t type) {
       return "CAMCTL";
     case linkcode::kTypeQrBitmap:
       return "QRBITMAP";
+    case linkcode::kTypeOta:
+      return "OTA";
     case linkcode::kTypeJpeg:
       return "JPEG";
     case linkcode::kTypeHb:
@@ -217,6 +220,15 @@ inline bool isQrFrame(uint8_t type, uint16_t len) {
   return type == linkcode::kTypeQrBitmap && len == linkcode::kQrBitmapLen;
 }
 
+// OTA in this task: the codec-validated 1..128B length is the gate here;
+// the byte grammar (printable ASCII, no '@'/whitespace) + the bounded copy
+// live once in otamanifest::copyOtaUrl, which handleCmd calls — never
+// re-derived. Fresh frames hand the URL to the existing OTA updater entry;
+// duplicates only re-ACK, never re-trigger an in-flight download.
+inline bool isOtaFrame(uint8_t type, uint16_t len) {
+  return type == linkcode::kTypeOta && len >= linkcode::kOtaUrlMinLen && len <= linkcode::kOtaUrlMaxLen;
+}
+
 // Wrap-safe periodic gates (mirror the `now - last >= interval` idiom used
 // by main.cpp and the stub).
 inline bool shouldSendHb(uint32_t nowMs, uint32_t lastHbMs, uint32_t intervalMs) {
@@ -284,6 +296,7 @@ inline bool fragSlice(size_t totalLen, size_t perFrame, uint8_t idx, uint8_t tot
 #include "common/logger.h"
 #include "config.h"
 #include "hal/camera_driver.h"
+#include "middleware/ota_client.h"
 #include "services/event_bus.h"
 #include "services/power_manager.h"
 
@@ -301,6 +314,7 @@ class LinkClient {
   LinkClient()
       : power_(nullptr),
         cam_(nullptr),
+        ota_(nullptr),
         associated_(false),
         linkUp_(false),
         lastAssocTryMs_(0),
@@ -433,6 +447,11 @@ class LinkClient {
     }
   }
 
+  // Carrier OTA door: the link-triggered pull hands its URL to the existing
+  // updater entry (startIfNewer: manifest pull-gate + start). Stored, never
+  // owned; main() attaches after both are begun.
+  void attachOta(OtaUpdater* ota) { ota_ = ota; }
+
   // One JPEG still on the next poll() (CLI `snap` trigger). Stills-first:
   // at most one frame per trigger, never continuous.
   void requestStill() {
@@ -446,15 +465,16 @@ class LinkClient {
 
   // CLI `link` / `status` door: one counters-only line (never payload bytes).
   void logStatus() const {
-    LOG_I(
-        "LINK",
-        "link state=%s assoc=%d rssi=%d ch=%u hb=%lu/%lu miss=%u cmd=%lu qr=%lu still=%lu/%lu fail=%lu "
-        "ackT=%lu drop=%lu tx=%u boot=%08lx",
-        linkUp_ ? "up" : "down", associated_ ? 1 : 0, static_cast<int>(lastRssi_), static_cast<unsigned>(lastChannel_),
-        static_cast<unsigned long>(hbSent_), static_cast<unsigned long>(hbAckRx_), static_cast<unsigned>(hbSinceAck_),
-        static_cast<unsigned long>(cmdRx_), static_cast<unsigned long>(qrRx_), static_cast<unsigned long>(framesSent_),
-        static_cast<unsigned long>(stillDrop_), static_cast<unsigned long>(txFail_), static_cast<unsigned long>(ackTx_),
-        static_cast<unsigned long>(udpDrop_), static_cast<unsigned>(txSeq_), static_cast<unsigned long>(bootId_));
+    LOG_I("LINK",
+          "link state=%s assoc=%d rssi=%d ch=%u hb=%lu/%lu miss=%u cmd=%lu qr=%lu ota=%lu still=%lu/%lu fail=%lu "
+          "ackT=%lu drop=%lu tx=%u boot=%08lx",
+          linkUp_ ? "up" : "down", associated_ ? 1 : 0, static_cast<int>(lastRssi_),
+          static_cast<unsigned>(lastChannel_), static_cast<unsigned long>(hbSent_),
+          static_cast<unsigned long>(hbAckRx_), static_cast<unsigned>(hbSinceAck_), static_cast<unsigned long>(cmdRx_),
+          static_cast<unsigned long>(qrRx_), static_cast<unsigned long>(otaRx_),
+          static_cast<unsigned long>(framesSent_), static_cast<unsigned long>(stillDrop_),
+          static_cast<unsigned long>(txFail_), static_cast<unsigned long>(ackTx_), static_cast<unsigned long>(udpDrop_),
+          static_cast<unsigned>(txSeq_), static_cast<unsigned long>(bootId_));
   }
 
   // Checked-send failures (udpsend::udpSendChecked false): rare/backpressure
@@ -543,6 +563,7 @@ class LinkClient {
       case linkcode::kTypeOled:
       case linkcode::kTypeCamCtl:
       case linkcode::kTypeQrBitmap:
+      case linkcode::kTypeOta:
         handleCmd(f, rip, rport);
         break;
       case linkcode::kTypeAck:
@@ -592,7 +613,10 @@ class LinkClient {
   // Core->head command: freshness-gated; fresh executes once via the ONE
   // command table + ACKs; duplicates re-ACK WITHOUT re-executing; stale
   // drops. QRBITMAP hands its 63 rows to the FaceRenderer via the power
-  // manager (H2.5 show mode) + ACKs; duplicates only re-ACK.
+  // manager (H2.5 show mode) + ACKs; duplicates only re-ACK. OTA hands its
+  // URL bytes to the existing updater entry (startIfNewer: manifest
+  // pull-gate + start, OLED progress bar inside) + ACKs; duplicates only
+  // re-ACK, never re-trigger an in-flight download.
   void handleCmd(const linkcode::Frame& f, const IPAddress& rip, uint16_t rport) {
     const wifilink::RxVerdict v = wifilink::classifyRx(haveCmdSeq_, lastCmdSeq_, f.seq);
     if (v == wifilink::RxVerdict::kStale) {
@@ -604,6 +628,34 @@ class LinkClient {
     if (v == wifilink::RxVerdict::kDuplicate) {
       sendAck(rip, rport, f.seq);  // re-ACK, never re-execute
       LOG_EVERY_N(20, "LINK", "redeliver seq=%u", static_cast<unsigned>(f.seq));
+      return;
+    }
+    if (wifilink::isOtaFrame(f.type, f.payloadLen)) {
+      haveCmdSeq_ = true;
+      lastCmdSeq_ = f.seq;
+      ++otaRx_;
+      ++cmdRx_;
+      sendAck(rip, rport, f.seq);
+      // Bounded copy through the shared grammar (fail-closed: '@' and
+      // whitespace never reach the updater, never the logs).
+      char url[otamanifest::kUrlMax + 1];
+      if (!otamanifest::copyOtaUrl(f.payload, f.payloadLen, url)) {
+        dropFirst(firstDrop_, "drop link ota grammar seq=%u (first of boot)", static_cast<unsigned>(f.seq));
+        LOG_EVERY_N(20, "LINK", "drop link ota grammar seq=%u", static_cast<unsigned>(f.seq));
+        ++udpDrop_;
+        return;
+      }
+      if (ota_ == nullptr) {
+        LOG_W("LINK", "ota not attached");
+        return;
+      }
+      if (ota_->active()) {
+        // Seq consumed + ACKed above; the in-flight download keeps running.
+        LOG_EVERY_N(20, "LINK", "ota in flight, ignored seq=%u", static_cast<unsigned>(f.seq));
+        return;
+      }
+      ota_->startIfNewer(url);  // own logs: versions + counters only
+      LOG_I("LINK", "ota seq=%u len=%u", static_cast<unsigned>(f.seq), static_cast<unsigned>(f.payloadLen));
       return;
     }
     if (wifilink::isQrFrame(f.type, f.payloadLen)) {
@@ -752,6 +804,7 @@ class LinkClient {
 
   PowerManager* power_;
   CameraDriver* cam_;
+  OtaUpdater* ota_;
   WiFiUDP udp_;
   // Static frame buffers (LinkClient is a setup()-time global -> BSS, never
   // task stack, never heap). JPEG bytes stream from the camera fb in
@@ -788,6 +841,7 @@ class LinkClient {
   uint32_t cmdRx_;
   uint32_t ackTx_;
   uint32_t qrRx_;
+  uint32_t otaRx_ = 0;
   uint32_t framesSent_;
   uint32_t stillDrop_;
   uint32_t udpDrop_;

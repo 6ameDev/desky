@@ -298,6 +298,7 @@ void test_link_phone_wire_headers_distinct();
 // MUST pack through these), defined in test_link_cmd_vocab.cpp.
 void test_link_cmd_vocab_oled_literal_round_trip();
 void test_link_cmd_vocab_camctl_literal_round_trip();
+void test_link_cmd_vocab_ota_literal_length();
 void test_link_cmd_vocab_face_literal_range();
 
 // Link endpoint helpers (H2.2 core link task), defined in test_link_server.cpp.
@@ -321,6 +322,24 @@ void test_telemetry_xwire_literals_are_live_frames();
 void test_link_frag_xwire_geometry();
 void test_link_frag_xwire_round_trip_all_sizes();
 void test_link_frag_xwire_rejects_disorder_without_corruption();
+
+// Carrier OTA trigger (kTypeOta bump + manifest + `otahead` verb), defined
+// in test_link_ota.cpp.
+void test_link_ota_golden_encode();
+void test_link_ota_golden_decode();
+void test_link_ota_staged_url_round_trip_identical();
+void test_link_ota_length_gates_reject_0_and_129();
+void test_link_ota_known_type_literal_set();
+void test_link_ota_old_head_drops_as_unknown();
+void test_linkserver_ota_gate_once_per_command_with_peer();
+void test_linkserver_ota_type_name();
+void test_otamanifest_ota_url_grammar();
+void test_otamanifest_build_parse_round_trip();
+void test_otamanifest_sibling_url_and_gate();
+void test_corecli_otahead_verb();
+void test_corecli_otahead_tail_split();
+void test_otamanifest_upload_version_decision();
+void test_linkserver_ota_restage_rearms_send();
 
 // Checked UDP send helper (shared/common/udp_send.h), defined in test_udp_send.cpp.
 void test_udpsend_all_ok_true();
@@ -530,6 +549,7 @@ int main() {
   RUN_TEST(test_link_phone_wire_headers_distinct);
   RUN_TEST(test_link_cmd_vocab_oled_literal_round_trip);
   RUN_TEST(test_link_cmd_vocab_camctl_literal_round_trip);
+  RUN_TEST(test_link_cmd_vocab_ota_literal_length);
   RUN_TEST(test_link_cmd_vocab_face_literal_range);
   RUN_TEST(test_linkserver_first_frame_fresh);
   RUN_TEST(test_linkserver_duplicate_stale_fresh);
@@ -539,6 +559,21 @@ int main() {
   RUN_TEST(test_linkserver_qr_pin_rule);
   RUN_TEST(test_linkserver_qr_frame_63_round_trip);
   RUN_TEST(test_linkserver_boot_epoch_resync_gate);
+  RUN_TEST(test_link_ota_golden_encode);
+  RUN_TEST(test_link_ota_golden_decode);
+  RUN_TEST(test_link_ota_staged_url_round_trip_identical);
+  RUN_TEST(test_link_ota_length_gates_reject_0_and_129);
+  RUN_TEST(test_link_ota_known_type_literal_set);
+  RUN_TEST(test_link_ota_old_head_drops_as_unknown);
+  RUN_TEST(test_linkserver_ota_gate_once_per_command_with_peer);
+  RUN_TEST(test_linkserver_ota_type_name);
+  RUN_TEST(test_otamanifest_ota_url_grammar);
+  RUN_TEST(test_otamanifest_build_parse_round_trip);
+  RUN_TEST(test_otamanifest_sibling_url_and_gate);
+  RUN_TEST(test_corecli_otahead_verb);
+  RUN_TEST(test_corecli_otahead_tail_split);
+  RUN_TEST(test_otamanifest_upload_version_decision);
+  RUN_TEST(test_linkserver_ota_restage_rearms_send);
   RUN_TEST(test_telemetry_xwire_encode_matches_literals);
   RUN_TEST(test_telemetry_xwire_independent_field_parse);
   RUN_TEST(test_telemetry_xwire_literals_are_live_frames);
