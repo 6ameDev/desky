@@ -161,7 +161,7 @@
 #define CFG_LINK_LOOP_MS 10
 
 // Carrier OTA staging (head pull over the core AP): plain-HTTP server on the
-// pinned ESPAsyncWebServer dep (see src/middleware/ota_staging.h) + the
+// pinned ESPAsyncWebServer dep (see src/abilities/ota/ota_task.h) + the
 // `otahead` console verb (see src/services/cli_manager.h). No new lib_deps.
 #define CFG_OTA_STAGE_PORT 8080
 // PSRAM staging cap for POST /head.bin (head slot is 0x1F0000; margin above).

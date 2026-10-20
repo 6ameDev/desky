@@ -341,6 +341,22 @@ void test_corecli_otahead_tail_split();
 void test_otamanifest_upload_version_decision();
 void test_linkserver_ota_restage_rearms_send();
 
+// OTA staging ability (Slice 5 codec+manager extraction), defined in
+// test_ota_staging.cpp.
+void test_ota_codec_routes_and_caps();
+void test_ota_codec_parse_version_param();
+void test_ota_codec_sha_helpers();
+void test_ota_mgr_empty_views();
+void test_ota_mgr_commit_adopts_version();
+void test_ota_mgr_no_version_keeps_label();
+void test_ota_mgr_version_atomic_at_commit();
+void test_ota_mgr_bad_version_rejects_preserving();
+void test_ota_mgr_overflow_resets_inflight();
+void test_ota_mgr_busy_view_during_upload();
+void test_ota_mgr_no_storage_stops_upload();
+void test_ota_mgr_digest_fail_clears_sha();
+void test_ota_mgr_final_without_start_fails();
+
 // Checked UDP send helper (shared/common/udp_send.h), defined in test_udp_send.cpp.
 void test_udpsend_all_ok_true();
 void test_udpsend_begin_fail_false();
@@ -574,6 +590,19 @@ int main() {
   RUN_TEST(test_corecli_otahead_tail_split);
   RUN_TEST(test_otamanifest_upload_version_decision);
   RUN_TEST(test_linkserver_ota_restage_rearms_send);
+  RUN_TEST(test_ota_codec_routes_and_caps);
+  RUN_TEST(test_ota_codec_parse_version_param);
+  RUN_TEST(test_ota_codec_sha_helpers);
+  RUN_TEST(test_ota_mgr_empty_views);
+  RUN_TEST(test_ota_mgr_commit_adopts_version);
+  RUN_TEST(test_ota_mgr_no_version_keeps_label);
+  RUN_TEST(test_ota_mgr_version_atomic_at_commit);
+  RUN_TEST(test_ota_mgr_bad_version_rejects_preserving);
+  RUN_TEST(test_ota_mgr_overflow_resets_inflight);
+  RUN_TEST(test_ota_mgr_busy_view_during_upload);
+  RUN_TEST(test_ota_mgr_no_storage_stops_upload);
+  RUN_TEST(test_ota_mgr_digest_fail_clears_sha);
+  RUN_TEST(test_ota_mgr_final_without_start_fails);
   RUN_TEST(test_telemetry_xwire_encode_matches_literals);
   RUN_TEST(test_telemetry_xwire_independent_field_parse);
   RUN_TEST(test_telemetry_xwire_literals_are_live_frames);
