@@ -2,6 +2,7 @@
 #include <esp_system.h>
 
 #include "abilities/audio/audio_task.h"
+#include "abilities/ota/ota_task.h"
 #include "abilities/pairing/pairing_codec.h"
 #include "abilities/sensors/sensors_task.h"
 #include "behavior/coordinator.h"
@@ -16,7 +17,6 @@
 #include "hal/tcrt5000_driver.h"
 #include "hal/vl53l0x_driver.h"
 #include "middleware/link_server.h"
-#include "middleware/ota_staging.h"
 #include "middleware/udp_server.h"
 #include "services/cli_manager.h"
 #include "services/config_store.h"
