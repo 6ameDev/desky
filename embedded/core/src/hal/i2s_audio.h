@@ -1,7 +1,7 @@
 #pragma once
 // desky v2 I2S duplex port owner — header-only, peripheral only, NO policy
 // and NO part format (amp packing lives in hal/speaker.h, mic unpacking in
-// hal/microphone.h; beep synth + loudness live in services/audio_manager.h,
+// hal/microphone.h; beep synth + loudness live in abilities/audio/audio_manager.h,
 // which owns this port + the audio task).
 //
 // Owns one I2S_NUM_0 port @CFG_AUDIO_RATE_HZ (16kHz): TX feeds the amp,
