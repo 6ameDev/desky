@@ -1,0 +1,20 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // === MCP Servers ===
+  "mcp": {
+    "kicad": {
+      "type": "local",
+      "command": [
+        "/Users/sumit/.nvm/versions/node/v22.22.3/bin/node",
+        "/Users/sumit/Codebases/github.com/mixelpixx/KiCAD-MCP-Server/dist/index.js"
+      ],
+      "environment": {
+        "KICAD_PYTHON": "/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3",
+        "PYTHONPATH": "/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/lib/python3.9/site-packages",
+        "LOG_LEVEL": "info"
+      },
+      "enabled": true
+    }
+  }
+}
