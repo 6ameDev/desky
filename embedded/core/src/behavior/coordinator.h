@@ -256,7 +256,7 @@ inline ArbitrateOutput arbitrate(const ArbitrateInput& in) {
 #include "services/event_bus.h"
 
 // Fallbacks keep this header compilable if config keys ever drift; in-project
-// include/config.h always wins (same pattern as sensor_fusion.h).
+// include/config.h always wins (same pattern as sensors_codec.h).
 #ifndef CFG_COORDINATOR_STACK_WORDS
 #define CFG_COORDINATOR_STACK_WORDS 4096
 #endif

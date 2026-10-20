@@ -13,7 +13,7 @@
 #include <math.h>
 #include <unity.h>
 
-#include "../src/middleware/sensor_fusion.h"
+#include "../src/abilities/sensors/sensors_codec.h"
 
 namespace {
 

@@ -13,7 +13,7 @@
 // split (assert <= thr-hyst, clear >= thr+hyst); re-pin them if the floor
 // material or ride height changes (log rawCount() over floor vs void).
 //
-// Structure mirrors sensor_task.h: the top half (namespace tcrt) is
+// Structure mirrors sensors_task.h: the top half (namespace tcrt) is
 // Arduino-free pure logic (stdint only) so host Unity tests include this
 // header directly. The bottom half (class Tcrt5000Driver) is firmware-only
 // (#ifdef ARDUINO): analogRead at 11dB attenuation (full ~3V3 swing on the
@@ -30,7 +30,7 @@
 #include "config.h"
 
 // Fallbacks keep this header compilable if config keys ever drift; in-project
-// include/config.h always wins (same pattern as sensor_fusion.h).
+// include/config.h always wins (same pattern as sensors_codec.h).
 #ifndef CFG_TCRT_THRESHOLD
 #define CFG_TCRT_THRESHOLD 1500
 #endif

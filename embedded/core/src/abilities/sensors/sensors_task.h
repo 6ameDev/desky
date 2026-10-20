@@ -1,125 +1,13 @@
 #pragma once
-// desky v2 sensor task — header-only, owns sensor polling + ground/obstacle publish.
+// desky v2 sensors task — abilities/sensors (ability layer).
 //
-// Polls the MPU (20ms), ToF (100ms), and both TCRT rails (20ms) on one 15ms
-// Core 1 tick via wrap-safe per-sensor elapsed scheduling; driver update()
-// calls skip non-blocking on bus contention and hold last-good inside the
-// drivers. Fusion runs on live ticks only: a ground tick needs the MPU plus
-// at least one enabled TCRT rail (dead ticks hold the last published level
-// in silence so a dead source can never clear a latched ground bit); a ToF
-// tick needs a valid ranging (enabled && != 9999 sentinel). Transitions
-// publish EVENT_GROUND_CHANGED (packed gndFwd bit0 + gndRev bit1, on either
-// rail's flip only, silence while held); the level boots with ground present
-// so boot-into-void publishes once. The forward ToF is obstacle distance
-// only (re-aimed forward, out of the ground path): its assert edge publishes
-// EVENT_OBSTACLE_DETECTED (payload = distance mm, +/-10mm hysteresis,
-// assert-edge only) which the coordinator explicitly ignores (no behavior
-// action yet). isPickedUp is never touched (no pickup rule).
-//
-// Structure mirrors coordinator.h: the top half (namespace sensortask) is
-// Arduino-free pure logic (stdint only) so host Unity tests include this
-// header directly. The bottom half (class SensorTask) is firmware-only
-// (#ifdef ARDUINO): a Core 1 publisher task.
-//
-// Rules: WDT fed every tick, Diagnostics::logWatermarks("SENSOR") every ~5s,
-// task never halts, no heap/String in the loop.
+// Firmware-only SensorTask binder: Core 1 RTOS task, HAL polling, EventBus
+// publish — no sockets involved. Moved verbatim from the bottom half of
+// the former middleware task header (Slice 3); zero behavior change. Pure pieces live
+// in sensors_codec.h, the shared production Fusion home in sensors_manager.h
+// (included here, which pulls the codec).
 
-#include <stdint.h>
-
-#include "config.h"
-#include "system_context.h"
-
-namespace sensortask {
-
-// ToF sentinel for "no reading yet" (mirrors Vl53l0xDriver::kNoReadingMm;
-// duplicated so this namespace stays driver-free for host tests).
-constexpr uint16_t kNoReadingMm = 9999;
-
-// Obstacle hysteresis band around CFG_OBSTACLE_MM: the assert edge fires
-// below (OBSTACLE - HYST), the latch silently re-arms above
-// (OBSTACLE + HYST), so edge flicker never spams the bus.
-constexpr int16_t kObstacleHystMm = 10;
-
-// Threshold fallback keeps this header compilable standalone (host g++
-// without -I include). In-project, include/config.h always wins.
-#ifndef CFG_OBSTACLE_MM
-#define CFG_OBSTACLE_MM 150
-#endif
-
-// ToF sample is usable only while powered and holding a real ranging.
-inline bool tofReadingValid(bool enabled, uint16_t distMm) { return enabled && distMm != kNoReadingMm; }
-
-// Wrap-safe elapsed gate: fires (and re-arms) once per intervalMs using
-// unsigned subtraction, so the ~49-day millis() rollover stays correct.
-inline bool due(uint32_t nowMs, uint32_t& lastMs, uint32_t intervalMs) {
-  if (nowMs - lastMs >= intervalMs) {
-    lastMs = nowMs;
-    return true;
-  }
-  return false;
-}
-
-// Transitions-only cliff edge: dead ticks never evaluate and never publish
-// (lastPublished holds in silence); live ticks publish once per level flip
-// (nonzero rising / zero falling). Boots clear, so boot-into-cliff fires.
-// Legacy single-rail helper (kept for host tests; firmware uses the unified
-// groundTransition below).
-inline bool cliffTransition(bool liveTick, bool cliffNow, bool& lastPublished, uint32_t& payloadOut) {
-  if (!liveTick) {
-    return false;
-  }
-  if (cliffNow == lastPublished) {
-    return false;
-  }
-  lastPublished = cliffNow;
-  payloadOut = cliffNow ? 1u : 0u;
-  return true;
-}
-
-// Transitions-only unified ground edge: dead ticks never evaluate and never
-// publish (lastFwd/lastRev hold in silence); live ticks publish the packed
-// ground payload once per flip on EITHER rail. Boots with ground present
-// (true,true), so boot-into-void fires once.
-inline bool groundTransition(bool liveTick, bool gndFwdNow, bool gndRevNow, bool& lastFwd, bool& lastRev,
-                             uint32_t& payloadOut) {
-  if (!liveTick) {
-    return false;
-  }
-  if (gndFwdNow == lastFwd && gndRevNow == lastRev) {
-    return false;
-  }
-  lastFwd = gndFwdNow;
-  lastRev = gndRevNow;
-  payloadOut = packGround(gndFwdNow, gndRevNow);
-  return true;
-}
-
-// Edge-triggered obstacle assert: dead ticks never evaluate and never touch
-// the latch; a clear latch fires ONCE when a live ToF reads below
-// (CFG_OBSTACLE_MM - kObstacleHystMm) with payload = distance mm (see the
-// EVENT_OBSTACLE_DETECTED contract in system_context.h). The latch silently
-// re-arms above (CFG_OBSTACLE_MM + kObstacleHystMm); held-obstacle ticks
-// stay silent. The clear edge never publishes (a future
-// EVENT_OBSTACLE_CLEARED can add it); the coordinator ignores this event.
-inline bool obstacleTransition(bool liveTick, uint16_t distMm, bool& asserted, uint32_t& payloadOut) {
-  if (!liveTick) {
-    return false;
-  }
-  const int32_t near = static_cast<int32_t>(CFG_OBSTACLE_MM) - static_cast<int32_t>(kObstacleHystMm);
-  const int32_t far = static_cast<int32_t>(CFG_OBSTACLE_MM) + static_cast<int32_t>(kObstacleHystMm);
-  const int32_t d = static_cast<int32_t>(distMm);
-  if (!asserted && d < near) {
-    asserted = true;
-    payloadOut = distMm;
-    return true;
-  }
-  if (asserted && d > far) {
-    asserted = false;
-  }
-  return false;
-}
-
-}  // namespace sensortask
+#include "sensors_manager.h"
 
 #ifdef ARDUINO
 // ── Firmware: sensor task (poll + fuse + publish, Core 1) ──────────────────
@@ -133,7 +21,6 @@ inline bool obstacleTransition(bool liveTick, uint16_t distMm, bool& asserted, u
 #include "hal/mpu6500_driver.h"
 #include "hal/tcrt5000_driver.h"
 #include "hal/vl53l0x_driver.h"
-#include "middleware/sensor_fusion.h"
 #include "services/event_bus.h"
 
 // Fallbacks keep this header compilable if config keys ever drift; in-project
