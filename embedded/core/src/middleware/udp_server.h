@@ -2,7 +2,7 @@
 // desky v2 UDP server — header-only, Phase 4 Workstream B.
 //
 // Owns dual-mode WiFi + the binary control/telemetry sockets (wire format in
-// middleware/udp_codec.h, FROZEN) + one Core 0 FreeRTOS task. Control RX
+// transport/udp_codec.h, FROZEN) + one Core 0 FreeRTOS task. Control RX
 // publishes EVENT_UDP_COMMAND_RECEIVED per datagram (never deduped — the
 // coordinator resume edge needs every fresh command); telemetry TX encodes
 // udp::TelemetryPacket at CFG_TELEMETRY_HZ from live sensors.
@@ -47,8 +47,8 @@
 #include <stdint.h>
 
 #include "common/udp_send.h"
-#include "middleware/connection_manager.h"
 #include "middleware/qr_pairing.h"
+#include "transport/connection_manager.h"
 
 // Fallback keeps the host tests + firmware compiling if config keys drift;
 // in-project include/config.h always wins (same pattern as pairing.h).
@@ -286,9 +286,9 @@ inline bool packQrBitmap(bool valid, const uint8_t* modules, uint8_t* out) {
 #include "middleware/pairing.h"
 #include "middleware/qr_pairing.h"
 #include "middleware/sensor_fusion.h"
-#include "middleware/udp_codec.h"
 #include "services/config_store.h"
 #include "services/event_bus.h"
+#include "transport/udp_codec.h"
 
 // Fallbacks keep this header compilable if config keys ever drift; in-project
 // include/config.h always wins (same pattern as coordinator.h).

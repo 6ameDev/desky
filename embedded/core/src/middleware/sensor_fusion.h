@@ -1,6 +1,6 @@
 #pragma once
 // desky v2 sensor fusion — Arduino-independent pure logic (stdint/math only,
-// like src/middleware/udp_codec.h). Shared by firmware (invoked on-demand by
+// like src/transport/udp_codec.h). Shared by firmware (invoked on-demand by
 // the sensor task) and host Unity tests. No heap, no Arduino headers.
 //
 // Sign convention (defined on the post-remap logical frame, zero at level
