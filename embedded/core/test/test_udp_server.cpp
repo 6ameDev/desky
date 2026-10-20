@@ -14,8 +14,8 @@
 #include <utility>
 
 #include "../src/behavior/coordinator.h"
-#include "../src/middleware/udp_codec.h"
 #include "../src/middleware/udp_server.h"
+#include "../src/transport/udp_codec.h"
 // Platform split 1.1: udp_server.h is included FIRST (it defines
 // UDPSTATUS_TOP_HALF_INCLUDED + pulls the connection core); pairing.h is
 // the PairingExchange owner, telemetry_manager.h the cadence/encode owner.
@@ -163,7 +163,7 @@ void test_udp_wire_constants() {
   // of including udp_codec.h (see the comment above kDriveV2Header). Pin the
   // copy to the canonical udp::kControlHeader/kControlSize so drift fails
   // here. Single source of truth: shared/protocol (normative:
-  // embedded/src/middleware/udp_codec.h). (static_cast: rxKindInt is
+  // embedded/src/transport/udp_codec.h). (static_cast: rxKindInt is
   // declared further below, after the classify tests.)
   TEST_ASSERT_EQUAL_UINT8(udp::kControlHeader, 0xAA);
   TEST_ASSERT_TRUE(udp::kControlSize == 6);

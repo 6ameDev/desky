@@ -36,7 +36,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "middleware/udp_codec.h"
+#include "transport/udp_codec.h"
 
 namespace telemetry {
 

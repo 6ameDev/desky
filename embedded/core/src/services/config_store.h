@@ -22,7 +22,7 @@
 #include <Preferences.h>
 
 #include "common/logger.h"
-#include "middleware/connection_manager.h"
+#include "transport/connection_manager.h"
 
 class ConfigStore {
  public:
