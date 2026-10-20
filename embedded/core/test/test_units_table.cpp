@@ -19,8 +19,8 @@
 
 #include "../../head/src/middleware/wifi_link.h"
 #include "../include/config.h"
+#include "../src/abilities/pairing/pairing_codec.h"
 #include "../src/behavior/coordinator.h"
-#include "../src/middleware/pairing.h"
 #include "../src/middleware/udp_server.h"
 
 void test_units_qr_pairing_window_order() {

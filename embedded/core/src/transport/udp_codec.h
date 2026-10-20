@@ -10,7 +10,7 @@
 
 // ── Frozen wire table (M9 three-way mirror gate) ─────────────────────────
 // Normative freeze (shared/protocol/README.md §"Pairing + authenticated
-// drive v1"; mirrors: firmware udp_server.h top half + pairing.h, client
+// drive v1"; mirrors: firmware udp_server.h top half + pairing_codec.h, client
 // domain/Codec.kt WireConstants, README):
 //   0xAA /  6  Control     App->Robot  [hdr|mode|thr|str|flags|XOR]
 //   0xBB /  9  Telemetry   Robot->App  [hdr|pitchBE|rollBE|distBE|flags|XOR]
@@ -28,7 +28,7 @@
 // are claimed — never reuse or renumber a header, never change a size, never
 // repurpose a reserved byte. New messages claim a fresh header (Phase-2
 // SET_RATE must pick other values). Deliberate stdint-only duplication: this
-// table is mirrored (not included) in udp_server.h / pairing.h / Codec.kt /
+// table is mirrored (not included) in udp_server.h / pairing_codec.h / Codec.kt /
 // README — drift must break the M9 gate tests, not silently pass.
 
 namespace udp {

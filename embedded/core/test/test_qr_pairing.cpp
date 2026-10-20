@@ -9,7 +9,7 @@
 #include <string.h>
 #include <unity.h>
 
-#include "../src/middleware/qr_pairing.h"
+#include "../src/abilities/pairing/pairing_codec.h"
 #include "link/link_codec.h"
 
 // Compile-time wire-length pin (P1b): the QR encoder's packed length and
@@ -182,12 +182,12 @@ void test_qr_rs_syndrome_zero() {
   //
   // NOTE: no trustworthy external EC codeword vector could be established
   // in this offline environment (no Nayuki/Thonky RS worked-example bytes
-  // on hand beyond the algorithm provenance already cited in qr_pairing.h),
+  // on hand beyond the algorithm provenance already cited in pairing_codec.h),
   // so this asserts the syndrome-zero property instead: recomputing the EC
   // remainder over data+EC yields zero. Algorithm provenance (generator
   // poly x^10+x^8+x^5+x^4+x^2+x+1 per ISO 18004 §7, Russian-peasant GF
   // multiply): Nayuki's QR generator (MIT) via Thonky's tutorial figures,
-  // as cited in qr_pairing.h.
+  // as cited in pairing_codec.h.
   static const uint8_t kCode[6] = {'1', '2', '3', '4', '5', '6'};
   // Rebuild the 19 data codewords (numeric mode, same layout as the
   // encoder: mode 0001, 10-bit count, 2x10-bit groups, terminator, pad).

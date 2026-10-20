@@ -7,7 +7,7 @@
 
 #include <unity.h>
 
-#include "../src/middleware/pairing.h"
+#include "../src/abilities/pairing/pairing_manager.h"
 
 namespace {
 

@@ -7,8 +7,8 @@
 // funnel live here; WiFiUDP/IPAddress stay in UdpServer (which adapts
 // IPAddress <-> u32 with ipToU32/u32ToIp below).
 //
-// Layer rule: peer identity + freshness math is middleware (this header);
-// bond/era lifecycle is pairing::Core (middleware/pairing.h); NVS persist
+// Layer rule: peer identity + freshness math is transport (this header);
+// bond/era lifecycle is pairing::Core (abilities/pairing/pairing_manager.h);
 // is services/ConfigStore; telemetry cadence is services/TelemetryManager.
 // Subscription state is explicitly OUT (decided later — Phase-2 SET_RATE
 // lands in TelemetryManager, never here).
