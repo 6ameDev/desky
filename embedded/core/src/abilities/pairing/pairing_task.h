@@ -1,10 +1,11 @@
 #pragma once
 // desky v2 pairing task binding — abilities/pairing (firmware-only crypto).
 //
-// mbedTLS glue (deriveKek/wrapPsk/ctEqual/deriveRekeyPsk) called by the
-// transport-embedded handlers in udp_server.h. Slice 6b moves those handlers
+// mbedTLS glue (deriveKek/wrapPsk/ctEqual/deriveRekeyPsk) + the PairingTask
+// session class below. Slice 6b moved the handlers
 // (handlePairReq/Unbond/Rekey/Alive/Disconnect, LastPair cache, QR staging)
-// here, leaving transport as dumb pipes. Never included by host tests.
+// here from udp_server.h, leaving transport as dumb pipes. Never included
+// by host tests.
 
 #include "pairing_codec.h"
 #include "pairing_manager.h"
@@ -31,6 +32,8 @@
 // Layer rule: crypto glue is abilities/pairing (this header); NVS persistence
 // is services/ConfigStore; policy/state is pairing::Core (pairing_manager.h).
 
+#include <Arduino.h>
+#include <esp_system.h>
 #include <mbedtls/cipher.h>
 // NOTE: this vendored constant_time.h ships WITHOUT the extern "C" guard
 // every other mbedtls header has, so a plain include mangles
@@ -45,7 +48,12 @@ extern "C" {
 #include <mbedtls/md.h>
 #include <mbedtls/platform_util.h>
 
+#include <utility>
+
 #include "common/fault_manager.h"  // DESKY_ASSERT (firmware side only)
+#include "common/logger.h"
+#include "services/config_store.h"
+#include "transport/connection_manager.h"
 
 namespace pairing {
 
@@ -194,6 +202,826 @@ inline bool deriveRekeyPsk(const uint8_t oldPsk[kPskLen], uint16_t nextEra, uint
   }
   return true;
 }
+
+// ── PairingTask: pairing/auth session policy (Slice 6b) ───────────────────
+// Owns ALL session state moved verbatim from UdpServer: bonded_, psk_,
+// lastCounter_, era_, validCount_, pairCore_, the LastPair redelivery cache,
+// qrBitmap_/qrBitmapValid_, and the dropFirst flags for the moved handlers.
+// pairing::Core (pairing_manager.h) stays untouched — window/tries/lockout
+// policy only; this class is the firmware session layer around it.
+//
+// Transport back-call contract (duck-typed `Transport& t`, always UdpServer):
+// the ability never touches sockets — byte composition lives here, the
+// gate-check + unicast stays in transport:
+//   t.markAlive(Verified&&, IPAddress, uint16_t, uint32_t, uint16_t era)
+//     -> connection::Pinned (pins the telemetry peer + refreshes the stamp)
+//   t.publishDrive(Pinned, uint32_t, mode, thr, str, flags) (token-gated drive
+//     effect: RX triple + coordinator publish; no-op on invalid token)
+//   t.sendPairOk(PersistReceipt, IPAddress, uint16_t, ok39)
+//   t.sendPairRedeliver(IPAddress, uint16_t, ok39) (lost-PAIR_OK race)
+//   t.sendPairErr(IPAddress, uint16_t, err4)
+//   t.sendRekeyAck(Pinned, IPAddress, uint16_t, ack10)
+//   t.sendRekeyAckImpl(IPAddress, uint16_t, ack10) (idempotent duplicate path)
+//   t.isFreshCounter(lastSeen, got) -> bool (udpstatus bridge)
+//   t.shouldRedeliver(...) -> bool (udpstatus bridge)
+//   t.packQrBitmap(valid, modules, out) -> bool (udpstatus bridge)
+//   t.driveDropFirst(fmt, args...) (transport-owned firstDriveDrop_ flag)
+// Shared socket-adjacent state (peer slot + alive stamp) stays in transport:
+// attach() pins the ConnectionManager + IPAddress peer pointers (set once
+// from UdpServer::begin before the task reads the radio).
+class PairingTask {
+ public:
+  PairingTask()
+      : conn_(nullptr),
+        peerIp_(nullptr),
+        peerPort_(nullptr),
+        pairCore_(),
+        psk_{},
+        lastCounter_(0),
+        bonded_(false),
+        era_(0),
+        validCount_(0),
+        maxVerifyUs_(0) {
+    lastPair_.valid = false;
+  }
+
+  // Pins transport-owned shared state. Call once from UdpServer::begin
+  // before restoreFromStore (handlers dereference these on every packet).
+  void attach(connection::ConnectionManager* conn, IPAddress* peerIp, uint16_t* peerPort) {
+    DESKY_ASSERT(conn != nullptr);
+    DESKY_ASSERT(peerIp != nullptr);
+    DESKY_ASSERT(peerPort != nullptr);
+    conn_ = conn;
+    peerIp_ = peerIp;
+    peerPort_ = peerPort;
+  }
+
+  // Bond-restore block moved verbatim from UdpServer::begin: bonded ->
+  // DRIVE_V2 verifies against the stored PSK; unbonded -> opens a pairing
+  // window (the code LOG_I line IS the display for now).
+  // ConfigStore::begin() already ran in setup(), so loadBond is safe here.
+  // The PAIR_OK redelivery cache stays invalid across reboot on both paths
+  // (RAM-only: a rebooted robot answers already_bonded until a fresh pair).
+  void restoreFromStore() {
+    lastPair_.valid = false;
+    uint8_t loadedPsk[16] = {};
+    uint32_t storedCtr = 0;
+    bool storedBond = false;
+    if (ConfigStore::loadBond(loadedPsk, storedCtr, storedBond) && storedBond) {
+      bonded_ = true;
+      lastCounter_ = storedCtr;
+      era_ = ConfigStore::loadEra();
+      for (size_t i = 0; i < sizeof(psk_); ++i) {
+        psk_[i] = loadedPsk[i];
+      }
+      LOG_I("UDP", "bond loaded counter=%lu era=%u", static_cast<unsigned long>(storedCtr),
+            static_cast<unsigned>(era_));
+    } else {
+      bonded_ = false;
+      lastCounter_ = 0;
+      era_ = 0;
+      if (!openPairingWindow()) {
+        LOG_W("UDP", "pair window open failed");
+      }
+    }
+    mbedtls_platform_zeroize(loadedPsk, sizeof(loadedPsk));
+  }
+
+  // Opens a pairing window showing a fresh esp_random 6-digit code (the
+  // LOG_I code line IS the display for now). Refused while bonded (single
+  // owner: clearBond() first — rotation never evicts). Public for the Task
+  // 10 bench procedure (10s-hold factory reset path).
+  // TODO(PHYSICAL-TRIGGER): button-vs-power-cycle decision pending — implements the 10s-hold promise; see
+  // DECISION-ISSUE.
+  bool openPairingWindow() {
+    if (bonded_) {
+      return false;
+    }
+    uint8_t code[pairing::kCodeLen];
+    for (size_t i = 0; i < pairing::kCodeLen; ++i) {
+      code[i] = static_cast<uint8_t>('0' + (esp_random() % 10u));
+    }
+    if (!pairCore_.openWindow(millis(), code)) {
+      return false;
+    }
+    LOG_I("UDP", "pair window open code=%c%c%c%c%c%c", code[0], code[1], code[2], code[3], code[4], code[5]);
+    // QR bitmap for this window's code: encoded in ALL builds (release
+    // included) into qrBitmap_ for future consumers (head link); the serial
+    // row dump below stays DEBUG-only (Tier-A regression path, zero-cost in
+    // release). No heap/String; fixed stack buffers only. Encode failure is
+    // impossible for validated digits (openWindow above accepted them) but
+    // the bitmap is still gated on success by construction.
+    qrBitmapValid_ = qr::encode6Digits(code, qrBitmap_);
+#if LOG_LEVEL <= LOG_LEVEL_DEBUG
+    // Tier-A hex dump of the V1-L bitmap for this code, one `QR row=NN:HHHHHH`
+    // line per row for the serial capture script. Same call site covers both
+    // window-open paths (boot begin() + post-UNBOND reopen, both funnel here).
+    if (qrBitmapValid_) {
+      for (int y = 0; y < qr::kSize; ++y) {
+        uint8_t row[qr::kRowBytes];
+        qr::rowBytes(qrBitmap_, y, row);
+        char hex[2 * qr::kRowBytes + 1];
+        for (int i = 0; i < qr::kRowBytes; ++i) {
+          hex[2 * i] = "0123456789ABCDEF"[row[i] >> 4];
+          hex[2 * i + 1] = "0123456789ABCDEF"[row[i] & 0x0Fu];
+        }
+        hex[2 * qr::kRowBytes] = '\0';
+        LOG_D("UDP", "QR row=%02d:%s", y, hex);
+      }
+    }
+#endif
+    return true;
+  }
+
+  // Read-only access to the cached window QR bitmap. Two views:
+  // - qrBitmap(): the UNPACKED 441B module array (0 = light, 1 = dark,
+  //   row-major) — the serial `QR row=` dump packs it per row. This is NOT
+  //   the wire format: staging these raw bytes as a 63B QRBITMAP renders
+  //   two dotted columns on the head (bench-proven 2026-10-18).
+  // - qrBitmapPacked(): the 63B wire payload (packed MSB-first rows) for
+  //   LinkServer::stageQrBitmap. Valid only while a pairing window is open;
+  //   check qrBitmapValid() first. False on null out or closed window.
+  bool qrBitmapValid() const { return qrBitmapValid_; }
+
+  const uint8_t* qrBitmap() const { return qrBitmap_; }
+
+  // Bonded-state read for the transport-retained paths (pre-bond legacy
+  // pin-only quirk + telemetry gate): the session flag lives here.
+  bool bonded() const { return bonded_; }
+
+  template <typename Transport>
+  bool qrBitmapPacked(uint8_t out[qr::kPackedLen], Transport& t) const {
+    return t.packQrBitmap(qrBitmapValid_, qrBitmap_, out);
+  }
+
+  // Explicit unpair / 10s-hold factory reset hook (Task 10 bench procedure;
+  // no button wired yet): clears the NVS bond + in-memory Core + key
+  // material. The next begin() (or openPairingWindow()) starts fresh.
+  // Also invalidates the PAIR_OK redelivery cache (+zeroizes its secrets).
+  // TODO(PHYSICAL-TRIGGER): button-vs-power-cycle decision pending — implements the 10s-hold promise; see
+  // DECISION-ISSUE.
+  bool clearBond() {
+    pairCore_.clearBond();
+    bonded_ = false;
+    lastCounter_ = 0;
+    conn_->clear();
+    era_ = 0;
+    validCount_ = 0;
+    mbedtls_platform_zeroize(psk_, sizeof(psk_));
+    lastPair_.valid = false;
+    mbedtls_platform_zeroize(lastPair_.code6, sizeof(lastPair_.code6));
+    mbedtls_platform_zeroize(lastPair_.cliNonce4, sizeof(lastPair_.cliNonce4));
+    mbedtls_platform_zeroize(lastPair_.srvNonce4, sizeof(lastPair_.srvNonce4));
+    mbedtls_platform_zeroize(lastPair_.ok39, sizeof(lastPair_.ok39));
+    lastPair_.bondMs = 0;
+    qrBitmapValid_ = false;  // No open window after an unpair/reset.
+    return ConfigStore::clearBond();
+  }
+
+  // DRIVE_V2 verify order (pre-publish): bonded? -> counter fresh? -> HMAC
+  // constant-time. Fail = silent drop (the 500ms failsafe stops safely).
+  // PASS returns the decoded stick (the transport loop updates its
+  // lastV_/lastOmega_/lastRxMs_ triple from it next to the dispatch call,
+  // then publishes EVENT_UDP_COMMAND_RECEIVED). No heap, no String, fixed
+  // stack buffers only; key/code/nonce material never logged.
+  template <typename Transport>
+  void handleDriveV2(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs, Transport& t) {
+    DESKY_ASSERT(buf != nullptr);
+    if (buf == nullptr) {
+      return;
+    }
+    if (!bonded_) {
+      t.driveDropFirst("drop drive unbonded (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop drive unbonded");
+      return;
+    }
+    // Layout [0xAC|mode|thr|str|flags|ctrBE 4B|tag 6B|XOR]: mode=1 thr=2
+    // str=3 flags=4 ctr=5..8 tag=9..14 xor=15 (len + header + XOR checked by
+    // the caller).
+    const uint32_t ctr = (static_cast<uint32_t>(buf[5]) << 24) | (static_cast<uint32_t>(buf[6]) << 16) |
+                         (static_cast<uint32_t>(buf[7]) << 8) | static_cast<uint32_t>(buf[8]);
+    if (!t.isFreshCounter(lastCounter_, ctr)) {
+      t.driveDropFirst("drop drive replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
+      LOG_EVERY_N(20, "UDP", "drop drive replay ctr=%lu", static_cast<unsigned long>(ctr));
+      return;
+    }
+    // HMAC msg (8B stack): counterBE||mode||thr||str||flags.
+    uint8_t msg[8];
+    msg[0] = buf[5];
+    msg[1] = buf[6];
+    msg[2] = buf[7];
+    msg[3] = buf[8];
+    msg[4] = buf[1];
+    msg[5] = buf[2];
+    msg[6] = buf[3];
+    msg[7] = buf[4];
+    uint8_t mac[32];
+    const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    const uint32_t t0 = micros();
+    int rc = -1;
+    if (md != nullptr) {
+      rc = mbedtls_md_hmac(md, psk_, sizeof(psk_), msg, sizeof(msg), mac);
+    }
+    const uint32_t dt = micros() - t0;  // Unsigned subtraction: wrap-safe.
+    if (dt > maxVerifyUs_) {
+      maxVerifyUs_ = dt;
+    }
+    LOG_EVERY_N(128, "UDP", "drive verify dt=%luus max=%luus", static_cast<unsigned long>(dt),
+                static_cast<unsigned long>(maxVerifyUs_));
+    bool ok = (rc == 0);
+    if (ok) {
+      ok = pairing::ctEqual(mac, buf + 9, 6);
+    }
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    mbedtls_platform_zeroize(mac, sizeof(mac));
+    if (!ok) {
+      t.driveDropFirst("drop drive auth (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop drive auth");
+      return;
+    }
+    // Platform split 1.1 (AuthVerifier threading): fold the passed
+    // prechecks into the Verified token — bonded/fresh/hmac re-evaluated
+    // fail-closed here (all true on this path; the per-cause drops+logs
+    // above stay verbatim). The drive effect below REQUIREs the token.
+    const connection::Checks driveChecks{bonded_, true, t.isFreshCounter(lastCounter_, ctr), ok};
+    connection::Verified verified = connection::AuthVerifier::verify(driveChecks, ctr, era_);
+    lastCounter_ = ctr;
+    ++validCount_;
+    // Robot-side persist cadence matches the interval advertised in PAIR_OK
+    // (pairing::kPairPersistDefault); the app mirrors it per negotiated byte.
+    if ((validCount_ % pairing::kPairPersistDefault) == 0) {
+      ConfigStore::saveCounter(lastCounter_);  // Periodic persist, never per-packet (flash wear).
+    }
+    // Alive funnel BEFORE the drive effect below.
+    connection::Pinned pinned = t.markAlive(std::move(verified), rip, rport, nowMs, era_);
+    // Drive effect REQUIREs the Pinned proof (effect-before-verify fails to
+    // compile without it); publishDrive no-ops on an invalid token.
+    t.publishDrive(std::move(pinned), nowMs, buf[1], buf[2], buf[3], buf[4]);
+  }
+
+  // PAIR_REQ layout [0x50|code6 1..6|clientNonce4 7..10|XOR] (len + header +
+  // XOR checked by the caller). Bonded -> PAIR_ERR already_bonded. Else
+  // tryCode; kOk mints a fresh PSK with store-before-send ordering
+  // (saveBond FIRST, then KEK->wrap->PAIR_OK unicast). Crypto/store failures
+  // after kOk answer PAIR_ERR internal_retry_fresh (4, M11 additive): the
+  // code is already burned, so the client must pair again with a fresh
+  // display code. Genuine not_in_window (tryCode != kOk) still sends reason
+  // 2. Every reply is unicast to the requester.
+  template <typename Transport>
+  void handlePairReq(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs, Transport& t) {
+    DESKY_ASSERT(buf != nullptr);
+    if (buf == nullptr) {
+      return;
+    }
+    // Lost-PAIR_OK race: while bonded, an identical retry (same code +
+    // client nonce) inside the redelivery window re-unicasts the cached
+    // PAIR_OK. Checked BEFORE the already_bonded reply below.
+    if (bonded_ && t.shouldRedeliver(lastPair_.valid, lastPair_.code6, lastPair_.cliNonce4, buf + 1, buf + 7,
+                                     lastPair_.bondMs, nowMs)) {
+      t.sendPairRedeliver(rip, rport, lastPair_.ok39);
+      return;
+    }
+    if (bonded_) {
+      uint8_t err[4];
+      err[0] = 0x52;
+      err[1] = pairing::toWireReason(pairing::Result::kAlreadyBonded);
+      err[2] = 0;
+      err[3] = static_cast<uint8_t>(err[0] ^ err[1] ^ err[2]);
+      t.sendPairErr(rip, rport, err);
+      dropFirst(firstPairDrop_, "pair req while bonded (first of boot)");
+      LOG_EVERY_N(10, "UDP", "pair req while bonded");
+      return;
+    }
+    const pairing::Result r = pairCore_.tryCode(buf + 1, pairing::kCodeLen, nowMs);
+    if (r != pairing::Result::kOk) {
+      const uint8_t retryS = (r == pairing::Result::kLocked) ? static_cast<uint8_t>(pairing::kLockoutMs / 1000u) : 0;
+      uint8_t err[4];
+      err[0] = 0x52;
+      err[1] = pairing::toWireReason(r);
+      err[2] = retryS;
+      err[3] = static_cast<uint8_t>(err[0] ^ err[1] ^ err[2]);
+      t.sendPairErr(rip, rport, err);
+      dropFirst(firstPairDrop_, "pair err reason=%u (first of boot)", static_cast<unsigned>(pairing::toWireReason(r)));
+      LOG_EVERY_N(10, "UDP", "pair err reason=%u", static_cast<unsigned>(pairing::toWireReason(r)));
+      return;
+    }
+    // Code verified + burned inside Core. Mint the bond: 16 PSK bytes + 4
+    // server-nonce bytes from esp_random (CSPRNG) into stack buffers.
+    uint8_t newPsk[pairing::kPskLen];
+    for (size_t i = 0; i < pairing::kPskLen / 4; ++i) {
+      const uint32_t rnd = esp_random();
+      newPsk[4 * i] = static_cast<uint8_t>((rnd >> 24) & 0xFFu);
+      newPsk[4 * i + 1] = static_cast<uint8_t>((rnd >> 16) & 0xFFu);
+      newPsk[4 * i + 2] = static_cast<uint8_t>((rnd >> 8) & 0xFFu);
+      newPsk[4 * i + 3] = static_cast<uint8_t>(rnd & 0xFFu);
+    }
+    uint8_t serverNonce[pairing::kPairNonceLen];
+    {
+      const uint32_t rnd = esp_random();
+      serverNonce[0] = static_cast<uint8_t>((rnd >> 24) & 0xFFu);
+      serverNonce[1] = static_cast<uint8_t>((rnd >> 16) & 0xFFu);
+      serverNonce[2] = static_cast<uint8_t>((rnd >> 8) & 0xFFu);
+      serverNonce[3] = static_cast<uint8_t>(rnd & 0xFFu);
+    }
+    const uint8_t* code6 = buf + 1;  // Verified match — the HKDF IKM.
+    const uint8_t* clientNonce = buf + 7;
+    bool sent = false;
+    uint8_t out[pairing::kPairOkSize] = {};  // Function scope: cached into lastPair_ on send.
+    // Bond baseline is counter 0 (never valid on the wire): the client's
+    // first DRIVE_V2 uses counter 1, matching the spec's "starts 1".
+    // Platform split 1.1: the receipt overload mints the store-before-ACK
+    // proof consumed by sendPairOk below (invalid until the NVS save lands).
+    connection::PersistReceipt receipt;
+    if (ConfigStore::saveBond(newPsk, 0, receipt)) {
+      uint8_t kek[pairing::kKekLen];
+      uint8_t ct[pairing::kPairCtLen];
+      uint8_t tag[pairing::kPairTagLen];
+      if (pairing::deriveKek(code6, clientNonce, serverNonce, kek) &&
+          pairing::wrapPsk(newPsk, kek, clientNonce, serverNonce, pairing::kPairPersistDefault, ct, tag)) {
+        // PAIR_OK 39B [0x51|server_nonce4|ct17|tag16|XOR]: ct covers
+        // psk16||persist_u8 (v1.1 addendum; old 38B frames have no byte).
+        out[0] = pairing::kPairOkHeader;
+        for (size_t i = 0; i < pairing::kPairNonceLen; ++i) {
+          out[1 + i] = serverNonce[i];
+        }
+        for (size_t i = 0; i < pairing::kPairCtLen; ++i) {
+          out[5 + i] = ct[i];
+        }
+        for (size_t i = 0; i < pairing::kPairTagLen; ++i) {
+          out[5 + pairing::kPairCtLen + i] = tag[i];
+        }
+        uint8_t outXor = 0;
+        for (size_t i = 0; i < sizeof(out) - 1; ++i) {
+          outXor ^= out[i];
+        }
+        out[sizeof(out) - 1] = outXor;
+        t.sendPairOk(std::move(receipt), rip, rport, out);
+        sent = true;
+      }
+      mbedtls_platform_zeroize(kek, sizeof(kek));
+      mbedtls_platform_zeroize(ct, sizeof(ct));
+      mbedtls_platform_zeroize(tag, sizeof(tag));
+    }
+    if (sent) {
+      for (size_t i = 0; i < sizeof(psk_); ++i) {
+        psk_[i] = newPsk[i];
+      }
+      lastCounter_ = 0;
+      era_ = 0;  // Fresh pair starts era 0 (saveBond persists it).
+      bonded_ = true;
+      qrBitmapValid_ = false;         // Code burned: the window is consumed.
+      pairCore_.onPairBonded(nowMs);  // PairingExchange forward (same point, same order; idempotent).
+      // Cache the reply BEFORE the stack zeroizes below: an identical retry
+      // inside kRedeliveryMs re-unicasts these bytes (RAM-only redelivery).
+      for (size_t i = 0; i < sizeof(lastPair_.code6); ++i) {
+        lastPair_.code6[i] = code6[i];
+      }
+      for (size_t i = 0; i < sizeof(lastPair_.cliNonce4); ++i) {
+        lastPair_.cliNonce4[i] = clientNonce[i];
+      }
+      for (size_t i = 0; i < sizeof(lastPair_.srvNonce4); ++i) {
+        lastPair_.srvNonce4[i] = serverNonce[i];
+      }
+      for (size_t i = 0; i < sizeof(lastPair_.ok39); ++i) {
+        lastPair_.ok39[i] = out[i];
+      }
+      lastPair_.bondMs = nowMs;
+      lastPair_.valid = true;
+      *peerIp_ = rip;  // The new owner pins the telemetry unicast path.
+      *peerPort_ = rport;
+      conn_->pinPeer(connection::ipToU32(rip[0], rip[1], rip[2], rip[3]));
+      LOG_I("UDP", "pair ok");
+    } else {
+      // M11 additive reason 4 (internal_retry_fresh): the code is already
+      // burned (single-use), so an NVS or crypto failure after kOk
+      // (saveBond/deriveKek/wrapPsk) sends 4, not 2. The client maps 4 to
+      // "robot error, try a fresh code": open a new window and pair again
+      // with the fresh display code. Reasons 0-3 are frozen (never renumber;
+      // genuine not_in_window still sends 2 via the tryCode path above).
+      uint8_t err[4];
+      err[0] = 0x52;
+      err[1] = pairing::toWireReason(pairing::Result::kInternal);
+      err[2] = 0;
+      err[3] = static_cast<uint8_t>(err[0] ^ err[1] ^ err[2]);
+      t.sendPairErr(rip, rport, err);
+      dropFirst(firstPairDrop_, "pair err internal (first of boot)");
+      LOG_EVERY_N(10, "UDP", "pair err internal");
+    }
+    mbedtls_platform_zeroize(newPsk, sizeof(newPsk));
+    mbedtls_platform_zeroize(serverNonce, sizeof(serverNonce));
+  }
+
+  // UNBOND layout [0xAD|ctrBE4 1..4|tag6 5..10|XOR] (len + header + XOR
+  // checked by the caller). Symmetric forget: a signed fire-and-forget from
+  // the bonded owner. Fail = silent drop (stale/replay/bad-tag). Pass clears
+  // the NVS bond + Core + key material + redelivery cache and opens a fresh
+  // pairing window so a new phone can pair immediately. No reply packet.
+  template <typename Transport>
+  void handleUnbond(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs, Transport& t) {
+    (void)rip;
+    (void)rport;
+    DESKY_ASSERT(buf != nullptr);
+    if (buf == nullptr) {
+      return;
+    }
+    if (!bonded_) {
+      dropFirst(firstUnbondDrop_, "drop unbond unbonded (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop unbond unbonded");
+      return;
+    }
+    const uint32_t ctr = (static_cast<uint32_t>(buf[1]) << 24) | (static_cast<uint32_t>(buf[2]) << 16) |
+                         (static_cast<uint32_t>(buf[3]) << 8) | static_cast<uint32_t>(buf[4]);
+    if (!t.isFreshCounter(lastCounter_, ctr)) {
+      dropFirst(firstUnbondDrop_, "drop unbond replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
+      LOG_EVERY_N(20, "UDP", "drop unbond replay ctr=%lu", static_cast<unsigned long>(ctr));
+      return;
+    }
+    // tag = first6(HMAC-SHA256(psk, "UNBOND"||counterBE4)).
+    uint8_t msg[pairing::kUnbondMsgLen];
+    pairing::unbondTagMsg(ctr, msg);
+    uint8_t mac[32];
+    const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    int rc = -1;
+    if (md != nullptr) {
+      rc = mbedtls_md_hmac(md, psk_, sizeof(psk_), msg, sizeof(msg), mac);
+    }
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    bool ok = (rc == 0);
+    if (ok) {
+      ok = pairing::ctEqual(mac, buf + 5, pairing::kUnbondTagLen);
+    }
+    mbedtls_platform_zeroize(mac, sizeof(mac));
+    if (!ok) {
+      dropFirst(firstUnbondDrop_, "drop unbond auth (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop unbond auth");
+      return;
+    }
+    // Platform split 1.1: fold the passed prechecks into Verified (same
+    // pattern as drive; per-cause drops+logs above stay verbatim), consumed
+    // by the refresh-then-clear below.
+    const connection::Checks unbondChecks{bonded_, true, t.isFreshCounter(lastCounter_, ctr), ok};
+    connection::Verified unbondVerified = connection::AuthVerifier::verify(unbondChecks, ctr, era_);
+    ConfigStore::clearBond();
+    pairCore_.onUnbonded();  // PairingExchange forward (superset of clearBond: +era/bondMs reset).
+    mbedtls_platform_zeroize(psk_, sizeof(psk_));
+    bonded_ = false;
+    lastCounter_ = 0;
+    era_ = 0;
+    // Refresh-then-clear: the signed goodbye still proves the owner was
+    // alive at nowMs; the net peer is gone (no more unicast to a dead app).
+    conn_->refreshThenClear(std::move(unbondVerified), nowMs);
+    lastPair_.valid = false;
+    mbedtls_platform_zeroize(lastPair_.code6, sizeof(lastPair_.code6));
+    mbedtls_platform_zeroize(lastPair_.cliNonce4, sizeof(lastPair_.cliNonce4));
+    mbedtls_platform_zeroize(lastPair_.srvNonce4, sizeof(lastPair_.srvNonce4));
+    mbedtls_platform_zeroize(lastPair_.ok39, sizeof(lastPair_.ok39));
+    lastPair_.bondMs = 0;
+    LOG_I("UDP", "unbond ok");
+    if (!openPairingWindow()) {
+      LOG_W("UDP", "pair window open failed (post-unbond)");
+    }
+  }
+
+  // REKEY_REQ layout [0x53|eraBE2 1..2|ctrBE4 3..6|tag6 7..12|XOR] (len +
+  // header + XOR checked by the caller). Silent Tier-1 rotation: the app
+  // derives PSK_next under the OLD psk well before EXHAUSTION_GATE and asks
+  // to move to era+1; the robot verifies (bonded -> era is exactly next ->
+  // counter fresh -> HMAC constant-time under the OLD psk), persists
+  // (era+1/psk_next/counter 0) BEFORE the ACK, then switches atomically and
+  // replies REKEY_ACK. Next drive uses counter 1 under the new PSK.
+  // Store-before-ACK ordering mirrors pairing (a failed NVS save answers
+  // nothing — the app retries, then falls back to the Tier-2 repair copy).
+  // Old PSK is dropped immediately on switch (no reorder window): stale
+  // in-flight drive frames under the old key drop via HMAC — documented in
+  // shared/protocol/README.md. Duplicate REQ with era == current era
+  // re-ACKs idempotently WITHOUT re-deriving or re-verifying (the lost-ACK
+  // retry reuses the same era; the ACK carries no secret — era + HMAC tag
+  // under the new PSK — so the unverified re-ACK leaks nothing). Any other
+  // era (replay or future jump) is a silent drop. No reply on failure.
+  template <typename Transport>
+  void handleRekey(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs, Transport& t) {
+    DESKY_ASSERT(buf != nullptr);
+    if (buf == nullptr) {
+      return;
+    }
+    if (!bonded_) {
+      dropFirst(firstRekeyDrop_, "drop rekey unbonded (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop rekey unbonded");
+      return;
+    }
+    const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(buf[1]) << 8) | static_cast<uint16_t>(buf[2]));
+    if (era == era_) {
+      // Idempotent duplicate: re-ACK WITHOUT re-deriving or re-verifying
+      // (the lost-ACK retry reuses the same era; the ACK carries no secret).
+      // Explicitly bypasses the Pinned gate below — documented, by design.
+      uint8_t ack[pairing::kRekeyAckSize];
+      if (composeRekeyAck(era_, ack)) {
+        t.sendRekeyAckImpl(rip, rport, ack);
+      }
+      LOG_EVERY_N(20, "UDP", "rekey redeliver era=%u", static_cast<unsigned>(era_));
+      return;
+    }
+    if (era != static_cast<uint16_t>(era_ + 1)) {
+      dropFirst(firstRekeyDrop_, "drop rekey era=%u have=%u (first of boot)", static_cast<unsigned>(era),
+                static_cast<unsigned>(era_));
+      LOG_EVERY_N(20, "UDP", "drop rekey era=%u have=%u", static_cast<unsigned>(era), static_cast<unsigned>(era_));
+      return;
+    }
+    const uint32_t ctr = (static_cast<uint32_t>(buf[3]) << 24) | (static_cast<uint32_t>(buf[4]) << 16) |
+                         (static_cast<uint32_t>(buf[5]) << 8) | static_cast<uint32_t>(buf[6]);
+    if (!t.isFreshCounter(lastCounter_, ctr)) {
+      dropFirst(firstRekeyDrop_, "drop rekey replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
+      LOG_EVERY_N(20, "UDP", "drop rekey replay ctr=%lu", static_cast<unsigned long>(ctr));
+      return;
+    }
+    // tag = first6(HMAC-SHA256(oldPsk, "REKEY"||eraBE2||counterBE4)).
+    uint8_t msg[pairing::kRekeyMsgLen];
+    pairing::rekeyTagMsg(era, ctr, msg);
+    uint8_t mac[32];
+    const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    int rc = -1;
+    if (md != nullptr) {
+      rc = mbedtls_md_hmac(md, psk_, sizeof(psk_), msg, sizeof(msg), mac);
+    }
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    bool ok = (rc == 0);
+    if (ok) {
+      ok = pairing::ctEqual(mac, buf + 7, pairing::kRekeyTagLen);
+    }
+    mbedtls_platform_zeroize(mac, sizeof(mac));
+    if (!ok) {
+      dropFirst(firstRekeyDrop_, "drop rekey auth (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop rekey auth");
+      return;
+    }
+    // Platform split 1.1: fold the passed prechecks into Verified (same
+    // pattern as drive; per-cause drops+logs above stay verbatim).
+    const connection::Checks rekeyChecks{bonded_, era == static_cast<uint16_t>(era_ + 1),
+                                         t.isFreshCounter(lastCounter_, ctr), ok};
+    connection::Verified rekeyVerified = connection::AuthVerifier::verify(rekeyChecks, ctr, era);
+    uint8_t nextPsk[pairing::kPskLen];
+    if (!pairing::deriveRekeyPsk(psk_, era, nextPsk)) {
+      dropFirst(firstRekeyDrop_, "drop rekey derive (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop rekey derive");
+      return;
+    }
+    if (!ConfigStore::saveRekey(nextPsk, era, 0)) {
+      mbedtls_platform_zeroize(nextPsk, sizeof(nextPsk));
+      dropFirst(firstRekeyDrop_, "drop rekey persist (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop rekey persist");
+      return;
+    }
+    for (size_t i = 0; i < sizeof(psk_); ++i) {
+      psk_[i] = nextPsk[i];
+    }
+    mbedtls_platform_zeroize(nextPsk, sizeof(nextPsk));
+    era_ = era;
+    pairCore_.onRekeyApplied(era);  // PairingExchange forward (same point, same order).
+    lastCounter_ = 0;
+    validCount_ = 0;
+    // Alive funnel BEFORE the ACK below.
+    connection::Pinned rekeyPinned = t.markAlive(std::move(rekeyVerified), rip, rport, nowMs, era_);
+    uint8_t ack[pairing::kRekeyAckSize];
+    if (composeRekeyAck(era_, ack)) {
+      t.sendRekeyAck(std::move(rekeyPinned), rip, rport, ack);
+    }
+    LOG_I("UDP", "rekey ok era=%u", static_cast<unsigned>(era_));
+  }
+
+  // ALIVE layout [0x55|eraBE2 1..2|ctrBE4 3..6|tag6 7..12|XOR] (len +
+  // header + XOR checked by the caller). Keepalive under the bonded PSK:
+  // verify order mirrors drive (bonded? -> era is current -> counter fresh
+  // -> HMAC constant-time). Pass refreshes the alive funnel WITHOUT any
+  // drive effect (lastV_/lastOmega_/lastRxMs_ untouched — only DRIVE moves
+  // the sticks and feeds the failsafe). Fail = silent drop. Pre-bond ALIVEs
+  // drop like pre-bond drive; old-key frames die via HMAC.
+  template <typename Transport>
+  void handleAlive(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs, Transport& t) {
+    DESKY_ASSERT(buf != nullptr);
+    if (buf == nullptr) {
+      return;
+    }
+    if (!bonded_) {
+      dropFirst(firstAliveDrop_, "drop alive unbonded (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop alive unbonded");
+      return;
+    }
+    const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(buf[1]) << 8) | static_cast<uint16_t>(buf[2]));
+    if (era != era_) {
+      dropFirst(firstAliveDrop_, "drop alive era=%u have=%u (first of boot)", static_cast<unsigned>(era),
+                static_cast<unsigned>(era_));
+      LOG_EVERY_N(20, "UDP", "drop alive era=%u have=%u", static_cast<unsigned>(era), static_cast<unsigned>(era_));
+      return;
+    }
+    const uint32_t ctr = (static_cast<uint32_t>(buf[3]) << 24) | (static_cast<uint32_t>(buf[4]) << 16) |
+                         (static_cast<uint32_t>(buf[5]) << 8) | static_cast<uint32_t>(buf[6]);
+    if (!t.isFreshCounter(lastCounter_, ctr)) {
+      dropFirst(firstAliveDrop_, "drop alive replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
+      LOG_EVERY_N(20, "UDP", "drop alive replay ctr=%lu", static_cast<unsigned long>(ctr));
+      return;
+    }
+    // tag = first6(HMAC-SHA256(psk, "ALIVE"||eraBE2||counterBE4)).
+    uint8_t msg[pairing::kAliveMsgLen];
+    pairing::aliveTagMsg(era, ctr, msg);
+    uint8_t mac[32];
+    const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    int rc = -1;
+    if (md != nullptr) {
+      rc = mbedtls_md_hmac(md, psk_, sizeof(psk_), msg, sizeof(msg), mac);
+    }
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    bool ok = (rc == 0);
+    if (ok) {
+      ok = pairing::ctEqual(mac, buf + 7, pairing::kAliveTagLen);
+    }
+    mbedtls_platform_zeroize(mac, sizeof(mac));
+    if (!ok) {
+      dropFirst(firstAliveDrop_, "drop alive auth (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop alive auth");
+      return;
+    }
+    // Platform split 1.1: fold the passed prechecks into Verified (same
+    // pattern as drive; per-cause drops+logs above stay verbatim).
+    const connection::Checks aliveChecks{bonded_, era == era_, t.isFreshCounter(lastCounter_, ctr), ok};
+    connection::Verified aliveVerified = connection::AuthVerifier::verify(aliveChecks, ctr, era);
+    // Shared counter: a valid ALIVE consumes exactly like drive (same
+    // holder app-side), so a replayed ALIVE can never refresh twice.
+    lastCounter_ = ctr;
+    ++validCount_;
+    if ((validCount_ % pairing::kPairPersistDefault) == 0) {
+      ConfigStore::saveCounter(lastCounter_);  // Periodic persist, never per-packet (flash wear).
+    }
+    t.markAlive(std::move(aliveVerified), rip, rport, nowMs,
+                era_);  // Alive only: no lastV_/lastOmega_/lastRxMs_, no publish (Pinned needs no effect).
+  }
+
+  // DISCONNECT layout [0x56|eraBE2 1..2|ctrBE4 3..6|tag6 7..12|XOR] (len +
+  // header + XOR checked by the caller). Graceful goodbye under the bonded
+  // PSK: verify mirrors ALIVE (bonded? -> era is current -> counter fresh ->
+  // HMAC constant-time). Pass runs refresh-then-clear like UNBOND — the
+  // signed goodbye proves the owner was alive at nowMs, then the net peer is
+  // gone (conn_.havePeer() = false). Unlike UNBOND the bond is KEPT (no NVS/Core/
+  // key clear, no pairing window): the next launch rejoins instantly.
+  // Never drives. Fail = silent drop. Pre-bond DISCONNECTs drop like drive.
+  template <typename Transport>
+  void handleDisconnect(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs, Transport& t) {
+    (void)rip;
+    (void)rport;
+    DESKY_ASSERT(buf != nullptr);
+    if (buf == nullptr) {
+      return;
+    }
+    if (!bonded_) {
+      dropFirst(firstDisconnectDrop_, "drop disconnect unbonded (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop disconnect unbonded");
+      return;
+    }
+    const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(buf[1]) << 8) | static_cast<uint16_t>(buf[2]));
+    if (era != era_) {
+      dropFirst(firstDisconnectDrop_, "drop disconnect era=%u have=%u (first of boot)", static_cast<unsigned>(era),
+                static_cast<unsigned>(era_));
+      LOG_EVERY_N(20, "UDP", "drop disconnect era=%u have=%u", static_cast<unsigned>(era), static_cast<unsigned>(era_));
+      return;
+    }
+    const uint32_t ctr = (static_cast<uint32_t>(buf[3]) << 24) | (static_cast<uint32_t>(buf[4]) << 16) |
+                         (static_cast<uint32_t>(buf[5]) << 8) | static_cast<uint32_t>(buf[6]);
+    if (!t.isFreshCounter(lastCounter_, ctr)) {
+      dropFirst(firstDisconnectDrop_, "drop disconnect replay ctr=%lu (first of boot)",
+                static_cast<unsigned long>(ctr));
+      LOG_EVERY_N(20, "UDP", "drop disconnect replay ctr=%lu", static_cast<unsigned long>(ctr));
+      return;
+    }
+    // tag = first6(HMAC-SHA256(psk, "DISCONNECT"||eraBE2||counterBE4)).
+    uint8_t msg[pairing::kDisconnectMsgLen];
+    pairing::disconnectTagMsg(era, ctr, msg);
+    uint8_t mac[32];
+    const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    int rc = -1;
+    if (md != nullptr) {
+      rc = mbedtls_md_hmac(md, psk_, sizeof(psk_), msg, sizeof(msg), mac);
+    }
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    bool ok = (rc == 0);
+    if (ok) {
+      ok = pairing::ctEqual(mac, buf + 7, pairing::kDisconnectTagLen);
+    }
+    mbedtls_platform_zeroize(mac, sizeof(mac));
+    if (!ok) {
+      dropFirst(firstDisconnectDrop_, "drop disconnect auth (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop disconnect auth");
+      return;
+    }
+    // Platform split 1.1: fold the passed prechecks into Verified (same
+    // pattern as drive; per-cause drops+logs above stay verbatim), consumed
+    // by the refresh-then-clear below.
+    const connection::Checks discChecks{bonded_, era == era_, t.isFreshCounter(lastCounter_, ctr), ok};
+    connection::Verified discVerified = connection::AuthVerifier::verify(discChecks, ctr, era);
+    lastCounter_ = ctr;  // Consume: a replayed goodbye can never clear twice.
+    ++validCount_;
+    if ((validCount_ % pairing::kPairPersistDefault) == 0) {
+      ConfigStore::saveCounter(lastCounter_);
+    }
+    conn_->refreshThenClear(std::move(discVerified), nowMs);  // Refresh-then-clear: net gone, bond kept.
+    LOG_I("UDP", "disconnect ok");
+  }
+
+ private:
+  // REKEY_ACK 10B composer (moved from UdpServer::sendRekeyAckImpl):
+  // [0x54|eraBE2|tag6|XOR] with tag = first6(HMAC-SHA256(newPsk,
+  // "REKEYACK"||eraBE2)). `psk_` IS the new key at both call sites
+  // (post-switch + idempotent duplicate). Returns false on HMAC failure
+  // (no send — same silent behavior as the Impl's early return). Key
+  // material never logged.
+  bool composeRekeyAck(uint16_t era, uint8_t out[pairing::kRekeyAckSize]) {
+    uint8_t msg[pairing::kRekeyAckMsgLen];
+    pairing::rekeyAckTagMsg(era, msg);
+    uint8_t mac[32];
+    out[0] = pairing::kRekeyAckHeader;
+    out[1] = static_cast<uint8_t>((era >> 8) & 0xFFu);
+    out[2] = static_cast<uint8_t>(era & 0xFFu);
+    const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    int rc = -1;
+    if (md != nullptr) {
+      rc = mbedtls_md_hmac(md, psk_, sizeof(psk_), msg, sizeof(msg), mac);
+    }
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    if (rc != 0) {
+      mbedtls_platform_zeroize(mac, sizeof(mac));
+      return false;
+    }
+    for (size_t i = 0; i < pairing::kRekeyTagLen; ++i) {
+      out[3 + i] = mac[i];
+    }
+    mbedtls_platform_zeroize(mac, sizeof(mac));
+    uint8_t xorSum = 0;
+    for (size_t i = 0; i + 1 < pairing::kRekeyAckSize; ++i) {
+      xorSum ^= out[i];
+    }
+    out[pairing::kRekeyAckSize - 1] = xorSum;
+    return true;
+  }
+
+  // Security-drop logging (bench lesson, Task 10): LOG_EVERY_N alone hides
+  // the first N-1 occurrences per call site, which blinded the bench run.
+  // First occurrence per boot per class always logs at INFO; afterwards the
+  // call-site LOG_EVERY_N throttle applies. No key/code/nonce material here.
+  template <typename... Args>
+  void dropFirst(bool& first, const char* fmt, Args... args) {
+    if (first) {
+      first = false;
+      LOG_I("UDP", fmt, args...);
+    }
+  }
+
+  // Transport-owned shared state (pinned by attach(); never owned here).
+  connection::ConnectionManager* conn_;
+  IPAddress* peerIp_;
+  uint16_t* peerPort_;
+  pairing::Core pairCore_;
+  uint8_t psk_[16];
+  uint32_t lastCounter_;
+  bool bonded_;
+  // Tier-1 rekey era (u16, NVS "bera", fresh pair resets to 0). DRIVE_V2
+  // carries no era — post-switch old-key frames drop via HMAC, so no drive
+  // layout change was needed.
+  uint16_t era_;
+  uint32_t validCount_;
+  uint32_t maxVerifyUs_;
+  // Cached QR bitmap of the CURRENT open window's code (V1 21x21,
+  // qr::kModules; see the normative payload contract in
+  // shared/protocol/README.md §"Pairing QR"). Encoded on every window open
+  // in ALL builds (release included) so future consumers (head link) read it
+  // without re-encoding; the serial row dump stays DEBUG-only. Invalid
+  // whenever no window is open (bonded, burned, or cleared).
+  uint8_t qrBitmap_[qr::kModules] = {};
+  bool qrBitmapValid_ = false;
+  // Last PAIR_OK redelivery cache (RAM-only, never persisted): an identical
+  // PAIR_REQ (same code + client nonce) inside kRedeliveryMs re-unicasts the
+  // cached bytes. Invalidated on reboot (restoreFromStore both paths),
+  // clearBond, and signed UNBOND; secrets zeroized alongside psk_.
+  struct LastPair {
+    bool valid = false;
+    uint8_t code6[6] = {};
+    uint8_t cliNonce4[4] = {};
+    uint8_t srvNonce4[4] = {};
+    uint8_t ok39[pairing::kPairOkSize] = {};
+    uint32_t bondMs = 0;
+  };
+  // Static assert #3 (platform split 1.1): the redelivery cache holds
+  // exactly one PAIR_OK frame — a size drift here breaks the unicast on the
+  // lost-PAIR_OK race. Host-side size pins live in test_udp_server.cpp.
+  static_assert(sizeof(LastPair::ok39) == pairing::kPairOkSize, "LastPair cache must hold exactly one PAIR_OK frame");
+  LastPair lastPair_;
+  // First-drop flags for dropFirst() (bench lesson: first occurrence per
+  // boot per class always logs). Reset only by reboot — never per window.
+  // (firstMalformedDrop_/firstLegacyDrop_/firstDriveDrop_/firstTelemetryDrop_
+  // stay in transport with the paths that log them.)
+  bool firstPairDrop_ = true;
+  bool firstUnbondDrop_ = true;
+  bool firstRekeyDrop_ = true;
+  bool firstAliveDrop_ = true;
+  bool firstDisconnectDrop_ = true;
+};
 
 }  // namespace pairing
 

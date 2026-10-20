@@ -4,6 +4,7 @@
 #include "abilities/audio/audio_task.h"
 #include "abilities/ota/ota_task.h"
 #include "abilities/pairing/pairing_codec.h"
+#include "abilities/pairing/pairing_task.h"
 #include "abilities/sensors/sensors_task.h"
 #include "behavior/coordinator.h"
 #include "behavior/motion_controller.h"
@@ -35,6 +36,7 @@ Coordinator g_coordinator;
 SensorTask g_sensor;
 AudioTask g_audio;
 UdpServer g_udp;
+pairing::PairingTask g_pairing;
 LinkServer g_link;
 OtaStaging g_otaStage;  // Carrier head-image staging (POST /head.bin + GETs).
 CoreCli g_cli;          // Minimal USB door: `otahead <url> [version]` only.
@@ -79,7 +81,7 @@ void setup() {
   // sees no UDP commands and sits in failsafe stop — safe by construction.
   LOG_I("BOOT", "wifi OFF bench mode (DESKY_NO_WIFI=1): TCRT rails live, coordinator failsafe-stopped");
 #else
-  const bool udpOk = g_udp.begin(&g_coordinator, &g_tof, &g_mpu);
+  const bool udpOk = g_udp.begin(&g_coordinator, &g_tof, &g_mpu, &g_pairing);
   DESKY_ASSERT(udpOk);
   // Link endpoint (H2.2, B-link sockets only): never bricks driving — a bind
   // or task failure only warns and the boot continues headless.
@@ -132,9 +134,9 @@ void loop() {
   // is a scannable QRBITMAP. No head linked -> the stage waits silently
   // (the serial QR row= dump stays the dev path). Window closed -> drop
   // the stage for the next window.
-  if (g_udp.qrBitmapValid()) {
+  if (g_pairing.qrBitmapValid()) {
     uint8_t packed[qr::kPackedLen];
-    if (g_udp.qrBitmapPacked(packed)) {
+    if (g_pairing.qrBitmapPacked(packed, g_udp)) {
       g_link.stageQrBitmap(packed);
     }
   } else {
