@@ -264,6 +264,7 @@ inline bool packQrBitmap(bool valid, const uint8_t* modules, uint8_t* out) {
 #include <utility>
 
 #include "abilities/pairing/pairing_task.h"
+#include "abilities/sensors/sensors_manager.h"
 #include "behavior/coordinator.h"
 #include "common/diagnostics.h"
 #include "common/fault_manager.h"
@@ -271,7 +272,6 @@ inline bool packQrBitmap(bool valid, const uint8_t* modules, uint8_t* out) {
 #include "config.h"
 #include "hal/mpu6500_driver.h"
 #include "hal/vl53l0x_driver.h"
-#include "middleware/sensor_fusion.h"
 #include "services/config_store.h"
 #include "services/event_bus.h"
 #include "transport/udp_codec.h"

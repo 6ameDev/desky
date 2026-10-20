@@ -35,7 +35,7 @@
 #define CFG_TOF_XSHUT_SHUTDOWN_MS 20
 #define CFG_TOF_XSHUT_BOOT_MS 50
 
-// Sensor fusion (pure logic, see src/middleware/sensor_fusion.h)
+// Sensor fusion (pure logic, see src/abilities/sensors/sensors_codec.h)
 // TCRT5000 cliff rails (pins via the MCU header, never hardcoded here).
 #define CFG_TCRT_FWD_PIN MCU_TCRT_FWD
 #define CFG_TCRT_REV_PIN MCU_TCRT_REV

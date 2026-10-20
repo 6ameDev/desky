@@ -1,4 +1,15 @@
 #pragma once
+// desky v2 sensors codec — abilities/sensors (ability layer).
+//
+// Arduino-free pure pieces, 100% native-testable: fusion math (SensorSnapshot,
+// FusionMounting, kBoardMounting, Fusion::evaluate) plus the sensor edge
+// helpers (namespace sensortask: tofReadingValid, due, cliffTransition,
+// groundTransition, obstacleTransition, kObstacleHystMM). Moved verbatim from
+// the former middleware fusion header + the Arduino-free top half of the
+// former middleware sensor-task header (Slice 3); zero behavior change.
+// Siblings: sensors_manager.h owns the production Fusion instance + a thin
+// evaluate() entry point; sensors_task.h is the firmware-only RTOS binder.
+
 // desky v2 sensor fusion — Arduino-independent pure logic (stdint/math only,
 // like src/transport/udp_codec.h). Shared by firmware (invoked on-demand by
 // the sensor task) and host Unity tests. No heap, no Arduino headers.
@@ -133,3 +144,105 @@ class Fusion {
 };
 
 }  // namespace fusion
+
+// desky v2 sensor task top half — Arduino-free pure logic (moved verbatim
+// from the former middleware task header; the firmware bottom half now lives in
+// sensors_task.h). Host Unity tests include this header (via
+// sensors_codec.h or sensors_task.h) directly.
+//
+// ToF sentinel for "no reading yet" (mirrors Vl53l0xDriver::kNoReadingMm;
+// duplicated so this namespace stays driver-free for host tests). Obstacle
+// hysteresis band + wrap-safe elapsed scheduling + transitions-only
+// ground/obstacle edges: see the per-function contracts below.
+
+namespace sensortask {
+
+// ToF sentinel for "no reading yet" (mirrors Vl53l0xDriver::kNoReadingMm;
+// duplicated so this namespace stays driver-free for host tests).
+constexpr uint16_t kNoReadingMm = 9999;
+
+// Obstacle hysteresis band around CFG_OBSTACLE_MM: the assert edge fires
+// below (OBSTACLE - HYST), the latch silently re-arms above
+// (OBSTACLE + HYST), so edge flicker never spams the bus.
+constexpr int16_t kObstacleHystMm = 10;
+
+// Threshold fallback keeps this header compilable standalone (host g++
+// without -I include). In-project, include/config.h always wins.
+#ifndef CFG_OBSTACLE_MM
+#define CFG_OBSTACLE_MM 150
+#endif
+
+// ToF sample is usable only while powered and holding a real ranging.
+inline bool tofReadingValid(bool enabled, uint16_t distMm) { return enabled && distMm != kNoReadingMm; }
+
+// Wrap-safe elapsed gate: fires (and re-arms) once per intervalMs using
+// unsigned subtraction, so the ~49-day millis() rollover stays correct.
+inline bool due(uint32_t nowMs, uint32_t& lastMs, uint32_t intervalMs) {
+  if (nowMs - lastMs >= intervalMs) {
+    lastMs = nowMs;
+    return true;
+  }
+  return false;
+}
+
+// Transitions-only cliff edge: dead ticks never evaluate and never publish
+// (lastPublished holds in silence); live ticks publish once per level flip
+// (nonzero rising / zero falling). Boots clear, so boot-into-cliff fires.
+// Legacy single-rail helper (kept for host tests; firmware uses the unified
+// groundTransition below).
+inline bool cliffTransition(bool liveTick, bool cliffNow, bool& lastPublished, uint32_t& payloadOut) {
+  if (!liveTick) {
+    return false;
+  }
+  if (cliffNow == lastPublished) {
+    return false;
+  }
+  lastPublished = cliffNow;
+  payloadOut = cliffNow ? 1u : 0u;
+  return true;
+}
+
+// Transitions-only unified ground edge: dead ticks never evaluate and never
+// publish (lastFwd/lastRev hold in silence); live ticks publish the packed
+// ground payload once per flip on EITHER rail. Boots with ground present
+// (true,true), so boot-into-void fires once.
+inline bool groundTransition(bool liveTick, bool gndFwdNow, bool gndRevNow, bool& lastFwd, bool& lastRev,
+                             uint32_t& payloadOut) {
+  if (!liveTick) {
+    return false;
+  }
+  if (gndFwdNow == lastFwd && gndRevNow == lastRev) {
+    return false;
+  }
+  lastFwd = gndFwdNow;
+  lastRev = gndRevNow;
+  payloadOut = packGround(gndFwdNow, gndRevNow);
+  return true;
+}
+
+// Edge-triggered obstacle assert: dead ticks never evaluate and never touch
+// the latch; a clear latch fires ONCE when a live ToF reads below
+// (CFG_OBSTACLE_MM - kObstacleHystMm) with payload = distance mm (see the
+// EVENT_OBSTACLE_DETECTED contract in system_context.h). The latch silently
+// re-arms above (CFG_OBSTACLE_MM + kObstacleHystMm); held-obstacle ticks
+// stay silent. The clear edge never publishes (a future
+// EVENT_OBSTACLE_CLEARED can add it); the coordinator ignores this event.
+inline bool obstacleTransition(bool liveTick, uint16_t distMm, bool& asserted, uint32_t& payloadOut) {
+  if (!liveTick) {
+    return false;
+  }
+  const int32_t near = static_cast<int32_t>(CFG_OBSTACLE_MM) - static_cast<int32_t>(kObstacleHystMm);
+  const int32_t far = static_cast<int32_t>(CFG_OBSTACLE_MM) + static_cast<int32_t>(kObstacleHystMm);
+  const int32_t d = static_cast<int32_t>(distMm);
+  if (!asserted && d < near) {
+    asserted = true;
+    payloadOut = distMm;
+    return true;
+  }
+  if (asserted && d > far) {
+    asserted = false;
+  }
+  return false;
+}
+
+}  // namespace sensortask

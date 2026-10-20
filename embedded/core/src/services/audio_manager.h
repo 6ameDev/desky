@@ -23,7 +23,7 @@
 // level so INFO transcripts stay readable), one
 // beep-start line per note + one done line per queue drain.
 //
-// Structure mirrors sensor_task.h: the top half (namespace audiometer) is
+// Structure mirrors sensors_task.h: the top half (namespace audiometer) is
 // Arduino-free pure DSP (stdint + math only) so host Unity tests include
 // this header directly. The bottom half (class AudioManager) is
 // firmware-only (#ifdef ARDUINO): note queue + synth/meter task.
@@ -40,7 +40,7 @@
 #include "config.h"
 
 // Fallbacks keep this header compilable if config keys ever drift; in-project
-// include/config.h always wins (same pattern as sensor_task.h).
+// include/config.h always wins (same pattern as sensors_task.h).
 #ifndef CFG_AUDIO_RATE_HZ
 #define CFG_AUDIO_RATE_HZ 16000
 #endif

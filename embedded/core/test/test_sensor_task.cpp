@@ -2,14 +2,14 @@
 // Run: pio test -e native-test
 //
 // Covers the Arduino-free namespace sensortask (edge + hold + scheduling in
-// src/middleware/sensor_task.h): transitions-only EVENT_CLIFF_DETECTED
+// src/abilities/sensors/sensors_codec.h): transitions-only EVENT_CLIFF_DETECTED
 // publish, frozen-input silence, and wrap-safe elapsed scheduling. The
 // SensorTask FreeRTOS task (drivers/WDT) is firmware-only (#ifdef ARDUINO)
 // and exercised on hardware. Runner lives in test_udp_codec.cpp.
 
 #include <unity.h>
 
-#include "../src/middleware/sensor_task.h"
+#include "../src/abilities/sensors/sensors_task.h"
 
 namespace {
 
