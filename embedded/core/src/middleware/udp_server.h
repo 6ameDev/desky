@@ -46,12 +46,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "abilities/pairing/pairing_codec.h"
 #include "common/udp_send.h"
-#include "middleware/qr_pairing.h"
 #include "transport/connection_manager.h"
 
 // Fallback keeps the host tests + firmware compiling if config keys drift;
-// in-project include/config.h always wins (same pattern as pairing.h).
+// in-project include/config.h always wins (same pattern as pairing_codec.h).
 #ifndef CFG_PAIR_REDELIVERY_MS
 #define CFG_PAIR_REDELIVERY_MS 60000
 #endif
@@ -107,28 +107,30 @@ inline int16_t degToDecideg(float deg) {
 // stdint/stddef only).
 constexpr uint8_t kDriveV2Header = 0xAC;
 constexpr size_t kDriveV2Size = 16;
-constexpr uint8_t kPairReqHeader = 0x50;
-constexpr size_t kPairReqSize = 12;
-constexpr uint8_t kUnbondHeader = 0xAD;
-constexpr size_t kUnbondSize = 12;
-constexpr size_t kUnbondTagLen = 6;
-constexpr size_t kUnbondMsgLen = 10;  // "UNBOND" (6 ASCII) || counterBE4
-// Tier-1 silent auto-rekey (see pairing.h + shared/protocol/README.md):
+// Pairing-owned vocabulary (single owner: pairing_codec.h; mirrored here for
+// the host-testable demux — equality pinned by test_udp_server static_asserts).
+constexpr uint8_t kPairReqHeader = pairing::kPairReqHeader;
+constexpr size_t kPairReqSize = pairing::kPairReqSize;
+constexpr uint8_t kUnbondHeader = pairing::kUnbondHeader;
+constexpr size_t kUnbondSize = pairing::kUnbondSize;
+constexpr size_t kUnbondTagLen = pairing::kUnbondTagLen;
+constexpr size_t kUnbondMsgLen = pairing::kUnbondMsgLen;  // "UNBOND" (6 ASCII) || counterBE4
+// Tier-1 silent auto-rekey (see pairing_codec.h + shared/protocol/README.md):
 // REKEY_REQ 14B [0x53|eraBE2|ctrBE4|tag6|XOR], REKEY_ACK 10B (TX only).
-// Headers 0x53/0x54 are claimed here — never reuse 0xAA/0xAC/0xBB/
+// Headers 0x53/0x54 are claimed in pairing_codec.h — never reuse 0xAA/0xAC/0xBB/
 // 0x50/0x51/0x52/0xAD (Phase-2 SET_RATE must pick other values).
-constexpr uint8_t kRekeyReqHeader = 0x53;
-constexpr size_t kRekeyReqSize = 14;
-constexpr uint8_t kRekeyAckHeader = 0x54;
-constexpr size_t kRekeyAckSize = 10;
-// ALIVE + DISCONNECT (robot alive rule, see pairing.h + README):
+constexpr uint8_t kRekeyReqHeader = pairing::kRekeyReqHeader;
+constexpr size_t kRekeyReqSize = pairing::kRekeyReqSize;
+constexpr uint8_t kRekeyAckHeader = pairing::kRekeyAckHeader;
+constexpr size_t kRekeyAckSize = pairing::kRekeyAckSize;
+// ALIVE + DISCONNECT (robot alive rule, see pairing_codec.h + README):
 // ALIVE 14B [0x55|eraBE2|ctrBE4|tag6|XOR], DISCONNECT 14B
-// [0x56|eraBE2|ctrBE4|tag6|XOR]. Headers 0x55/0x56 are claimed here —
-// never reuse 0xAA/0xAC/0xBB/0x50/0x51/0x52/0x53/0x54/0xAD.
-constexpr uint8_t kAliveHeader = 0x55;
-constexpr size_t kAliveSize = 14;
-constexpr uint8_t kDisconnectHeader = 0x56;
-constexpr size_t kDisconnectSize = 14;
+// [0x56|eraBE2|ctrBE4|tag6|XOR]. Headers 0x55/0x56 are claimed in
+// pairing_codec.h — never reuse 0xAA/0xAC/0xBB/0x50/0x51/0x52/0x53/0x54/0xAD.
+constexpr uint8_t kAliveHeader = pairing::kAliveHeader;
+constexpr size_t kAliveSize = pairing::kAliveSize;
+constexpr uint8_t kDisconnectHeader = pairing::kDisconnectHeader;
+constexpr size_t kDisconnectSize = pairing::kDisconnectSize;
 // Robot alive freshness window: a bonded peer counts as alive while its
 // last valid packet (ALIVE, DRIVE_V2, or REKEY_REQ) is within kAliveMs.
 // DISCONNECT/UNBOND clear the net peer immediately (refresh-then-clear),
@@ -165,24 +167,9 @@ inline RxKind classifyRx(size_t len, uint8_t header) {
   return RxKind::kDrop;
 }
 
-// UNBOND tag message (10B, host-testable): "UNBOND" ASCII || counterBE4.
-// Domain-separates the unbond tag from drive tags (drive covers
-// counter||mode||thr||str||flags with no ASCII prefix).
-inline void unbondTagMsg(uint32_t counter, uint8_t out10[kUnbondMsgLen]) {
-  if (out10 == nullptr) {
-    return;
-  }
-  out10[0] = 'U';
-  out10[1] = 'N';
-  out10[2] = 'B';
-  out10[3] = 'O';
-  out10[4] = 'N';
-  out10[5] = 'D';
-  out10[6] = static_cast<uint8_t>((counter >> 24) & 0xFFu);
-  out10[7] = static_cast<uint8_t>((counter >> 16) & 0xFFu);
-  out10[8] = static_cast<uint8_t>((counter >> 8) & 0xFFu);
-  out10[9] = static_cast<uint8_t>(counter & 0xFFu);
-}
+// UNBOND tag builder lives in pairing_codec.h (single owner); re-exported
+// here for the demux/handlers and the host tests pinning udpstatus:: names.
+using pairing::unbondTagMsg;
 
 // Wrap-aware strictly-greater for the DRIVE_V2 32-bit BE counter (starts at
 // 1; initial lastSeen=0). Unsigned subtraction throughout: wrap-safe across
@@ -219,7 +206,7 @@ inline bool shouldSendTelemetry(bool bonded, bool havePeer, uint32_t lastAliveMs
 // is valid, the incoming code (6B) matches with a no-early-exit loop, the
 // incoming client nonce (4B) matches, and the bond is younger than
 // kRedeliveryMs (wrap-safe millis math). Null pointers -> false. Deliberately
-// local (no pairing.h include) so this top half stays stdint-only.
+// local (no manager/task dependency) so this top half stays stdint-only.
 inline bool shouldRedeliver(bool valid, const uint8_t* storedCode, const uint8_t* storedNonce, const uint8_t* inCode,
                             const uint8_t* inNonce, uint32_t bondMs, uint32_t nowMs) {
   if (!valid) {
@@ -276,6 +263,7 @@ inline bool packQrBitmap(bool valid, const uint8_t* modules, uint8_t* out) {
 
 #include <utility>
 
+#include "abilities/pairing/pairing_task.h"
 #include "behavior/coordinator.h"
 #include "common/diagnostics.h"
 #include "common/fault_manager.h"
@@ -283,8 +271,6 @@ inline bool packQrBitmap(bool valid, const uint8_t* modules, uint8_t* out) {
 #include "config.h"
 #include "hal/mpu6500_driver.h"
 #include "hal/vl53l0x_driver.h"
-#include "middleware/pairing.h"
-#include "middleware/qr_pairing.h"
 #include "middleware/sensor_fusion.h"
 #include "services/config_store.h"
 #include "services/event_bus.h"

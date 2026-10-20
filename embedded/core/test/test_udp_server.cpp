@@ -13,14 +13,15 @@
 #include <type_traits>
 #include <utility>
 
+#include "../src/abilities/pairing/pairing_codec.h"
 #include "../src/behavior/coordinator.h"
 #include "../src/middleware/udp_server.h"
-#include "../src/transport/udp_codec.h"
-// Platform split 1.1: udp_server.h is included FIRST (it defines
-// UDPSTATUS_TOP_HALF_INCLUDED + pulls the connection core); pairing.h is
-// the PairingExchange owner, telemetry_manager.h the cadence/encode owner.
-#include "../src/middleware/pairing.h"
+// Platform split 1.1: udp_server.h is included before telemetry_manager.h (it
+// defines UDPSTATUS_TOP_HALF_INCLUDED + pulls the connection core);
+// pairing_codec.h is the wire-codec owner, telemetry_manager.h the
+// cadence/encode owner.
 #include "../src/services/telemetry_manager.h"
+#include "../src/transport/udp_codec.h"
 
 // Static assert #3 (platform split 1.1): frozen wire sizes + LastPair cache
 // shape + distinct claimed headers, pinned at COMPILE time on the host.
@@ -42,8 +43,8 @@ static_assert(udpstatus::kRekeyAckHeader == 0x54, "REKEY_ACK header is 0x54");
 static_assert(pairing::kPairOkSize == 39, "PAIR_OK is 39B (v1.1)");
 static_assert(pairing::kPairOkLegacySize == 38, "v1 PAIR_OK was 38B");
 static_assert(udpstatus::kRekeyAckSize == 10, "REKEY_ACK is 10B");
-// NOTE (M9): PAIR_OK header (0x51) lives in pairing.h ARDUINO-only glue
-// (kPairOkHeader, mbedTLS) and PAIR_ERR (0x52/4) is a firmware-only literal
+// NOTE (M9): PAIR_OK header (0x51) lives in pairing_codec.h (Arduino-free
+// sizes since the abilities split) and PAIR_ERR (0x52/4) is a firmware-only
 // in sendPairErr — neither has a host-visible constexpr, so both are pinned
 // as literals in test_udp_mirror_freeze / test_udp_pair_*_frame_golden below
 // (literals reviewed against the udp_codec.h freeze table + Codec.kt + README).
@@ -652,7 +653,7 @@ void test_telemetry_publish_edge_forces_early() {
 
 // ── M9 three-way mirror gate ─────────────────────────────────────────────
 // Literal freeze of every header/size in the udp_codec.h table (firmware
-// udp_server.h top half + pairing.h vs client domain/Codec.kt vs
+// udp_server.h top half + pairing_codec.h vs client domain/Codec.kt vs
 // shared/protocol/README.md). Host-visible constexprs are pinned against
 // literals; PAIR_OK header (0x51, ARDUINO-only kPairOkHeader) and PAIR_ERR
 // (0x52/4, firmware-only sendPairErr literal) are pinned as literals by the

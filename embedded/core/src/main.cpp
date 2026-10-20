@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <esp_system.h>
 
+#include "abilities/pairing/pairing_codec.h"
 #include "behavior/coordinator.h"
 #include "behavior/motion_controller.h"
 #include "common/diagnostics.h"
@@ -14,7 +15,6 @@
 #include "hal/vl53l0x_driver.h"
 #include "middleware/link_server.h"
 #include "middleware/ota_staging.h"
-#include "middleware/qr_pairing.h"
 #include "middleware/sensor_task.h"
 #include "middleware/udp_server.h"
 #include "services/audio_manager.h"

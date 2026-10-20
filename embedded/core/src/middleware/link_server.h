@@ -85,7 +85,7 @@ namespace linkcode = linkwrap__::link;
 #include "link/ota_manifest.h"
 
 // Fallbacks keep the host tests + firmware compiling if config keys drift;
-// in-project include/config.h always wins (same pattern as pairing.h).
+// in-project include/config.h always wins (same pattern as pairing_codec.h).
 #ifndef CFG_LINK_UDP_PORT
 #define CFG_LINK_UDP_PORT 3334
 #endif
