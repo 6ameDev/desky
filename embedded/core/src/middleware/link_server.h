@@ -26,7 +26,7 @@
 //     messages reassemble via linkcode::Reassembler into a second STATIC 16KB
 //     message buffer. Validated JPEG bytes are checksummed (CRC) + counted
 //     (framesRx_/bytesRx_/lastFps) and DROPPED after validation — no consumer
-//     yet (H2.5/display consumes later).
+//     yet (DISPLAY-CONSUMER SEAM, see handleTcpFrame).
 //
 // Buffer choice (documented): a 24KB-ish recv buffer is far too big for the
 // 4096-word task stack, so BOTH big buffers are LinkServer MEMBERS (the server
@@ -34,12 +34,28 @@
 // stays 4096 words; the UDP path uses a 1034B stack frame (kMaxFrame) and
 // everything else is counters. No heap/String anywhere in the RX/TX path.
 //
-// H2.5 QR send: the main loop stages the pairing window's 63B bitmap
-// (stageQrBitmap, policy side, never sockets); this task unicasts it once
-// per window to the HB-pinned head peer (trySendQr, transport side — one
-// small unicast after the UDP drain, so the RX tick can never stall).
-// No head linked -> the stage waits silently; window closed -> clearQr.
-// Duplicate protection is the existing seq/ACK machinery on both ends.
+// H2.5 QR send (Slice 6c split): the pairing window's 63B bitmap stage
+// lives in pairing::PairingTask (staged bitmap + sent latch, policy side,
+// never sockets); the main loop calls PairingTask::pumpQrLink, which packs
+// and hands one QRBITMAP frame per window to sendUnicast below (transport
+// side, pinned head peer). No head linked -> the pump waits silently;
+// window closed -> the pump unlatches for the next window. Duplicate
+// protection is the existing seq/ACK machinery on both ends.
+//
+// Carrier OTA trigger (same split): the `otahead` URL stage lives in
+// OtaStaging (abilities/ota, policy side, never sockets); the main loop
+// calls OtaStaging::pumpOtaLink, which hands one OTA frame per command to
+// sendUnicast. Every valid `otahead` command replaces the stage and
+// re-arms the send (latest command wins); a head mid-download ignores the
+// re-trigger via its in-flight guard. Same silent-wait / consume-on-attempt
+// shape as the QR pump above. URL bytes are validated by the shared
+// otamanifest grammar and never logged.
+//
+// Direction map: QRBITMAP flows BOTH ways on different seq domains —
+// inbound head->core frames stage into LastLinkCmd (shared head seq
+// domain, ACKed, snapshotCmd handoff below) while the outbound pump path
+// above rides the core->head tx domain (sendUnicast). The two never share
+// a counter; the mapping is explicit by construction.
 
 // Auth: NONE in this task beyond CRC+seq — transport-only trust, exactly like
 // the AP passphrase (documented in shared/link/README). A keyed link can come
@@ -332,107 +348,79 @@ class LinkServer {
 
   bool hasHeadPeer() const { return haveHeadPeer_; }
 
-  // Stage the pairing window's 63B QR bitmap (main-loop policy side; copies
-  // under lock, never touches sockets, so it cannot disturb the UDP RX
-  // tick). The link task unicasts it once to the HB-pinned head. Null or
-  // pre-begin (no mutex) -> false, fail-closed.
+  // Core->head unicast for the ability pumps (Slice 6c: the QR/OTA stages
+  // live in PairingTask/OtaStaging now — this class holds no business
+  // state, only sockets + framing + the pinned peer + the tx counter).
+  // Mints the frame seq under lock (single txSeq_ writer — see sendTo),
+  // encodes, and unicasts to the HB-pinned head peer. False when pre-begin,
+  // peerless, or the radio refused the datagram (txFail_ + LOG_W inside,
+  // same strings as the old per-type paths). seqOut always carries the
+  // minted seq for the pump's send logs (0 when pre-begin/peerless).
   // Producer vocabulary note: the future stageFace/stageOled/stageCam MUST
-  // pack via link::packOled/packCamCtl/unpack* (literal-byte tests pin the wire);
-  // the stageOtaUrl producer next to this one validates via the shared
-  // otamanifest::isValidOtaUrlBytes helper (single-sourced, never re-derived).
-  bool stageQrBitmap(const uint8_t qr63[linkcode::kQrBitmapLen]) {
-    if (qr63 == nullptr || mutex_ == nullptr) {
+  // pack via link::packOled/packCamCtl/unpack* (literal-byte tests pin the
+  // wire); the OTA producer validates via the shared otamanifest grammar
+  // (single-sourced, never re-derived).
+  bool sendUnicast(uint8_t type, const uint8_t* payload, uint16_t payloadLen, uint16_t& seqOut) {
+    seqOut = 0;
+    if (mutex_ == nullptr || !haveHeadPeer_) {
       return false;
     }
-    xSemaphoreTake(mutex_, portMAX_DELAY);
-    if (!qrSent_) {
-      for (size_t i = 0; i < linkcode::kQrBitmapLen; ++i) {
-        stagedQr_[i] = qr63[i];
-      }
-      stagedValid_ = true;
+    const char* what = "frame";
+    switch (type) {
+      case linkcode::kTypeQrBitmap:
+        what = "qr";
+        break;
+      case linkcode::kTypeOta:
+        what = "ota";
+        break;
+      case linkcode::kTypeHbAck:
+        what = "hb_ack";
+        break;
+      case linkcode::kTypeAck:
+        what = "ack";
+        break;
+      default:
+        break;
     }
-    xSemaphoreGive(mutex_);
-    return true;
-  }
-
-  // Stage a carrier OTA URL for the head pull (main-loop policy side, fed by
-  // the `otahead <url>` console verb; copies under lock, never touches
-  // sockets). The link task unicasts it once as a kTypeOta frame to the
-  // HB-pinned head. Validation is the shared otamanifest grammar (1..128
-  // printable-ASCII bytes, no '@'/whitespace — credentials never ride or
-  // log); invalid/null/pre-begin -> false, fail-closed. Every valid command
-  // REPLACES the stage and re-arms the send (console-verb semantics: latest
-  // command wins — a head mid-download ignores the re-trigger via its
-  // in-flight guard, an idle head pulls the newest URL); clearOta re-arms
-  // for the next command.
-  bool stageOtaUrl(const char* url) {
-    if (url == nullptr || mutex_ == nullptr) {
-      return false;
-    }
-    size_t len = 0;
-    while (len <= otamanifest::kUrlMax && url[len] != '\0') {
-      ++len;
-    }
-    if (len == 0 || len > otamanifest::kUrlMax) {
-      return false;
-    }
-    if (!otamanifest::isValidOtaUrlBytes(reinterpret_cast<const uint8_t*>(url), len)) {
-      return false;
-    }
-    xSemaphoreTake(mutex_, portMAX_DELAY);
-    for (size_t i = 0; i < len; ++i) {
-      stagedOta_[i] = static_cast<uint8_t>(url[i]);
-    }
-    stagedOtaLen_ = len;
-    stagedOtaValid_ = true;
-    otaSent_ = false;
-    xSemaphoreGive(mutex_);
-    return true;
-  }
-
-  // Drop any staged/unsent OTA (torn download repeat path) and unlatch the
-  // once-per-command gate. Safe pre-begin.
-  void clearOta() {
-    if (mutex_ == nullptr) {
-      return;
-    }
-    xSemaphoreTake(mutex_, portMAX_DELAY);
-    stagedOtaValid_ = false;
-    otaSent_ = false;
-    stagedOtaLen_ = 0;
-    for (size_t i = 0; i < linkcode::kOtaUrlMaxLen; ++i) {
-      stagedOta_[i] = 0;
-    }
-    xSemaphoreGive(mutex_);
-  }
-
-  // Staged OTA length for the console door (counters only). 0 pre-begin.
-  size_t stagedOtaLen() const {
-    if (mutex_ == nullptr) {
-      return 0;
-    }
-    xSemaphoreTake(mutex_, portMAX_DELAY);
-    const size_t len = stagedOtaValid_ ? stagedOtaLen_ : 0;
-    xSemaphoreGive(mutex_);
-    return len;
-  }
-
-  // Drop any staged/unsent QR (window closed: bonded/burned/cleared) and
-  // unlatch the once-per-window gate for the next window. Safe pre-begin.
-  void clearQr() {
-    if (mutex_ == nullptr) {
-      return;
-    }
-    xSemaphoreTake(mutex_, portMAX_DELAY);
-    stagedValid_ = false;
-    qrSent_ = false;
-    for (size_t i = 0; i < linkcode::kQrBitmapLen; ++i) {
-      stagedQr_[i] = 0;
-    }
-    xSemaphoreGive(mutex_);
+    return sendTo(type, payload, payloadLen, headIp_, headPort_, seqOut, what) == SendVerdict::kOk;
   }
 
  private:
+  // Single core->head send choke point (txSeq single owner): every frame
+  // send funnels here. Mints the seq under lock (the ONLY txSeq_++ left in
+  // the file — the old lock-free increments in the ACK paths are gone),
+  // encodes, and unicasts — serializing the shared WiFiUDP object across
+  // the link task (ACK/HB_ACK replies) and the main-loop ability pumps
+  // (QR/OTA via sendUnicast above). txFail_ + LOG_W live here (verbatim
+  // strings from the old per-type paths); per-type success counters and
+  // success logs stay at the call sites (they differ per type).
+  enum class SendVerdict : uint8_t { kOk, kEncodeFail, kSendFail };
+
+  SendVerdict sendTo(uint8_t type, const uint8_t* payload, uint16_t payloadLen, const IPAddress& ip, uint16_t port,
+                     uint16_t& seqOut, const char* what) {
+    seqOut = 0;
+    if (mutex_ == nullptr) {
+      return SendVerdict::kSendFail;
+    }
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    seqOut = txSeq_++;
+    uint8_t out[linkcode::kMaxFrame];
+    const size_t n = linkcode::encodeFrame(type, seqOut, payload, payloadLen, 0, 1, out, sizeof(out));
+    bool sent = false;
+    if (n != 0) {
+      sent = udpsend::udpSendChecked(udp_, ip, port, out, n);
+      if (!sent) {
+        ++txFail_;
+        LOG_W("LINK", "udp send fail what=%s len=%u", what, static_cast<unsigned>(n));
+      }
+    }
+    xSemaphoreGive(mutex_);
+    if (n == 0) {
+      return SendVerdict::kEncodeFail;
+    }
+    return sent ? SendVerdict::kOk : SendVerdict::kSendFail;
+  }
+
   static void taskEntry(void* arg) { static_cast<LinkServer*>(arg)->loop(); }
 
   void loop() {
@@ -445,8 +433,6 @@ class LinkServer {
     for (;;) {
       vTaskDelayUntil(&lastWake, period);
       pollUdp();
-      trySendQr();
-      trySendOta();
       pollTcp();
       FaultManager::watchdogFeed();
       ++ticks;
@@ -557,8 +543,8 @@ class LinkServer {
       case linkcode::kTypeJpeg:
       case linkcode::kTypeOta:
         // Core->head direction on the UDP socket: never valid inbound here
-        // (JPEG rides TCP; OTA is staged core-side and sent by trySendOta).
-        // Silent drop, throttled.
+        // (JPEG rides TCP; OTA is staged ability-side and sent by the OTA
+        // pump via sendUnicast). Silent drop, throttled.
         dropFirst(firstUnexpectedDrop_, "drop link unexpected %s on udp (first of boot)", linkserver::typeName(f.type));
         LOG_EVERY_N(20, "LINK", "drop link unexpected %s on udp", linkserver::typeName(f.type));
         ++udpDrop_;
@@ -679,164 +665,48 @@ class LinkServer {
   }
 
   // ACK TX (unicast to the command sender): payload is the acked seq; the
-  // frame's own seq rides our core->head tx domain (txSeq_++ per send, so a
-  // duplicate re-ACK is a fresh frame carrying the same receipt).
+  // frame's own seq rides our core->head tx domain (sendTo mints it, so a
+  // duplicate re-ACK is a fresh frame carrying the same receipt). Replies
+  // to the sender — NOT via the pinned-peer sendUnicast — because handleCmd
+  // deliberately never pins (only HBs pin); routing here through the pinned
+  // peer would misdeliver. Encode failure stays silent (as before).
   void sendAck(const IPAddress& ip, uint16_t port, uint16_t ackedSeq) {
     uint8_t payload[linkcode::kAckLen];
-    uint8_t out[linkcode::kOverhead + linkcode::kAckLen];
     if (!linkcode::packAck(ackedSeq, payload)) {
       return;
     }
-    const size_t n =
-        linkcode::encodeFrame(linkcode::kTypeAck, txSeq_++, payload, sizeof(payload), 0, 1, out, sizeof(out));
-    if (n == 0) {
-      return;
+    uint16_t seq = 0;
+    if (sendTo(linkcode::kTypeAck, payload, sizeof(payload), ip, port, seq, "ack") == SendVerdict::kOk) {
+      ++ackTx_;
     }
-    if (!udpsend::udpSendChecked(udp_, ip, port, out, n)) {
-      ++txFail_;
-      LOG_W("LINK", "udp send fail what=%s len=%u", "ack", static_cast<unsigned>(n));
-      return;
-    }
-    ++ackTx_;
   }
 
-  // HB peer pin (H2.5 QR unicast target). Called for fresh + duplicate
-  // HBs only — the stale path returns before it, so replays never move the
-  // peer. Counters-only rule: no payload bytes logged here.
+  // HB peer pin (ability-pump QR/OTA unicast target + ACK/HB_ACK replies).
+  // Called for fresh + duplicate HBs only — the stale path returns before
+  // it, so replays never move the peer. Counters-only rule: no payload
+  // bytes logged here.
   void pinHeadPeer(const IPAddress& ip, uint16_t port) {
     headIp_ = ip;
     headPort_ = port;
     haveHeadPeer_ = true;
   }
 
-  // QRBITMAP send (H2.5, link-task side): unicasts the staged 63B bitmap
-  // once per window to the HB-pinned head as one QRBITMAP frame. No head
-  // linked -> silent pending skip + throttled LOG_D (the serial QR row=
-  // dump stays the dev path); the stage waits for a late joiner. Encode
-  // failure -> throttled drop, never a fault, never a brick of driving.
-  // Duplicate protection is the existing seq/ACK machinery (head re-ACKs
-  // duplicates); the qrSent_ latch keeps this to one send per window.
-  void trySendQr() {
-    uint8_t staged[linkcode::kQrBitmapLen] = {};
-    bool doSend = false;
-    bool pendingNoPeer = false;
-    uint16_t seq = 0;
-    IPAddress peer;
-    uint16_t port = 0;
-    if (mutex_ != nullptr) {
-      xSemaphoreTake(mutex_, portMAX_DELAY);
-      pendingNoPeer = stagedValid_ && !qrSent_ && !haveHeadPeer_;
-      doSend = linkserver::qrReadyToSend(stagedValid_, qrSent_, haveHeadPeer_);
-      if (doSend) {
-        for (size_t i = 0; i < linkcode::kQrBitmapLen; ++i) {
-          staged[i] = stagedQr_[i];
-        }
-        seq = txSeq_++;
-        peer = headIp_;
-        port = headPort_;
-        stagedValid_ = false;
-        qrSent_ = true;
-      }
-      xSemaphoreGive(mutex_);
-    }
-    if (pendingNoPeer) {
-      LOG_EVERY_N(20, "LINK", "qr pending, no head peer");
-      return;
-    }
-    if (!doSend) {
-      return;
-    }
-    uint8_t out[linkcode::kOverhead + linkcode::kQrBitmapLen];
-    const size_t n =
-        linkcode::encodeFrame(linkcode::kTypeQrBitmap, seq, staged, sizeof(staged), 0, 1, out, sizeof(out));
-    if (n == 0) {
-      LOG_EVERY_N(20, "LINK", "qr encode failed seq=%u", static_cast<unsigned>(seq));
-      return;
-    }
-    if (!udpsend::udpSendChecked(udp_, peer, port, out, n)) {
-      ++txFail_;
-      LOG_W("LINK", "udp send fail what=%s len=%u", "qr", static_cast<unsigned>(n));
-      return;
-    }
-    ++qrTx_;
-    LOG_I("LINK", "qr sent seq=%u len=%u", static_cast<unsigned>(seq), static_cast<unsigned>(sizeof(staged)));
-  }
-
-  // OTA URL send (carrier trigger, task side): unicasts the staged URL once
-  // per `otahead` command to the HB-pinned head as one OTA frame. No head
-  // linked -> silent pending skip + throttled LOG_D (same late-joiner wait
-  // as the QR path). Encode failure -> throttled drop, never a fault, never
-  // a brick of driving. Duplicate protection is the existing seq/ACK
-  // machinery (head re-ACKs duplicates); the otaSent_ latch keeps this to
-  // one send per command. Never logs URL bytes (length only).
-  void trySendOta() {
-    uint8_t staged[linkcode::kOtaUrlMaxLen] = {};
-    size_t stagedLen = 0;
-    bool doSend = false;
-    bool pendingNoPeer = false;
-    uint16_t seq = 0;
-    IPAddress peer;
-    uint16_t port = 0;
-    if (mutex_ != nullptr) {
-      xSemaphoreTake(mutex_, portMAX_DELAY);
-      pendingNoPeer = stagedOtaValid_ && !otaSent_ && !haveHeadPeer_;
-      doSend = linkserver::otaReadyToSend(stagedOtaValid_, otaSent_, haveHeadPeer_);
-      if (doSend) {
-        for (size_t i = 0; i < stagedOtaLen_; ++i) {
-          staged[i] = stagedOta_[i];
-        }
-        stagedLen = stagedOtaLen_;
-        seq = txSeq_++;
-        peer = headIp_;
-        port = headPort_;
-        stagedOtaValid_ = false;
-        otaSent_ = true;
-      }
-      xSemaphoreGive(mutex_);
-    }
-    if (pendingNoPeer) {
-      LOG_EVERY_N(20, "LINK", "ota pending, no head peer");
-      return;
-    }
-    if (!doSend) {
-      return;
-    }
-    uint8_t out[linkcode::kOverhead + linkcode::kOtaUrlMaxLen];
-    const size_t n = linkcode::encodeFrame(linkcode::kTypeOta, seq, staged, static_cast<uint16_t>(stagedLen), 0, 1, out,
-                                           sizeof(out));
-    if (n == 0) {
-      LOG_EVERY_N(20, "LINK", "ota encode failed seq=%u", static_cast<unsigned>(seq));
-      return;
-    }
-    if (!udpsend::udpSendChecked(udp_, peer, port, out, n)) {
-      ++txFail_;
-      LOG_W("LINK", "udp send fail what=%s len=%u", "ota", static_cast<unsigned>(n));
-      return;
-    }
-    ++otaTx_;
-    LOG_I("LINK", "ota sent seq=%u len=%u", static_cast<unsigned>(seq), static_cast<unsigned>(stagedLen));
-  }
-
   // HB_ACK TX (core->head): echoes the HB's channel + the fixed era (no
-  // rekey domain on the transport-only link). Carries no secret.
+  // rekey domain on the transport-only link). Carries no secret. The HB
+  // pinned the peer just before this call (fresh + duplicate both pin), so
+  // the pinned-peer sendUnicast reaches exactly the HB sender.
   void sendHbAck(const IPAddress& ip, uint16_t port, uint8_t channel) {
+    (void)ip;
+    (void)port;
     uint8_t payload[linkcode::kHbAckLen];
-    uint8_t out[linkcode::kOverhead + linkcode::kHbAckLen];
     if (!linkcode::packHbAck(channel, kHbAckEra, payload)) {
       return;
     }
-    const size_t n =
-        linkcode::encodeFrame(linkcode::kTypeHbAck, txSeq_++, payload, sizeof(payload), 0, 1, out, sizeof(out));
-    if (n == 0) {
-      return;
+    uint16_t seq = 0;
+    if (sendUnicast(linkcode::kTypeHbAck, payload, sizeof(payload), seq)) {
+      ++hbAckTx_;
+      LOG_EVERY_N(20, "LINK", "hb_ack tx seq=%u", static_cast<unsigned>(seq));
     }
-    if (!udpsend::udpSendChecked(udp_, ip, port, out, n)) {
-      ++txFail_;
-      LOG_W("LINK", "udp send fail what=%s len=%u", "hb_ack", static_cast<unsigned>(n));
-      return;
-    }
-    ++hbAckTx_;
-    LOG_EVERY_N(20, "LINK", "hb_ack tx seq=%u", static_cast<unsigned>(txSeq_ - 1));
   }
 
   // TCP: serve ONE JPEG client. Accept while idle (extras refused while a
@@ -906,9 +776,13 @@ class LinkServer {
   // included); the Reassembler then appends strictly in order and rejects
   // duplicates/gaps/total-mismatches/overflows WITHOUT mutating state.
   // Restart-on-0 keeps a lost tail from wedging the stream — a duplicate
-  // idx-0 retransmit just rewrites identical bytes. Complete messages are
-  // checksummed (per-frame CRC via the codec) + counted, then DROPPED: no
-  // consumer yet (H2.5/display consumes later). Counters only in logs.
+  // idx-0 retransmit just rewrites identical bytes.
+  // DISPLAY-CONSUMER SEAM: complete messages stop here by design. No
+  // display ability exists yet, so validated bytes are checksummed (per-frame
+  // CRC via the codec) + counted, then DROPPED — documented, not invented.
+  // A future display ability consumes at this point; it MUST NOT re-own the
+  // stream framing (pullFrame/decode/Reassembler above stay the single
+  // framing owner). Counters only in logs.
   void handleTcpFrame(const linkcode::Frame& f) {
     if (f.type != linkcode::kTypeJpeg) {
       dropFirst(firstTcpDrop_, "drop link tcp non-jpeg %s (first of boot)", linkserver::typeName(f.type));
@@ -971,30 +845,17 @@ class LinkServer {
   uint8_t jpegMsg_[kJpegMsgCap];
   linkcode::Reassembler reasm_;
   LastLinkCmd lastCmd_;
-  // HB-pinned head peer: unicast target for core->head frames (the QRBITMAP
-  // send below). Pinned from every non-stale HB (fresh + duplicate re-pin;
-  // stale never moves it) — the link task's only notion of "a head is here".
+  // HB-pinned head peer: unicast target for core->head frames (ACK/HB_ACK
+  // replies + the ability-pump QR/OTA unicasts via sendUnicast). Pinned
+  // from every non-stale HB (fresh + duplicate re-pin; stale never moves
+  // it) — the link task's only notion of "a head is here".
   IPAddress headIp_;
   uint16_t headPort_ = 0;
   bool haveHeadPeer_ = false;
-  // Staged QR bitmap (H2.5): the main loop stages the open window's 63B
-  // bitmap (policy side, never sockets); the link task unicasts it ONCE to
-  // the pinned head (qrSent_ latches until clearQr). Waiting for a late
-  // joiner is the silent pending path, never a fault.
-  uint8_t stagedQr_[linkcode::kQrBitmapLen] = {};
-  bool stagedValid_ = false;
-  bool qrSent_ = false;
-  // Staged carrier OTA URL: the `otahead` console verb stages the pull URL
-  // (policy side, never sockets); the link task unicasts it ONCE to the
-  // pinned head (otaSent_ latches until clearOta). Same shape as the QR
-  // stage above; the URL bytes are validated by stageOtaUrl and never logged.
-  uint8_t stagedOta_[linkcode::kOtaUrlMaxLen] = {};
-  size_t stagedOtaLen_ = 0;
-  bool stagedOtaValid_ = false;
-  bool otaSent_ = false;
   // Seq domains: head->core (HB + staged commands share head's counter;
   // first-ever frame accepted regardless of value) vs our core->head tx
-  // counter for ACK/HB_ACK frames. Epoch domain: the head's per-boot bootId
+  // counter (txSeq_++, single writer in sendTo, for ACK/HB_ACK/QR/OTA
+  // frames). Epoch domain: the head's per-boot bootId
   // (HB payload) — a changed epoch resyncs the seq gate (head rebooted),
   // same-epoch frames keep the strictly-greater gate.
   bool haveSeq_ = false;

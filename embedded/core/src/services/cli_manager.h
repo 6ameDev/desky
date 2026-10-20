@@ -2,8 +2,9 @@
 // desky-core USB serial CLI — header-only, minimal carrier door.
 //
 // The core has no interactive console otherwise (setup()/loop() only log):
-// this door exists for one carrier op — staging the head OTA pull URL for
-// the link task (`otahead <url> [version]`). Lowercase verbs only (humans).
+// this door exists for one carrier op — staging the head OTA pull URL in
+// the OTA ability (`otahead <url> [version]`), which the main-loop pump
+// unicasts to the HB-pinned head. Lowercase verbs only (humans).
 // No String/heap anywhere in the path (static line buffer, strncmp math).
 //
 // Reference:
@@ -120,9 +121,9 @@ inline bool parseOtaheadTail(const char* tail, char* urlOut129) {
 
 #include <Arduino.h>
 
+#include "abilities/ota/ota_task.h"
 #include "common/logger.h"
 #include "config.h"
-#include "middleware/link_server.h"
 
 // Fallbacks keep this header compiling if config keys ever drift; in-project
 // include/config.h always wins (same pattern as core's coordinator.h).
@@ -132,10 +133,10 @@ inline bool parseOtaheadTail(const char* tail, char* urlOut129) {
 
 class CoreCli {
  public:
-  CoreCli() : link_(nullptr), lineLen_(0) {}
+  CoreCli() : ota_(nullptr), lineLen_(0) {}
 
-  void begin(LinkServer* link) {
-    link_ = link;
+  void begin(OtaStaging* ota) {
+    ota_ = ota;
     printHelp();
   }
 
@@ -172,32 +173,32 @@ class CoreCli {
     if (cmd.target != corecmd::Target::OTAHEAD) {
       return;
     }
-    if (link_ == nullptr || line == nullptr) {
+    if (ota_ == nullptr || line == nullptr) {
       LOG_W("CLI", "otahead not attached");
       return;
     }
     // URL rides the raw line (parseLine checked verb + non-empty tail);
-    // corecmd::parseOtaheadTail owns the arg grammar, the stage gate owns
-    // the URL byte grammar (fail-closed, '@' rejected — never logged).
+    // corecmd::parseOtaheadTail owns the arg grammar, the ability stage gate
+    // owns the URL byte grammar (fail-closed, '@' rejected — never logged).
     const char* verb = corecmd::skipSpaces(line);
     char url[otamanifest::kUrlMax + 1];
     if (!corecmd::parseOtaheadTail(verb + 7, url)) {
       LOG_W("CLI", "bad otahead args (want otahead <url>)");
       return;
     }
-    if (!link_->stageOtaUrl(url)) {
-      LOG_W("CLI", "otahead refused (bad url or link not ready)");
+    if (!ota_->stageOtaUrl(url)) {
+      LOG_W("CLI", "otahead refused (bad url or ota not ready)");
       return;
     }
     // Length only: the manifest version rides POST ?version= and is reported
     // by the staging server itself — this door never reads it (no second
     // source, no attach pointer to go stale).
-    LOG_I("CLI", "otahead staged len=%u", static_cast<unsigned>(link_->stagedOtaLen()));
+    LOG_I("CLI", "otahead staged len=%u", static_cast<unsigned>(ota_->stagedOtaLen()));
   }
 
   void printHelp() { LOG_I("CLI", "cmds: otahead <url> | help"); }
 
-  LinkServer* link_;
+  OtaStaging* ota_;
   char lineBuf_[CFG_CLI_LINE_LEN];
   size_t lineLen_;
 };

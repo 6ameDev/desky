@@ -18,7 +18,8 @@
 // the previous label; malformed ?version rejects the upload with previous
 // bytes + label preserved. The `otahead` console verb only triggers.
 //
-// The `otahead` console verb stages the link URL; the manifest version
+// The `otahead` console verb stages the link URL here (Slice 6c: the old
+// LinkServer stage lives in this ability now); the manifest version
 // arrives only via POST ?version= (single source). An empty stage serves
 // version=0 (the head pull-gate treats it as up-to-date and never pulls —
 // fail-closed by construction).
@@ -46,6 +47,7 @@
 #include "common/logger.h"
 #include "config.h"
 #include "link/ota_manifest.h"
+#include "middleware/link_server.h"
 
 class OtaStaging {
  public:
@@ -83,6 +85,122 @@ class OtaStaging {
   size_t imageBytes() const { return mgr_.imageBytes(); }
 
   bool hasImage() const { return mgr_.hasImage(); }
+
+  // Slice 6c link-delivery stage: ability-side home of the old
+  // LinkServer::stageOtaUrl/clearOta/stagedOtaLen trio (policy side, never
+  // sockets). Stage a carrier OTA URL for the head pull, fed by the
+  // `otahead <url>` console verb; copies under lock. The main-loop pump
+  // below unicasts it once as a kTypeOta frame to the HB-pinned head.
+  // Validation is the shared otamanifest grammar (1..128 printable-ASCII
+  // bytes, no '@'/whitespace — credentials never ride or log);
+  // invalid/null/pre-begin -> false, fail-closed. Every valid command
+  // REPLACES the stage and re-arms the send (console-verb semantics: latest
+  // command wins — a head mid-download ignores the re-trigger via its
+  // in-flight guard, an idle head pulls the newest URL).
+  bool stageOtaUrl(const char* url) {
+    if (url == nullptr || mutex_ == nullptr) {
+      return false;
+    }
+    size_t len = 0;
+    while (len <= otamanifest::kUrlMax && url[len] != '\0') {
+      ++len;
+    }
+    if (len == 0 || len > otamanifest::kUrlMax) {
+      return false;
+    }
+    if (!otamanifest::isValidOtaUrlBytes(reinterpret_cast<const uint8_t*>(url), len)) {
+      return false;
+    }
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    for (size_t i = 0; i < len; ++i) {
+      stagedOta_[i] = static_cast<uint8_t>(url[i]);
+    }
+    stagedOtaLen_ = len;
+    stagedOtaValid_ = true;
+    otaSent_ = false;
+    xSemaphoreGive(mutex_);
+    return true;
+  }
+
+  // Drop any staged/unsent OTA (torn download repeat path) and unlatch the
+  // once-per-command gate. Safe pre-begin.
+  void clearOta() {
+    if (mutex_ == nullptr) {
+      return;
+    }
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    stagedOtaValid_ = false;
+    otaSent_ = false;
+    stagedOtaLen_ = 0;
+    for (size_t i = 0; i < linkcode::kOtaUrlMaxLen; ++i) {
+      stagedOta_[i] = 0;
+    }
+    xSemaphoreGive(mutex_);
+  }
+
+  // Staged OTA length for the console door (counters only). 0 pre-begin,
+  // or when nothing is staged.
+  size_t stagedOtaLen() const {
+    if (mutex_ == nullptr) {
+      return 0;
+    }
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    const size_t len = stagedOtaValid_ ? stagedOtaLen_ : 0;
+    xSemaphoreGive(mutex_);
+    return len;
+  }
+
+  // Slice 6c OTA link pump: called from the main loop (replaces the old
+  // link-task trySendOta). Hands the staged URL to the transport's
+  // pinned-peer sendUnicast exactly once per `otahead` command (otaSent_
+  // latch, same linkserver::otaReadyToSend gate the old task path used).
+  // No head linked -> silent wait for a late joiner; nothing staged or
+  // already sent -> no-op. Consume-on-attempt: the latch sets once a peer
+  // is present, even if the radio refuses the datagram — same as the old
+  // task path (a failed unicast is dropped for this command, never
+  // retried; the next `otahead` re-arms via stageOtaUrl). Returns true iff
+  // a frame was handed to the radio. Never touches sockets; never logs URL
+  // bytes (length only).
+  bool pumpOtaLink(LinkServer& link) {
+    if (mutex_ == nullptr) {
+      return false;
+    }
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    const bool valid = stagedOtaValid_;
+    const bool sent = otaSent_;
+    xSemaphoreGive(mutex_);
+    IPAddress peer;
+    uint16_t port = 0;
+    const bool havePeer = link.headPeer(peer, port);
+    if (!linkserver::otaReadyToSend(valid, sent, havePeer)) {
+      if (valid && !sent && !havePeer) {
+        LOG_EVERY_N(20, "LINK", "ota pending, no head peer");
+      }
+      return false;
+    }
+    uint8_t staged[linkcode::kOtaUrlMaxLen] = {};
+    size_t stagedLen = 0;
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    bool doSend = stagedOtaValid_ && !otaSent_;
+    if (doSend) {
+      for (size_t i = 0; i < stagedOtaLen_; ++i) {
+        staged[i] = stagedOta_[i];
+      }
+      stagedLen = stagedOtaLen_;
+      stagedOtaValid_ = false;
+      otaSent_ = true;
+    }
+    xSemaphoreGive(mutex_);
+    if (!doSend) {
+      return false;
+    }
+    uint16_t seq = 0;
+    if (!link.sendUnicast(linkcode::kTypeOta, staged, static_cast<uint16_t>(stagedLen), seq)) {
+      return false;
+    }
+    LOG_I("LINK", "ota sent seq=%u len=%u", static_cast<unsigned>(seq), static_cast<unsigned>(stagedLen));
+    return true;
+  }
 
  private:
   void handleGetBin(AsyncWebServerRequest* req) {
@@ -254,6 +372,17 @@ class OtaStaging {
   ota::StagingManager mgr_;
   mbedtls_md_context_t shaCtx_;
   bool shaActive_;
+  // Slice 6c link-delivery stage (policy side, never sockets): the
+  // `otahead` console verb stages the pull URL here; pumpOtaLink above
+  // unicasts it ONCE to the pinned head (otaSent_ latches until the next
+  // stageOtaUrl / clearOta). Same shape as the pairing QR stage; the URL
+  // bytes are validated by stageOtaUrl and never logged. All writers run
+  // on the main loop (console poll + pump), guarded by mutex_ like the
+  // staging manager state above.
+  uint8_t stagedOta_[linkcode::kOtaUrlMaxLen] = {};
+  size_t stagedOtaLen_ = 0;
+  bool stagedOtaValid_ = false;
+  bool otaSent_ = false;
 };
 
 #endif  // ARDUINO

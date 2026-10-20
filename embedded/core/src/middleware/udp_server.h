@@ -232,8 +232,9 @@ inline bool shouldRedeliver(bool valid, const uint8_t* storedCode, const uint8_t
 
 // QR pack bridge (host-testable): valid window packs via qr::packBitmap;
 // closed-window/null never touches `out` (fail-closed). The firmware
-// PairingTask::qrBitmapPacked() delegates here via the transport bridge so
-// the valid→pack→stage bridge is unit-covered without ARDUINO.
+// PairingTask::pumpQrLink() packs via qr::packBitmap directly (same pure
+// function), so the valid→pack→pump bridge is unit-covered without ARDUINO
+// through this helper.
 inline bool packQrBitmap(bool valid, const uint8_t* modules, uint8_t* out) {
   if (!valid || modules == nullptr || out == nullptr) {
     return false;

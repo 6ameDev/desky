@@ -3,7 +3,6 @@
 
 #include "abilities/audio/audio_task.h"
 #include "abilities/ota/ota_task.h"
-#include "abilities/pairing/pairing_codec.h"
 #include "abilities/pairing/pairing_task.h"
 #include "abilities/sensors/sensors_task.h"
 #include "behavior/coordinator.h"
@@ -98,8 +97,8 @@ void setup() {
   }
 #endif
   // Minimal USB door (carrier `otahead` trigger): always live, even in bench
-  // mode (the stage then fails closed — link task never started).
-  g_cli.begin(&g_link);
+  // mode (the stage then fails closed — the OTA ability never began).
+  g_cli.begin(&g_otaStage);
   LOG_I("BOOT", "sensors ready tof=%dmm mpu=0x%02X", g_tof.distanceMm(), g_mpu.address());
   LOG_I("BOOT", "tcrt fwd pin=%d raw=%u gnd=%u rev pin=%d raw=%u gnd=%u", CFG_TCRT_FWD_PIN, g_tcrtFwd.rawCount(),
         g_tcrtFwd.groundPresent() ? 1u : 0u, CFG_TCRT_REV_PIN, g_tcrtRev.rawCount(),
@@ -126,22 +125,16 @@ void loop() {
   // stage waits silently for the link task, never blocks driving.
   g_cli.poll();
 #if !DESKY_NO_WIFI
-  // H2.5 QR bridge (policy side only): pack the open window's bitmap to
-  // the 63B wire payload and stage it for the link task, which unicasts it
-  // once to the HB-pinned head. Packing is load-bearing: qrBitmap() is the
-  // unpacked 441B module array, and staging it raw renders two dotted
-  // columns on the head (bench-proven 2026-10-18) — only the packed form
-  // is a scannable QRBITMAP. No head linked -> the stage waits silently
-  // (the serial QR row= dump stays the dev path). Window closed -> drop
-  // the stage for the next window.
-  if (g_pairing.qrBitmapValid()) {
-    uint8_t packed[qr::kPackedLen];
-    if (g_pairing.qrBitmapPacked(packed, g_udp)) {
-      g_link.stageQrBitmap(packed);
-    }
-  } else {
-    g_link.clearQr();
-  }
+  // Ability link pumps (Slice 6c, policy side): the pairing window's QR
+  // bitmap and the staged `otahead` URL each unicast once to the HB-pinned
+  // head via the transport's sendUnicast. No head linked -> the pumps wait
+  // silently (the serial QR row= dump stays the dev path). Packing the
+  // window bitmap is load-bearing: qrBitmap() is the unpacked 441B module
+  // array, and staging it raw renders two dotted columns on the head
+  // (bench-proven 2026-10-18) — only the packed form is a scannable
+  // QRBITMAP. Duplicate protection is the link seq/ACK machinery.
+  g_pairing.pumpQrLink(g_link);
+  g_otaStage.pumpOtaLink(g_link);
 #endif
   LOG_D("MAIN", "desky v2 skeleton alive");
   Diagnostics::logWatermarks();

@@ -52,6 +52,7 @@ extern "C" {
 
 #include "common/fault_manager.h"  // DESKY_ASSERT (firmware side only)
 #include "common/logger.h"
+#include "middleware/link_server.h"
 #include "services/config_store.h"
 #include "transport/connection_manager.h"
 
@@ -203,12 +204,16 @@ inline bool deriveRekeyPsk(const uint8_t oldPsk[kPskLen], uint16_t nextEra, uint
   return true;
 }
 
-// ── PairingTask: pairing/auth session policy (Slice 6b) ───────────────────
+// ── PairingTask: pairing/auth session policy (Slice 6b) + QR link stage
+// (Slice 6c) ──────────────────────────────────────────────────────────
 // Owns ALL session state moved verbatim from UdpServer: bonded_, psk_,
 // lastCounter_, era_, validCount_, pairCore_, the LastPair redelivery cache,
 // qrBitmap_/qrBitmapValid_, and the dropFirst flags for the moved handlers.
-// pairing::Core (pairing_manager.h) stays untouched — window/tries/lockout
-// policy only; this class is the firmware session layer around it.
+// Slice 6c adds the QR link stage: the open window's packed bitmap is sent
+// once per window via pumpQrLink below (the old LinkServer stageQrBitmap /
+// clearQr pair, now ability-owned; transport only unicasts). pairing::Core
+// (pairing_manager.h) stays untouched — window/tries/lockout policy only;
+// this class is the firmware session layer around it.
 //
 // Transport back-call contract (duck-typed `Transport& t`, always UdpServer):
 // the ability never touches sockets — byte composition lives here, the
@@ -224,7 +229,6 @@ inline bool deriveRekeyPsk(const uint8_t oldPsk[kPskLen], uint16_t nextEra, uint
 //   t.sendRekeyAckImpl(IPAddress, uint16_t, ack10) (idempotent duplicate path)
 //   t.isFreshCounter(lastSeen, got) -> bool (udpstatus bridge)
 //   t.shouldRedeliver(...) -> bool (udpstatus bridge)
-//   t.packQrBitmap(valid, modules, out) -> bool (udpstatus bridge)
 //   t.driveDropFirst(fmt, args...) (transport-owned firstDriveDrop_ flag)
 // Shared socket-adjacent state (peer slot + alive stamp) stays in transport:
 // attach() pins the ConnectionManager + IPAddress peer pointers (set once
@@ -306,12 +310,15 @@ class PairingTask {
     }
     LOG_I("UDP", "pair window open code=%c%c%c%c%c%c", code[0], code[1], code[2], code[3], code[4], code[5]);
     // QR bitmap for this window's code: encoded in ALL builds (release
-    // included) into qrBitmap_ for future consumers (head link); the serial
-    // row dump below stays DEBUG-only (Tier-A regression path, zero-cost in
+    // included) into qrBitmap_ for the head-link pump below; the serial
+    // row dump stays DEBUG-only (Tier-A regression path, zero-cost in
     // release). No heap/String; fixed stack buffers only. Encode failure is
     // impossible for validated digits (openWindow above accepted them) but
-    // the bitmap is still gated on success by construction.
+    // the bitmap is still gated on success by construction. A fresh window
+    // always re-arms the once-per-window send latch (covers a pair/unbond
+    // reopen the main-loop pump never observed as closed).
     qrBitmapValid_ = qr::encode6Digits(code, qrBitmap_);
+    qrSent_ = false;  // Fresh window re-arms the pump's once-per-window latch.
 #if LOG_LEVEL <= LOG_LEVEL_DEBUG
     // Tier-A hex dump of the V1-L bitmap for this code, one `QR row=NN:HHHHHH`
     // line per row for the serial capture script. Same call site covers both
@@ -333,26 +340,59 @@ class PairingTask {
     return true;
   }
 
-  // Read-only access to the cached window QR bitmap. Two views:
-  // - qrBitmap(): the UNPACKED 441B module array (0 = light, 1 = dark,
-  //   row-major) — the serial `QR row=` dump packs it per row. This is NOT
-  //   the wire format: staging these raw bytes as a 63B QRBITMAP renders
-  //   two dotted columns on the head (bench-proven 2026-10-18).
-  // - qrBitmapPacked(): the 63B wire payload (packed MSB-first rows) for
-  //   LinkServer::stageQrBitmap. Valid only while a pairing window is open;
-  //   check qrBitmapValid() first. False on null out or closed window.
+  // Read-only access to the cached window QR bitmap: the UNPACKED 441B
+  // module array (0 = light, 1 = dark, row-major) — the serial `QR row=`
+  // dump packs it per row. This array IS the QR link stage (Slice 6c): it
+  // is packed to the 63B wire payload at pump time below, so no second
+  // staged copy exists. Valid only while a pairing window is open; check
+  // qrBitmapValid() first.
   bool qrBitmapValid() const { return qrBitmapValid_; }
 
   const uint8_t* qrBitmap() const { return qrBitmap_; }
 
+  // Slice 6c QR link pump: ability-side policy half of the old
+  // LinkServer::stageQrBitmap/clearQr pair. Called from the main loop
+  // (replaces both call sites): while a pairing window is open, packs the
+  // window bitmap to the 63B wire payload and hands it to the transport's
+  // pinned-peer sendUnicast exactly once per window (qrSent_ latch, same
+  // linkserver::qrReadyToSend gate the old task path used). No head linked
+  // -> silent wait for a late joiner (the serial QR row= dump stays the
+  // dev path); window closed -> unlatch for the next window (the old
+  // clearQr). Consume-on-attempt: the latch sets once a peer is present,
+  // even if the radio refuses the datagram — same as the old trySendQr (a
+  // failed unicast is dropped for this window, never retried). Packing is
+  // the same qr::packBitmap the old path used. Returns true iff a frame
+  // was handed to the radio. Never touches sockets (LinkServer::sendUnicast
+  // owns the send); never logs bitmap bytes (seq/len only).
+  bool pumpQrLink(LinkServer& link) {
+    if (!qrBitmapValid_) {
+      qrSent_ = false;  // Window closed: unlatch for the next window.
+      return false;
+    }
+    if (qrSent_) {
+      return false;  // Already sent this window.
+    }
+    IPAddress peer;
+    uint16_t port = 0;
+    const bool havePeer = link.headPeer(peer, port);
+    if (!linkserver::qrReadyToSend(qrBitmapValid_, qrSent_, havePeer)) {
+      LOG_EVERY_N(20, "LINK", "qr pending, no head peer");
+      return false;
+    }
+    uint8_t packed[qr::kPackedLen] = {};
+    qr::packBitmap(qrBitmap_, packed);
+    uint16_t seq = 0;
+    if (!link.sendUnicast(linkcode::kTypeQrBitmap, packed, sizeof(packed), seq)) {
+      return false;
+    }
+    qrSent_ = true;
+    LOG_I("LINK", "qr sent seq=%u len=%u", static_cast<unsigned>(seq), static_cast<unsigned>(sizeof(packed)));
+    return true;
+  }
+
   // Bonded-state read for the transport-retained paths (pre-bond legacy
   // pin-only quirk + telemetry gate): the session flag lives here.
   bool bonded() const { return bonded_; }
-
-  template <typename Transport>
-  bool qrBitmapPacked(uint8_t out[qr::kPackedLen], Transport& t) const {
-    return t.packQrBitmap(qrBitmapValid_, qrBitmap_, out);
-  }
 
   // Explicit unpair / 10s-hold factory reset hook (Task 10 bench procedure;
   // no button wired yet): clears the NVS bond + in-memory Core + key
@@ -375,6 +415,7 @@ class PairingTask {
     mbedtls_platform_zeroize(lastPair_.ok39, sizeof(lastPair_.ok39));
     lastPair_.bondMs = 0;
     qrBitmapValid_ = false;  // No open window after an unpair/reset.
+    qrSent_ = false;         // Next window sends exactly once.
     return ConfigStore::clearBond();
   }
 
@@ -995,6 +1036,11 @@ class PairingTask {
   // whenever no window is open (bonded, burned, or cleared).
   uint8_t qrBitmap_[qr::kModules] = {};
   bool qrBitmapValid_ = false;
+  // Once-per-window QR link send latch (Slice 6c): set by pumpQrLink when a
+  // frame is handed to the radio; cleared when the window closes (pump) or
+  // a fresh window opens / the bond clears (above). Written by the main
+  // loop only — same cross-task posture as qrBitmapValid_ itself.
+  bool qrSent_ = false;
   // Last PAIR_OK redelivery cache (RAM-only, never persisted): an identical
   // PAIR_REQ (same code + client nonce) inside kRedeliveryMs re-unicasts the
   // cached bytes. Invalidated on reboot (restoreFromStore both paths),
