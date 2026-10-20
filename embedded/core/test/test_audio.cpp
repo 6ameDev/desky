@@ -3,7 +3,7 @@
 //
 // Covers the Arduino-free part headers (hal/microphone.h: INMP441
 // top-24-in-32 unpack; hal/speaker.h: 32-bit dual-mono pack for the amp's
-// floating SD_MODE mix) and audiometer (src/services/audio_manager.h:
+// floating SD_MODE mix) and audiometer (src/abilities/audio/audio_codec.h:
 // bell-chime synth + per-channel RMS + louderSide deadband). The duplex I2S
 // port (init/read/write), the AudioManager task, and the playPcm
 // server-streaming stub are exercised on hardware.
@@ -11,9 +11,9 @@
 
 #include <unity.h>
 
+#include "../src/abilities/audio/audio_codec.h"
 #include "../src/hal/microphone.h"
 #include "../src/hal/speaker.h"
-#include "../src/services/audio_manager.h"
 
 void test_audio_int24_unpack_top24_in_32() {  // INMP441 left-justifies its 24-bit sample (bottom 8 zero): arithmetic
   // >>8 sign-extends into int32. HARDWARE ASSUMPTION — the clap test owns it.

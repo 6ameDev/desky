@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <esp_system.h>
 
+#include "abilities/audio/audio_task.h"
 #include "abilities/pairing/pairing_codec.h"
 #include "abilities/sensors/sensors_task.h"
 #include "behavior/coordinator.h"
@@ -17,7 +18,6 @@
 #include "middleware/link_server.h"
 #include "middleware/ota_staging.h"
 #include "middleware/udp_server.h"
-#include "services/audio_manager.h"
 #include "services/cli_manager.h"
 #include "services/config_store.h"
 #include "services/event_bus.h"
@@ -33,7 +33,7 @@ MotorDriver g_motorDriver(MCU_MOTOR_IN1, MCU_MOTOR_IN2, MCU_MOTOR_IN3, MCU_MOTOR
 MotionController g_motion;
 Coordinator g_coordinator;
 SensorTask g_sensor;
-AudioManager g_audio;
+AudioTask g_audio;
 UdpServer g_udp;
 LinkServer g_link;
 OtaStaging g_otaStage;  // Carrier head-image staging (POST /head.bin + GETs).
