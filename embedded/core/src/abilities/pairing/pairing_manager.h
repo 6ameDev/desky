@@ -98,13 +98,14 @@ class Core {
 
   // ── PairingExchange bond transitions (platform split 1.1) ─────────────
   // The gate above (window/tries/lockout/burn) already lived here; the
-  // bond/era lifecycle joins it so UdpServer only forwards. Residual (by
-  // design, documented in udp_server.h): the PSK bytes, the drive counter
-  // + validCount_ persist cadence, and the PAIR_OK redelivery cache stay in
-  // UdpServer — key material needs mbedTLS zeroize (firmware-only) and the
-  // cache rides udpstatus::shouldRedeliver. UdpServer calls these at the
-  // same points it flips its own flags (same order: verify ->
-  // markAlive-position -> persist -> switch -> ACK).
+  // bond/era lifecycle joins it. Slice 6b moved the firmware session
+  // around it (PSK bytes, drive counter + validCount_ persist cadence, and
+  // the PAIR_OK redelivery cache) to PairingTask
+  // (abilities/pairing/pairing_task.h) — key material needs mbedTLS zeroize
+  // (firmware-only) and the cache rides udpstatus::shouldRedeliver via the
+  // transport bridge. PairingTask calls these at the same points it flips
+  // its own flags (same order: verify -> markAlive-position -> persist ->
+  // switch -> ACK).
 
   // Records a fresh bond: gate closed, era reset (fresh pair starts era 0 —
   // saveBond persists it), bond clock set. Called by tryCode on kOk AND
