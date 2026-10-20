@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // === MCP Servers ===
+  "mcp": {
+    "figma-console": {
+      "type": "local",
+      "command": [
+        "/Users/sumit/.nvm/versions/node/v22.22.3/bin/npx",
+        "-y",
+        "figma-console-mcp@latest"
+      ],
+      "enabled": true
+    }
+  }
+}
