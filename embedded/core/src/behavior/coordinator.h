@@ -247,7 +247,11 @@ inline ArbitrateOutput arbitrate(const ArbitrateInput& in) {
 // ── Firmware: Coordinator task (EventBus subscriber, Core 1) ──────────────
 
 #include <Arduino.h>
+#include <mbedtls/platform_util.h>
 
+#include <utility>
+
+#include "abilities/pairing/pairing_task.h"
 #include "behavior/motion_controller.h"
 #include "common/diagnostics.h"
 #include "common/fault_manager.h"
@@ -294,7 +298,8 @@ class Coordinator {
         cmdV_(0.0f),
         cmdOmega_(0.0f),
         hasCmd_(false),
-        lastCmdMs_(0) {}
+        lastCmdMs_(0),
+        pairing_(nullptr) {}
 
   // Subscribes to the bus and pins the coordinator task to Core 1. Call once
   // in setup(), after MotionController::begin (the task drives L1 from its
@@ -334,6 +339,87 @@ class Coordinator {
     out = snap_;
     xSemaphoreGive(mutex_);
     return true;
+  }
+
+  // Slice 7 drive handler (semantic owner: behavior owns intent; the moved
+  // lines are the old PairingTask::handleDriveV2 body minus the session
+  // verify, which now lives in pairing::tryConsume — noted as a future
+  // drive_codec candidate, not split out in this slice). Fail = silent drop
+  // (the 500ms failsafe stops safely). No heap, no String, fixed stack
+  // buffers only; key/code/nonce material never logged.
+  //
+  // Transport concept (duck-typed `Transport& t`, always UdpServer): the
+  // coordinator never touches sockets —
+  //   t.markAlive(Verified&&, IPAddress, uint16_t, uint32_t, uint16_t era)
+  //     -> connection::Pinned (alive funnel; runs BEFORE any effect)
+  //   t.publishDrive(Pinned, uint32_t, mode, thr, str, flags) (token-gated
+  //     EventBus publish; effect-before-verify fails to compile without it)
+  //   t.noteDriveCommand(float v, float omega, uint32_t nowMs) (telemetry RX
+  //     observation; transport owns telem_)
+  //   t.isFreshCounter(lastSeen, got) -> bool (udpstatus bridge, pre-check only)
+  //   t.driveDropFirst(fmt, args...) (transport-owned firstDriveDrop_ flag)
+  // Session access is via pairing_ (pinned by attachPairing from
+  // UdpServer::begin before the task reads the radio): bonded()/lastCounter()
+  // reads are LOGGING-ONLY pre-checks preserving the per-cause drops; the
+  // AUTHORITATIVE gate is pairing_->tryConsume (same thread, so no
+  // interleaving between the pre-check and the commit).
+  template <typename Transport>
+  void handleDriveV2(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs, Transport& t) {
+    DESKY_ASSERT(buf != nullptr);
+    DESKY_ASSERT(pairing_ != nullptr);
+    if (buf == nullptr || pairing_ == nullptr) {
+      return;
+    }
+    if (!pairing_->bonded()) {
+      t.driveDropFirst("drop drive unbonded (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop drive unbonded");
+      return;
+    }
+    // Layout [0xAC|mode|thr|str|flags|ctrBE 4B|tag 6B|XOR]: mode=1 thr=2
+    // str=3 flags=4 ctr=5..8 tag=9..14 xor=15 (len + header + XOR checked by
+    // the caller).
+    const uint32_t ctr = (static_cast<uint32_t>(buf[5]) << 24) | (static_cast<uint32_t>(buf[6]) << 16) |
+                         (static_cast<uint32_t>(buf[7]) << 8) | static_cast<uint32_t>(buf[8]);
+    if (!t.isFreshCounter(pairing_->lastCounter(), ctr)) {
+      t.driveDropFirst("drop drive replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
+      LOG_EVERY_N(20, "UDP", "drop drive replay ctr=%lu", static_cast<unsigned long>(ctr));
+      return;
+    }
+    // HMAC msg (8B stack): counterBE||mode||thr||str||flags.
+    uint8_t msg[8];
+    msg[0] = buf[5];
+    msg[1] = buf[6];
+    msg[2] = buf[7];
+    msg[3] = buf[8];
+    msg[4] = buf[1];
+    msg[5] = buf[2];
+    msg[6] = buf[3];
+    msg[7] = buf[4];
+    // Atomic session gate: bonded + fresh + HMAC in one step (eraOk = true —
+    // DRIVE_V2 carries no era; the session era rides along). Consumes the
+    // counter + runs the persist cadence on success; zero state change on
+    // failure.
+    connection::Verified verified = pairing_->tryConsume(ctr, true, buf + 9, msg, sizeof(msg));
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    if (!verified.valid()) {
+      t.driveDropFirst("drop drive auth (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop drive auth");
+      return;
+    }
+    // Alive funnel BEFORE the drive effects below.
+    connection::Pinned pinned = t.markAlive(std::move(verified), rip, rport, nowMs, pairing_->era());
+    // Drive effects REQUIRE the Pinned proof (effect-before-verify fails to
+    // compile without it): coordinator EventBus publish via the transport's
+    // token-gated publishDrive, then the telemetry RX observation.
+    t.publishDrive(std::move(pinned), nowMs, buf[1], buf[2], buf[3], buf[4]);
+    t.noteDriveCommand(coordinator::byteToUnit(buf[2]), coordinator::byteToUnit(buf[3]), nowMs);
+  }
+
+  // Pins the pairing/auth session (set once from UdpServer::begin before the
+  // radio task reads; the drive handler dereferences it on every packet).
+  void attachPairing(pairing::PairingTask* pairing) {
+    DESKY_ASSERT(pairing != nullptr);
+    pairing_ = pairing;
   }
 
  private:
@@ -474,6 +560,7 @@ class Coordinator {
   float cmdOmega_;
   bool hasCmd_;
   uint32_t lastCmdMs_;
+  pairing::PairingTask* pairing_;
 };
 
 #endif  // ARDUINO

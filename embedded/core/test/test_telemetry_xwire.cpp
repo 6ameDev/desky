@@ -162,3 +162,35 @@ void test_telemetry_xwire_literals_are_live_frames() {
     TEST_ASSERT_FALSE(udp::decodeTelemetry(buf, sizeof(buf) - 1, pkt));  // truncated
   }
 }
+
+// Slice 7: RX observation (noteCommand/isDriving) — the coverage gain of the
+// slice. TelemetryManager owns the stale window as a ctor passthrough (same
+// pattern as rateMs_); the driving bit is nonzero-stick AND fresh, never
+// coordinator state.
+void test_telemetry_note_driving_while_fresh() {
+  telemetry::TelemetryManager tm(66, 500);
+  TEST_ASSERT_EQUAL_UINT32(500, tm.staleMs());
+  TEST_ASSERT_FALSE(tm.isDriving(1000));  // No command yet.
+  tm.noteCommand(0.5f, 0.0f, 1000);
+  TEST_ASSERT_TRUE(tm.isDriving(1000));
+  TEST_ASSERT_TRUE(tm.isDriving(1500));   // Boundary counts as fresh.
+  TEST_ASSERT_FALSE(tm.isDriving(1501));  // Stale.
+}
+
+void test_telemetry_note_zero_stick_never_drives() {
+  telemetry::TelemetryManager tm(66, 500);
+  tm.noteCommand(0.0f, 0.0f, 1000);
+  TEST_ASSERT_FALSE(tm.isDriving(1000));  // Fresh but centered: never drives.
+  tm.noteCommand(0.0f, 0.25f, 2000);
+  TEST_ASSERT_TRUE(tm.isDriving(2000));  // Pure turn counts as driving.
+  tm.noteCommand(0.0f, 0.0f, 3000);
+  TEST_ASSERT_FALSE(tm.isDriving(3000));  // Centered again: stops.
+}
+
+void test_telemetry_note_wrap_safe_millis() {
+  telemetry::TelemetryManager tm(66, 500);
+  tm.noteCommand(0.5f, 0.0f, 0xFFFFFF00u);
+  TEST_ASSERT_TRUE(tm.isDriving(0xFFFFFF00u));
+  TEST_ASSERT_TRUE(tm.isDriving(100));    // Wrapped, 356ms later: fresh.
+  TEST_ASSERT_FALSE(tm.isDriving(1000));  // 1256ms later: stale.
+}
