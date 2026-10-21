@@ -315,10 +315,10 @@ inline bool step(State& s, Event e) {
 #include <WiFi.h>
 #include <WiFiClient.h>
 
+#include "abilities/face/face_task.h"
 #include "common/fault_manager.h"
 #include "common/logger.h"
 #include "config.h"
-#include "middleware/face_renderer.h"
 
 // Fallbacks keep this header compiling if config keys ever drift; in-project
 // include/config.h always wins (same pattern as core's coordinator.h).
