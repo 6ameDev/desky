@@ -1,13 +1,17 @@
 #pragma once
-// desky-head WiFi link mapping — MIDDLEWARE compatibility shim (Task 2 split).
+// desky-head WiFi link mapping — MIDDLEWARE compatibility shim (Task 2 split,
+// Task 4 pairing extraction).
 //
 // The socket client (class LinkClient) + framing predicates now live in
 // transport/link_client.h + transport/link_codec.h as dumb pipes (business
 // decisions arrive there as injected callbacks bound in main.cpp). This shim
-// re-exports those transport headers and retains the business mapping
-// helpers below (mapCmd/isPairShowFrame/isPairDoneFrame/isOtaFrame) VERBATIM
-// for Tasks 3-5, so existing host tests including this path keep passing
-// with zero test changes.
+// re-exports those transport headers plus the pairing ability codec, and
+// retains the business mapping helpers below (mapCmd/isOtaFrame) VERBATIM
+// for Task 5, so existing host tests including this path keep passing with
+// zero test changes. The PairShow/PairDone gates moved to
+// abilities/pairing/pairing_codec.h (Task 4) and are re-exported below —
+// same entities, same wifilink:: spelling, so the host goldens pinning this
+// path are unaffected.
 //
 // POSIX gotcha (discovered on core, not rediscovered here): newlib declares
 // ::link(), so `namespace link` at global scope BREAKS Arduino TUs. The
@@ -21,11 +25,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "abilities/pairing/pairing_codec.h"
 #include "head_context.h"
 #include "transport/link_client.h"
 #include "transport/link_codec.h"
 
 namespace wifilink {
+
+// PairShow/PairDone gates (canonical home: abilities/pairing/pairing_codec.h
+// since Task 4 — re-exported here so existing host tests including this path
+// pass with zero test changes).
+using pairinglink::isPairDoneFrame;
+using pairinglink::isPairShowFrame;
 
 // Codec frame -> ONE command-table PowerCommand (FACE/OLED/CAMCTL only).
 // Value-checked through the shared codec vocabulary (linkcode::unpackFace /
@@ -98,23 +109,12 @@ inline bool mapCmd(uint8_t type, const uint8_t* payload, uint16_t len, PowerComm
 // frozen in the codec (never reused); the USB CLI `qr` demo still exercises
 // the same 63B staging path locally via showQrDemo (no link involved).
 
-// PAIRSHOW in this task: the codec-validated 8B length is the gate here;
-// the 6-digit vocabulary lives once in linkcode::pack/unpackPairShow (the
-// shared digits+valid-secs contract), which handleCmd calls — never
-// re-derived. Fresh frames hand the PIN + window to the FaceRenderer via the
-// power manager (authoritative-PIN show mode) + ACKs; duplicates only
-// re-ACK, never re-render.
-inline bool isPairShowFrame(uint8_t type, uint16_t len) {
-  return type == linkcode::kTypePairShow && len == linkcode::kPairShowLen;
-}
-
-// PAIRDONE in this task: the fixed-empty contract (0B — the frame presence
-// is the signal, enforced by the codec length gate in decodeFrame). Fresh
-// frames clear the pairing show via the power manager + ACKs; duplicates
-// only re-ACK, never re-clear.
-inline bool isPairDoneFrame(uint8_t type, uint16_t len) {
-  return type == linkcode::kTypePairDone && len == linkcode::kPairDoneLen;
-}
+// (Task 4: the PAIRSHOW/PAIRDONE length gates above now re-export
+// pairinglink::isPairShowFrame/isPairDoneFrame from
+// abilities/pairing/pairing_codec.h — same entities, zero test changes. The
+// PIN handoff itself moved to the pairing ability triple:
+// pairing_codec (gates) + pairing_manager (PIN policy) + pairing_task
+// (link→display binder, bound in main.cpp).)
 
 // OTA in this task: the codec-validated 1..128B length is the gate here;
 // the byte grammar (printable ASCII, no '@'/whitespace) + the bounded copy
