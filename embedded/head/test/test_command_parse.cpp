@@ -6,8 +6,8 @@
 
 #include <unity.h>
 
-#include "../src/middleware/link_stub.h"
 #include "../src/services/cli_manager.h"
+#include "../src/transport/link_stub.h"
 
 void test_cli_cam_on_off() {
   PowerCommand cmd;

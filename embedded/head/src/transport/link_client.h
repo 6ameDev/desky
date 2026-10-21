@@ -4,9 +4,10 @@
 // Sockets, framing, peer/assoc/HB state only; business decisions arrive as
 // injected callbacks (LinkHandlers, stored never owned, bound in main.cpp).
 // No PowerManager / OtaUpdater / CameraDriver / FaceRenderer includes, no
-// direct business calls. Moved verbatim from the bottom half of
-// middleware/wifi_link.h (Task 2 split); the business mapping helpers
-// (mapCmd/isPairShow/isPairDone/isOta) stay in that shim for Tasks 3-5.
+// direct business calls. Split from the monolith wifi_link.h (Task 2); the
+// business mapping helpers live in their canonical homes (wifilink::mapCmd +
+// isOtaFrame in transport/link_codec.h, pairing gates in
+// abilities/pairing/pairing_codec.h).
 //
 //   UDP CFG_LINK_UDP_PORT (3334): HB head->core at 1Hz (rssi/channel/freeHeap/
 //     bootId per the codec HB type) + ACK replies; RX FACE/OLED/CAMCTL/
@@ -76,8 +77,8 @@
 struct LinkHandlers {
   void* ctx = nullptr;
   // Validated FACE/OLED/CAMCTL frame (decode + frag gate + seq gate +
-  // codec value check). Handler maps (wifilink::mapCmd, Tasks 3-5),
-  // publishes HEAD_EVENT_LINK_CMD, and executes.
+  // codec value check). Handler maps (wifilink::mapCmd in
+  // transport/link_codec.h), publishes HEAD_EVENT_LINK_CMD, and executes.
   void (*onCommand)(void* ctx, const linkcode::Frame& f) = nullptr;
   // Validated PAIRSHOW payload (digits + window unpacked by transport).
   void (*onPairShow)(void* ctx, const uint8_t pin6[6], uint16_t validSecs) = nullptr;
@@ -437,8 +438,8 @@ class LinkClient {
       LOG_EVERY_N(20, "LINK", "redeliver seq=%u", static_cast<unsigned>(f.seq));
       return;
     }
-    // Length gate mirrors wifilink::isOtaFrame (canonical lives in the
-    // middleware shim for Tasks 3-5); the byte grammar + updater trigger are
+    // Length gate mirrors wifilink::isOtaFrame (transport/link_codec.h); the
+    // byte grammar + updater trigger are
     // the injected onOtaUrl edge (main binds OtaUpdater there).
     if (f.type == linkcode::kTypeOta && f.payloadLen >= linkcode::kOtaUrlMinLen &&
         f.payloadLen <= linkcode::kOtaUrlMaxLen) {
@@ -460,8 +461,8 @@ class LinkClient {
       LOG_I("LINK", "ota seq=%u len=%u", static_cast<unsigned>(f.seq), static_cast<unsigned>(f.payloadLen));
       return;
     }
-    // Length gate mirrors wifilink::isPairShowFrame (canonical in the shim);
-    // the 6-digit vocabulary lives once in unpackPairShow (shared
+    // Length gate mirrors wifilink::isPairShowFrame
+    // (abilities/pairing/pairing_codec.h); the 6-digit vocabulary lives once in unpackPairShow (shared
     // digits+valid-secs contract). Duplicates only re-ACK, never re-render.
     if (f.type == linkcode::kTypePairShow && f.payloadLen == linkcode::kPairShowLen) {
       uint8_t pin[6] = {};

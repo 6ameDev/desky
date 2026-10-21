@@ -15,7 +15,7 @@
 #include <string.h>
 #include <unity.h>
 
-#include "../../head/src/middleware/wifi_link.h"
+#include "../../head/src/transport/link_codec.h"
 #include "../src/transport/link_server.h"
 
 namespace {

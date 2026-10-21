@@ -6,6 +6,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "head_context.h"
+
 // The frozen codec namespace `link` collides with POSIX ::link() (declared
 // via the WiFi/lwIP stack) in any Arduino TU, and the codec itself must not
 // be touched. Included once here inside linkwrap__ and aliased back on ALL
@@ -16,8 +18,7 @@ namespace linkwrap__ {
 namespace linkcode = linkwrap__::link;
 
 // Fallback keeps host tests + firmware compiling if config keys drift;
-// in-project include/config.h always wins. Mirrors middleware/wifi_link.h
-// (guarded so both can coexist; same value, never re-derived).
+// in-project include/config.h always wins (same value, never re-derived).
 #ifndef CFG_LINK_MAX_MISSED
 #define CFG_LINK_MAX_MISSED 3
 #endif
@@ -79,6 +80,80 @@ inline const char* typeName(uint8_t type) {
     default:
       return "UNKNOWN";
   }
+}
+
+// Codec frame -> ONE command-table PowerCommand (FACE/OLED/CAMCTL only).
+// Value-checked through the shared codec vocabulary (linkcode::unpackFace /
+// unpackOled / unpackCamCtl — the wire values ARE the vocabulary, validated
+// once in link/link_codec.h): OLED wire 0/1/2 maps onto the head DisplayState
+// order (which inverts the wire order — see the note on unpackOled, never
+// re-derived here), CAMCTL 0/1. False = not a command frame or bad value
+// (caller drops; QRBITMAP/JPEG/HB/HB_ACK/ACK/unknown never map here).
+inline bool mapCmd(uint8_t type, const uint8_t* payload, uint16_t len, PowerCommand& out) {
+  if (len > 0 && payload == nullptr) {
+    return false;
+  }
+  switch (type) {
+    case linkcode::kTypeFace: {
+      if (len != linkcode::kFaceLen) {
+        return false;
+      }
+      uint8_t id = 0;
+      if (!linkcode::unpackFace(payload[0], id)) {
+        return false;
+      }
+      out.target = CmdTarget::FACE;
+      out.arg = static_cast<int32_t>(id);  // clamped downstream by dispatch/clampFace
+      return true;
+    }
+    case linkcode::kTypeOled: {
+      if (len != linkcode::kOledLen) {
+        return false;
+      }
+      uint8_t mode = 0;
+      if (!linkcode::unpackOled(payload[0], mode)) {
+        return false;
+      }
+      out.target = CmdTarget::OLED;
+      switch (mode) {
+        case linkcode::kOledOn:
+          out.arg = static_cast<int32_t>(OLED_ON);
+          break;
+        case linkcode::kOledDim:
+          out.arg = static_cast<int32_t>(OLED_DIM);
+          break;
+        case linkcode::kOledOff:
+          out.arg = static_cast<int32_t>(OLED_OFF);
+          break;
+        default:
+          return false;  // unreachable: unpackOled accepted only the three above
+      }
+      return true;
+    }
+    case linkcode::kTypeCamCtl: {
+      if (len != linkcode::kCamCtlLen) {
+        return false;
+      }
+      uint8_t wire = 0;
+      if (!linkcode::unpackCamCtl(payload[0], wire)) {
+        return false;
+      }
+      out.target = CmdTarget::CAM;
+      out.arg = (wire == linkcode::kCamOn) ? 1 : 0;
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+// OTA consumer gate: the codec-validated 1..128B length is the gate here;
+// the byte grammar (printable ASCII, no '@'/whitespace) + the bounded copy
+// live once in otamanifest::copyOtaUrl, which handleCmd calls — never
+// re-derived. Fresh frames hand the URL to the existing OTA updater entry;
+// duplicates only re-ACK, never re-trigger an in-flight download.
+inline bool isOtaFrame(uint8_t type, uint16_t len) {
+  return type == linkcode::kTypeOta && len >= linkcode::kOtaUrlMinLen && len <= linkcode::kOtaUrlMaxLen;
 }
 
 // Wrap-safe periodic gates (mirror the `now - last >= interval` idiom used

@@ -8,8 +8,8 @@
 
 #include <unity.h>
 
-#include "../src/middleware/wifi_link.h"
 #include "../src/services/cli_manager.h"
+#include "../src/transport/link_codec.h"
 
 void test_wifilink_seq_first_fresh_then_duplicate_then_stale() {
   using V = wifilink::RxVerdict;

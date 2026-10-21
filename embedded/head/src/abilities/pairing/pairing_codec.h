@@ -40,3 +40,12 @@ static_assert(linkcode::kTypePairDone == 0x07, "frozen PairDone type byte");
 static_assert(linkcode::kPairDoneLen == 0, "frozen PairDone payload length");
 
 }  // namespace pairinglink
+
+// wifilink:: spelling (Tasks 2-5 shim re-export): host goldens address these
+// gates through wifilink::isPairShowFrame/isPairDoneFrame — same entities as
+// pairinglink:: above, so test sources keep working with include-path updates
+// only. New code prefers the canonical pairinglink:: spelling.
+namespace wifilink {
+using pairinglink::isPairDoneFrame;
+using pairinglink::isPairShowFrame;
+}  // namespace wifilink

@@ -1,12 +1,14 @@
 // Host unit tests for head face-id mapping (no hardware).
 // Run: pio test -e native-test
 //
-// Including the renderer header (not just head_context.h) locks the
-// #ifdef ARDUINO split: on host only the Arduino-free top half compiles.
+// Including the face ability headers (not just head_context.h) locks the
+// #ifdef ARDUINO split: the codec is Arduino-free on host, while the task
+// shell compiles to empty without ARDUINO (firmware-only FaceRenderer).
 
 #include <unity.h>
 
-#include "../src/middleware/face_renderer.h"
+#include "../src/abilities/face/face_codec.h"
+#include "../src/abilities/face/face_task.h"
 
 void test_face_names_match_ids() {
   TEST_ASSERT_EQUAL_STRING("boot", faceName(FACE_BOOT));

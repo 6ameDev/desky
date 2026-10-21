@@ -1,11 +1,11 @@
 #pragma once
-// desky-head power manager — header-only, REAL matrix (not a stub).
+// desky-head power manager — header-only, REAL rails matrix (not a stub).
 //
 // Camera+display are power-hungry: camera {ON,OFF} + display {ON,DIM,OFF}.
-// ONE command table: PowerManager::apply() is the SINGLE dispatch point
-// both doors call — the USB serial CLI (lowercase verbs, laptop terminal)
-// and the UART link stub (uppercase verbs, S3 side) each parse a line into
-// a PowerCommand and land here. Boot applies HEAD_BOOT_LEAN (0 = validation:
+// Narrowed rails owner (Task 6): the ONE command table lives in
+// behavior/coordinator.h (HeadCoordinator::dispatch, the SINGLE dispatch
+// point both doors call) and routes CAM/OLED here; FACE/QR route to the
+// FaceRenderer there. Boot applies HEAD_BOOT_LEAN (0 = validation:
 // everything on; 1 = lean: camera off, display dim).
 //
 // Matrix rows (pure transitions in head_context.h, unit-tested):
@@ -77,7 +77,11 @@ class PowerManager {
           oledStateName(oledState_), faceName(faceId_));
   }
 
-  // THE command table: every parsed line from either door lands here.
+  // Rails entry: CAM/OLED only. FACE/QR route through
+  // HeadCoordinator::dispatch() (behavior layer), which calls back here for
+  // these two rails. Anything else (STATUS/HELP/LINK/SNAP/OTA/INVALID, or a
+  // FACE/QR that bypassed the coordinator) never changes rail state.
+  // Guarded, not silent.
   void apply(const PowerCommand& cmd) {
     switch (cmd.target) {
       case CmdTarget::CAM: {
@@ -90,19 +94,6 @@ class PowerManager {
           EventBus::publish(HEAD_EVENT_CAMERA_STATE, static_cast<uint32_t>(camState_));
         }
         LOG_I("PWR", "cam=%s", camStateName(camState_));
-        break;
-      }
-      case CmdTarget::FACE: {
-        faceId_ = headapply::resolveFace(cmd.arg);
-        if (disp_ != nullptr) {
-          disp_->showFace(faceId_);
-        }
-        if (oledState_ == OLED_OFF) {
-          LOG_I("PWR", "face=%s stored (display off, paints on next on)", faceName(faceId_));
-        } else {
-          LOG_I("PWR", "face=%s", faceName(faceId_));
-        }
-        EventBus::publish(HEAD_EVENT_FACE_CHANGED, static_cast<uint32_t>(faceId_));
         break;
       }
       case CmdTarget::OLED: {
@@ -122,26 +113,12 @@ class PowerManager {
         LOG_I("PWR", "oled=%s", oledStateName(oledState_));
         break;
       }
-      case CmdTarget::QR:
-        // Bench door (`qr` = show demo, `qr clear` = clear): QR/pairing show
-        // modes visible in status below. A link pairing arrives via
-        // showPairing(), not here; `qr clear` clears either overlay.
-        if (cmd.arg != 0) {
-          showQrDemo();
-        } else {
-          clearQr();
-        }
-        break;
-      case CmdTarget::STATUS:
-      case CmdTarget::HELP:
-      case CmdTarget::LINK:
-      case CmdTarget::SNAP:
-      case CmdTarget::OTA:
-      case CmdTarget::INVALID:
+      default:
         // STATUS/HELP/LINK/SNAP/OTA are answered by the CLI door itself (LINK
         // prints the WiFi status line, SNAP queues a JPEG still, OTA starts
         // the pull updater); INVALID never reaches apply (doors reject at
-        // parse). Guarded, not silent.
+        // parse). FACE/QR route through the coordinator, never here.
+        // Guarded, not silent.
         LOG_W("PWR", "apply ignored (no state change)");
         break;
     }
@@ -197,6 +174,10 @@ class PowerManager {
   CameraState camState() const { return camState_; }
   DisplayState oledState() const { return oledState_; }
   uint8_t faceId() const { return faceId_; }
+
+  // Coordinator FACE-branch handoff (behavior layer owns the FACE dispatch;
+  // the stored id stays here so boot/status read one source).
+  void setFaceId(uint8_t id) { faceId_ = id; }
 
  private:
   void applyToDrivers() {
