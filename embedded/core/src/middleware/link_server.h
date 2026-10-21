@@ -402,9 +402,18 @@ class LinkServer {
     if (mutex_ == nullptr) {
       return SendVerdict::kSendFail;
     }
+    // Stack-budget guard (crash-proven): every UDP send on this task funnels
+    // through here into the deep LWIP/WiFi TX chain, so the encode buffer is
+    // capped at the largest legal link-UDP payload (OTA URL 128B + overhead)
+    // instead of kMaxFrame (1034B). Oversize callers fail closed here, never
+    // via stack smash (JPEG rides TCP, never this path).
+    DESKY_ASSERT(payloadLen <= linkcode::kOtaUrlMaxLen);
+    if (payload == nullptr || payloadLen > linkcode::kOtaUrlMaxLen) {
+      return SendVerdict::kEncodeFail;
+    }
     xSemaphoreTake(mutex_, portMAX_DELAY);
     seqOut = txSeq_++;
-    uint8_t out[linkcode::kMaxFrame];
+    uint8_t out[linkcode::kOverhead + linkcode::kOtaUrlMaxLen];
     const size_t n = linkcode::encodeFrame(type, seqOut, payload, payloadLen, 0, 1, out, sizeof(out));
     bool sent = false;
     if (n != 0) {
