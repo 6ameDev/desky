@@ -31,7 +31,8 @@ constexpr size_t kMaxPayload = 1024;                   // Max single-frame paylo
 constexpr size_t kMaxFrame = kOverhead + kMaxPayload;  // 1034: largest single frame.
 
 // ── Frame types ─────────────────────────────────────────────────────────────
-// Directions: core->head display/control, head->core heartbeat, either ACK.
+// Directions: core->head display/control/pairing, head->core heartbeat,
+// either ACK.
 //
 // BUMP RULE (additive only, both sides together): a new type takes the next
 // free value, gets a length contract below, and joins isKnownType +
@@ -43,9 +44,18 @@ constexpr size_t kMaxFrame = kOverhead + kMaxPayload;  // 1034: largest single f
 constexpr uint8_t kTypeFace = 0x01;      // core->head, 1B: face id u8 (clamped downstream).
 constexpr uint8_t kTypeOled = 0x02;      // core->head, 1B: mode 0=ON 1=DIM 2=OFF.
 constexpr uint8_t kTypeCamCtl = 0x03;    // core->head, 1B: 0=off 1=on.
-constexpr uint8_t kTypeQrBitmap = 0x04;  // core->head, 63B: V1 21x21 packed rows, MSB-first.
-constexpr uint8_t kTypeOta = 0x05;       // core->head, 1..128B: OTA pull URL bytes, no NUL.
-constexpr uint8_t kTypeJpeg = 0x10;      // core->head, 0..1024B: raw JPEG bytes.
+constexpr uint8_t kTypeQrBitmap = 0x04;  // RESERVED (superseded by PAIRSHOW/PAIRDONE — frozen table,
+// never reuse the header): still 63B V1 21x21 packed rows, MSB-first.
+constexpr uint8_t kTypeOta = 0x05;  // core->head, 1..128B: OTA pull URL bytes, no NUL.
+// PAIRSHOW (Pre-2 pairing-display path): the core sends the 6 digits +
+// validity window and the head renders them (replacing the 63B QRBITMAP
+// push). Log names are wired in both typeName tables (core link_server.h,
+// head wifi_link.h); length/known gates live here.
+constexpr uint8_t kTypePairShow = 0x06;  // core->head, 8B: 6 ASCII digits + valid-seconds u16BE.
+constexpr uint8_t kTypePairDone = 0x07;  // core->head, empty: pairing complete.
+constexpr uint8_t kTypeJpeg = 0x10;      // direction-free framing, 0..1024B: raw JPEG bytes
+                                         // (actual use: head->core stills over TCP; head drops
+                                         // inbound JPEG on UDP).
 constexpr uint8_t kTypeHb = 0x20;        // head->core, 10B: heartbeat + boot epoch.
 constexpr uint8_t kTypeHbAck = 0x21;     // core->head, 5B: heartbeat ack.
 constexpr uint8_t kTypeAck = 0x22;       // either, 2B: acked seq u16BE.
@@ -66,6 +76,15 @@ constexpr size_t kQrBitmapLen = 63;
 constexpr size_t kOtaUrlMinLen = 1;
 constexpr size_t kOtaUrlMaxLen = 128;
 constexpr size_t kHbLen = 10;  // rssi i8 | channel u8 | freeHeap u32BE | bootId u32BE.
+// PAIRSHOW (core->head pairing-code display, 8B): 6 ASCII digits ('0'..'9')
+// + valid-seconds u16BE (0 = already-expired display). The digit vocabulary
+// lives once in packPairShow/unpackPairShow below so both sides call it —
+// never mirrored. The frame codec above checks length only, never values.
+constexpr size_t kPairShowLen = 8;
+// PAIRDONE (core->head pairing complete, empty): no payload — the frame
+// presence is the signal. A fixed-empty contract (not a 0..N range) so any
+// stowaway byte fails the decode gate.
+constexpr size_t kPairDoneLen = 0;
 // bootId is a per-boot random epoch (esp_random at head startup): the core
 // accepts ANY seq on a bootId change (fresh epoch resync) and gates
 // strictly-greater only within one bootId. Without the epoch, a head reboot
@@ -136,6 +155,8 @@ inline bool isKnownType(uint8_t type) {
     case kTypeCamCtl:
     case kTypeQrBitmap:
     case kTypeOta:
+    case kTypePairShow:
+    case kTypePairDone:
     case kTypeJpeg:
     case kTypeHb:
     case kTypeHbAck:
@@ -160,6 +181,10 @@ inline bool isValidPayloadLen(uint8_t type, uint16_t len) {
       return len == kQrBitmapLen;
     case kTypeOta:
       return len >= kOtaUrlMinLen && len <= kOtaUrlMaxLen;
+    case kTypePairShow:
+      return len == kPairShowLen;
+    case kTypePairDone:
+      return len == kPairDoneLen;
     case kTypeJpeg:
       return len <= kMaxPayload;
     case kTypeHb:
@@ -360,6 +385,37 @@ inline bool unpackAck(const uint8_t* in, size_t len, uint16_t& ackedSeq) {
     return false;
   }
   ackedSeq = getU16BE(in);
+  return true;
+}
+
+// PAIRSHOW (core->head, 8B): 6 ASCII pairing digits + valid-seconds u16BE.
+// Digit validation is fail-closed both ways (a non-digit rejects, mirroring
+// qr::encode6Digits); validSecs rides raw u16BE (0 = already-expired).
+inline bool packPairShow(const uint8_t digits[6], uint16_t validSecs, uint8_t out[kPairShowLen]) {
+  if (digits == nullptr || out == nullptr) {
+    return false;
+  }
+  for (size_t i = 0; i < 6; ++i) {
+    if (digits[i] < '0' || digits[i] > '9') {
+      return false;
+    }
+    out[i] = digits[i];
+  }
+  putU16BE(out + 6, validSecs);
+  return true;
+}
+
+inline bool unpackPairShow(const uint8_t* in, size_t len, uint8_t digitsOut[6], uint16_t& validSecs) {
+  if (in == nullptr || digitsOut == nullptr || len != kPairShowLen) {
+    return false;
+  }
+  for (size_t i = 0; i < 6; ++i) {
+    if (in[i] < '0' || in[i] > '9') {
+      return false;
+    }
+    digitsOut[i] = in[i];
+  }
+  validSecs = getU16BE(in + 6);
   return true;
 }
 

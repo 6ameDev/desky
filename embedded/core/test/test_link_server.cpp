@@ -80,6 +80,8 @@ void test_linkserver_type_names() {
   TEST_ASSERT_EQUAL_STRING("OLED", linkserver::typeName(linkcode::kTypeOled));
   TEST_ASSERT_EQUAL_STRING("CAMCTL", linkserver::typeName(linkcode::kTypeCamCtl));
   TEST_ASSERT_EQUAL_STRING("QRBITMAP", linkserver::typeName(linkcode::kTypeQrBitmap));
+  TEST_ASSERT_EQUAL_STRING("PAIRSHOW", linkserver::typeName(linkcode::kTypePairShow));
+  TEST_ASSERT_EQUAL_STRING("PAIRDONE", linkserver::typeName(linkcode::kTypePairDone));
   TEST_ASSERT_EQUAL_STRING("JPEG", linkserver::typeName(linkcode::kTypeJpeg));
   TEST_ASSERT_EQUAL_STRING("HB", linkserver::typeName(linkcode::kTypeHb));
   TEST_ASSERT_EQUAL_STRING("HB_ACK", linkserver::typeName(linkcode::kTypeHbAck));

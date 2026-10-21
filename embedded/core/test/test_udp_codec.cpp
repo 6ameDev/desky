@@ -293,6 +293,11 @@ void test_link_reassembly_total_mismatch_reject();
 void test_link_reassembly_overlap_and_gap_reject();
 void test_link_reassembly_overflow_reject();
 void test_link_phone_wire_headers_distinct();
+void test_link_pairshow_golden_pack();
+void test_link_pairshow_golden_frame();
+void test_link_pairshow_round_trip_edges();
+void test_link_pairshow_rejects();
+void test_link_pairdone_empty_frame();
 
 // Link command vocabulary (producer side: future stageFace/stageOled/stageCam
 // MUST pack through these), defined in test_link_cmd_vocab.cpp.
@@ -566,6 +571,11 @@ int main() {
   RUN_TEST(test_link_reassembly_overlap_and_gap_reject);
   RUN_TEST(test_link_reassembly_overflow_reject);
   RUN_TEST(test_link_phone_wire_headers_distinct);
+  RUN_TEST(test_link_pairshow_golden_pack);
+  RUN_TEST(test_link_pairshow_golden_frame);
+  RUN_TEST(test_link_pairshow_round_trip_edges);
+  RUN_TEST(test_link_pairshow_rejects);
+  RUN_TEST(test_link_pairdone_empty_frame);
   RUN_TEST(test_link_cmd_vocab_oled_literal_round_trip);
   RUN_TEST(test_link_cmd_vocab_camctl_literal_round_trip);
   RUN_TEST(test_link_cmd_vocab_ota_literal_length);

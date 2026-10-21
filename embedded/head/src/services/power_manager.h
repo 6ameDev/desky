@@ -116,15 +116,16 @@ class PowerManager {
           disp_->setPowerState(oledState_ != OLED_OFF);
           disp_->setDim(oledState_ == OLED_DIM);
           if (oledState_ != OLED_OFF) {
-            disp_->repaint();  // Repaint the live mode (QR survives ON/DIM; FACE clears it).
+            disp_->repaint();  // Repaint the live mode (QR/pairing survive ON/DIM; FACE clears them).
           }
         }
         LOG_I("PWR", "oled=%s", oledStateName(oledState_));
         break;
       }
       case CmdTarget::QR:
-        // Bench door (`qr` = show demo, `qr clear` = clear): QR show mode
-        // visible in status below. A link QR arrives via showQr(), not here.
+        // Bench door (`qr` = show demo, `qr clear` = clear): QR/pairing show
+        // modes visible in status below. A link QR/pairing arrives via
+        // showQr()/showPairing(), not here; `qr clear` clears either overlay.
         if (cmd.arg != 0) {
           showQrDemo();
         } else {
@@ -150,13 +151,16 @@ class PowerManager {
     const uint32_t frames = (cam_ != nullptr) ? cam_->frames() : 0;
     const uint32_t dropped = (cam_ != nullptr) ? cam_->dropped() : 0;
     const size_t lastBytes = (cam_ != nullptr) ? cam_->lastSizeBytes() : 0;
-    LOG_I("PWR", "cam=%s oled=%s face=%s qr=%s frames=%lu drops=%lu last=%uB fps=%lum", camStateName(camState_),
-          oledStateName(oledState_), faceName(faceId_), qrActive() ? "on" : "off", (unsigned long)frames,
-          (unsigned long)dropped, (unsigned)lastBytes, (unsigned long)((cam_ != nullptr) ? cam_->fpsMilli() : 0));
+    LOG_I("PWR", "cam=%s oled=%s face=%s qr=%s pair=%s frames=%lu drops=%lu last=%uB fps=%lum", camStateName(camState_),
+          oledStateName(oledState_), faceName(faceId_), qrActive() ? "on" : "off", pairActive() ? "on" : "off",
+          (unsigned long)frames, (unsigned long)dropped, (unsigned)lastBytes,
+          (unsigned long)((cam_ != nullptr) ? cam_->fpsMilli() : 0));
   }
 
   // H2.5 QR handoff: the LinkClient hands the 63B link bitmap here; the
   // renderer copies + paints under its own present/enabled/dim gates.
+  // Reserved path (superseded by showPairing below): kept so old firmwares'
+  // bitmaps still display.
   void showQr(const uint8_t* qr63) {
     if (disp_ != nullptr) {
       disp_->showQr(qr63);
@@ -176,6 +180,24 @@ class PowerManager {
   }
 
   bool qrActive() const { return disp_ != nullptr && disp_->qrActive(); }
+
+  // Pairing handoff (Pre-2): the LinkClient hands the authoritative PIN +
+  // validity window here; the renderer re-derives the bitmap locally and
+  // paints under its own present/enabled/dim gates. No business logic beyond
+  // forwarding + rival-overlay hiding (same as showQr above).
+  void showPairing(const uint8_t pin6[6], uint16_t validSecs) {
+    if (disp_ != nullptr) {
+      disp_->showPairing(pin6, validSecs);
+    }
+  }
+
+  void clearPairing(const char* why = "cli") {
+    if (disp_ != nullptr) {
+      disp_->clearPairing(why);
+    }
+  }
+
+  bool pairActive() const { return disp_ != nullptr && disp_->pairActive(); }
 
   CameraState camState() const { return camState_; }
   DisplayState oledState() const { return oledState_; }
