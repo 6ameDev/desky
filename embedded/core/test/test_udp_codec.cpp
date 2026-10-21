@@ -316,6 +316,9 @@ void test_linkserver_boot_epoch_resync_gate();
 void test_telemetry_xwire_encode_matches_literals();
 void test_telemetry_xwire_independent_field_parse();
 void test_telemetry_xwire_literals_are_live_frames();
+void test_telemetry_note_driving_while_fresh();
+void test_telemetry_note_zero_stick_never_drives();
+void test_telemetry_note_wrap_safe_millis();
 
 // Link FRAG X-WIRE (head fragSlice -> encode -> pull -> decode -> reassemble),
 // defined in test_link_frag_xwire.cpp.
@@ -606,6 +609,9 @@ int main() {
   RUN_TEST(test_telemetry_xwire_encode_matches_literals);
   RUN_TEST(test_telemetry_xwire_independent_field_parse);
   RUN_TEST(test_telemetry_xwire_literals_are_live_frames);
+  RUN_TEST(test_telemetry_note_driving_while_fresh);
+  RUN_TEST(test_telemetry_note_zero_stick_never_drives);
+  RUN_TEST(test_telemetry_note_wrap_safe_millis);
   RUN_TEST(test_link_frag_xwire_geometry);
   RUN_TEST(test_link_frag_xwire_round_trip_all_sizes);
   RUN_TEST(test_link_frag_xwire_rejects_disorder_without_corruption);
