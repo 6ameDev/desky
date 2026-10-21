@@ -12,7 +12,7 @@
 #include <stdint.h>
 #include <string.h>
 
-// ── Face ids (procedural art lives in middleware/face_renderer.h) ──
+// ── Face ids (procedural art lives in abilities/face/face_task.h) ──
 enum FaceId : uint8_t {
   FACE_BOOT = 0,  // neutral squares — power-on default
   FACE_HAPPY = 1,

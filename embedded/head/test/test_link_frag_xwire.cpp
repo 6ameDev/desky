@@ -1,6 +1,6 @@
 // Link FRAG X-WIRE test (S/M) — HEAD-SUITE MIRROR of core's
 // test_link_frag_xwire.cpp. Same seam, same sizes, same disorder cases; only
-// the include spelling differs (head's own wifi_link.h + core's
+// the include spelling differs (head's own transport/link_codec.h + core's
 // link_server.h via relative path). Both suites pin the shared contract, so
 // a one-sided drift breaks at least one gate. Include path needs
 // -I../core/src on the head native-test env (see head/platformio.ini).
@@ -10,7 +10,7 @@
 #include <unity.h>
 
 #include "../../core/src/transport/link_server.h"
-#include "../src/middleware/wifi_link.h"
+#include "../src/transport/link_codec.h"
 
 namespace {
 

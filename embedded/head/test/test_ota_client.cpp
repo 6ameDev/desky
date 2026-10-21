@@ -9,7 +9,7 @@
 
 #include <unity.h>
 
-#include "../src/middleware/ota_client.h"
+#include "../src/abilities/ota/ota_codec.h"
 #include "../src/services/cli_manager.h"
 
 void test_ota_parse_plain_host() {

@@ -15,9 +15,9 @@
 
 #include <unity.h>
 
-#include "../src/middleware/wifi_link.h"  // linkcode:: alias + wifilink:: (canonical
+#include "../src/transport/link_codec.h"  // linkcode:: alias + wifilink:: (canonical
 // linkcode:: spelling is pinned by core's test_link_codec.cpp goldens; head TUs
-// must use the alias — see the POSIX ::link note in wifi_link.h)
+// must use the alias — see the POSIX ::link note in link_codec.h)
 #include "../src/services/cli_manager.h"
 #include "../src/services/power_manager.h"  // headapply:: (Arduino-free top half)
 

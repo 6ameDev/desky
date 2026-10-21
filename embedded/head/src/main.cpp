@@ -3,6 +3,7 @@
 #include "abilities/face/face_task.h"
 #include "abilities/ota/ota_task.h"
 #include "abilities/pairing/pairing_task.h"
+#include "behavior/coordinator.h"
 #include "common/diagnostics.h"
 #include "common/fault_manager.h"
 #include "common/i2c_manager.h"
@@ -13,12 +14,11 @@
 #include "hal/ssd1306_display.h"
 #include "head_context.h"
 #include "link/ota_manifest.h"
-#include "middleware/link_stub.h"
-#include "middleware/wifi_link.h"
 #include "services/cli_manager.h"
 #include "services/event_bus.h"
 #include "services/power_manager.h"
 #include "transport/link_client.h"
+#include "transport/link_codec.h"
 #include "transport/link_stub.h"
 
 // desky-head (face-unit: OV3660 eyes + face OLED + link stub, PARKED).
@@ -50,7 +50,8 @@ CameraDriver g_cam;
 Ssd1306Display g_panel(g_i2c);
 FaceRenderer g_display(g_panel);
 PowerManager g_power;
-PairingManager g_pairing;  // PairShow/Done PIN handoff policy (ability layer, bound below)
+HeadCoordinator g_coordinator;  // ONE command table (both doors dispatch here)
+PairingManager g_pairing;       // PairShow/Done PIN handoff policy (ability layer, bound below)
 LinkStub g_link;
 LinkClient g_wifi;
 OtaUpdater g_ota;  // Standing rule: never ship without the OTA client (see
@@ -73,7 +74,7 @@ void onWifiCommand(void* ctx, const linkcode::Frame& f) {
     return;  // unreachable: transport value-checks before invoking
   }
   EventBus::publish(HEAD_EVENT_LINK_CMD, static_cast<uint32_t>(cmd.target));
-  g_power.apply(cmd);  // FACE->showFace, OLED ON/DIM/OFF, CAM on/off
+  g_coordinator.dispatch(cmd);  // FACE->showFace, OLED ON/DIM/OFF, CAM on/off
 }
 
 // WiFi OTA edge: grammar + updater trigger (transport already consumed the
@@ -103,7 +104,7 @@ bool isCameraOn(void* ctx) {
 void onStubCommand(void* ctx, const PowerCommand& cmd) {
   (void)ctx;
   EventBus::publish(HEAD_EVENT_LINK_CMD, static_cast<uint32_t>(cmd.target));
-  g_power.apply(cmd);
+  g_coordinator.dispatch(cmd);
 }
 }  // namespace
 
@@ -130,8 +131,9 @@ void setup() {
   const bool oledOk = g_display.init();
   (void)oledOk;  // NEVER asserted: absent OLED is the normal on-MB state.
   g_power.begin(&g_cam, &g_display);
-  g_pairing.attach(&g_power);  // PairShow/Done handoff (ability layer, never owned here)
-  g_link.begin();              // PARKED stub (retained for switch-back).
+  g_coordinator.begin(&g_power, &g_display);  // ONE table behind both doors
+  g_pairing.attach(&g_power);                 // PairShow/Done handoff (ability layer, never owned here)
+  g_link.begin();                             // PARKED stub (retained for switch-back).
   {
     StubHandlers sh;
     sh.ctx = nullptr;
@@ -150,10 +152,11 @@ void setup() {
     g_wifi.setHandlers(wh);
   }
   g_cli.begin(&g_power);
-  g_cli.attachLink(&g_wifi);      // LINK status line + `snap` still trigger.
-  g_cli.attachOta(&g_ota);        // `ota <url>` pull updater (standalone).
-  g_ota.attachFace(&g_display);   // Updater progress -> OLED bar/alert.
-  g_sub = EventBus::subscribe();  // Settles before any publish (loop only).
+  g_cli.attachCoordinator(&g_coordinator);  // CAM/OLED/FACE/QR fallback dispatch
+  g_cli.attachLink(&g_wifi);                // LINK status line + `snap` still trigger.
+  g_cli.attachOta(&g_ota);                  // `ota <url>` pull updater (standalone).
+  g_ota.attachFace(&g_display);             // Updater progress -> OLED bar/alert.
+  g_sub = EventBus::subscribe();            // Settles before any publish (loop only).
   g_lastCamMs = millis();
   g_lastAliveMs = millis();
   LOG_I("BOOT", "desky-head alive | MCU=%s cores=%d flash=%dMB psram=%d", MCU_NAME, MCU_NUM_CORES, MCU_FLASH_SIZE_MB,

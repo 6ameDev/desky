@@ -4,7 +4,7 @@
 // Top half (namespace headcmd) is Arduino-free line parsing so host Unity
 // tests cover it; the bottom half (class CliManager) is firmware-only
 // (#ifdef ARDUINO): fixed-buffer Serial line assembly dispatching into the
-// ONE command table (PowerManager::apply).
+// ONE command table (HeadCoordinator::dispatch).
 //
 // Reference:
 //   cam on|off            camera power gate (sensor deinit/re-init)
@@ -193,6 +193,7 @@ inline bool parseLine(const char* line, PowerCommand& out) {
 #include <Arduino.h>
 
 #include "abilities/ota/ota_task.h"
+#include "behavior/coordinator.h"
 #include "common/logger.h"
 #include "config.h"
 #include "services/power_manager.h"
@@ -206,12 +207,16 @@ inline bool parseLine(const char* line, PowerCommand& out) {
 
 class CliManager {
  public:
-  CliManager() : power_(nullptr), link_(nullptr), ota_(nullptr), lineLen_(0) {}
+  CliManager() : power_(nullptr), coord_(nullptr), link_(nullptr), ota_(nullptr), lineLen_(0) {}
 
   void begin(PowerManager* power) {
     power_ = power;
     printHelp();
   }
+
+  // Coordinator door for the CAM/OLED/FACE/QR fallback (stored, never owned;
+  // main() attaches the HeadCoordinator after PowerManager::begin).
+  void attachCoordinator(HeadCoordinator* coord) { coord_ = coord; }
 
   // Live-path door for the LINK status line + `snap` still trigger. Stored,
   // never owned; main() attaches after both clients are begun.
@@ -223,7 +228,7 @@ class CliManager {
 
   // Drain Serial into a fixed buffer; each newline parses and dispatches.
   // STATUS/HELP are answered here; LINK/SNAP/OTA fan out to their clients;
-  // everything else lands in the ONE command table (PowerManager::apply).
+  // everything else lands in the ONE command table (HeadCoordinator::dispatch).
   void poll() {
     while (Serial.available() > 0) {
       const char c = static_cast<char>(Serial.read());
@@ -281,7 +286,9 @@ class CliManager {
         LOG_W("CLI", "ota not attached");
       }
     } else {
-      power_->apply(cmd);
+      if (coord_ != nullptr) {
+        coord_->dispatch(cmd);
+      }
     }
   }
 
@@ -292,6 +299,7 @@ class CliManager {
   }
 
   PowerManager* power_;
+  HeadCoordinator* coord_;
   LinkClient* link_;
   OtaUpdater* ota_;
   char lineBuf_[CFG_CLI_LINE_LEN];

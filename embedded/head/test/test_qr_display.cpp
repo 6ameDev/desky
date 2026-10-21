@@ -2,7 +2,7 @@
 // Run: pio test -e native-test
 //
 // Covers the Arduino-free qrdisplay geometry/payload contract in
-// src/middleware/face_renderer.h (cross-pinned against the frozen link
+// src/abilities/face/face_codec.h (cross-pinned against the frozen link
 // codec length), the FACE_QR id rules in head_context.h, and the `qr` /
 // `qr clear` CLI bench verbs. The firmware paint path (drawQr) is
 // compile-tested by the desky-head build, not here.
@@ -12,9 +12,9 @@
 
 #include "../../core/src/abilities/pairing/pairing_codec.h"
 #include "../include/config.h"
-#include "../src/middleware/face_renderer.h"
-#include "../src/middleware/wifi_link.h"
+#include "../src/abilities/face/face_codec.h"
 #include "../src/services/cli_manager.h"
+#include "../src/transport/link_codec.h"
 
 // 63B "123456" packed golden, duplicated from the canonical core vector in
 // embedded/core/test/test_qr_pairing.cpp (test_qr_packed_matches_golden_rows,

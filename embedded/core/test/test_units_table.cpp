@@ -17,7 +17,7 @@
 
 #include <unity.h>
 
-#include "../../head/src/middleware/wifi_link.h"
+#include "../../head/src/transport/link_codec.h"
 #include "../include/config.h"
 #include "../src/abilities/pairing/pairing_codec.h"
 #include "../src/behavior/coordinator.h"
