@@ -21,7 +21,7 @@
 //                         http://host[:port]/path (https/ftp rejected,
 //                         '@' rejected — credentials never ride or log).
 //                         Standing rule: never ship without the OTA client
-//                         (see middleware/ota_client.h).
+//                         (see abilities/ota/ota_task.h).
 //   qr                    show the bench QR demo pattern (exercises the QR
 //                         show/clear path with no link)
 //   qr clear              clear the QR show mode (any `face` also clears it)
@@ -192,9 +192,9 @@ inline bool parseLine(const char* line, PowerCommand& out) {
 
 #include <Arduino.h>
 
+#include "abilities/ota/ota_task.h"
 #include "common/logger.h"
 #include "config.h"
-#include "middleware/ota_client.h"
 #include "services/power_manager.h"
 #include "transport/link_client.h"
 
