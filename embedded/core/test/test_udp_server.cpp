@@ -2,7 +2,7 @@
 // Run: pio test -e native-test
 //
 // Covers the Arduino-free namespace udpstatus (statusFlags bit map +
-// decidegree math in src/middleware/udp_server.h), the coordinator
+// decidegree math in src/transport/udp_server.h), the coordinator
 // packCommand->unpackCommand round-trip at the center-128 edges, and a
 // telemetry encode->decode round-trip with flags set. The UdpServer task
 // (WiFi/socket/WDT) is firmware-only (#ifdef ARDUINO) and exercised on
@@ -15,7 +15,7 @@
 
 #include "../src/abilities/pairing/pairing_codec.h"
 #include "../src/behavior/coordinator.h"
-#include "../src/middleware/udp_server.h"
+#include "../src/transport/udp_server.h"
 // Platform split 1.1: udp_server.h is included before telemetry_manager.h (it
 // defines UDPSTATUS_TOP_HALF_INCLUDED + pulls the connection core);
 // pairing_codec.h is the wire-codec owner, telemetry_manager.h the

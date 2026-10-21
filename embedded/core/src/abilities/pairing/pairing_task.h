@@ -56,9 +56,9 @@ extern "C" {
 
 #include "common/fault_manager.h"  // DESKY_ASSERT (firmware side only)
 #include "common/logger.h"
-#include "middleware/link_server.h"
 #include "services/config_store.h"
 #include "transport/connection_manager.h"
+#include "transport/link_server.h"
 
 namespace pairing {
 
@@ -433,7 +433,7 @@ class PairingTask {
   //
   // Freshness is the wrap-aware strictly-greater idiom, textually identical
   // to udpstatus::isFreshCounter (single owner stays there — this header
-  // cannot include middleware/udp_server.h: it includes this header, so the
+  // cannot include transport/udp_server.h: it includes this header, so the
   // one line is mirrored with this note; the callers' logging pre-checks go
   // through the canonical transport bridge). All session tags are first6
   // (drive/alive/disconnect/unbond/rekey all truncate to 6B), so the compare

@@ -6,7 +6,7 @@
 // include this header directly. No heap, no exceptions, no Strings, no
 // sockets: bytes leave through a UdpServer-provided send callback.
 //
-// Include order: middleware/udp_server.h top half (udpstatus — the single
+// Include order: transport/udp_server.h top half (udpstatus — the single
 // owner of packStatus/degToDecideg) BEFORE this header. udp_server.h
 // includes this file right after the udpstatus namespace; host tests do
 // the same (udp_server.h first).
@@ -30,7 +30,7 @@
 // (setRateMs + per-peer subscription state), never in the connection core.
 
 #ifndef UDPSTATUS_TOP_HALF_INCLUDED
-#error "include middleware/udp_server.h before services/telemetry_manager.h (udpstatus owns pack/gate)"
+#error "include transport/udp_server.h before services/telemetry_manager.h (udpstatus owns pack/gate)"
 #endif
 
 #include <stddef.h>

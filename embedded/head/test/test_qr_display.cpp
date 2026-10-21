@@ -10,8 +10,7 @@
 #include <string.h>
 #include <unity.h>
 
-#include "../../core/src/middleware/pairing.h"
-#include "../../core/src/middleware/qr_pairing.h"
+#include "../../core/src/abilities/pairing/pairing_codec.h"
 #include "../include/config.h"
 #include "../src/middleware/face_renderer.h"
 #include "../src/middleware/wifi_link.h"

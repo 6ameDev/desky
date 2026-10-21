@@ -2,14 +2,14 @@
 // Run: pio test -e native-test
 //
 // Covers the Arduino-free namespace linkserver in
-// src/middleware/link_server.h (seq verdicts incl. u16 wrap, TCP stream
+// src/transport/link_server.h (seq verdicts incl. u16 wrap, TCP stream
 // framing, type names). The LinkServer task (sockets/WDT) is firmware-only
 // (#ifdef ARDUINO) and exercised on hardware. Runner lives in
 // test_udp_codec.cpp (single main).
 
 #include <unity.h>
 
-#include "../src/middleware/link_server.h"
+#include "../src/transport/link_server.h"
 
 void test_linkserver_first_frame_fresh() {
   TEST_ASSERT_TRUE(linkserver::classifySeq(false, 0, 0) == linkserver::SeqVerdict::kFresh);

@@ -19,7 +19,7 @@
 // markAlive/clear/isAlive shapes already take the id, so the call sites
 // do not change.
 //
-// Alive window ownership: udpstatus::kAliveMs (middleware/udp_server.h) is
+// Alive window ownership: udpstatus::kAliveMs (transport/udp_server.h) is
 // the single owner — this header NEVER redefines the 5s literal. The window
 // arrives as a ctor parameter and UdpServer passes udpstatus::kAliveMs; the
 // host tests pin the equality (see test_udp_server.cpp).

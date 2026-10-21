@@ -150,7 +150,7 @@
 #define CFG_AUDIO_METER_MS 100
 
 // Core<->head link endpoint (H2.2 B-link, sockets-only; see
-// src/middleware/link_server.h): UDP 3334 = command/HB frames,
+// src/transport/link_server.h): UDP 3334 = command/HB frames,
 // TCP 3335 = JPEG head->core stream. Task sits on Core 0 below UdpServer.
 #define CFG_LINK_UDP_PORT 3334
 #define CFG_LINK_TCP_PORT 3335

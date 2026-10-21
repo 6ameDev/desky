@@ -3,8 +3,8 @@
 
 #include <unity.h>
 
-#include "../src/middleware/udp_server.h"
 #include "../src/transport/udp_codec.h"
+#include "../src/transport/udp_server.h"
 
 void setUp() {}
 void tearDown() {}
