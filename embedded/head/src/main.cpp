@@ -1,6 +1,7 @@
 #include <Arduino.h>
 
 #include "abilities/face/face_task.h"
+#include "abilities/ota/ota_task.h"
 #include "abilities/pairing/pairing_task.h"
 #include "common/diagnostics.h"
 #include "common/fault_manager.h"
@@ -13,7 +14,6 @@
 #include "head_context.h"
 #include "link/ota_manifest.h"
 #include "middleware/link_stub.h"
-#include "middleware/ota_client.h"
 #include "middleware/wifi_link.h"
 #include "services/cli_manager.h"
 #include "services/event_bus.h"
@@ -54,7 +54,7 @@ PairingManager g_pairing;  // PairShow/Done PIN handoff policy (ability layer, b
 LinkStub g_link;
 LinkClient g_wifi;
 OtaUpdater g_ota;  // Standing rule: never ship without the OTA client (see
-                   // middleware/ota_client.h) — no USB door exists in the field.
+                   // abilities/ota/ota_task.h) — no USB door exists in the field.
 CliManager g_cli;
 EventBus::Subscription g_sub;
 uint32_t g_lastCamMs = 0;
