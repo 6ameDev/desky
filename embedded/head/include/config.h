@@ -47,7 +47,7 @@
 // (GET /head-version) compares against this via otamanifest::shouldPull —
 // bump on every release or the carrier pull-gate treats the image as current
 // and never pulls. Pinned literally by host tests.
-#define HEAD_FW_VERSION 13
+#define HEAD_FW_VERSION 14
 
 // USB serial CLI (laptop terminal on the MB board)
 #define CFG_CLI_BAUD 115200

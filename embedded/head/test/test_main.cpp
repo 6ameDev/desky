@@ -101,6 +101,11 @@ void test_pairdisplay_pin_validation_and_state();
 void test_pairdisplay_deadline_expiry();
 void test_pairdisplay_pin_line_geometry();
 void test_pairshow_pin_to_bitmap_equivalence();
+void test_pairing_manager_bad_pin_noop();
+void test_pairing_manager_show_rearms_deadline();
+void test_pairing_manager_clear_when_idle_noop();
+void test_pairing_manager_show_clear_roundtrip();
+void test_pairing_manager_null_face_safe();
 
 // OTA pull client pure top half (URL parse, version, validation, state
 // machine) + CLI `ota <url>` verb, defined in test_ota_client.cpp.
@@ -202,6 +207,11 @@ int main() {
   RUN_TEST(test_pairdisplay_deadline_expiry);
   RUN_TEST(test_pairdisplay_pin_line_geometry);
   RUN_TEST(test_pairshow_pin_to_bitmap_equivalence);
+  RUN_TEST(test_pairing_manager_bad_pin_noop);
+  RUN_TEST(test_pairing_manager_show_rearms_deadline);
+  RUN_TEST(test_pairing_manager_clear_when_idle_noop);
+  RUN_TEST(test_pairing_manager_show_clear_roundtrip);
+  RUN_TEST(test_pairing_manager_null_face_safe);
   RUN_TEST(test_ota_parse_plain_host);
   RUN_TEST(test_ota_parse_port_and_deep_path);
   RUN_TEST(test_ota_parse_bare_host_defaults_path);

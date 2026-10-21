@@ -6,8 +6,10 @@
 // the link handlers in main.cpp (UART stub + WiFi client) each parse a line or
 // frame into a PowerCommand and land here. Narrowed from
 // PowerManager::apply() (Task 6): PowerManager keeps the CAM/OLED rails +
-// boot matrix + status + pairing/QR forwarders; FACE/QR routing lives here,
-// next to the FaceRenderer it drives. No sockets, no business state of its
+// boot matrix + status + QR demo forwarder; FACE/QR routing lives here,
+// next to the FaceRenderer it drives. (Task 7: the PairShow/PairDone PIN
+// handoff bypasses this table via PairingManager -> the shared
+// FaceOverlayManager.) No sockets, no business state of its
 // own — stored pointers only, main owns the targets.
 //
 // Publishers stay at the doors (main handlers own the LINK_CMD publish, the
@@ -66,7 +68,8 @@ class HeadCoordinator {
       case CmdTarget::QR:
         // Bench door (`qr` = show demo, `qr clear` = clear): QR/pairing show
         // modes visible in status below. A link pairing arrives via
-        // showPairing(), not here; `qr clear` clears either overlay.
+        // PairingManager (the pairing_task edge), not here; `qr clear`
+        // clears either overlay.
         if (power_ == nullptr) {
           break;
         }
@@ -90,6 +93,12 @@ class HeadCoordinator {
         break;
     }
   }
+
+  // Overlay readers for the status paths (reporting only — the pairing
+  // ability owns the PIN handoff, the renderer owns paint; both share the
+  // one FaceOverlayManager underneath).
+  bool qrActive() const { return face_ != nullptr && face_->qrActive(); }
+  bool pairActive() const { return face_ != nullptr && face_->pairActive(); }
 
  private:
   PowerManager* power_;  // rails owner (main binds, never owned here)

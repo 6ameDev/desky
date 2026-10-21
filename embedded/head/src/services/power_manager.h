@@ -5,8 +5,10 @@
 // Narrowed rails owner (Task 6): the ONE command table lives in
 // behavior/coordinator.h (HeadCoordinator::dispatch, the SINGLE dispatch
 // point both doors call) and routes CAM/OLED here; FACE/QR route to the
-// FaceRenderer there. Boot applies HEAD_BOOT_LEAN (0 = validation:
-// everything on; 1 = lean: camera off, display dim).
+// FaceRenderer there. The PairShow/PairDone PIN handoff bypasses these rails
+// entirely (PairingManager -> the shared FaceOverlayManager, Task 7). Boot
+// applies HEAD_BOOT_LEAN (0 = validation: everything on; 1 = lean: camera
+// off, display dim).
 //
 // Matrix rows (pure transitions in head_context.h, unit-tested):
 // - cam on/off flips the sensor+task gate, display untouched.
@@ -128,8 +130,12 @@ class PowerManager {
     const uint32_t frames = (cam_ != nullptr) ? cam_->frames() : 0;
     const uint32_t dropped = (cam_ != nullptr) ? cam_->dropped() : 0;
     const size_t lastBytes = (cam_ != nullptr) ? cam_->lastSizeBytes() : 0;
+    // Pair flag is reporting only, read through the face side (FaceRenderer
+    // fronts the single FaceOverlayManager — no pairing policy lives here
+    // since Task 7 narrowed these rails).
+    const bool pair = disp_ != nullptr && disp_->pairActive();
     LOG_I("PWR", "cam=%s oled=%s face=%s qr=%s pair=%s frames=%lu drops=%lu last=%uB fps=%lum", camStateName(camState_),
-          oledStateName(oledState_), faceName(faceId_), qrActive() ? "on" : "off", pairActive() ? "on" : "off",
+          oledStateName(oledState_), faceName(faceId_), qrActive() ? "on" : "off", pair ? "on" : "off",
           (unsigned long)frames, (unsigned long)dropped, (unsigned)lastBytes,
           (unsigned long)((cam_ != nullptr) ? cam_->fpsMilli() : 0));
   }
@@ -152,24 +158,6 @@ class PowerManager {
   }
 
   bool qrActive() const { return disp_ != nullptr && disp_->qrActive(); }
-
-  // Pairing handoff (Pre-2): the LinkClient hands the authoritative PIN +
-  // validity window here; the renderer re-derives the bitmap locally and
-  // paints under its own present/enabled/dim gates. No business logic beyond
-  // forwarding + rival-overlay hiding.
-  void showPairing(const uint8_t pin6[6], uint16_t validSecs) {
-    if (disp_ != nullptr) {
-      disp_->showPairing(pin6, validSecs);
-    }
-  }
-
-  void clearPairing(const char* why = "cli") {
-    if (disp_ != nullptr) {
-      disp_->clearPairing(why);
-    }
-  }
-
-  bool pairActive() const { return disp_ != nullptr && disp_->pairActive(); }
 
   CameraState camState() const { return camState_; }
   DisplayState oledState() const { return oledState_; }
