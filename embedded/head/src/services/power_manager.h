@@ -50,10 +50,10 @@ inline uint8_t resolveFace(int32_t arg) { return clampFace(arg); }
 
 #include <Arduino.h>
 
+#include "abilities/face/face_task.h"
 #include "common/logger.h"
 #include "config.h"
 #include "hal/camera_driver.h"
-#include "middleware/face_renderer.h"
 #include "services/event_bus.h"
 
 // Fallbacks keep this header compilable if config keys ever drift; in-project

@@ -1,5 +1,6 @@
 #include <Arduino.h>
 
+#include "abilities/face/face_task.h"
 #include "common/diagnostics.h"
 #include "common/fault_manager.h"
 #include "common/i2c_manager.h"
@@ -10,7 +11,6 @@
 #include "hal/ssd1306_display.h"
 #include "head_context.h"
 #include "link/ota_manifest.h"
-#include "middleware/face_renderer.h"
 #include "middleware/link_stub.h"
 #include "middleware/ota_client.h"
 #include "middleware/wifi_link.h"
