@@ -15,13 +15,14 @@
 // socket call; sequencing preserved: fill -> pack -> gate -> due/edge ->
 // encode -> send):
 //   STAYS in UdpServer (needs hardware + socket + logging):
-//     snapshot fill (coord snapshot, ToF live, MPU->fusion on demand,
-//     driving from server-local RX tracking), the udpstatus::
-//     shouldSendTelemetry gate + its dropFirst/logging, the WiFiUDP fd +
-//     beginPacket/write/endPacket (passed in as the send fn).
+//     snapshot fill (coord snapshot, ToF live, MPU->fusion on demand), the
+//     udpstatus:: shouldSendTelemetry gate + its dropFirst/logging, the
+//     WiFiUDP fd + beginPacket/write/endPacket (passed in as the send fn).
 //   MOVED here: aggregate Snapshot (plain struct below), encodeSnapshot
-//     (the degToDecideg/packStatus lines), cadence + edge state, the
-//     encodeTelemetry call.
+//     (the degToDecideg/packStatus lines), cadence + edge + encode state,
+//     the encodeTelemetry call, and the RX-observation triple (noteCommand /
+//     isDriving — Slice 7: the driving bit is services-owned telemetry
+//     state fed by the transport passthrough, never coordinator state).
 // Subscription placeholder: today the rate is the bonded-default
 // (UdpServer::kTelemetryMs passthrough, no new logic — edge sends cannot
 // fire early because UdpServer polls at exactly the cadence rate, so TX
@@ -62,8 +63,21 @@ inline void encodeSnapshot(const Snapshot& s, udp::TelemetryPacket& pkt) {
 class TelemetryManager {
  public:
   // rateMs is the bonded-default cadence, owned by UdpServer::kTelemetryMs
-  // — always pass that (UdpServer does); never a literal here.
-  explicit TelemetryManager(uint32_t rateMs) : rateMs_(rateMs), lastTxMs_(0), haveSent_(false) {
+  // — always pass that (UdpServer does); never a literal here. staleMs is
+  // the RX-observation freshness window, owned by UdpServer::kStaleMs (the
+  // CFG_COORDINATOR_STALE_MS passthrough) — same pattern: UdpServer always
+  // passes it, never a literal. It defaults to 0 only so existing host
+  // tests (which never drive the RX observation) keep compiling; firmware
+  // must pass the real window.
+  explicit TelemetryManager(uint32_t rateMs, uint32_t staleMs = 0)
+      : rateMs_(rateMs),
+        staleMs_(staleMs),
+        lastTxMs_(0),
+        haveSent_(false),
+        lastV_(0.0f),
+        lastOmega_(0.0f),
+        lastRxMs_(0),
+        haveCmd_(false) {
     for (size_t i = 0; i < sizeof(last_); ++i) {
       last_[i] = 0;
     }
@@ -112,10 +126,36 @@ class TelemetryManager {
   uint32_t lastTxMs() const { return lastTxMs_; }
   bool hasSent() const { return haveSent_; }
 
+  // ── RX observation (Slice 7: driving triple, moved verbatim from ──────
+  // UdpServer) ────────────────────────────────────────────────────────────
+  // The driving bit is a server-local RX observation (last commanded stick
+  // nonzero AND fresh), NOT coordinator state — the coordinator owns no
+  // driving flag. Transport reports every verified drive frame through the
+  // noteDriveCommand passthrough; the encode path reads isDriving(nowMs).
+  // Unsigned subtraction: wrap-safe across the millis() rollover (same
+  // idiom as the coordinator/pairing math). The boundary counts as fresh.
+  void noteCommand(float v, float omega, uint32_t nowMs) {
+    lastV_ = v;
+    lastOmega_ = omega;
+    lastRxMs_ = nowMs;
+    haveCmd_ = true;
+  }
+
+  bool isDriving(uint32_t nowMs) const {
+    return haveCmd_ && (lastV_ != 0.0f || lastOmega_ != 0.0f) && (nowMs - lastRxMs_ <= staleMs_);
+  }
+
+  uint32_t staleMs() const { return staleMs_; }
+
  private:
   uint32_t rateMs_;
+  uint32_t staleMs_;
   uint32_t lastTxMs_;
   bool haveSent_;
+  float lastV_;
+  float lastOmega_;
+  uint32_t lastRxMs_;
+  bool haveCmd_;
   uint8_t last_[udp::kTelemetrySize];
 };
 
