@@ -1,12 +1,12 @@
 # shared/link — core<->head link frame codec (B-link)
 
 Header-only, Arduino-free frame codec: `link_codec.h` (namespace `link`).
-Pure byte math in the `middleware/` style — data transformation only, no
+Pure byte math in the transport-codec style — data transformation only, no
 peripheral lifecycle — shared by firmware (future socket transport) and
 host Unity tests (`core/test/test_link_codec.cpp`).
 
 Normative wire source: `link_codec.h` itself. Phone-wire contracts
-(`core/src/middleware/udp_codec.h`, `shared/protocol/README.md`) are
+(`core/src/transport/udp_codec.h`, `shared/protocol/README.md`) are
 unrelated to this wire.
 
 ## Frame layout
