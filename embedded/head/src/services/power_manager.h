@@ -124,8 +124,8 @@ class PowerManager {
       }
       case CmdTarget::QR:
         // Bench door (`qr` = show demo, `qr clear` = clear): QR/pairing show
-        // modes visible in status below. A link QR/pairing arrives via
-        // showQr()/showPairing(), not here; `qr clear` clears either overlay.
+        // modes visible in status below. A link pairing arrives via
+        // showPairing(), not here; `qr clear` clears either overlay.
         if (cmd.arg != 0) {
           showQrDemo();
         } else {
@@ -157,16 +157,11 @@ class PowerManager {
           (unsigned long)((cam_ != nullptr) ? cam_->fpsMilli() : 0));
   }
 
-  // H2.5 QR handoff: the LinkClient hands the 63B link bitmap here; the
-  // renderer copies + paints under its own present/enabled/dim gates.
-  // Reserved path (superseded by showPairing below): kept so old firmwares'
-  // bitmaps still display.
-  void showQr(const uint8_t* qr63) {
-    if (disp_ != nullptr) {
-      disp_->showQr(qr63);
-    }
-  }
-
+  // Bench demo door: the USB CLI `qr` verb paints the deterministic demo
+  // pattern (FaceRenderer::showQrDemo) with no link involved. (Historical:
+  // the LinkClient handed the 63B wire bitmap through a showQr() wrapper
+  // here; the flag-day removal dropped that trigger and the dead wrapper
+  // with it — the demo path below is untouched.)
   void showQrDemo() {
     if (disp_ != nullptr) {
       disp_->showQrDemo();
@@ -184,7 +179,7 @@ class PowerManager {
   // Pairing handoff (Pre-2): the LinkClient hands the authoritative PIN +
   // validity window here; the renderer re-derives the bitmap locally and
   // paints under its own present/enabled/dim gates. No business logic beyond
-  // forwarding + rival-overlay hiding (same as showQr above).
+  // forwarding + rival-overlay hiding.
   void showPairing(const uint8_t pin6[6], uint16_t validSecs) {
     if (disp_ != nullptr) {
       disp_->showPairing(pin6, validSecs);

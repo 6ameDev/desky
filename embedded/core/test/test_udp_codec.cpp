@@ -311,7 +311,6 @@ void test_linkserver_first_frame_fresh();
 void test_linkserver_duplicate_stale_fresh();
 void test_linkserver_pull_framing();
 void test_linkserver_type_names();
-void test_linkserver_qr_gate_once_per_window_with_peer();
 void test_linkserver_qr_pin_rule();
 void test_linkserver_qr_frame_63_round_trip();
 void test_linkserver_boot_epoch_resync_gate();
@@ -584,7 +583,6 @@ int main() {
   RUN_TEST(test_linkserver_duplicate_stale_fresh);
   RUN_TEST(test_linkserver_pull_framing);
   RUN_TEST(test_linkserver_type_names);
-  RUN_TEST(test_linkserver_qr_gate_once_per_window_with_peer);
   RUN_TEST(test_linkserver_qr_pin_rule);
   RUN_TEST(test_linkserver_qr_frame_63_round_trip);
   RUN_TEST(test_linkserver_boot_epoch_resync_gate);

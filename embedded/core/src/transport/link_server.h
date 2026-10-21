@@ -6,13 +6,13 @@
 // FROZEN B-link contract implemented here; the codec and README are never
 // touched from this file).
 //
-//   UDP 3334 (CFG_LINK_UDP_PORT): RX link frames (FACE/OLED/CAMCTL/QRBITMAP/
+//   UDP 3334 (CFG_LINK_UDP_PORT): RX link frames (FACE/OLED/CAMCTL/
 //     HB/ACK per link_codec.h), CRC/seq validated via the codec. Seq freshness
 //     via linkcode::isFreshSeq on a single shared head->core seq domain (HB +
 //     staged commands share head's counter; received ACKs ride outside it —
 //     see handleAck). Duplicate seq re-ACKs idempotently WITHOUT re-executing
 //     (mirror of the REKEY duplicate rule in udp_server.h). Valid HB replies
-//     HB_ACK (core->head). Valid FACE/OLED/CAMCTL/QRBITMAP stage into
+//     HB_ACK (core->head). Valid FACE/OLED/CAMCTL stage into
 //     LastLinkCmd (bounded copy under lock) for the main loop / future OLED
 //     bridge — applying, for now, is the LOG_I command line. Unknown types
 //     are rejected by the frozen codec and land in the unknown-type drop
@@ -55,11 +55,13 @@
 // PairShow pump above. URL bytes are validated by the shared
 // otamanifest grammar and never logged.
 //
-// Direction map: QRBITMAP still stages inbound head->core into LastLinkCmd
-// (shared head seq domain, ACKed, snapshotCmd handoff below); the outbound
-// pairing path is now PAIRSHOW (8B PIN) + PAIRDONE (empty) on the
-// core->head tx domain (sendUnicast). The two never share a counter; the
-// mapping is explicit by construction.
+// Direction map: the pairing path is PAIRSHOW (8B PIN) + PAIRDONE (empty)
+// on the core->head tx domain (sendUnicast). The two never share a counter;
+// the mapping is explicit by construction. (Historical: Slice 6c pushed the
+// 63B QRBITMAP core->head the same way; the flag-day removal dropped every
+// QRBITMAP send/stage path — a decoded QRBITMAP frame now falls to the
+// unexpected-inbound drop like other wrong-direction types, and the codec
+// reservation in shared/link/link_codec.h stays frozen.)
 
 // Auth: NONE in this task beyond CRC+seq — transport-only trust, exactly like
 // the AP passphrase (documented in shared/link/README). A keyed link can come
@@ -214,17 +216,11 @@ inline const char* typeName(uint8_t type) {
   }
 }
 
-// Send gate (host-testable, historical QR shape): staged && !alreadySent &&
-// haveHeadPeer. Kept under the QR name so the pinned unit seam stays green;
-// the Pre-2 PairShow pump stages 6 digits (not the 63B bitmap) through the
-// same once-per-window shape, and the OTA gate below shares it.
-inline bool qrReadyToSend(bool stagedValid, bool alreadySent, bool haveHeadPeer) {
-  return stagedValid && !alreadySent && haveHeadPeer;
-}
-
-// OTA send gate (host-testable): same once-per-command shape as the gate
-// above — one unicast of the staged URL to the HB-pinned head, silent wait
-// while no peer is linked.
+// OTA send gate (host-testable): staged && !alreadySent && haveHeadPeer —
+// one unicast of the staged URL to the HB-pinned head, silent wait while no
+// peer is linked. (Historical: this once-per-window shape carried the Slice
+// 6c QR name; the QRBITMAP send path is gone, so the dead helper went with
+// it — the Pre-2 PairShow pump stages 6 digits, not the 63B bitmap.)
 inline bool otaReadyToSend(bool stagedValid, bool alreadySent, bool haveHeadPeer) {
   return stagedValid && !alreadySent && haveHeadPeer;
 }
@@ -333,7 +329,6 @@ class LinkServer {
   uint32_t ackRx() const { return ackRx_; }
   uint32_t ackTx() const { return ackTx_; }
   uint32_t hbAckTx() const { return hbAckTx_; }
-  uint32_t qrTx() const { return qrTx_; }
   uint32_t otaTx() const { return otaTx_; }
   uint32_t txFail() const { return txFail_; }
   uint32_t tcpDrop() const { return tcpDrop_; }
@@ -375,9 +370,6 @@ class LinkServer {
     }
     const char* what = "frame";
     switch (type) {
-      case linkcode::kTypeQrBitmap:
-        what = "qr";
-        break;
       case linkcode::kTypePairShow:
         what = "pairshow";
         break;
@@ -405,7 +397,7 @@ class LinkServer {
   // the file — the old lock-free increments in the ACK paths are gone),
   // encodes, and unicasts — serializing the shared WiFiUDP object across
   // the link task (ACK/HB_ACK replies) and the main-loop ability pumps
-  // (QR/OTA via sendUnicast above). txFail_ + LOG_W live here (verbatim
+  // (OTA via sendUnicast above). txFail_ + LOG_W live here (verbatim
   // strings from the old per-type paths); per-type success counters and
   // success logs stay at the call sites (they differ per type).
   enum class SendVerdict : uint8_t { kOk, kEncodeFail, kSendFail };
@@ -490,15 +482,14 @@ class LinkServer {
                static_cast<unsigned>(headPort_));
     }
     LOG_I("LINK",
-          "acct udp=%lu/%lu hb=%lu cmd=%lu ack=%lu/%lu ha=%lu qr=%lu ota=%lu fail=%lu frm=%lu B=%lu fps=%lu tcp=%lu "
+          "acct udp=%lu/%lu hb=%lu cmd=%lu ack=%lu/%lu ha=%lu ota=%lu fail=%lu frm=%lu B=%lu fps=%lu tcp=%lu "
           "peer=%s sq=%u boot=%08lx tx=%u",
           static_cast<unsigned long>(udpRx_), static_cast<unsigned long>(udpDrop_), static_cast<unsigned long>(hbRx_),
           static_cast<unsigned long>(cmdRx_), static_cast<unsigned long>(ackRx_), static_cast<unsigned long>(ackTx_),
-          static_cast<unsigned long>(hbAckTx_), static_cast<unsigned long>(qrTx_), static_cast<unsigned long>(otaTx_),
-          static_cast<unsigned long>(txFail_), static_cast<unsigned long>(framesRx_),
-          static_cast<unsigned long>(bytesRx_), static_cast<unsigned long>(lastFps_),
-          static_cast<unsigned long>(tcpDrop_), peer, static_cast<unsigned>(lastSeq_),
-          static_cast<unsigned long>(lastBootId_), static_cast<unsigned>(txSeq_));
+          static_cast<unsigned long>(hbAckTx_), static_cast<unsigned long>(otaTx_), static_cast<unsigned long>(txFail_),
+          static_cast<unsigned long>(framesRx_), static_cast<unsigned long>(bytesRx_),
+          static_cast<unsigned long>(lastFps_), static_cast<unsigned long>(tcpDrop_), peer,
+          static_cast<unsigned>(lastSeq_), static_cast<unsigned long>(lastBootId_), static_cast<unsigned>(txSeq_));
   }
 
   // UDP: drain every pending datagram; decode via the codec, then demux by
@@ -557,7 +548,6 @@ class LinkServer {
       case linkcode::kTypeFace:
       case linkcode::kTypeOled:
       case linkcode::kTypeCamCtl:
-      case linkcode::kTypeQrBitmap:
         handleCmd(f, rip, rport);
         break;
       case linkcode::kTypeAck:
@@ -568,9 +558,11 @@ class LinkServer {
       case linkcode::kTypeOta:
       case linkcode::kTypePairShow:
       case linkcode::kTypePairDone:
+      case linkcode::kTypeQrBitmap:
         // Core->head direction on the UDP socket: never valid inbound here
         // (JPEG rides TCP; OTA/PairShow/PairDone are staged ability-side and
-        // sent by the OTA/PIN pumps via sendUnicast). Silent drop, throttled.
+        // sent by the OTA/PIN pumps via sendUnicast; QRBITMAP is reserved and
+        // never sent since the flag-day removal). Silent drop, throttled.
         dropFirst(firstUnexpectedDrop_, "drop link unexpected %s on udp (first of boot)", linkserver::typeName(f.type));
         LOG_EVERY_N(20, "LINK", "drop link unexpected %s on udp", linkserver::typeName(f.type));
         ++udpDrop_;
@@ -639,7 +631,7 @@ class LinkServer {
     LOG_EVERY_N(10, "LINK", "hb seq=%u", static_cast<unsigned>(f.seq));
   }
 
-  // FACE/OLED/CAMCTL/QRBITMAP: freshness-gated; fresh stages a bounded copy
+  // FACE/OLED/CAMCTL: freshness-gated; fresh stages a bounded copy
   // under lock + ACKs + LOG_Is the command (type/seq/len only — never payload
   // bytes); duplicates re-ACK WITHOUT re-staging or re-logging at INFO;
   // stale drops.
@@ -872,7 +864,7 @@ class LinkServer {
   linkcode::Reassembler reasm_;
   LastLinkCmd lastCmd_;
   // HB-pinned head peer: unicast target for core->head frames (ACK/HB_ACK
-  // replies + the ability-pump QR/OTA unicasts via sendUnicast). Pinned
+  // replies + the ability-pump OTA unicasts via sendUnicast). Pinned
   // from every non-stale HB (fresh + duplicate re-pin; stale never moves
   // it) — the link task's only notion of "a head is here".
   IPAddress headIp_;
@@ -880,7 +872,7 @@ class LinkServer {
   bool haveHeadPeer_ = false;
   // Seq domains: head->core (HB + staged commands share head's counter;
   // first-ever frame accepted regardless of value) vs our core->head tx
-  // counter (txSeq_++, single writer in sendTo, for ACK/HB_ACK/QR/OTA
+  // counter (txSeq_++, single writer in sendTo, for ACK/HB_ACK/OTA
   // frames). Epoch domain: the head's per-boot bootId
   // (HB payload) — a changed epoch resyncs the seq gate (head rebooted),
   // same-epoch frames keep the strictly-greater gate.
@@ -897,7 +889,6 @@ class LinkServer {
   uint32_t ackRx_ = 0;
   uint32_t ackTx_ = 0;
   uint32_t hbAckTx_ = 0;
-  uint32_t qrTx_ = 0;
   uint32_t otaTx_ = 0;
   uint32_t txFail_ = 0;
   uint32_t framesRx_ = 0;

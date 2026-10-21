@@ -36,7 +36,6 @@ void test_wifilink_map_face();
 void test_wifilink_map_oled_rows();
 void test_wifilink_map_cam();
 void test_wifilink_map_rejects_non_commands();
-void test_wifilink_qr_frame_gate();
 void test_wifilink_hb_and_retry_gates();
 void test_wifilink_assoc_step_begins_once_then_waits();
 void test_wifilink_assoc_step_connects_on_later_tick();
@@ -151,7 +150,6 @@ int main() {
   RUN_TEST(test_wifilink_map_oled_rows);
   RUN_TEST(test_wifilink_map_cam);
   RUN_TEST(test_wifilink_map_rejects_non_commands);
-  RUN_TEST(test_wifilink_qr_frame_gate);
   RUN_TEST(test_wifilink_hb_and_retry_gates);
   RUN_TEST(test_wifilink_assoc_step_begins_once_then_waits);
   RUN_TEST(test_wifilink_assoc_step_connects_on_later_tick);

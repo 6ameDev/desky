@@ -93,13 +93,6 @@ void test_wifilink_map_rejects_non_commands() {
   TEST_ASSERT_FALSE(wifilink::mapCmd(0xFF, &one, 1, cmd));
 }
 
-void test_wifilink_qr_frame_gate() {
-  TEST_ASSERT_TRUE(wifilink::isQrFrame(linkcode::kTypeQrBitmap, linkcode::kQrBitmapLen));
-  TEST_ASSERT_FALSE(wifilink::isQrFrame(linkcode::kTypeQrBitmap, linkcode::kQrBitmapLen - 1));
-  TEST_ASSERT_FALSE(wifilink::isQrFrame(linkcode::kTypeQrBitmap, linkcode::kQrBitmapLen + 1));
-  TEST_ASSERT_FALSE(wifilink::isQrFrame(linkcode::kTypeFace, 1));
-}
-
 void test_wifilink_hb_and_retry_gates() {
   TEST_ASSERT_TRUE(wifilink::shouldSendHb(1000, 0, 1000));
   TEST_ASSERT_FALSE(wifilink::shouldSendHb(999, 0, 1000));
