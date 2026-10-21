@@ -24,7 +24,8 @@
 #include "../src/abilities/face/face_codec.h"        // qrdisplay:: + pairdisplay:: (Arduino-free,
                                                      // incl. the shared qr:: encoder through the head TU)
 #include "../src/abilities/pairing/pairing_codec.h"  // pairinglink:: gates (+ wifilink:: spelling)
-#include "../src/transport/link_codec.h"             // linkcode:: alias + wifilink:: (canonical
+#include "../src/abilities/pairing/pairing_manager.h"  // PairingManager (Arduino-free pure policy over FaceOverlayManager)
+#include "../src/transport/link_codec.h"               // linkcode:: alias + wifilink:: (canonical
 // linkcode:: spelling is pinned by core's test_link_codec.cpp goldens; head TUs
 // must use the alias — see the POSIX ::link note in link_codec.h)
 
@@ -219,8 +220,8 @@ void test_pairdisplay_pin_line_geometry() {
   TEST_ASSERT_TRUE(qrdisplay::kPinX >= qrdisplay::kX0 + qrdisplay::kExtentPx);  // no overlap
 }
 
-void test_pairshow_pin_to_bitmap_equivalence() {
-  // Authoritative-PIN identity: the locally re-derived bitmap for "123456"
+void test_pairshow_pin_to_bitmap_equivalence() {  // Authoritative-PIN identity: the locally re-derived bitmap for
+                                                  // "123456"
   // equals the existing packed golden — this keeps the bitmap suite
   // meaningful now that no bitmap rides the wire (rendered ONCE at show).
   const uint8_t code[6] = {'1', '2', '3', '4', '5', '6'};
@@ -238,4 +239,79 @@ void test_pairshow_pin_to_bitmap_equivalence() {
   // Non-digit PINs never encode (the show path fails closed before paint).
   const uint8_t bad[6] = {'1', '2', '3', '4', '5', 'x'};
   TEST_ASSERT_FALSE(qr::encode6Digits(bad, modules));
+}
+
+void test_pairing_manager_bad_pin_noop() {
+  // Fail-closed: a null/bad PIN changes no overlay state (single home stays
+  // in FaceOverlayManager — the manager keeps no shadow copy).
+  FaceOverlayManager face;
+  PairingManager mgr;
+  mgr.attach(&face);
+  const uint8_t bad[6] = {'1', '2', '3', '4', '5', 'x'};
+  TEST_ASSERT_FALSE(mgr.show(bad, 120, 1000));
+  TEST_ASSERT_FALSE(mgr.active());
+  TEST_ASSERT_FALSE(face.pairActive());
+  TEST_ASSERT_FALSE(mgr.show(nullptr, 120, 1000));
+  TEST_ASSERT_FALSE(mgr.active());
+  TEST_ASSERT_FALSE(face.pairActive());
+}
+
+void test_pairing_manager_show_rearms_deadline() {
+  // Every fresh show re-arms the valid-secs deadline (no once-latch).
+  FaceOverlayManager face;
+  PairingManager mgr;
+  mgr.attach(&face);
+  const uint8_t pin[6] = {'1', '2', '3', '4', '5', '6'};
+  TEST_ASSERT_TRUE(mgr.show(pin, 120, 1000));  // deadline 121000
+  TEST_ASSERT_TRUE(mgr.active());
+  TEST_ASSERT_FALSE(mgr.expired(120999));
+  // A shorter window proves the new deadline replaced the old one.
+  const uint8_t other[6] = {'6', '5', '4', '3', '2', '1'};
+  TEST_ASSERT_TRUE(mgr.show(other, 60, 5000));  // deadline 65000
+  TEST_ASSERT_TRUE(mgr.active());
+  TEST_ASSERT_FALSE(mgr.expired(64999));
+  TEST_ASSERT_TRUE(mgr.expired(65000));
+  TEST_ASSERT_TRUE(face.pairExpired(65000));
+}
+
+void test_pairing_manager_clear_when_idle_noop() {
+  // Clear with nothing up is a no-op (only real transitions log downstream).
+  FaceOverlayManager face;
+  PairingManager mgr;
+  mgr.attach(&face);
+  TEST_ASSERT_FALSE(mgr.clear());
+  TEST_ASSERT_FALSE(mgr.active());
+}
+
+void test_pairing_manager_show_clear_roundtrip() {
+  // Show arms, clear disarms, and the deadline gate follows the single home
+  // (cleared => never expired, no stale deadline).
+  FaceOverlayManager face;
+  PairingManager mgr;
+  mgr.attach(&face);
+  const uint8_t pin[6] = {'1', '2', '3', '4', '5', '6'};
+  TEST_ASSERT_TRUE(mgr.show(pin, 10, 1000));  // deadline 11000
+  TEST_ASSERT_TRUE(mgr.active());
+  TEST_ASSERT_FALSE(mgr.expired(10999));
+  TEST_ASSERT_TRUE(mgr.expired(11000));
+  TEST_ASSERT_TRUE(mgr.clear());
+  TEST_ASSERT_FALSE(mgr.active());
+  TEST_ASSERT_FALSE(face.pairActive());
+  TEST_ASSERT_FALSE(mgr.expired(11000));
+  TEST_ASSERT_FALSE(mgr.expired(999999));
+}
+
+void test_pairing_manager_null_face_safe() {
+  // Never attached (or attached null): every call is a safe no-op.
+  PairingManager mgr;
+  const uint8_t pin[6] = {'1', '2', '3', '4', '5', '6'};
+  TEST_ASSERT_FALSE(mgr.show(pin, 120, 1000));
+  TEST_ASSERT_FALSE(mgr.clear());
+  TEST_ASSERT_FALSE(mgr.active());
+  TEST_ASSERT_FALSE(mgr.expired(999999));
+  mgr.attach(nullptr);
+  TEST_ASSERT_FALSE(mgr.show(pin, 120, 1000));
+  TEST_ASSERT_FALSE(mgr.clear());
+  TEST_ASSERT_FALSE(mgr.active());
+  TEST_ASSERT_FALSE(mgr.expired(999999));
 }

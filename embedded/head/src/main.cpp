@@ -132,7 +132,7 @@ void setup() {
   (void)oledOk;  // NEVER asserted: absent OLED is the normal on-MB state.
   g_power.begin(&g_cam, &g_display);
   g_coordinator.begin(&g_power, &g_display);  // ONE table behind both doors
-  g_pairing.attach(&g_power);                 // PairShow/Done handoff (ability layer, never owned here)
+  g_pairing.attach(&g_display.overlays());    // PairShow/Done policy over the single overlay home (never owned here)
   g_link.begin();                             // PARKED stub (retained for switch-back).
   {
     StubHandlers sh;
@@ -188,7 +188,7 @@ void loop() {
   if (now - g_lastAliveMs >= 5000) {
     g_lastAliveMs = now;
     LOG_I("HEAD", "alive cam=%s oled=%s face=%s qr=%s", camStateName(g_power.camState()),
-          oledStateName(g_power.oledState()), faceName(g_power.faceId()), g_power.qrActive() ? "on" : "off");
+          oledStateName(g_power.oledState()), faceName(g_power.faceId()), g_coordinator.qrActive() ? "on" : "off");
     Diagnostics::logWatermarks("HEAD");
   }
 }

@@ -208,6 +208,13 @@ class FaceRenderer : public IActuator {
 
   bool pairActive() const { return mgr_.pairActive(); }
 
+  // Overlay owner share: the pairing ability (PairingManager, Arduino-free
+  // pure policy) attaches to this same instance so the valid-secs deadline
+  // lives in exactly one place — the render task keeps owning paint, logs,
+  // and expiry cadence over it.
+  FaceOverlayManager& overlays() { return mgr_; }
+  const FaceOverlayManager& overlays() const { return mgr_; }
+
   // OTA progress mode (carrier trigger): the updater drives this — showOta
   // arms/refreshes the fill bar (FETCH: fill proportion, VERIFY/COMMIT:
   // full bar), failOta flips to the alert face, hideOta clears to the stored
