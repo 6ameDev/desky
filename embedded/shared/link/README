@@ -41,9 +41,11 @@ new types require a codec bump on both sides.
 | `0x01` | FACE     | core->head  | Face id `u8` (1B; clamped downstream, not here)    |
 | `0x02` | OLED     | core->head  | Mode `u8` (1B): 0=ON 1=DIM 2=OFF                   |
 | `0x03` | CAMCTL   | core->head  | Camera `u8` (1B): 0=off 1=on                      |
-| `0x04` | QRBITMAP | core->head  | V1 21x21 packed rows, MSB-first (exactly 63B)      |
+| `0x04` | QRBITMAP | core->head (reserved) | V1 21x21 packed rows, MSB-first (exactly 63B; see pairing contract) |
 | `0x05` | OTA      | core->head  | OTA pull URL bytes, no NUL (1..128B)               |
-| `0x10` | JPEG     | core->head  | Raw JPEG bytes (0..1024B)                          |
+| `0x06` | PAIRSHOW | core->head  | 6 ASCII digits + valid-seconds `u16BE` (8B)        |
+| `0x07` | PAIRDONE | core->head  | Empty (0B; the frame presence is the signal)       |
+| `0x10` | JPEG     | head->core  | Raw JPEG bytes (0..1024B; stills over TCP)         |
 | `0x20` | HB       | head->core  | `rssi i8` + `channel u8` + `freeHeap u32BE` + `bootId u32BE` (10B) |
 | `0x21` | HB_ACK   | core->head  | `channel u8` + `era/resync u32BE` (5B)              |
 | `0x22` | ACK      | either      | Acked seq `u16BE` (2B)                             |
@@ -77,6 +79,73 @@ null-safe, no heap — fixed caller-owned buffers at every call site.
 QR coupling note: the codec takes generic bytes plus an explicit 63B
 length check and never includes `qr_pairing.h`, so it stays decoupled
 from the QR encoder. 63B = 3 packed bytes/row x 21 rows.
+
+JPEG direction note: the envelope is direction-free (the length gate
+accepts 0..1024B either way), but actual use is head->core stills over
+TCP (`wifi_link.h` `serviceStill`: one frame per `snap` trigger, chunked
+per the MTU rule). Inbound JPEG on the UDP socket is dropped on both
+ends (wrong-direction class: core `link_server.h`, head `wifi_link.h`).
+
+## Pairing-screen contract (Pre-2, normative)
+
+Supersedes the Slice 6c QR-bitmap push: the core sends the 6 digits +
+validity window and the head renders them, so no bitmap rides the wire.
+Types `0x06`/`0x07` are additive (BUMP RULE above); `0x04` is frozen and
+never reused.
+
+### PAIRSHOW (`0x06`, core->head, exactly 8B)
+
+| Offset | Size | Field       | Meaning                                              |
+| ------ | ---- | ----------- | ---------------------------------------------------- |
+| 0..5   | 6    | digits      | 6 ASCII digits `'0'`..`'9'`                          |
+| 6..7   | 2    | valid-secs  | Validity window `u16BE` (0 = already-expired display) |
+
+The digit vocabulary is validated fail-closed both ways by
+`packPairShow`/`unpackPairShow` (non-digit rejects); the frame codec
+checks the 8B length only, never values.
+
+Who sends when: `PairingTask::pumpPairShow` (main loop) composes the
+payload once per open window (`validSecs = kWindowMs/1000`) and hands
+one frame to `sendUnicast`. No head linked -> the pump waits silently;
+window closed -> the send latch unlatches for the next window.
+
+### PAIRDONE (`0x07`, core->head, empty)
+
+No payload — the frame presence is the signal. The contract is
+fixed-empty (not a 0..N range), so any stowaway byte fails the decode
+gate.
+
+Who sends when: `PairingTask::notifyPairingDone` fire-and-forget via
+`sendUnicast` on pairing completion — the pair-ok bond (`handlePairReq`),
+a signed unbond (`handleUnbond`), and `clearBond` (unpair/factory
+reset). Peerless = silent no-op.
+
+### Head behavior (normative)
+
+- Gates: `isPairShowFrame` (8B) / `isPairDoneFrame` (0B) check the
+  length contract; `unpackPairShow` re-validates the digits. Bad digits
+  are unexecutable: dropped with no ACK (same fail-closed shape as a bad
+  FACE/OLED/CAMCTL value).
+- Fresh PAIRSHOW hands the PIN + window to `showPairing` and ACKs;
+  fresh PAIRDONE calls `clearPairing("link")` and ACKs. Duplicates only
+  re-ACK, never re-render/re-clear; stale frames drop (shared seq gate,
+  same as commands).
+- Render: the QR bitmap is re-derived LOCALLY via `qr::encode6Digits`
+  into the existing 63B staging path; the digits print beside it in the
+  two-column geometry (`face_renderer.h`: QR block origin (3, 3), 58px
+  square with full quiet zone; PIN line at x=66 y=28). Deadline =
+  show-time + validSecs*1000; the render task self-clears on expiry.
+  Clear paths: PAIRDONE, any FACE command, the valid-secs deadline, CLI.
+  One live overlay at a time (pairing vs legacy-QR vs OTA wins in turn).
+- Reserved `0x04` QRBITMAP is still displayed (`showQr` path, 63B
+  row-major MSB-first) so old firmwares' bitmaps keep working; never
+  removed.
+
+No flag day: the bump is additive, so mixed fleets degrade to
+drop-as-unknown, never misparse. An old head drops PAIRSHOW/PAIRDONE as
+unknown (no pairing screen; the serial LOG line still carries the code),
+while an old core + new head keeps working through the reserved QRBITMAP
+display path.
 
 ## MTU / fragmentation rule
 

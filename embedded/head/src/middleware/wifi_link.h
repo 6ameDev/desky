@@ -8,8 +8,8 @@
 // LinkStub stays instantiated for switch-back, this client is the live path.
 //
 //   UDP CFG_LINK_UDP_PORT (3334): HB head->core at 1Hz (rssi/channel/freeHeap/
-//     bootId per the codec HB type) + ACK replies; RX FACE/OLED/CAMCTL/QRBITMAP
-//     commands + HB_ACK on the same socket. HB_ACK tracked: linkDown after
+//     bootId per the codec HB type) + ACK replies; RX FACE/OLED/CAMCTL/
+//     QRBITMAP/PAIRSHOW/PAIRDONE commands + HB_ACK on the same socket. HB_ACK tracked: linkDown after
 //     3 missed ACKs (~3s) -> re-associate + re-AWAKE. The tx seq domain is
 //     MONOTONIC within a boot (never reset on re-assoc); the per-boot bootId
 //     epoch lets the core resync after a head reboot instead of dropping low
@@ -133,6 +133,10 @@ inline const char* typeName(uint8_t type) {
       return "CAMCTL";
     case linkcode::kTypeQrBitmap:
       return "QRBITMAP";
+    case linkcode::kTypePairShow:
+      return "PAIRSHOW";
+    case linkcode::kTypePairDone:
+      return "PAIRDONE";
     case linkcode::kTypeOta:
       return "OTA";
     case linkcode::kTypeJpeg:
@@ -216,8 +220,28 @@ inline bool mapCmd(uint8_t type, const uint8_t* payload, uint16_t len, PowerComm
 // QRBITMAP in this task: the codec-validated 63B length is the whole
 // contract. Fresh frames hand their rows to the FaceRenderer via the power
 // manager (H2.5 show mode); duplicates only re-ACK, never re-render.
+// Reserved type (superseded by PAIRSHOW/PAIRDONE below): still displayed so
+// old firmwares' bitmaps keep working; never removed.
 inline bool isQrFrame(uint8_t type, uint16_t len) {
   return type == linkcode::kTypeQrBitmap && len == linkcode::kQrBitmapLen;
+}
+
+// PAIRSHOW in this task: the codec-validated 8B length is the gate here;
+// the 6-digit vocabulary lives once in linkcode::pack/unpackPairShow (the
+// shared digits+valid-secs contract), which handleCmd calls — never
+// re-derived. Fresh frames hand the PIN + window to the FaceRenderer via
+// the power manager (authoritative-PIN show mode) + ACKs; duplicates only
+// re-ACK, never re-render.
+inline bool isPairShowFrame(uint8_t type, uint16_t len) {
+  return type == linkcode::kTypePairShow && len == linkcode::kPairShowLen;
+}
+
+// PAIRDONE in this task: the fixed-empty contract (0B — the frame presence
+// is the signal, enforced by the codec length gate in decodeFrame). Fresh
+// frames clear the pairing show via the power manager + ACKs; duplicates
+// only re-ACK, never re-clear.
+inline bool isPairDoneFrame(uint8_t type, uint16_t len) {
+  return type == linkcode::kTypePairDone && len == linkcode::kPairDoneLen;
 }
 
 // OTA in this task: the codec-validated 1..128B length is the gate here;
@@ -466,12 +490,13 @@ class LinkClient {
   // CLI `link` / `status` door: one counters-only line (never payload bytes).
   void logStatus() const {
     LOG_I("LINK",
-          "link state=%s assoc=%d rssi=%d ch=%u hb=%lu/%lu miss=%u cmd=%lu qr=%lu ota=%lu still=%lu/%lu fail=%lu "
-          "ackT=%lu drop=%lu tx=%u boot=%08lx",
+          "link state=%s assoc=%d rssi=%d ch=%u hb=%lu/%lu miss=%u cmd=%lu qr=%lu pair=%lu/%lu ota=%lu still=%lu/%lu "
+          "fail=%lu ackT=%lu drop=%lu tx=%u boot=%08lx",
           linkUp_ ? "up" : "down", associated_ ? 1 : 0, static_cast<int>(lastRssi_),
           static_cast<unsigned>(lastChannel_), static_cast<unsigned long>(hbSent_),
           static_cast<unsigned long>(hbAckRx_), static_cast<unsigned>(hbSinceAck_), static_cast<unsigned long>(cmdRx_),
-          static_cast<unsigned long>(qrRx_), static_cast<unsigned long>(otaRx_),
+          static_cast<unsigned long>(qrRx_), static_cast<unsigned long>(pairShowRx_),
+          static_cast<unsigned long>(pairDoneRx_), static_cast<unsigned long>(otaRx_),
           static_cast<unsigned long>(framesSent_), static_cast<unsigned long>(stillDrop_),
           static_cast<unsigned long>(txFail_), static_cast<unsigned long>(ackTx_), static_cast<unsigned long>(udpDrop_),
           static_cast<unsigned>(txSeq_), static_cast<unsigned long>(bootId_));
@@ -563,6 +588,8 @@ class LinkClient {
       case linkcode::kTypeOled:
       case linkcode::kTypeCamCtl:
       case linkcode::kTypeQrBitmap:
+      case linkcode::kTypePairShow:
+      case linkcode::kTypePairDone:
       case linkcode::kTypeOta:
         handleCmd(f, rip, rport);
         break;
@@ -612,11 +639,14 @@ class LinkClient {
 
   // Core->head command: freshness-gated; fresh executes once via the ONE
   // command table + ACKs; duplicates re-ACK WITHOUT re-executing; stale
-  // drops. QRBITMAP hands its 63 rows to the FaceRenderer via the power
-  // manager (H2.5 show mode) + ACKs; duplicates only re-ACK. OTA hands its
-  // URL bytes to the existing updater entry (startIfNewer: manifest
-  // pull-gate + start, OLED progress bar inside) + ACKs; duplicates only
-  // re-ACK, never re-trigger an in-flight download.
+  // drops. PAIRSHOW hands its 6 digits + validity window to the FaceRenderer
+  // via the power manager (authoritative-PIN show mode) + ACKs; PAIRDONE
+  // clears it + ACKs; duplicates only re-ACK. QRBITMAP hands its 63 rows to
+  // the FaceRenderer via the power manager (H2.5 show mode, reserved path
+  // for old firmwares) + ACKs; duplicates only re-ACK. OTA hands its URL
+  // bytes to the existing updater entry (startIfNewer: manifest pull-gate +
+  // start, OLED progress bar inside) + ACKs; duplicates only re-ACK, never
+  // re-trigger an in-flight download.
   void handleCmd(const linkcode::Frame& f, const IPAddress& rip, uint16_t rport) {
     const wifilink::RxVerdict v = wifilink::classifyRx(haveCmdSeq_, lastCmdSeq_, f.seq);
     if (v == wifilink::RxVerdict::kStale) {
@@ -656,6 +686,46 @@ class LinkClient {
       }
       ota_->startIfNewer(url);  // own logs: versions + counters only
       LOG_I("LINK", "ota seq=%u len=%u", static_cast<unsigned>(f.seq), static_cast<unsigned>(f.payloadLen));
+      return;
+    }
+    if (wifilink::isPairShowFrame(f.type, f.payloadLen)) {
+      uint8_t pin[6] = {};
+      uint16_t validSecs = 0;
+      if (!linkcode::unpackPairShow(f.payload, f.payloadLen, pin, validSecs)) {
+        // Bad digits: unexecutable, no ACK for a frame we cannot apply
+        // (same fail-closed shape as the bad-value FACE/OLED/CAMCTL drop).
+        dropFirst(firstDrop_, "drop link bad pairshow seq=%u (first of boot)", static_cast<unsigned>(f.seq));
+        LOG_EVERY_N(20, "LINK", "drop link bad pairshow seq=%u", static_cast<unsigned>(f.seq));
+        ++udpDrop_;
+        return;
+      }
+      haveCmdSeq_ = true;
+      lastCmdSeq_ = f.seq;
+      ++pairShowRx_;
+      ++cmdRx_;
+      sendAck(rip, rport, f.seq);
+      // Handoff (Pre-2): the 8B payload hands digits + window to the
+      // renderer synchronously (stack pin outlives this call; no heap, no
+      // retained pointer). Any FACE/OTA command or the valid-secs deadline
+      // clears it. Re-arms on every fresh show.
+      if (power_ != nullptr) {
+        power_->showPairing(pin, validSecs);
+      }
+      LOG_I("LINK", "pairshow seq=%u valid=%us", static_cast<unsigned>(f.seq), static_cast<unsigned>(validSecs));
+      return;
+    }
+    if (wifilink::isPairDoneFrame(f.type, f.payloadLen)) {
+      haveCmdSeq_ = true;
+      lastCmdSeq_ = f.seq;
+      ++pairDoneRx_;
+      ++cmdRx_;
+      sendAck(rip, rport, f.seq);
+      // Handoff (Pre-2): pairing complete — clear the PIN/QR show (no-op
+      // when nothing is up, so only real transitions log downstream).
+      if (power_ != nullptr) {
+        power_->clearPairing("link");
+      }
+      LOG_I("LINK", "pairdone seq=%u", static_cast<unsigned>(f.seq));
       return;
     }
     if (wifilink::isQrFrame(f.type, f.payloadLen)) {
@@ -841,6 +911,8 @@ class LinkClient {
   uint32_t cmdRx_;
   uint32_t ackTx_;
   uint32_t qrRx_;
+  uint32_t pairShowRx_ = 0;
+  uint32_t pairDoneRx_ = 0;
   uint32_t otaRx_ = 0;
   uint32_t framesSent_;
   uint32_t stillDrop_;

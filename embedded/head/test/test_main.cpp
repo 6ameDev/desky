@@ -92,6 +92,17 @@ void test_otadisplay_geometry_and_fill();
 void test_otadisplay_state_transitions();
 void test_link_ota_version_vocabulary_and_gate();
 
+// Authoritative-PIN pairing display (kTypePairShow/kTypePairDone bump +
+// side-by-side PIN geometry + deadline state), defined in test_pair_show.cpp.
+void test_pairshow_literal_contract();
+void test_pairshow_shared_codec_pack_unpack();
+void test_pairshow_producer_bytes_to_renderer_exact();
+void test_pairshow_duplicate_reack_and_stale_drop_cases();
+void test_pairdisplay_pin_validation_and_state();
+void test_pairdisplay_deadline_expiry();
+void test_pairdisplay_pin_line_geometry();
+void test_pairshow_pin_to_bitmap_equivalence();
+
 // OTA pull client pure top half (URL parse, version, validation, state
 // machine) + CLI `ota <url>` verb, defined in test_ota_client.cpp.
 void test_ota_parse_plain_host();
@@ -185,6 +196,14 @@ int main() {
   RUN_TEST(test_otadisplay_geometry_and_fill);
   RUN_TEST(test_otadisplay_state_transitions);
   RUN_TEST(test_link_ota_version_vocabulary_and_gate);
+  RUN_TEST(test_pairshow_literal_contract);
+  RUN_TEST(test_pairshow_shared_codec_pack_unpack);
+  RUN_TEST(test_pairshow_producer_bytes_to_renderer_exact);
+  RUN_TEST(test_pairshow_duplicate_reack_and_stale_drop_cases);
+  RUN_TEST(test_pairdisplay_pin_validation_and_state);
+  RUN_TEST(test_pairdisplay_deadline_expiry);
+  RUN_TEST(test_pairdisplay_pin_line_geometry);
+  RUN_TEST(test_pairshow_pin_to_bitmap_equivalence);
   RUN_TEST(test_ota_parse_plain_host);
   RUN_TEST(test_ota_parse_port_and_deep_path);
   RUN_TEST(test_ota_parse_bare_host_defaults_path);

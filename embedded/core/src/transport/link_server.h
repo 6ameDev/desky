@@ -34,28 +34,32 @@
 // stays 4096 words; the UDP path uses a 1034B stack frame (kMaxFrame) and
 // everything else is counters. No heap/String anywhere in the RX/TX path.
 //
-// H2.5 QR send (Slice 6c split): the pairing window's 63B bitmap stage
-// lives in pairing::PairingTask (staged bitmap + sent latch, policy side,
-// never sockets); the main loop calls PairingTask::pumpQrLink, which packs
-// and hands one QRBITMAP frame per window to sendUnicast below (transport
-// side, pinned head peer). No head linked -> the pump waits silently;
-// window closed -> the pump unlatches for the next window. Duplicate
-// protection is the existing seq/ACK machinery on both ends.
+// H2.5 PIN show (Pre-2 split, supersedes the Slice 6c QR bitmap stage):
+// the pairing window's 6-digit code + valid-seconds stage lives in
+// pairing::PairingTask (staged code + sent latch, policy side, never
+// sockets); the main loop calls PairingTask::pumpPairShow, which composes
+// the 8B PairShow payload via linkcode::packPairShow and hands one
+// PAIRSHOW frame per window to sendUnicast below (transport side, pinned
+// head peer); pairing completion goes out as the empty PAIRDONE frame via
+// PairingTask::notifyPairingDone. No head linked -> the pump waits
+// silently; window closed -> the pump unlatches for the next window.
+// Duplicate protection is the existing seq/ACK machinery on both ends.
+// (Historical: Slice 6c sent the 63B QRBITMAP the same way.)
 //
 // Carrier OTA trigger (same split): the `otahead` URL stage lives in
 // OtaStaging (abilities/ota, policy side, never sockets); the main loop
 // calls OtaStaging::pumpOtaLink, which hands one OTA frame per command to
 // sendUnicast. Every valid `otahead` command replaces the stage and
 // re-arms the send (latest command wins); a head mid-download ignores the
-// re-trigger via its in-flight guard. Same silent-wait / consume-on-attempt
-// shape as the QR pump above. URL bytes are validated by the shared
+// re-trigger via its in-flight guard. Same silent-wait shape as the
+// PairShow pump above. URL bytes are validated by the shared
 // otamanifest grammar and never logged.
 //
-// Direction map: QRBITMAP flows BOTH ways on different seq domains —
-// inbound head->core frames stage into LastLinkCmd (shared head seq
-// domain, ACKed, snapshotCmd handoff below) while the outbound pump path
-// above rides the core->head tx domain (sendUnicast). The two never share
-// a counter; the mapping is explicit by construction.
+// Direction map: QRBITMAP still stages inbound head->core into LastLinkCmd
+// (shared head seq domain, ACKed, snapshotCmd handoff below); the outbound
+// pairing path is now PAIRSHOW (8B PIN) + PAIRDONE (empty) on the
+// core->head tx domain (sendUnicast). The two never share a counter; the
+// mapping is explicit by construction.
 
 // Auth: NONE in this task beyond CRC+seq — transport-only trust, exactly like
 // the AP passphrase (documented in shared/link/README). A keyed link can come
@@ -191,6 +195,10 @@ inline const char* typeName(uint8_t type) {
       return "CAMCTL";
     case linkcode::kTypeQrBitmap:
       return "QRBITMAP";
+    case linkcode::kTypePairShow:
+      return "PAIRSHOW";
+    case linkcode::kTypePairDone:
+      return "PAIRDONE";
     case linkcode::kTypeOta:
       return "OTA";
     case linkcode::kTypeJpeg:
@@ -206,16 +214,15 @@ inline const char* typeName(uint8_t type) {
   }
 }
 
-// QR send gate (host-testable): the link task unicasts the staged 63B
-// bitmap exactly once per window (alreadySent latches after the send) and
-// only to an HB-pinned head peer. Staging without a peer waits (late
-// joiners covered); no peer never blocks the RX tick — the skip stays a
-// throttled LOG_D on the task side.
+// Send gate (host-testable, historical QR shape): staged && !alreadySent &&
+// haveHeadPeer. Kept under the QR name so the pinned unit seam stays green;
+// the Pre-2 PairShow pump stages 6 digits (not the 63B bitmap) through the
+// same once-per-window shape, and the OTA gate below shares it.
 inline bool qrReadyToSend(bool stagedValid, bool alreadySent, bool haveHeadPeer) {
   return stagedValid && !alreadySent && haveHeadPeer;
 }
 
-// OTA send gate (host-testable): same once-per-command shape as the QR gate
+// OTA send gate (host-testable): same once-per-command shape as the gate
 // above — one unicast of the staged URL to the HB-pinned head, silent wait
 // while no peer is linked.
 inline bool otaReadyToSend(bool stagedValid, bool alreadySent, bool haveHeadPeer) {
@@ -348,18 +355,19 @@ class LinkServer {
 
   bool hasHeadPeer() const { return haveHeadPeer_; }
 
-  // Core->head unicast for the ability pumps (Slice 6c: the QR/OTA stages
-  // live in PairingTask/OtaStaging now — this class holds no business
-  // state, only sockets + framing + the pinned peer + the tx counter).
-  // Mints the frame seq under lock (single txSeq_ writer — see sendTo),
-  // encodes, and unicasts to the HB-pinned head peer. False when pre-begin,
-  // peerless, or the radio refused the datagram (txFail_ + LOG_W inside,
-  // same strings as the old per-type paths). seqOut always carries the
-  // minted seq for the pump's send logs (0 when pre-begin/peerless).
-  // Producer vocabulary note: the future stageFace/stageOled/stageCam MUST
-  // pack via link::packOled/packCamCtl/unpack* (literal-byte tests pin the
-  // wire); the OTA producer validates via the shared otamanifest grammar
-  // (single-sourced, never re-derived).
+  // Core->head unicast for the ability pumps (Pre-2: the PairShow/PairDone
+  // + OTA stages live in PairingTask/OtaStaging now — this class holds no
+  // business state, only sockets + framing + the pinned peer + the tx
+  // counter). Mints the frame seq under lock (single txSeq_ writer — see
+  // sendTo), encodes, and unicasts to the HB-pinned head peer. False when
+  // pre-begin, peerless, or the radio refused the datagram (txFail_ + LOG_W
+  // inside, same strings as the old per-type paths). seqOut always carries
+  // the minted seq for the pump's send logs (0 when pre-begin/peerless).
+  // Empty payloads are legal (PairDone carries 0B; the guard lives in
+  // sendTo). Producer vocabulary note: the future stageFace/stageOled/
+  // stageCam MUST pack via link::packOled/packCamCtl/unpack* (literal-byte
+  // tests pin the wire); the OTA producer validates via the shared
+  // otamanifest grammar (single-sourced, never re-derived).
   bool sendUnicast(uint8_t type, const uint8_t* payload, uint16_t payloadLen, uint16_t& seqOut) {
     seqOut = 0;
     if (mutex_ == nullptr || !haveHeadPeer_) {
@@ -369,6 +377,12 @@ class LinkServer {
     switch (type) {
       case linkcode::kTypeQrBitmap:
         what = "qr";
+        break;
+      case linkcode::kTypePairShow:
+        what = "pairshow";
+        break;
+      case linkcode::kTypePairDone:
+        what = "pairdone";
         break;
       case linkcode::kTypeOta:
         what = "ota";
@@ -408,7 +422,8 @@ class LinkServer {
     // instead of kMaxFrame (1034B). Oversize callers fail closed here, never
     // via stack smash (JPEG rides TCP, never this path).
     DESKY_ASSERT(payloadLen <= linkcode::kOtaUrlMaxLen);
-    if (payload == nullptr || payloadLen > linkcode::kOtaUrlMaxLen) {
+    DESKY_ASSERT(payload != nullptr || payloadLen == 0);
+    if (payloadLen > linkcode::kOtaUrlMaxLen || (payload == nullptr && payloadLen != 0)) {
       return SendVerdict::kEncodeFail;
     }
     xSemaphoreTake(mutex_, portMAX_DELAY);
@@ -551,9 +566,11 @@ class LinkServer {
       case linkcode::kTypeHbAck:
       case linkcode::kTypeJpeg:
       case linkcode::kTypeOta:
+      case linkcode::kTypePairShow:
+      case linkcode::kTypePairDone:
         // Core->head direction on the UDP socket: never valid inbound here
-        // (JPEG rides TCP; OTA is staged ability-side and sent by the OTA
-        // pump via sendUnicast). Silent drop, throttled.
+        // (JPEG rides TCP; OTA/PairShow/PairDone are staged ability-side and
+        // sent by the OTA/PIN pumps via sendUnicast). Silent drop, throttled.
         dropFirst(firstUnexpectedDrop_, "drop link unexpected %s on udp (first of boot)", linkserver::typeName(f.type));
         LOG_EVERY_N(20, "LINK", "drop link unexpected %s on udp", linkserver::typeName(f.type));
         ++udpDrop_;

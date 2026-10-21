@@ -88,6 +88,7 @@ void setup() {
   if (!linkOk) {
     LOG_W("LINK", "link endpoint failed, continuing headless");
   }
+  g_pairing.attachLink(&g_link);
   // Carrier OTA staging (pinned AsyncWebServer, no new deps): same never-
   // brick rule — a staging failure only warns, the `otahead` verb then fails
   // closed at stage time.
@@ -125,15 +126,12 @@ void loop() {
   // stage waits silently for the link task, never blocks driving.
   g_cli.poll();
 #if !DESKY_NO_WIFI
-  // Ability link pumps (Slice 6c, policy side): the pairing window's QR
-  // bitmap and the staged `otahead` URL each unicast once to the HB-pinned
-  // head via the transport's sendUnicast. No head linked -> the pumps wait
-  // silently (the serial QR row= dump stays the dev path). Packing the
-  // window bitmap is load-bearing: qrBitmap() is the unpacked 441B module
-  // array, and staging it raw renders two dotted columns on the head
-  // (bench-proven 2026-10-18) — only the packed form is a scannable
-  // QRBITMAP. Duplicate protection is the link seq/ACK machinery.
-  g_pairing.pumpQrLink(g_link);
+  // Ability link pumps (Pre-2 PIN-show, policy side): the pairing window's
+  // 6-digit PIN + valid-seconds and the staged `otahead` URL each unicast
+  // once to the HB-pinned head via the transport's sendUnicast. No head
+  // linked -> the pumps wait silently. Duplicate protection is the link
+  // seq/ACK machinery.
+  g_pairing.pumpPairShow(g_link);
   g_otaStage.pumpOtaLink(g_link);
 #endif
   LOG_D("MAIN", "desky v2 skeleton alive");

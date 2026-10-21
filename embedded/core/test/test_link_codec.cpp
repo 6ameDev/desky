@@ -416,6 +416,126 @@ void test_link_reassembly_overflow_reject() {
   TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, buf, sizeof(expected));
 }
 
+void test_link_pairshow_golden_pack() {
+  // SHOW payload golden: digits "123456" + validSecs 300 (0x012C) packs to
+  // the literal 8B below (computed once, pinned here).
+  const uint8_t digits[6] = {'1', '2', '3', '4', '5', '6'};
+  uint8_t out[link::kPairShowLen] = {};
+  TEST_ASSERT_TRUE(link::packPairShow(digits, 300, out));
+  const uint8_t expected[8] = {0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x01, 0x2C};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, out, sizeof(expected));
+  // Unpack round-trips the same bytes.
+  uint8_t back[6] = {};
+  uint16_t secs = 0;
+  TEST_ASSERT_TRUE(link::unpackPairShow(out, sizeof(out), back, secs));
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(digits, back, sizeof(digits));
+  TEST_ASSERT_EQUAL_UINT16(300, secs);
+}
+
+void test_link_pairshow_golden_frame() {
+  // SHOW frame golden: seq=9 frag=0/1 payload=[31 32 33 34 35 36 01 2C]:
+  //   4C 06 00 09 00 01 00 08 31 32 33 34 35 36 01 2C 73 02
+  // (CRC-CCITT-FALSE cross-checked with an independent implementation).
+  const uint8_t golden[18] = {0x4C, 0x06, 0x00, 0x09, 0x00, 0x01, 0x00, 0x08, 0x31,
+                              0x32, 0x33, 0x34, 0x35, 0x36, 0x01, 0x2C, 0x73, 0x02};
+  const uint8_t digits[6] = {'1', '2', '3', '4', '5', '6'};
+  uint8_t payload[link::kPairShowLen] = {};
+  TEST_ASSERT_TRUE(link::packPairShow(digits, 300, payload));
+  uint8_t out[link::kMaxFrame] = {};
+  const size_t n = link::encodeFrame(link::kTypePairShow, 9, payload, sizeof(payload), 0, 1, out, sizeof(out));
+  TEST_ASSERT_EQUAL_size_t(sizeof(golden), n);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(golden, out, sizeof(golden));
+  link::Frame f;
+  TEST_ASSERT_TRUE(link::decodeFrame(golden, sizeof(golden), f));
+  TEST_ASSERT_EQUAL_UINT8(link::kTypePairShow, f.type);
+  TEST_ASSERT_EQUAL_UINT16(9, f.seq);
+  TEST_ASSERT_EQUAL_UINT16(link::kPairShowLen, f.payloadLen);
+  uint8_t back[6] = {};
+  uint16_t secs = 0;
+  TEST_ASSERT_TRUE(link::unpackPairShow(f.payload, f.payloadLen, back, secs));
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(digits, back, sizeof(digits));
+  TEST_ASSERT_EQUAL_UINT16(300, secs);
+}
+
+void test_link_pairshow_round_trip_edges() {
+  // validSecs edges (0 = already-expired, 65535 = max) + boundary codes.
+  static const uint8_t kCodes[3][6] = {
+      {'0', '0', '0', '0', '0', '0'}, {'9', '9', '9', '9', '9', '9'}, {'1', '2', '3', '4', '5', '6'}};
+  static const uint16_t kSecs[3] = {0, 65535, 1};
+  for (int c = 0; c < 3; ++c) {
+    uint8_t packed[link::kPairShowLen] = {};
+    TEST_ASSERT_TRUE(link::packPairShow(kCodes[c], kSecs[c], packed));
+    uint8_t digits[6] = {};
+    uint16_t secs = 0xFFFF ^ kSecs[c];
+    TEST_ASSERT_TRUE(link::unpackPairShow(packed, sizeof(packed), digits, secs));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(kCodes[c], digits, 6);
+    TEST_ASSERT_EQUAL_UINT16(kSecs[c], secs);
+    // Frame round trip through the length gate.
+    uint8_t out[link::kMaxFrame] = {};
+    const size_t n = link::encodeFrame(link::kTypePairShow, static_cast<uint16_t>(c), packed, sizeof(packed), 0, 1, out,
+                                       sizeof(out));
+    TEST_ASSERT_EQUAL_size_t(link::kOverhead + link::kPairShowLen, n);
+    link::Frame f;
+    TEST_ASSERT_TRUE(link::decodeFrame(out, n, f));
+    TEST_ASSERT_EQUAL_UINT8(link::kTypePairShow, f.type);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(packed, f.payload, sizeof(packed));
+  }
+}
+
+void test_link_pairshow_rejects() {
+  const uint8_t digits[6] = {'1', '2', '3', '4', '5', '6'};
+  const uint8_t nonDigit[6] = {'1', '2', '3', '4', '5', 'X'};
+  uint8_t out[link::kPairShowLen] = {};
+  uint8_t back[6] = {};
+  uint16_t secs = 0;
+  // Fail-closed on non-digits both ways (mirrors qr::encode6Digits).
+  TEST_ASSERT_FALSE(link::packPairShow(nonDigit, 300, out));
+  TEST_ASSERT_FALSE(link::packPairShow(digits, 300, nullptr));
+  TEST_ASSERT_FALSE(link::packPairShow(nullptr, 300, out));
+  uint8_t bad[link::kPairShowLen] = {'1', '2', '3', '4', '5', 'X', 0x01, 0x2C};
+  TEST_ASSERT_FALSE(link::unpackPairShow(bad, sizeof(bad), back, secs));
+  // Length gate: 7B and 9B never encode; hand-built frames with valid CRCs
+  // still fail decode.
+  uint8_t frame[link::kMaxFrame] = {};
+  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypePairShow, 1, out, 7, 0, 1, frame, sizeof(frame)));
+  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypePairShow, 1, out, 9, 0, 1, frame, sizeof(frame)));
+  TEST_ASSERT_FALSE(link::unpackPairShow(out, 7, back, secs));
+  TEST_ASSERT_FALSE(link::unpackPairShow(out, 9, back, secs));
+  TEST_ASSERT_FALSE(link::unpackPairShow(nullptr, link::kPairShowLen, back, secs));
+  TEST_ASSERT_FALSE(link::unpackPairShow(out, link::kPairShowLen, nullptr, secs));
+  uint8_t short7[link::kOverhead + 7] = {0x4C, 0x06, 0x00, 0x01, 0x00, 0x01, 0x00, 0x07,
+                                         0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x01};
+  link::putU16BE(short7 + link::kHeaderSize + 7, link::crc16Ccitt(short7, link::kHeaderSize + 7));
+  link::Frame f;
+  TEST_ASSERT_FALSE(link::decodeFrame(short7, sizeof(short7), f));
+}
+
+void test_link_pairdone_empty_frame() {
+  // DONE golden: empty payload, seq=10 frag=0/1:
+  //   4C 07 00 0A 00 01 00 00 BE 83
+  const uint8_t golden[10] = {0x4C, 0x07, 0x00, 0x0A, 0x00, 0x01, 0x00, 0x00, 0xBE, 0x83};
+  uint8_t out[link::kMaxFrame] = {};
+  const size_t n = link::encodeFrame(link::kTypePairDone, 10, nullptr, 0, 0, 1, out, sizeof(out));
+  TEST_ASSERT_EQUAL_size_t(sizeof(golden), n);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(golden, out, sizeof(golden));
+  link::Frame f;
+  TEST_ASSERT_TRUE(link::decodeFrame(golden, sizeof(golden), f));
+  TEST_ASSERT_EQUAL_UINT8(link::kTypePairDone, f.type);
+  TEST_ASSERT_EQUAL_UINT16(10, f.seq);
+  TEST_ASSERT_EQUAL_UINT16(0, f.payloadLen);
+  // Fixed-empty contract: any stowaway byte fails both gates.
+  const uint8_t one[1] = {0x00};
+  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypePairDone, 1, one, 1, 0, 1, out, sizeof(out)));
+  uint8_t wide[link::kOverhead + 1] = {0x4C, 0x07, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00};
+  link::putU16BE(wide + 9, link::crc16Ccitt(wide, 9));
+  TEST_ASSERT_FALSE(link::decodeFrame(wide, sizeof(wide), f));
+  // Both new types are known; the next free type stays unknown.
+  TEST_ASSERT_TRUE(link::isKnownType(link::kTypePairShow));
+  TEST_ASSERT_TRUE(link::isKnownType(link::kTypePairDone));
+  TEST_ASSERT_TRUE(link::isKnownType(0x06));
+  TEST_ASSERT_TRUE(link::isKnownType(0x07));
+  TEST_ASSERT_FALSE(link::isKnownType(0x08));
+}
 void test_link_phone_wire_headers_distinct() {
   // None of the frozen phone-wire headers may ever equal the link magic.
   static const uint8_t kFrozen[] = {0xAA, 0xBB, 0x50, 0x51, 0x52, 0xAC, 0xAD, 0x53, 0x54, 0x55, 0x56};
@@ -425,8 +545,9 @@ void test_link_phone_wire_headers_distinct() {
   TEST_ASSERT_EQUAL_UINT8(0x4C, link::kMagic);
   // Link type bytes are disjoint from the magic, so a resync scan cannot
   // mistake a type byte for a frame start.
-  static const uint8_t kTypes[] = {link::kTypeFace, link::kTypeOled, link::kTypeCamCtl, link::kTypeQrBitmap,
-                                   link::kTypeJpeg, link::kTypeHb,   link::kTypeHbAck,  link::kTypeAck};
+  static const uint8_t kTypes[] = {link::kTypeFace,     link::kTypeOled,     link::kTypeCamCtl, link::kTypeQrBitmap,
+                                   link::kTypePairShow, link::kTypePairDone, link::kTypeJpeg,   link::kTypeHb,
+                                   link::kTypeHbAck,    link::kTypeAck};
   for (size_t i = 0; i < sizeof(kTypes); ++i) {
     TEST_ASSERT_NOT_EQUAL(link::kMagic, kTypes[i]);
     TEST_ASSERT_TRUE(link::isKnownType(kTypes[i]));
