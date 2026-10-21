@@ -14,8 +14,8 @@
 #include <string.h>
 #include <unity.h>
 
-#include "../src/middleware/link_server.h"
 #include "../src/services/cli_manager.h"
+#include "../src/transport/link_server.h"
 #include "link/ota_manifest.h"
 
 // Pre-bump contract mirror: the frozen type set BEFORE kTypeOta existed.

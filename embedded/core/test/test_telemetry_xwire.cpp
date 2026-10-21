@@ -15,7 +15,7 @@
 
 #include <unity.h>
 
-#include "../src/middleware/udp_server.h"  // udpstatus top half + services/telemetry_manager.h
+#include "../src/transport/udp_server.h"  // udpstatus top half + services/telemetry_manager.h
 
 namespace {
 

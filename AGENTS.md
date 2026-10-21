@@ -16,7 +16,7 @@
   task touches `hardware/` — read `hardware/INTERFACE.md` §0 first; it is
   normative over anything below.
 - `shared/protocol/` — protocol contracts; normative source is
-  `embedded/src/middleware/udp_codec.h`.
+  `embedded/core/src/transport/udp_codec.h`.
 - `embedded/docs/` + `embedded/scripts/` — intentionally untracked
   (owner-managed); not in git, so their absence from `git status` is normal.
 
@@ -31,8 +31,9 @@
 ## Project map
 
 - `embedded/core/src/hal/` — sensor/actuator interfaces (`ISensor`, `IActuator`) + drivers.
-- `embedded/core/src/services/` — system services: logger, fault/diag/config/i2c/power managers.
-- `embedded/core/src/middleware/` — sensor fusion, UDP codec/server (network-facing logic).
+- `embedded/core/src/transport/` — dumb pipes: sockets, framing codecs, peer + alive state (udp_server, link_server, udp_codec, connection_manager).
+- `embedded/core/src/services/` — system services: logger, fault/diag/config/i2c/power managers, cli, event bus, telemetry, config store.
+- `embedded/core/src/abilities/` — self-contained features as codec/manager/task triples (pairing, sensors, audio, ota).
 - `embedded/core/src/behavior/` — coordinator (state machine), motion controller.
 - `embedded/core/include/mcu/` — board definitions; swap MCUs via `active_mcu.h` only.
 - `embedded/core/include/config.h` — tunable constants; never hardcode pins elsewhere.
@@ -60,8 +61,10 @@ Core envs: `desky` (dev/debug), `desky-release` (field), `native-test`
   abstraction (`motor_*`, `camera_*`) — a part swap must never force a rename.
 - Layer placement rule: peripheral lifecycle (pins, clocks, DMA,
   init/teardown) → `hal/` (or a `shared/` bus driver if cross-firmware);
-  data transformation + protocols → `middleware/`; policy, state, sequencing
-  → `services/`. Consumers reach hardware only through HAL. One port with
+  sockets, framing, and peer state → `transport/` (dumb pipes only, no
+  business state); system plumbing → `services/`; end-to-end capabilities
+  → `abilities/` as codec/manager/task triples; intent and orchestration
+  → `behavior/`. Consumers reach hardware only through HAL. One port with
   shared clocks gets exactly one owner (`i2s_audio`); per-part format
   knowledge splits into role-named siblings (`speaker`, `microphone`).
 - No firmware prefixes on filenames; the project path scopes them

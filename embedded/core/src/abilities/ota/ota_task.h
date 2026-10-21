@@ -47,7 +47,7 @@
 #include "common/logger.h"
 #include "config.h"
 #include "link/ota_manifest.h"
-#include "middleware/link_server.h"
+#include "transport/link_server.h"
 
 class OtaStaging {
  public:

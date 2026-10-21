@@ -16,11 +16,11 @@
 #include "hal/mpu6500_driver.h"
 #include "hal/tcrt5000_driver.h"
 #include "hal/vl53l0x_driver.h"
-#include "middleware/link_server.h"
-#include "middleware/udp_server.h"
 #include "services/cli_manager.h"
 #include "services/config_store.h"
 #include "services/event_bus.h"
+#include "transport/link_server.h"
+#include "transport/udp_server.h"
 
 // Bench-mode WiFi kill (desky-bench env sets -D DESKY_NO_WIFI=1): default
 // build has WiFi on. Same fallback pattern as DESKY_WIFI_STA in udp_server.h.

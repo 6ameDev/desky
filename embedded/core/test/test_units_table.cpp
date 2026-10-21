@@ -21,7 +21,7 @@
 #include "../include/config.h"
 #include "../src/abilities/pairing/pairing_codec.h"
 #include "../src/behavior/coordinator.h"
-#include "../src/middleware/udp_server.h"
+#include "../src/transport/udp_server.h"
 
 void test_units_qr_pairing_window_order() {
   // Intent: the head QR show clears (120s) well before the core pairing

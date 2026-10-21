@@ -9,7 +9,7 @@
 #include <string.h>
 #include <unity.h>
 
-#include "../../core/src/middleware/link_server.h"
+#include "../../core/src/transport/link_server.h"
 #include "../src/middleware/wifi_link.h"
 
 namespace {
