@@ -1,6 +1,7 @@
 #include <Arduino.h>
 
 #include "abilities/face/face_task.h"
+#include "abilities/pairing/pairing_task.h"
 #include "common/diagnostics.h"
 #include "common/fault_manager.h"
 #include "common/i2c_manager.h"
@@ -49,6 +50,7 @@ CameraDriver g_cam;
 Ssd1306Display g_panel(g_i2c);
 FaceRenderer g_display(g_panel);
 PowerManager g_power;
+PairingManager g_pairing;  // PairShow/Done PIN handoff policy (ability layer, bound below)
 LinkStub g_link;
 LinkClient g_wifi;
 OtaUpdater g_ota;  // Standing rule: never ship without the OTA client (see
@@ -62,6 +64,8 @@ uint32_t g_lastAliveMs = 0;
 // WiFi command edge: maps the validated frame via the ONE command table and
 // owns the LINK_CMD publish (transport must not publish: the wire type is
 // NOT the CmdTarget value — kTypeCamCtl=0x03 vs CmdTarget::CAM=0).
+// WiFi pairing edges (authoritative-PIN show + clear) live in the pairing
+// ability (abilities/pairing/pairing_task.h, ctx = g_pairing below).
 void onWifiCommand(void* ctx, const linkcode::Frame& f) {
   (void)ctx;
   PowerCommand cmd;
@@ -70,17 +74,6 @@ void onWifiCommand(void* ctx, const linkcode::Frame& f) {
   }
   EventBus::publish(HEAD_EVENT_LINK_CMD, static_cast<uint32_t>(cmd.target));
   g_power.apply(cmd);  // FACE->showFace, OLED ON/DIM/OFF, CAM on/off
-}
-
-// WiFi pairing edges: authoritative-PIN show + clear via the power manager.
-void onWifiPairShow(void* ctx, const uint8_t pin6[6], uint16_t validSecs) {
-  (void)ctx;
-  g_power.showPairing(pin6, validSecs);
-}
-
-void onWifiPairDone(void* ctx) {
-  (void)ctx;
-  g_power.clearPairing("link");
 }
 
 // WiFi OTA edge: grammar + updater trigger (transport already consumed the
@@ -137,7 +130,8 @@ void setup() {
   const bool oledOk = g_display.init();
   (void)oledOk;  // NEVER asserted: absent OLED is the normal on-MB state.
   g_power.begin(&g_cam, &g_display);
-  g_link.begin();  // PARKED stub (retained for switch-back).
+  g_pairing.attach(&g_power);  // PairShow/Done handoff (ability layer, never owned here)
+  g_link.begin();              // PARKED stub (retained for switch-back).
   {
     StubHandlers sh;
     sh.ctx = nullptr;
@@ -147,10 +141,10 @@ void setup() {
   g_wifi.begin();  // Live path: WiFi STA link client.
   {
     LinkHandlers wh;
-    wh.ctx = nullptr;
+    wh.ctx = &g_pairing;  // pairing edges own it; command/OTA/stills edges ignore ctx (globals)
     wh.onCommand = onWifiCommand;
-    wh.onPairShow = onWifiPairShow;
-    wh.onPairDone = onWifiPairDone;
+    wh.onPairShow = pairingtask::onPairShow;
+    wh.onPairDone = pairingtask::onPairDone;
     wh.onOtaUrl = onWifiOtaUrl;
     wh.isCameraOn = isCameraOn;
     g_wifi.setHandlers(wh);
