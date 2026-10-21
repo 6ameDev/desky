@@ -45,13 +45,6 @@ void test_linkserver_pull_framing() {
   TEST_ASSERT_TRUE(linkserver::pullFrame(insane, sizeof(insane), frameLen) == linkserver::Pull::kResync);
 }
 
-void test_linkserver_qr_gate_once_per_window_with_peer() {
-  TEST_ASSERT_TRUE(linkserver::qrReadyToSend(true, false, true));
-  TEST_ASSERT_FALSE(linkserver::qrReadyToSend(false, false, true));  // nothing staged
-  TEST_ASSERT_FALSE(linkserver::qrReadyToSend(true, true, true));    // already sent this window
-  TEST_ASSERT_FALSE(linkserver::qrReadyToSend(true, false, false));  // no head linked: wait
-}
-
 void test_linkserver_qr_pin_rule() {
   using V = linkserver::SeqVerdict;
   TEST_ASSERT_TRUE(linkserver::pinOnVerdict(V::kFresh));

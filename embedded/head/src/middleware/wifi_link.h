@@ -9,7 +9,7 @@
 //
 //   UDP CFG_LINK_UDP_PORT (3334): HB head->core at 1Hz (rssi/channel/freeHeap/
 //     bootId per the codec HB type) + ACK replies; RX FACE/OLED/CAMCTL/
-//     QRBITMAP/PAIRSHOW/PAIRDONE commands + HB_ACK on the same socket. HB_ACK tracked: linkDown after
+//     PAIRSHOW/PAIRDONE commands + HB_ACK on the same socket. HB_ACK tracked: linkDown after
 //     3 missed ACKs (~3s) -> re-associate + re-AWAKE. The tx seq domain is
 //     MONOTONIC within a boot (never reset on re-assoc); the per-boot bootId
 //     epoch lets the core resync after a head reboot instead of dropping low
@@ -217,14 +217,11 @@ inline bool mapCmd(uint8_t type, const uint8_t* payload, uint16_t len, PowerComm
   }
 }
 
-// QRBITMAP in this task: the codec-validated 63B length is the whole
-// contract. Fresh frames hand their rows to the FaceRenderer via the power
-// manager (H2.5 show mode); duplicates only re-ACK, never re-render.
-// Reserved type (superseded by PAIRSHOW/PAIRDONE below): still displayed so
-// old firmwares' bitmaps keep working; never removed.
-inline bool isQrFrame(uint8_t type, uint16_t len) {
-  return type == linkcode::kTypeQrBitmap && len == linkcode::kQrBitmapLen;
-}
+// QRBITMAP in this task (historical): the Slice 6c bitmap push is gone —
+// the flag-day removal dropped the wire trigger, so no frame is ever handed
+// to the FaceRenderer from the link. The reserved 63B length contract stays
+// frozen in the codec (never reused); the USB CLI `qr` demo still exercises
+// the same 63B staging path locally via showQrDemo (no link involved).
 
 // PAIRSHOW in this task: the codec-validated 8B length is the gate here;
 // the 6-digit vocabulary lives once in linkcode::pack/unpackPairShow (the
@@ -359,7 +356,6 @@ class LinkClient {
         hbAckRx_(0),
         cmdRx_(0),
         ackTx_(0),
-        qrRx_(0),
         framesSent_(0),
         stillDrop_(0),
         udpDrop_(0),
@@ -490,16 +486,16 @@ class LinkClient {
   // CLI `link` / `status` door: one counters-only line (never payload bytes).
   void logStatus() const {
     LOG_I("LINK",
-          "link state=%s assoc=%d rssi=%d ch=%u hb=%lu/%lu miss=%u cmd=%lu qr=%lu pair=%lu/%lu ota=%lu still=%lu/%lu "
+          "link state=%s assoc=%d rssi=%d ch=%u hb=%lu/%lu miss=%u cmd=%lu pair=%lu/%lu ota=%lu still=%lu/%lu "
           "fail=%lu ackT=%lu drop=%lu tx=%u boot=%08lx",
           linkUp_ ? "up" : "down", associated_ ? 1 : 0, static_cast<int>(lastRssi_),
           static_cast<unsigned>(lastChannel_), static_cast<unsigned long>(hbSent_),
           static_cast<unsigned long>(hbAckRx_), static_cast<unsigned>(hbSinceAck_), static_cast<unsigned long>(cmdRx_),
-          static_cast<unsigned long>(qrRx_), static_cast<unsigned long>(pairShowRx_),
-          static_cast<unsigned long>(pairDoneRx_), static_cast<unsigned long>(otaRx_),
-          static_cast<unsigned long>(framesSent_), static_cast<unsigned long>(stillDrop_),
-          static_cast<unsigned long>(txFail_), static_cast<unsigned long>(ackTx_), static_cast<unsigned long>(udpDrop_),
-          static_cast<unsigned>(txSeq_), static_cast<unsigned long>(bootId_));
+          static_cast<unsigned long>(pairShowRx_), static_cast<unsigned long>(pairDoneRx_),
+          static_cast<unsigned long>(otaRx_), static_cast<unsigned long>(framesSent_),
+          static_cast<unsigned long>(stillDrop_), static_cast<unsigned long>(txFail_),
+          static_cast<unsigned long>(ackTx_), static_cast<unsigned long>(udpDrop_), static_cast<unsigned>(txSeq_),
+          static_cast<unsigned long>(bootId_));
   }
 
   // Checked-send failures (udpsend::udpSendChecked false): rare/backpressure
@@ -587,7 +583,6 @@ class LinkClient {
       case linkcode::kTypeFace:
       case linkcode::kTypeOled:
       case linkcode::kTypeCamCtl:
-      case linkcode::kTypeQrBitmap:
       case linkcode::kTypePairShow:
       case linkcode::kTypePairDone:
       case linkcode::kTypeOta:
@@ -599,8 +594,10 @@ class LinkClient {
         break;
       case linkcode::kTypeHb:
       case linkcode::kTypeJpeg:
+      case linkcode::kTypeQrBitmap:
         // Wrong direction on this socket (HB is ours to send, JPEG rides
-        // TCP). Silent throttled drop, counters only.
+        // TCP, QRBITMAP is reserved and never sent since the flag-day
+        // removal). Silent throttled drop, counters only.
         dropFirst(firstDrop_, "drop link unexpected %s on udp (first of boot)", wifilink::typeName(f.type));
         LOG_EVERY_N(20, "LINK", "drop link unexpected %s on udp", wifilink::typeName(f.type));
         ++udpDrop_;
@@ -641,9 +638,7 @@ class LinkClient {
   // command table + ACKs; duplicates re-ACK WITHOUT re-executing; stale
   // drops. PAIRSHOW hands its 6 digits + validity window to the FaceRenderer
   // via the power manager (authoritative-PIN show mode) + ACKs; PAIRDONE
-  // clears it + ACKs; duplicates only re-ACK. QRBITMAP hands its 63 rows to
-  // the FaceRenderer via the power manager (H2.5 show mode, reserved path
-  // for old firmwares) + ACKs; duplicates only re-ACK. OTA hands its URL
+  // clears it + ACKs; duplicates only re-ACK. OTA hands its URL
   // bytes to the existing updater entry (startIfNewer: manifest pull-gate +
   // start, OLED progress bar inside) + ACKs; duplicates only re-ACK, never
   // re-trigger an in-flight download.
@@ -726,21 +721,6 @@ class LinkClient {
         power_->clearPairing("link");
       }
       LOG_I("LINK", "pairdone seq=%u", static_cast<unsigned>(f.seq));
-      return;
-    }
-    if (wifilink::isQrFrame(f.type, f.payloadLen)) {
-      haveCmdSeq_ = true;
-      lastCmdSeq_ = f.seq;
-      ++qrRx_;
-      ++cmdRx_;
-      sendAck(rip, rport, f.seq);
-      // Handoff (H2.5): the 63B payload is copied synchronously into the
-      // renderer's BSS staging buffer (rxBuf_ outlives this call; no heap,
-      // no retained pointer). Any FACE command or the 120s timeout clears it.
-      if (power_ != nullptr) {
-        power_->showQr(f.payload);
-      }
-      LOG_I("LINK", "qr seq=%u len=%u", static_cast<unsigned>(f.seq), static_cast<unsigned>(f.payloadLen));
       return;
     }
     PowerCommand cmd;
@@ -910,7 +890,6 @@ class LinkClient {
   uint32_t hbAckRx_;
   uint32_t cmdRx_;
   uint32_t ackTx_;
-  uint32_t qrRx_;
   uint32_t pairShowRx_ = 0;
   uint32_t pairDoneRx_ = 0;
   uint32_t otaRx_ = 0;

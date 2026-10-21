@@ -41,7 +41,7 @@ new types require a codec bump on both sides.
 | `0x01` | FACE     | core->head  | Face id `u8` (1B; clamped downstream, not here)    |
 | `0x02` | OLED     | core->head  | Mode `u8` (1B): 0=ON 1=DIM 2=OFF                   |
 | `0x03` | CAMCTL   | core->head  | Camera `u8` (1B): 0=off 1=on                      |
-| `0x04` | QRBITMAP | core->head (reserved) | V1 21x21 packed rows, MSB-first (exactly 63B; see pairing contract) |
+| `0x04` | QRBITMAP | — (reserved, never sent) | V1 21x21 packed rows, MSB-first (exactly 63B; see pairing contract) |
 | `0x05` | OTA      | core->head  | OTA pull URL bytes, no NUL (1..128B)               |
 | `0x06` | PAIRSHOW | core->head  | 6 ASCII digits + valid-seconds `u16BE` (8B)        |
 | `0x07` | PAIRDONE | core->head  | Empty (0B; the frame presence is the signal)       |
@@ -137,15 +137,19 @@ reset). Peerless = silent no-op.
   show-time + validSecs*1000; the render task self-clears on expiry.
   Clear paths: PAIRDONE, any FACE command, the valid-secs deadline, CLI.
   One live overlay at a time (pairing vs legacy-QR vs OTA wins in turn).
-- Reserved `0x04` QRBITMAP is still displayed (`showQr` path, 63B
-  row-major MSB-first) so old firmwares' bitmaps keep working; never
-  removed.
+- Reserved `0x04` QRBITMAP is no longer displayed: the flag-day removal
+  dropped every QRBITMAP send/stage path on both firmwares (a decoded
+  frame now falls to the wrong-direction drop). The type value and the
+  exact-63B contract stay frozen and are never reused (see pairing
+  contract above).
 
-No flag day: the bump is additive, so mixed fleets degrade to
-drop-as-unknown, never misparse. An old head drops PAIRSHOW/PAIRDONE as
-unknown (no pairing screen; the serial LOG line still carries the code),
-while an old core + new head keeps working through the reserved QRBITMAP
-display path.
+Flag-day upgrade: both sides run the PairShow/PairDone firmware, so no
+bitmap-pushing peer exists in the fleet — the removal above is safe.
+(Historical: the bump was additive, so mixed fleets degraded to
+drop-as-unknown, never misparse. An old head dropped PAIRSHOW/PAIRDONE as
+unknown (no pairing screen; the serial LOG line still carried the code),
+while an old core + new head kept working through the reserved QRBITMAP
+display path.)
 
 ## MTU / fragmentation rule
 

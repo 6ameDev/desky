@@ -869,10 +869,10 @@ void test_udp_alive_disconnect_frame_goldens() {
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0xFF)));
 }
 
-// QR pack bridge (judgment-call a): udpstatus::packQrBitmap pins the same
-// qr::packBitmap the firmware PairingTask::pumpQrLink() packs the window
-// with (main-loop valid→pack→pump bridge). Valid packs identically; closed
-// window / null never touches `out`.
+// QR pack bridge: udpstatus::packQrBitmap pins the same shared qr::packBitmap
+// the head uses to re-derive the pairing bitmap locally (main-loop
+// valid→pack bridge shape). Valid packs identically; closed window / null
+// never touches `out`.
 void test_udp_pack_qr_bitmap_bridge() {
   const uint8_t code[6] = {'1', '2', '3', '4', '5', '6'};
   uint8_t modules[qr::kModules];

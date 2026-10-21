@@ -78,7 +78,7 @@ inline uint8_t moduleAt(const uint8_t* qr63, int x, int y) {
 // into the existing qrBuf_ staging path (no bitmap rides the wire), and the
 // digits print beside it. Deadline = show-time + validSecs*1000 (u32 wrap
 // natural); the render task clears on expiry. Re-arm on every fresh show.
-// Single overlay rivalry: pairing wins over legacy-QR/OTA and vice versa —
+// Single overlay rivalry: pairing wins over demo-QR/OTA and vice versa —
 // the show paths enforce at most one live overlay.
 namespace pairdisplay {
 constexpr uint32_t kMsPerSec = 1000;
@@ -280,14 +280,15 @@ class FaceRenderer : public IActuator {
 
   uint8_t faceId() const { return faceId_; }
 
-  // QR show mode (H2.5): renders the link QRBITMAP's 21x21 modules until a
+  // QR show mode: renders 21x21 modules from the 63B staging buffer until a
   // FACE command arrives or CFG_FACE_QR_TIMEOUT_MS elapses
   // (FACE-command-or-120s-timeout). Respects the present()/enabled_/dim_
   // gates exactly like drawFace: absent OLED or a disabled panel gates the
   // paint (the bitmap is still stored and paints on the next repaint). No
   // heap/String; the 63B staging buffer is a member (BSS, never stack).
-  // Reserved wire type (superseded by the PAIRSHOW/PIN path below): old
-  // firmwares' bitmaps still display; never removed.
+  // (Historical: Slice 6c filled this buffer from the wire QRBITMAP via the
+  // link; the flag-day removal dropped that trigger — the buffer is now
+  // filled by the USB `qr` demo and the local PairShow re-derive below.)
   void showQr(const uint8_t qr63[qrdisplay::kQrLen]) {
     if (qr63 == nullptr) {
       return;
@@ -300,7 +301,7 @@ class FaceRenderer : public IActuator {
       LOG_I("FACE", "ota cleared (qr)");
     }
     if (pairActive_) {
-      pairActive_ = false;  // one live overlay: legacy QR wins over pairing
+      pairActive_ = false;  // one live overlay: demo QR wins over pairing
       LOG_I("FACE", "pairing cleared (qr)");
     }
     qrActive_ = true;
@@ -381,7 +382,7 @@ class FaceRenderer : public IActuator {
       LOG_I("FACE", "ota cleared (pairing)");
     }
     if (qrActive_) {
-      qrActive_ = false;  // one live overlay: pairing wins over legacy QR
+      qrActive_ = false;  // one live overlay: pairing wins over demo QR
       LOG_I("FACE", "qr cleared (pairing)");
     }
     pairActive_ = true;
@@ -393,7 +394,7 @@ class FaceRenderer : public IActuator {
   }
 
   // Clears the pairing show mode (PAIRDONE/timeout/CLI path). Also clears a
-  // live legacy QR (single overlay — no stale bitmap survives pairing
+  // live demo QR (single overlay — no stale bitmap survives pairing
   // completion). No-op when neither is up. Repaints the stored face when
   // live.
   void clearPairing(const char* why = "cli") {
@@ -596,7 +597,7 @@ class FaceRenderer : public IActuator {
   // QR paint: cleared panel, SSD1306_WHITE 2px squares for dark modules at
   // the left qrdisplay origin (quiet zone = cleared background) plus the
   // 6-digit pairing PIN in the default font right of the block (only while
-  // a pairing show is live — legacy QRBITMAP frames paint the block alone).
+  // a pairing show is live — the bitmap-only demo paints the block alone).
   // Gated on present() like drawFace (absent OLED on-MB is normal, never
   // assert); the caller also gates on enabled_, and dim_ only changes
   // cadence + contrast via setDim, never the pixels here.
