@@ -195,8 +195,8 @@ inline bool parseLine(const char* line, PowerCommand& out) {
 #include "common/logger.h"
 #include "config.h"
 #include "middleware/ota_client.h"
-#include "middleware/wifi_link.h"
 #include "services/power_manager.h"
+#include "transport/link_client.h"
 
 // Fallbacks keep this header compilable if config keys ever drift; in-project
 // include/config.h always wins (same pattern as core's coordinator.h).

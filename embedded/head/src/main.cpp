@@ -9,6 +9,7 @@
 #include "hal/camera_driver.h"
 #include "hal/ssd1306_display.h"
 #include "head_context.h"
+#include "link/ota_manifest.h"
 #include "middleware/face_renderer.h"
 #include "middleware/link_stub.h"
 #include "middleware/ota_client.h"
@@ -16,6 +17,8 @@
 #include "services/cli_manager.h"
 #include "services/event_bus.h"
 #include "services/power_manager.h"
+#include "transport/link_client.h"
+#include "transport/link_stub.h"
 
 // desky-head (face-unit: OV3660 eyes + face OLED + link stub, PARKED).
 // Setup order (core convention): logger -> fault -> config -> banner —
@@ -54,6 +57,61 @@ CliManager g_cli;
 EventBus::Subscription g_sub;
 uint32_t g_lastCamMs = 0;
 uint32_t g_lastAliveMs = 0;
+
+// ── Link business edges (transport callbacks; main is the binder) ──────────
+// WiFi command edge: maps the validated frame via the ONE command table and
+// owns the LINK_CMD publish (transport must not publish: the wire type is
+// NOT the CmdTarget value — kTypeCamCtl=0x03 vs CmdTarget::CAM=0).
+void onWifiCommand(void* ctx, const linkcode::Frame& f) {
+  (void)ctx;
+  PowerCommand cmd;
+  if (!wifilink::mapCmd(f.type, f.payload, f.payloadLen, cmd)) {
+    return;  // unreachable: transport value-checks before invoking
+  }
+  EventBus::publish(HEAD_EVENT_LINK_CMD, static_cast<uint32_t>(cmd.target));
+  g_power.apply(cmd);  // FACE->showFace, OLED ON/DIM/OFF, CAM on/off
+}
+
+// WiFi pairing edges: authoritative-PIN show + clear via the power manager.
+void onWifiPairShow(void* ctx, const uint8_t pin6[6], uint16_t validSecs) {
+  (void)ctx;
+  g_power.showPairing(pin6, validSecs);
+}
+
+void onWifiPairDone(void* ctx) {
+  (void)ctx;
+  g_power.clearPairing("link");
+}
+
+// WiFi OTA edge: grammar + updater trigger (transport already consumed the
+// seq + ACKed before this call). True = consumed.
+bool onWifiOtaUrl(void* ctx, const uint8_t* url, uint16_t len) {
+  (void)ctx;
+  char buf[otamanifest::kUrlMax + 1];
+  if (!otamanifest::copyOtaUrl(url, len, buf)) {
+    return false;
+  }
+  if (g_ota.active()) {
+    // Seq consumed + ACKed above; the in-flight download keeps running.
+    LOG_EVERY_N(20, "LINK", "ota in flight, ignored");
+    return true;
+  }
+  g_ota.startIfNewer(buf);  // own logs: versions + counters only
+  return true;
+}
+
+// WiFi stills edge: camera power gate for the TCP stills pump.
+bool isCameraOn(void* ctx) {
+  (void)ctx;
+  return g_cam.isEnabled();
+}
+
+// UART stub edge: same ONE command table as the USB CLI door.
+void onStubCommand(void* ctx, const PowerCommand& cmd) {
+  (void)ctx;
+  EventBus::publish(HEAD_EVENT_LINK_CMD, static_cast<uint32_t>(cmd.target));
+  g_power.apply(cmd);
+}
 }  // namespace
 
 void setup() {
@@ -79,12 +137,27 @@ void setup() {
   const bool oledOk = g_display.init();
   (void)oledOk;  // NEVER asserted: absent OLED is the normal on-MB state.
   g_power.begin(&g_cam, &g_display);
-  g_link.begin(&g_power);          // PARKED stub (retained for switch-back).
-  g_wifi.begin(&g_power, &g_cam);  // Live path: WiFi STA link client.
+  g_link.begin();  // PARKED stub (retained for switch-back).
+  {
+    StubHandlers sh;
+    sh.ctx = nullptr;
+    sh.onCommand = onStubCommand;
+    g_link.setHandlers(sh);
+  }
+  g_wifi.begin();  // Live path: WiFi STA link client.
+  {
+    LinkHandlers wh;
+    wh.ctx = nullptr;
+    wh.onCommand = onWifiCommand;
+    wh.onPairShow = onWifiPairShow;
+    wh.onPairDone = onWifiPairDone;
+    wh.onOtaUrl = onWifiOtaUrl;
+    wh.isCameraOn = isCameraOn;
+    g_wifi.setHandlers(wh);
+  }
   g_cli.begin(&g_power);
   g_cli.attachLink(&g_wifi);      // LINK status line + `snap` still trigger.
   g_cli.attachOta(&g_ota);        // `ota <url>` pull updater (standalone).
-  g_wifi.attachOta(&g_ota);       // Carrier door: link OTA frame -> updater entry.
   g_ota.attachFace(&g_display);   // Updater progress -> OLED bar/alert.
   g_sub = EventBus::subscribe();  // Settles before any publish (loop only).
   g_lastCamMs = millis();
