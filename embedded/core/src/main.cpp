@@ -93,7 +93,7 @@ void setup() {
 #else
   // Transport owns dumb pipes only: the verified-drive fan-out is a
   // setup-registered hook (no bus include in transport), the peer/alive
-  // binding + bond restore lands via attachPairing; the behavior pins
+  // binding + pair restore lands via attachPairing; the behavior pins
   // (pairing seam + telemetry RX-observation report) are wired directly on
   // the coordinator.
   g_udp.setCommandPublisher([](uint32_t payload) { EventBus::publish(EVENT_UDP_COMMAND_RECEIVED, payload); });
@@ -110,7 +110,7 @@ void setup() {
   if (!linkOk) {
     LOG_W("LINK", "link endpoint failed, continuing headless");
   }
-  g_pairing.attachLink(&g_link);
+  g_pairing.attachHeadLink(&g_link);
   // Carrier OTA staging: same never-brick rule — a staging failure only
   // warns, the `otahead` verb then fails closed at stage time.
   const bool otaStageOk = g_otaStage.begin();
@@ -150,7 +150,7 @@ void loop() {
   // staged `otahead` URL each unicast once to the HB-pinned head. No head
   // linked -> the pumps wait silently. Duplicate protection is the link
   // seq/ACK machinery.
-  g_pairing.pumpPairShow(g_link);
+  g_pairing.publishPairShow(g_link);
   g_otaStage.pumpOtaLink(g_link);
   // Telemetry consumer: snapshot + encode + publish at CFG_TELEMETRY_HZ
   // through the transport's dumb send (outer cadence inside poll —

@@ -103,14 +103,14 @@
 #define CFG_WIFI_STA_RETRY_MS 5000
 
 // Pairing window (Tier 1 enrolment): 6-digit ephemeral code, single-use,
-// 5-min window, 5 bad tries -> 30s lockout. Bond/PSK keys live in ConfigStore
+// 5-min window, 5 bad tries -> 30s lockout. Pair/PSK keys live in ConfigStore
 // cfg v2. FreeRTOS-free plain ints.
 #define CFG_PAIR_CODE_LEN 6
 #define CFG_PAIR_WINDOW_MS 300000
 #define CFG_PAIR_MAX_TRIES 5
 #define CFG_PAIR_LOCKOUT_MS 30000
-// PAIR_OK redelivery window: while bonded, an identical PAIR_REQ
-// (same code + client nonce) within this window after the bond re-unicasts
+// PAIR_OK redelivery window: while paired, an identical PAIR_REQ
+// (same code + client nonce) within this window after the pair re-unicasts
 // the cached PAIR_OK instead of answering already_bonded (covers the lost-
 // reply / client-retry race; RAM-only, never persisted).
 #define CFG_PAIR_REDELIVERY_MS 60000

@@ -5,7 +5,7 @@
 // here; WiFiUDP/IPAddress stay in UdpServer (adapted via ipToU32/u32ToIp).
 //
 // Layer rule: peer identity + freshness math is transport (this header);
-// bond/era lifecycle is pairing; persistence is ConfigStore; telemetry
+// pair/era lifecycle is pairing; persistence is ConfigStore; telemetry
 // cadence is TelemetryManager.
 //
 // Single-peer slot today. The markAlive/clear/isAlive shapes already take
@@ -16,13 +16,13 @@
 // host tests pin the equality.
 //
 // Token funnel: handlers obtain Verified via AuthVerifier::verify (folds the
-// call-site verdicts — bonded, eraOk, fresh, hmacOk — into one token; no
+// call-site verdicts — paired, eraOk, fresh, hmacOk — into one token; no
 // crypto is reimplemented here), then Pinned via markAlive(Verified&&), then
 // call the privileged effects. Effect-before-verify fails to compile: the
 // effect signatures require the moved token, and every token is move-only
 // with deleted copies. Invalid token -> no state change (fail-closed).
 // PairingReceipt default-constructs INVALID; only ConfigStore (friend) can
-// mark one valid via saveBond/saveRekey.
+// mark one valid via savePair/savePairRefresh.
 
 #include <stddef.h>
 #include <stdint.h>
@@ -84,11 +84,11 @@ class Verified {
 };
 
 // Precheck verdicts, computed by the caller. Per-opcode eraOk mapping:
-//   drive/unbond -> true (no era on the wire); alive/disconnect ->
-//   (wireEra == sessionEra); rekey -> (wireEra == sessionEra + 1), while the
+//   drive/unpair -> true (no era on the wire); alive/disconnect ->
+//   (wireEra == sessionEra); refresh -> (wireEra == sessionEra + 1), while the
 //   idempotent duplicate (wireEra == sessionEra) re-ACKs without verifying.
 struct Checks {
-  bool bonded;
+  bool paired;
   bool eraOk;
   bool fresh;
   bool hmacOk;
@@ -99,7 +99,7 @@ class AuthVerifier {
   // Single funnel: every verdict true -> valid token carrying ctr+era;
   // any verdict false (or null checks) -> invalid token, no side effects.
   [[nodiscard]] static Verified verify(const Checks& checks, uint32_t ctr, uint16_t era) {
-    const bool ok = checks.bonded && checks.eraOk && checks.fresh && checks.hmacOk;
+    const bool ok = checks.paired && checks.eraOk && checks.fresh && checks.hmacOk;
     return Verified(ok, ctr, era);
   }
 
