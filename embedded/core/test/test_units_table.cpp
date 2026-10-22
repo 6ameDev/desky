@@ -22,6 +22,8 @@
 #include "../src/abilities/pairing/pairing_codec.h"
 #include "../src/behavior/coordinator.h"
 #include "../src/transport/udp_server.h"
+// telemetry_manager.h requires udp_server.h first (order pin above).
+#include "../src/services/telemetry_manager.h"
 
 void test_units_qr_pairing_window_order() {
   // Intent: the head QR show clears (120s) well before the core pairing
