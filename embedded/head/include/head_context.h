@@ -1,27 +1,18 @@
 #pragma once
-// desky-head shared vocabulary — Arduino-free pure logic (stdint/string
-// only), mirroring core's include/system_context.h. Single home for the
-// face ids, the power-matrix states, the ONE command-table verb struct both
-// doors (USB CLI + UART link stub) dispatch through, and the head event
-// types bound to the shared bus mechanics (EventBusT) by
-// src/services/event_bus.h.
-//
-// Host Unity tests include this header directly (like core's fusion/
-// coordinator pure tops): every mapping/transition below is unit-covered.
+// Shared vocabulary (Arduino-free, host-tested): face ids, power-matrix
+// states, the command verb struct, head event types.
 
 #include <stdint.h>
 #include <string.h>
 
-// ── Face ids (procedural art lives in abilities/face/face_task.h) ──
+// Face ids
 enum FaceId : uint8_t {
   FACE_BOOT = 0,  // neutral squares — power-on default
   FACE_HAPPY = 1,
   FACE_SAD = 2,
-  FACE_BLINK = 3,  // line eyes — also the DIM-mode resting face
-  FACE_ALERT = 4,  // wide eyes + O mouth
-  // QR bitmap show mode (H2.5, appended — existing ids never renumber).
-  // Entered ONLY via FaceRenderer::showQr(); never via a FACE id: clampFace
-  // maps it back to BOOT, and it has no CLI face name (bench uses `qr`).
+  FACE_BLINK = 3,
+  FACE_ALERT = 4,
+  // Entered ONLY via showQr(); never via a FACE id.
   FACE_QR = 5,
   FACE_COUNT = 6,
 };
@@ -68,9 +59,7 @@ inline uint8_t faceIdFromName(const char* name) {
   return 0xFF;
 }
 
-// Any out-of-range id falls back to BOOT (never blank the face on bad input).
-// FACE_QR is excluded too: the QR mode is entered only via showQr(), so a
-// numeric FACE id can never land on it (any FACE command clears QR instead).
+// Out-of-range ids fall back to BOOT; FACE_QR is excluded (entered only via showQr).
 inline uint8_t clampFace(int id) {
   if (id < 0 || id >= static_cast<int>(FACE_COUNT) || id == static_cast<int>(FACE_QR)) {
     return FACE_BOOT;
@@ -78,7 +67,7 @@ inline uint8_t clampFace(int id) {
   return static_cast<uint8_t>(id);
 }
 
-// ── Power-matrix states (camera+display are power-hungry) ──
+// Power-matrix states
 enum CameraState : uint8_t { CAM_OFF = 0, CAM_ON = 1 };
 
 enum DisplayState : uint8_t { OLED_OFF = 0, OLED_DIM = 1, OLED_ON = 2 };
@@ -96,8 +85,7 @@ inline const char* oledStateName(DisplayState s) {
   }
 }
 
-// Boot defaults from HEAD_BOOT_LEAN: 0 = validation (everything on),
-// nonzero = lean (camera off, display dim). Pure so host tests pin it.
+// Boot defaults from HEAD_BOOT_LEAN.
 inline void bootPowerState(int lean, CameraState& cam, DisplayState& oled) {
   if (lean != 0) {
     cam = CAM_OFF;
@@ -108,11 +96,7 @@ inline void bootPowerState(int lean, CameraState& cam, DisplayState& oled) {
   }
 }
 
-// Matrix transitions (each row unit-tested):
-// - cam: on/off flips the sensor+task gate, display untouched.
-// - oled: on/dim/off; OFF gates the render task, DIM = low refresh +
-//   low contrast, ON = full 25fps. A face id is stored regardless of the
-//   display state (render applies it whenever the display is next on).
+// Matrix transitions (each row unit-tested).
 inline CameraState resolveCamCommand(CameraState cur, bool on) {
   (void)cur;
   return on ? CAM_ON : CAM_OFF;
@@ -123,24 +107,19 @@ inline DisplayState resolveOledCommand(DisplayState cur, DisplayState want) {
   return want;
 }
 
-// ── ONE command table: both doors dispatch through this struct ──
-// USB serial CLI (lowercase verbs, laptop terminal) and the UART link stub
-// (uppercase verbs, S3 side) each parse a line into a PowerCommand and call
-// the single PowerManager::apply() entry point. Framing/CRC is task 3.
-// OTA carries its URL via the raw CLI line (re-parsed at dispatch), not via
-// arg — the int32 has no room for a URL and OTA never rides the UART wire.
+// Both doors dispatch through this struct.
 enum class CmdTarget : uint8_t { CAM, FACE, OLED, STATUS, HELP, INVALID, LINK, SNAP, QR, OTA };
 
 struct PowerCommand {
   CmdTarget target = CmdTarget::INVALID;
-  int32_t arg = 0;  // CAM: 0/1 off/on; FACE: face id; OLED: DisplayState value
+  int32_t arg = 0;  // CAM: 0/1; FACE: id; OLED: DisplayState
 };
 
-// ── Head events (bound to shared EventBusT by services/event_bus.h) ──
+// Head events
 enum HeadEventType : uint32_t {
-  HEAD_EVENT_FACE_CHANGED = 0,  // payload = FaceId now shown (or pending)
-  HEAD_EVENT_CAMERA_STATE = 1,  // payload = CameraState (0/1)
-  HEAD_EVENT_LINK_CMD = 2,      // payload = raw CmdTarget value received over UART
+  HEAD_EVENT_FACE_CHANGED = 0,
+  HEAD_EVENT_CAMERA_STATE = 1,
+  HEAD_EVENT_LINK_CMD = 2,
   HEAD_EVENT_COUNT = 3,
 };
 

@@ -1,7 +1,7 @@
 // Host unit tests for the pairing core (no hardware).
 // Run: pio test -e native-test
 //
-// Covers Task 2: golden accept + burn-once, bad-code tries, 5th-try lockout
+// Covers: golden accept + burn-once, bad-code tries, 5th-try lockout
 // with 30s expiry, 5-min window expiry, pre-window attempts, malformed
 // input. Runner lives in test_udp_codec.cpp (single main).
 
@@ -226,7 +226,7 @@ void test_pair_core_bond_lifecycle() {
   TEST_ASSERT_EQUAL_UINT32(0, core.bondMs());
 }
 
-// M11 additive reason 4 (internal_retry_fresh): reasons 0-3 frozen (never
+// Additive reason 4 (internal_retry_fresh): reasons 0-3 frozen (never
 // renumber; 0 keeps explicit 0 semantics, 2 keeps not_in_window for genuine
 // window expiry). Burn-failure after tryCode kOk (saveBond/deriveKek/wrapPsk
 // fail, code already burned) sends kInternal (4) via

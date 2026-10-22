@@ -1,8 +1,4 @@
-// Host unit tests for both command doors (no hardware).
-// Run: pio test -e native-test
-//
-// Two dialects on purpose: lowercase on the USB CLI (human), UPPERCASE on
-// the UART link stub (wire). Task 3 unifies them behind the codec.
+// Both command doors (no hardware): lowercase CLI, UPPERCASE link stub.
 
 #include <unity.h>
 
@@ -23,7 +19,7 @@ void test_cli_cam_rejects() {
   TEST_ASSERT_FALSE(headcmd::parseLine("cam", cmd));
   TEST_ASSERT_FALSE(headcmd::parseLine("cam dim", cmd));
   TEST_ASSERT_FALSE(headcmd::parseLine("cam on now", cmd));  // trailing garbage
-  TEST_ASSERT_FALSE(headcmd::parseLine("CAM ON", cmd));      // link dialect rejected here
+  TEST_ASSERT_FALSE(headcmd::parseLine("CAM ON", cmd));
 }
 
 void test_cli_face_numeric_and_name() {
@@ -60,7 +56,7 @@ void test_cli_status_help_and_noise() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::STATUS), static_cast<uint8_t>(cmd.target));
   TEST_ASSERT_TRUE(headcmd::parseLine("help", cmd));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::HELP), static_cast<uint8_t>(cmd.target));
-  TEST_ASSERT_TRUE(headcmd::parseLine("  cam on  ", cmd));  // padding tolerated
+  TEST_ASSERT_TRUE(headcmd::parseLine("  cam on  ", cmd));
   TEST_ASSERT_FALSE(headcmd::parseLine("", cmd));
   TEST_ASSERT_FALSE(headcmd::parseLine("   ", cmd));
   TEST_ASSERT_FALSE(headcmd::parseLine(nullptr, cmd));
@@ -72,16 +68,16 @@ void test_link_face_numeric() {
   TEST_ASSERT_TRUE(linkstub::mapLine("FACE 2", cmd));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::FACE), static_cast<uint8_t>(cmd.target));
   TEST_ASSERT_EQUAL_INT32(2, cmd.arg);
-  TEST_ASSERT_TRUE(linkstub::mapLine("FACE 9", cmd));  // clamps downstream, still a verb
+  TEST_ASSERT_TRUE(linkstub::mapLine("FACE 9", cmd));
   TEST_ASSERT_EQUAL_INT32(9, cmd.arg);
-  TEST_ASSERT_TRUE(linkstub::mapLine("FACE 1\r\n", cmd));  // line endings tolerated
+  TEST_ASSERT_TRUE(linkstub::mapLine("FACE 1\r\n", cmd));
 }
 
 void test_link_face_rejects() {
   PowerCommand cmd;
-  TEST_ASSERT_FALSE(linkstub::mapLine("FACE happy", cmd));  // numeric ids on the wire
+  TEST_ASSERT_FALSE(linkstub::mapLine("FACE happy", cmd));
   TEST_ASSERT_FALSE(linkstub::mapLine("FACE", cmd));
-  TEST_ASSERT_FALSE(linkstub::mapLine("face 1", cmd));  // CLI dialect rejected here
+  TEST_ASSERT_FALSE(linkstub::mapLine("face 1", cmd));
 }
 
 void test_link_cam_oled_verbs() {
@@ -100,7 +96,7 @@ void test_link_cam_oled_verbs() {
 void test_link_noise_rejected() {
   PowerCommand cmd;
   TEST_ASSERT_FALSE(linkstub::mapLine("", cmd));
-  TEST_ASSERT_FALSE(linkstub::mapLine("AWAKE", cmd));  // TX-only line, never a command
+  TEST_ASSERT_FALSE(linkstub::mapLine("AWAKE", cmd));
   TEST_ASSERT_FALSE(linkstub::mapLine("HB", cmd));
   TEST_ASSERT_FALSE(linkstub::mapLine(nullptr, cmd));
 }

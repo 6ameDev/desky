@@ -1,6 +1,5 @@
 #pragma once
-// Thread-safe system state + event bus types (v2 architecture).
-// Mutex + FreeRTOS queue wiring lands in Phase 1.
+// Thread-safe system state + event bus types.
 
 #include <stdint.h>
 
@@ -26,9 +25,9 @@ struct SystemState {
 
   enum RobotMode { MODE_MANUAL, MODE_AUTONOMOUS, MODE_LOW_POWER, MODE_EMERGENCY } mode = MODE_MANUAL;
 
-  // Coordinator-owned intent (v2 §D intent fan-out): WHAT is running, never
-  // HOW. Actuator subsystems own private behavior→primitive maps; completion
-  // closes the loop via EVENT_BEHAVIOR_DONE.
+  // Coordinator-owned intent: WHAT is running, never HOW. Actuator subsystems
+  // own private behavior→primitive maps; completion closes the loop via
+  // EVENT_BEHAVIOR_DONE.
   BehaviorId activeBehavior = BEHAVIOR_NONE;
 };
 
@@ -42,18 +41,14 @@ enum EventType {
   EVENT_FACE_RECOGNIZED,
   EVENT_BEHAVIOR_STARTED,
   EVENT_BEHAVIOR_DONE,
-  // Appended at the end: never renumber existing values (coordinator resume
-  // edges and telemetry bit maps depend on stable ordering).
+  // Appended at the end: never renumber existing values.
   // EVENT_OBSTACLE_DETECTED payload contract: payload = ToF distance in mm
-  // at the assert edge. Published edge-triggered by the sensor task when the
-  // forward ToF drops below CFG_OBSTACLE_MM (with hysteresis); the
-  // coordinator explicitly IGNORES it (no behavior action yet — see the
-  // default branch of its event drain; no coordinator.h change).
+  // at the assert edge. Published edge-triggered by the sensor task; the
+  // coordinator ignores it (no behavior action yet).
   EVENT_OBSTACLE_DETECTED,
   // EVENT_BEEP_DONE payload contract: payload = 0 (unused). Published once
-  // by the audio task when the beep queue drains to empty (rare, edge-only —
-  // never periodic, so no bus spam); the coordinator explicitly IGNORES it
-  // (no behavior action — see the default branch of its event drain).
+  // by the audio task when the beep queue drains to empty (rare, edge-only);
+  // the coordinator ignores it.
   EVENT_BEEP_DONE
 };
 

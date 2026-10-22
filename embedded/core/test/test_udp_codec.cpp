@@ -173,7 +173,7 @@ void test_status_flags_unpack_round_trip();
 void test_pack_command_center_edges();
 void test_telemetry_round_trip_with_flags_set();
 void test_deg_to_decideg_edges_and_clamp();
-// Pairing/auth v1 RX demux (Task 5), defined in test_udp_server.cpp.
+// Pairing/auth v1 RX demux, defined in test_udp_server.cpp.
 void test_udp_wire_constants();
 void test_udp_fresh_counter_greater_ok();
 void test_udp_fresh_counter_equal_older_reject();
@@ -241,7 +241,7 @@ void test_alive_tag_msg_golden();
 void test_disconnect_tag_msg_golden();
 void test_pair_core_bond_lifecycle();
 void test_pair_wire_reasons_frozen();
-// M9 three-way mirror gate (defined in test_udp_server.cpp).
+// Wire mirror gate (defined in test_udp_server.cpp).
 void test_udp_mirror_freeze();
 void test_udp_pair_req_frame_golden();
 void test_udp_pair_err_frame_golden();
@@ -253,7 +253,7 @@ void test_udp_alive_disconnect_frame_goldens();
 void test_udp_pair_ok_framing();
 void test_udp_pack_qr_bitmap_bridge();
 
-// QR pairing bitmap (Phase 0), defined in test_qr_pairing.cpp.
+// QR pairing bitmap, defined in test_qr_pairing.cpp.
 void test_qr_size_is_21();
 void test_qr_golden_encodes();
 void test_qr_finder_patterns_three_corners();
@@ -306,7 +306,7 @@ void test_link_cmd_vocab_camctl_literal_round_trip();
 void test_link_cmd_vocab_ota_literal_length();
 void test_link_cmd_vocab_face_literal_range();
 
-// Link endpoint helpers (H2.2 core link task), defined in test_link_server.cpp.
+// Link endpoint helpers, defined in test_link_server.cpp.
 void test_linkserver_first_frame_fresh();
 void test_linkserver_duplicate_stale_fresh();
 void test_linkserver_pull_framing();
@@ -348,8 +348,7 @@ void test_corecli_otahead_tail_split();
 void test_otamanifest_upload_version_decision();
 void test_linkserver_ota_restage_rearms_send();
 
-// OTA staging ability (Slice 5 codec+manager extraction), defined in
-// test_ota_staging.cpp.
+// OTA staging ability, defined in test_ota_staging.cpp.
 void test_ota_codec_routes_and_caps();
 void test_ota_codec_parse_version_param();
 void test_ota_codec_sha_helpers();
@@ -371,7 +370,7 @@ void test_udpsend_short_write_false();
 void test_udpsend_end_fail_false();
 void test_udpsend_all_fail_false();
 
-// Cross-constant relations table (gap 9), defined in test_units_table.cpp.
+// Cross-constant relations table, defined in test_units_table.cpp.
 void test_units_qr_pairing_window_order();
 void test_units_telemetry_rate_product();
 void test_units_alive_stale_fence();

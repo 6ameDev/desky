@@ -1,16 +1,6 @@
 #pragma once
-// desky v2 fault manager — header-only, owns failure policy.
-//
-// Layering: logger formats/ships text (no side effects); this module
-// decides halt vs reboot, watchdog lifecycle, and OOM response. It calls
-// the logger, never the reverse.
-//
-// Usage:
-//   FaultManager::watchdogInit();   // setup(), subscribes caller (loopTask)
-//   FaultManager::watchdogFeed();   // loop() / each task body
-//   DESKY_ASSERT(ptr != nullptr);   // dev: halt (WDT released first so the
-//                                   // halt is a halt, not a reboot loop)
-//                                   // release: flush + ESP.restart()
+// Fault manager — header-only, owns failure policy: halt vs reboot, watchdog lifecycle, OOM response.
+// Logger formats/ships text (no side effects); this module decides, never the reverse.
 
 #include <Arduino.h>
 #include <esp_heap_caps.h>
@@ -38,7 +28,7 @@ class FaultManager {
 
   static void registerAllocFailureHook() { heap_caps_register_failed_alloc_callback(&onAllocFailed); }
 
-  // Short reset-cause string for the boot banner (IDF idiom).
+  // Short reset-cause string for the boot banner.
   static const char* resetReasonStr() {
     switch (esp_reset_reason()) {
       case ESP_RST_UNKNOWN:
@@ -76,11 +66,9 @@ class FaultManager {
     Serial.flush();
     ESP.restart();
     while (true) {
-    }  // Unreachable; silences noreturn warnings on some toolchains.
+    }  // Unreachable; silences noreturn warnings.
 #else
-    // Dev: preserve the corpse for the debugger. Release the watchdog
-    // first — a halted task stops feeding it, otherwise "halt" degrades
-    // into a reboot loop and the evidence scrolls past.
+    // Dev: halt for the debugger; release WDT first or halt degrades into a reboot loop.
     esp_task_wdt_delete(nullptr);
     while (true) {
       delay(1000);
@@ -89,8 +77,7 @@ class FaultManager {
   }
 
  private:
-  // Runs in allocation-failure context: ROM-safe print only (no heap,
-  // no mutex), then restart. Logging here could deadlock on the log mutex.
+  // Alloc-failure context: ROM print only (no heap, no mutex); logging here could deadlock.
   static void onAllocFailed(size_t requestedSize, uint32_t caps, const char* functionName) {
     ets_printf("OOM: alloc %u caps %lu in %s — restarting\n", (unsigned)requestedSize, (unsigned long)caps,
                functionName != nullptr ? functionName : "?");

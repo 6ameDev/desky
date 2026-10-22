@@ -1,10 +1,6 @@
 #pragma once
-// desky v2 diagnostics — header-only, ESP-IDF primitives only.
-//
-// Memory discipline rule (see also logger.h): no String/new/malloc in
-// tasks/loops. Stack buffers + vsnprintf only. This helper makes the
-// habit measurable from day 1: call logWatermarks() in each task body
-// (and loop()) so stack/heap pressure is visible long before Phase 2.
+// Stack/heap watermark logger: call in each task body and loop().
+// Largest-block vs total-free divergence is the fragmentation canary.
 
 #include <Arduino.h>
 
@@ -12,8 +8,7 @@
 
 class Diagnostics {
  public:
-  // Logs caller-task stack watermark + heap free + largest free block.
-  // Largest-block < total-free divergence is the fragmentation canary.
+  // Caller-task stack watermark + heap free + largest free block.
   static void logWatermarks(const char* tag = "MEM") {
 #if defined(portTICK_PERIOD_MS)
     UBaseType_t watermark = uxTaskGetStackHighWaterMark(nullptr);

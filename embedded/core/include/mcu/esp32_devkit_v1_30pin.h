@@ -1,7 +1,6 @@
 #pragma once
 // MCU definition: ESP32 DevKit v1 (30-pin, classic ESP32-WROOM-32).
-// Canonical baseline for desky v2 clean rewrite. Verified against
-// V1 main branch pin map (motors/FAULT/XSHUT/I2C).
+// Rollback baseline (swap back via include/mcu/active_mcu.h).
 // Framework: Arduino + FreeRTOS, board = esp32dev, env = desky.
 
 #include "mcu_common.h"
@@ -15,7 +14,7 @@
 #define MCU_HAS_NATIVE_USB 0
 #define MCU_HAS_CAMERA 0
 
-// ── Proven V1 pin map (locked as baseline) ───────────────────
+// ── Pin map (locked as baseline) ───────────────────
 #define MCU_MOTOR_IN1 25    // MotorDriver IN1, LEDC 20kHz 8-bit
 #define MCU_MOTOR_IN2 26    // MotorDriver IN2
 #define MCU_MOTOR_IN3 18    // MotorDriver IN3
@@ -33,9 +32,8 @@
 #define MCU_ADDR_OLED_ALT 0x3D
 
 // ── Reserved second I2C bus (NOT initialized — no Wire1 instance yet) ──
-// RESERVED-for-future-bus (e.g. OLED-on-bus2, isolating its ~23ms render
-// hold from ToF/MPU). GPIO32/33 are safe spares: not strapping, not SPI
-// flash (6-11), not input-only (34-39), ADC1 (no ADC2/WiFi conflict).
+// GPIO32/33 are safe spares: not strapping, not SPI flash (6-11), not
+// input-only (34-39), ADC1 (no ADC2/WiFi conflict).
 // Do NOT call Wire1.begin() until the second I2CManager instance lands.
 #define MCU_I2C1_SDA 32
 #define MCU_I2C1_SCL 33
@@ -45,15 +43,15 @@
 #define MCU_I2C_TIMEOUT_MS 20
 #define MCU_PWM_FREQ_HZ 20000
 #define MCU_PWM_RESOLUTION_BITS 8
-#define MCU_PWM_MIN_DUTY 65  // MIN_MOTOR_PWM from V1
+#define MCU_PWM_MIN_DUTY 65
 
 // ── Hard constraints (do not violate without new MCU file) ──
 // - Strapping pins 0/2/5/12/15: keep unconnected at boot (none used above).
 // - GPIO6-11: reserved for SPI flash, never use as GPIO.
 // - GPIO34-39: input-only, no pullup/PWM — do not assign outputs here.
 // - GPIO25/26/27 are ADC2-capable: NO analogRead on them while WiFi is on
-//   (ADC2 conflicts with WiFi). No analogRead in V1 — keep it that way.
+//   (ADC2 conflicts with WiFi).
 // - GPIO4 drives onboard LED on some DevKits — XSHUT as plain OUTPUT is fine.
-// - Single shared Wire bus + i2cMutex model required (OLED holds ~23ms).
-// - Default 4MB partition: V1 flash ~80% full — watch headroom, prefer
-//   larger-app partition if firmware grows.
+// - Single shared Wire bus + i2cMutex model required.
+// - Default 4MB partition: watch headroom, prefer larger-app partition if
+//   firmware grows.

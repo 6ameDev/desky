@@ -1,17 +1,16 @@
 #pragma once
-// desky v2 UDP packet codec — Arduino-independent pure byte math.
+// UDP packet codec — Arduino-independent pure byte math.
 //
-// Shared by firmware (Phase 4 UDP server) and host Unity tests.
-// Wire format (docs/architecture/v2.md §G): big-endian multi-byte,
+// Shared by firmware and host Unity tests.
+// Wire format: big-endian multi-byte,
 // XOR checksum over all preceding bytes. No heap, no Arduino headers.
 
 #include <stddef.h>
 #include <stdint.h>
 
-// ── Frozen wire table (M9 three-way mirror gate) ─────────────────────────
+// ── Frozen wire table ─────────────────────────
 // Normative freeze (shared/protocol/README.md §"Pairing + authenticated
-// drive v1"; mirrors: firmware udp_server.h top half + pairing_codec.h, client
-// domain/Codec.kt WireConstants, README):
+// drive v1"):
 //   0xAA /  6  Control     App->Robot  [hdr|mode|thr|str|flags|XOR]
 //   0xBB /  9  Telemetry   Robot->App  [hdr|pitchBE|rollBE|distBE|flags|XOR]
 //   0x50 / 12  PAIR_REQ    App->Robot  [hdr|code6|cliNonce4|XOR]
@@ -24,12 +23,10 @@
 //   0x54 / 10  REKEY_ACK   Robot->App  [hdr|eraBE2|tag6|XOR]
 //   0x55 / 14  ALIVE       App->Robot  [hdr|eraBE2|ctrBE4|tag6|XOR]
 //   0x56 / 14  DISCONNECT  App->Robot  [hdr|eraBE2|ctrBE4|tag6|XOR]
-// Reserved: headers 0xAA/0xBB/0x50/0x51/0x52/0xAC/0xAD/0x53/0x54/0x55/0x56
-// are claimed — never reuse or renumber a header, never change a size, never
-// repurpose a reserved byte. New messages claim a fresh header (Phase-2
-// SET_RATE must pick other values). Deliberate stdint-only duplication: this
-// table is mirrored (not included) in udp_server.h / pairing_codec.h / Codec.kt /
-// README — drift must break the M9 gate tests, not silently pass.
+// Reserved: claimed headers are never reused or renumbered, sizes never
+// change, reserved bytes never repurposed — new messages claim a fresh
+// header. Deliberate stdint-only duplication: this table is mirrored (not
+// included) in udp_server.h / pairing_codec.h / Codec.kt / README.
 
 namespace udp {
 

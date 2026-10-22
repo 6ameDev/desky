@@ -1,40 +1,26 @@
 #pragma once
-// desky v2 audio manager — abilities/audio (ability layer).
+// Audio manager — abilities/audio.
 //
-// AudioManager: note queue + synth/meter policy, header-only, firmware-only
-// (#ifdef ARDUINO). Owns the I2S HAL (hal/i2s_audio.h duplex port +
-// hal/speaker.h amp format + hal/microphone.h mic format) + one Core 0
-// FreeRTOS task. Non-blocking API: beep() enqueues a tone, playTune() queues
-// a short melody, bootJingle() queues the 4-bell ascending arpeggio (the
-// jingle itself is the speaker self-test). playPcm() stages raw PCM for the
-// server/hub streaming future. The RX meter (per-channel RMS over each DMA
-// batch + leaky peak-hold + louderSide L/R/TIE with deadband) is snapshot +
-// serial only — NO periodic level events (bus spam); the single
-// EVENT_BEEP_DONE (payload 0) fires when the beep queue drains to empty,
-// which the coordinator explicitly ignores (see system_context.h).
+// AudioManager: note queue + synth/meter policy, header-only, firmware-only.
+// Owns the I2S HAL (duplex port + speaker/mic formats) + one Core 0 task.
+// Non-blocking API: beep() enqueues a tone, playTune() queues a melody,
+// bootJingle() queues the 4-bell ascending arpeggio (the jingle itself is the
+// speaker self-test). playPcm() stages raw PCM for future streaming. The RX
+// meter (per-channel RMS + leaky peak-hold + L/R/TIE with deadband) is
+// snapshot + serial only — no periodic level events; the single
+// EVENT_BEEP_DONE (payload 0) fires when the queue drains, which the
+// coordinator ignores.
 //
-// TX synth: bell chimes (sine + octave partial, exponential decay —
-// a struck bell, not a gated oscillator). Output is DUAL-MONO (identical
-// L+R samples, so the amp's floating SD_MODE (L+R)/2 mix is moot). Quiet
-// by construction: peak = CFG_AUDIO_VOLUME of int16 full-scale (~12%
-// default — the 8Ω 2W cavity on 5V gets loud).
+// TX synth: bell chimes (sine + octave partial, exponential decay). Output is
+// DUAL-MONO (identical L+R samples). Quiet by construction: peak =
+// CFG_AUDIO_VOLUME of int16 full-scale.
 //
-// Serial log lines: one boot line (rate/format/channels/pins/volume), one
-// meter line at CFG_AUDIO_METER_MS cadence (rmsL/rmsR/peak/side, DEBUG
-// level so INFO transcripts stay readable), one
-// beep-start line per note + one done line per queue drain.
-//
-// Structure: pure DSP lives in audio_codec.h (namespace audiometer,
-// Arduino-free, host-tested directly); the RTOS binder lives in
-// audio_task.h (thin forwarder — see its seam note). Moved verbatim from the
-// bottom half of the former services/audio_manager.h (Slice 4); zero
-// behavior change. Zero socket dependencies (no WiFi/socket/Udp/
-// AsyncWebServer/Preferences/NVS — only EventBus EVENT_BEEP_DONE publish).
+// Serial lines: one boot line, one DEBUG meter line at CFG_AUDIO_METER_MS
+// cadence, one beep-start line per note + one done line per queue drain.
 //
 // Rules: no heap/String in the audio task paths (fixed 8-slot note queue,
-// drop + LOG_W when full — matches the EventBus drop style), WDT fed every
-// loop, Diagnostics::logWatermarks("AUDIO") every ~5s, task never halts,
-// no ISR work (DMA polled in the task).
+// drop + LOG_W when full), WDT fed every loop, logWatermarks("AUDIO") every
+// ~5s, task never halts, no ISR work (DMA polled in the task).
 
 #include "audio_codec.h"
 
@@ -53,8 +39,7 @@
 #include "services/event_bus.h"
 #include "system_context.h"
 
-// Fallbacks keep this header compilable if config keys ever drift; in-project
-// include/config.h always wins (same pattern as udp_server.h).
+// Fallbacks if config keys drift; in-project include/config.h always wins.
 #ifndef CFG_AUDIO_STACK_WORDS
 #define CFG_AUDIO_STACK_WORDS 4096
 #endif
@@ -120,9 +105,7 @@ class AudioManager {
         lastWmMs_(0) {}
 
   // Inits the duplex HAL, logs ONE boot line, and pins the audio task to
-  // Core 0. Call once in setup(), after SensorTask::begin (audio never
-  // touches sensors — the ordering just keeps fallible inits sequenced) in
-  // ALL envs incl. desky-bench (no WiFi dependency), with logging up.
+  // Core 0. Call once in setup(), with logging up.
   bool begin() {
     peakAmp_ = static_cast<int16_t>(CFG_AUDIO_VOLUME * 32767.0f);
     if (!hal_.init()) {
@@ -143,7 +126,7 @@ class AudioManager {
   }
 
   // Non-blocking: enqueue one tone (gapMs trailing silence). False + LOG_W
-  // when the 8-slot queue is full (drop style, matches EventBus) or dur 0.
+  // when the 8-slot queue is full or dur 0.
   bool beep(uint16_t freqHz, uint16_t durMs, uint16_t gapMs = 0) {
     if (durMs == 0) {
       return false;
@@ -167,15 +150,12 @@ class AudioManager {
     return allFit;
   }
 
-  // Non-blocking: queue the boot jingle (call after the BOOT banner lines so
-  // the chirp reads as the speaker self-test).
+  // Non-blocking: queue the boot jingle (call after the BOOT banner lines).
   bool bootJingle() { return playTune(kBootJingle, sizeof(kBootJingle) / sizeof(kBootJingle[0])); }
 
   // Non-blocking: stage raw int16 mono PCM for playout once the note
-  // machinery is fully idle (notes always win over PCM). STUB for the
-  // server/hub future: the network task will fill this buffer with streamed
-  // chunks; the task drains it exactly like notes (dual-mono'd, done edge).
-  // Truncates to the buffer cap. Call from setup/task context, never ISR.
+  // machinery is fully idle (notes always win over PCM). Truncates to the
+  // buffer cap. Call from setup/task context, never ISR.
   bool playPcm(const int16_t* samples, size_t frames) {
     if (mutex_ == nullptr || samples == nullptr || frames == 0) {
       return false;
@@ -193,7 +173,7 @@ class AudioManager {
     return true;
   }
 
-  // Mutex-guarded copy of the live meter (rmsL/rmsR/peak/side for logs).
+  // Mutex-guarded copy of the live meter.
   audiometer::AudioLevel snapshot() const {
     audiometer::AudioLevel level;
     if (mutex_ == nullptr) {
@@ -249,11 +229,11 @@ class AudioManager {
     esp_task_wdt_add(nullptr);
     lastMeterMs_ = millis();
     lastWmMs_ = lastMeterMs_;
-    // Never returns / never halts by design (see coordinator.h: a halted
-    // WDT-subscribed task becomes a panic-reboot loop).
+    // Never returns / never halts. (A halted WDT-subscribed task becomes a
+    // panic-reboot loop.)
     for (;;) {
-      // RX: one DMA batch per loop (16ms of stereo-32 @16kHz, 30ms cap).
-      // Timeouts hold the last meter in silence — no stale-zero flicker.
+      // RX: one DMA batch per loop. Timeouts hold the last meter in
+      // silence — no stale-zero flicker.
       size_t got = hal_.readRx(rxStereo_, sizeof(rxStereo_), 30);
       const size_t frames = got / (2u * sizeof(uint32_t));
       if (frames > 0) {
@@ -261,8 +241,7 @@ class AudioManager {
       }
 
       // TX: fill one 10ms dual-mono chunk (pcm -> note -> gap -> queued ->
-      // idle silence; the idle silence write keeps the amp fed with zeros so
-      // it never holds a stale half-cycle).
+      // idle silence).
       uint32_t avail = kTxChunkFrames;
       uint32_t filled = 0;
       bool pcmDone = false;
@@ -338,10 +317,8 @@ class AudioManager {
       speaker::packMono32(txMono_, txStereo_, kTxChunkFrames);
       hal_.writeTx(txStereo_, sizeof(txStereo_), 50);
 
-      // Meter serial line at the CFG cadence (the ONLY periodic audio log).
-      // DEBUG level (bench lesson, Task 10): at INFO it drowned the UDP
-      // security-drop lines in the transcript. Still visible in debug
-      // builds; release builds strip it at compile time.
+      // Meter serial line at the CFG cadence (the ONLY periodic audio log),
+      // DEBUG level so INFO transcripts stay readable.
       const uint32_t nowMs = millis();
       if (nowMs - lastMeterMs_ >= kMeterMs) {
         lastMeterMs_ = nowMs;
@@ -377,7 +354,6 @@ class AudioManager {
   }
 
   // Per-channel RMS over one DMA batch + leaky peak-hold + louderSide.
-  // Unpacks int24 on the fly (no second buffer, no heap).
   void updateMeter(size_t frames) {
     uint64_t accL = 0;
     uint64_t accR = 0;
@@ -394,8 +370,8 @@ class AudioManager {
     xSemaphoreTake(mutex_, portMAX_DELAY);
     level_.rmsL = rmsL;
     level_.rmsR = rmsR;
-    // Leaky peak-hold: attacks instantly, decays ~0.8%/batch (~16ms) so a
-    // clap spike stays visible across several meter lines, then settles.
+    // Leaky peak-hold: attacks instantly, decays slowly so a spike stays
+    // visible across several meter lines, then settles.
     level_.peak = (level_.peak * 127u) / 128u;
     if (curMax > level_.peak) {
       level_.peak = curMax;
@@ -423,8 +399,8 @@ class AudioManager {
   audiometer::AudioLevel level_;  // Task writes / snapshot() reads under mutex_.
   uint32_t lastMeterMs_;
   uint32_t lastWmMs_;
-  // Staged-PCM playout buffer (playPcm): 1.024s cap @16kHz, int16 mono —
-  // the server/hub streaming stub. Dual-mono'd on the way out like notes.
+  // Staged-PCM playout buffer (playPcm): 1.024s cap @16kHz, int16 mono.
+  // Dual-mono'd on the way out like notes.
   static constexpr uint32_t kPcmCapFrames = 16384;
   int16_t pcmBuf_[kPcmCapFrames];
   uint32_t pcmLen_ = 0;

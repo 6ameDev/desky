@@ -1,5 +1,4 @@
-// Host unit tests for the head power matrix (no hardware).
-// Run: pio test -e native-test
+// Head power matrix (no hardware).
 
 #include <unity.h>
 
@@ -24,7 +23,7 @@ void test_boot_lean_nonzero_cam_off_oled_dim() {
 void test_cam_matrix_flips_both_ways() {
   TEST_ASSERT_EQUAL_UINT8(CAM_ON, resolveCamCommand(CAM_OFF, true));
   TEST_ASSERT_EQUAL_UINT8(CAM_OFF, resolveCamCommand(CAM_ON, false));
-  TEST_ASSERT_EQUAL_UINT8(CAM_ON, resolveCamCommand(CAM_ON, true));  // idempotent
+  TEST_ASSERT_EQUAL_UINT8(CAM_ON, resolveCamCommand(CAM_ON, true));
   TEST_ASSERT_EQUAL_UINT8(CAM_OFF, resolveCamCommand(CAM_OFF, false));
 }
 
@@ -32,7 +31,7 @@ void test_oled_matrix_all_rows() {
   TEST_ASSERT_EQUAL_UINT8(OLED_ON, resolveOledCommand(OLED_OFF, OLED_ON));
   TEST_ASSERT_EQUAL_UINT8(OLED_DIM, resolveOledCommand(OLED_ON, OLED_DIM));
   TEST_ASSERT_EQUAL_UINT8(OLED_OFF, resolveOledCommand(OLED_DIM, OLED_OFF));
-  TEST_ASSERT_EQUAL_UINT8(OLED_DIM, resolveOledCommand(OLED_DIM, OLED_DIM));  // idempotent
+  TEST_ASSERT_EQUAL_UINT8(OLED_DIM, resolveOledCommand(OLED_DIM, OLED_DIM));
 }
 
 void test_power_state_names() {

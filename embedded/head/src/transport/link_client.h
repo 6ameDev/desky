@@ -1,57 +1,20 @@
 #pragma once
-// desky-head WiFi link client (H2.3 B-link) — TRANSPORT layer, dumb pipe.
-//
-// Sockets, framing, peer/assoc/HB state only; business decisions arrive as
-// injected callbacks (LinkHandlers, stored never owned, bound in main.cpp).
-// No PowerManager / OtaUpdater / CameraDriver / FaceRenderer includes, no
-// direct business calls. Split from the monolith wifi_link.h (Task 2); the
-// business mapping helpers live in their canonical homes (wifilink::mapCmd +
-// isOtaFrame in transport/link_codec.h, pairing gates in
-// abilities/pairing/pairing_codec.h).
-//
-//   UDP CFG_LINK_UDP_PORT (3334): HB head->core at 1Hz (rssi/channel/freeHeap/
-//     bootId per the codec HB type) + ACK replies; RX FACE/OLED/CAMCTL/
-//     PAIRSHOW/PAIRDONE commands + HB_ACK on the same socket. HB_ACK tracked: linkDown after
-//     3 missed ACKs (~3s) -> re-associate + re-AWAKE. The tx seq domain is
-//     MONOTONIC within a boot (never reset on re-assoc); the per-boot bootId
-//     epoch lets the core resync after a head reboot instead of dropping low
-//     seqs as stale forever.
-//   TCP CFG_LINK_TCP_PORT (3335): JPEG stills head->core, chunked per the
-//     README MTU rule (frag idx/total in every frame). Stills-first: 1 frame
-//     per CLI `snap` trigger in this task, NO continuous streaming yet
-//     (continuous fps comes with the H2.4 bench gates).
-//
-// Power / coexistence notes (see also include/mcu/esp32cam_ov3660.h):
-// - Camera data/clock pins are DIGITAL-only (no ADC2 use anywhere on head),
-//   so there is NO ADC2-vs-WiFi conflict — WiFi + camera coexist by design.
-// - Star 5V rail budgets module + camera + OLED + radio peak together; the
-//   modem-sleep-between-HBs policy keeps the radio at its idle floor except
-//   during the 1Hz HB blip and on-demand still uploads.
-// - Channel follows the core AP (head never selects a channel; the STA
-//   inherits the AP channel on associate).
-// - MB-board rule preserved: with no AP visible (every USB run) association
-//   fails gracefully with a throttled LOG_W + retry — never asserts, never
-//   blocks boot, camera + faces keep working standalone.
-//
-// Scheduling: NO dedicated task in this task — poll() + heartbeatTick() run
-// on the Arduino loop (Core 1 by construction), so the Core 0 render task
-// (CFG_FACE_PRIORITY_OFFSET +2) is never preempted by link work. If link work
-// ever moves to its own task, pin it to Core 0 at offset +1 (BELOW face +2,
-// same level core gave the link below its UDP server +3).
-//
-// POSIX gotcha (discovered on core, not rediscovered here): newlib declares
-// ::link(), so `namespace link` at global scope BREAKS Arduino TUs. The
-// codec is included ONCE inside linkwrap__ (see transport/link_codec.h) and
-// used via the `linkcode` alias uniformly (same workaround as core's
-// link_server.h).
+// desky-head WiFi link client (B-link) - TRANSPORT layer, dumb pipe.
+// Sockets, framing, peer/assoc/HB state only; business arrives as injected
+// LinkHandlers callbacks (stored, never owned, bound in main.cpp).
+// UDP 3334: HB head->core at 1Hz + ACK replies; RX FACE/OLED/CAMCTL/
+// PAIRSHOW/PAIRDONE/OTA + HB_ACK. Link down after 3 missed ACKs (~3s).
+// Tx seq is monotonic within a boot; the per-boot bootId epoch lets the
+// core resync after a head reboot. TCP 3335: JPEG stills, one frame per
+// `snap` trigger. Logs are counters-only, never payload bytes.
+// Association is async with throttled retry; absence of the AP never
+// blocks boot. poll() + heartbeatTick() run on the Arduino loop.
 
 #include <stddef.h>
 #include <stdint.h>
 
 #include "transport/link_codec.h"
 
-// Fallbacks keep the host tests + firmware compiling if config keys drift;
-// in-project include/config.h always wins (same pattern as link_stub.h).
 #ifndef CFG_LINK_SSID
 #define CFG_LINK_SSID "desky"
 #endif
@@ -71,25 +34,18 @@
 #define CFG_LINK_ASSOC_RETRY_MS 5000
 #endif
 
-// Injected business edges (stored, never owned). main.cpp binds these to the
-// PowerManager / OtaUpdater / CameraDriver; transport never includes those
-// headers and never calls them directly.
+// Injected business edges (stored, never owned). main.cpp binds them.
 struct LinkHandlers {
   void* ctx = nullptr;
-  // Validated FACE/OLED/CAMCTL frame (decode + frag gate + seq gate +
-  // codec value check). Handler maps (wifilink::mapCmd in
-  // transport/link_codec.h), publishes HEAD_EVENT_LINK_CMD, and executes.
+  // Validated FACE/OLED/CAMCTL frame. Handler maps, publishes, executes.
   void (*onCommand)(void* ctx, const linkcode::Frame& f) = nullptr;
-  // Validated PAIRSHOW payload (digits + window unpacked by transport).
+  // Validated PAIRSHOW payload (digits + window).
   void (*onPairShow)(void* ctx, const uint8_t pin6[6], uint16_t validSecs) = nullptr;
   // Validated PAIRDONE frame (presence is the signal).
   void (*onPairDone)(void* ctx) = nullptr;
-  // Raw OTA URL bytes (length-gated only). Handler owns the grammar
-  // (otamanifest::copyOtaUrl) + updater trigger. True = consumed (the seq
-  // was already consumed + ACKed by transport before this call).
+  // Raw OTA URL bytes (length-gated only). True = consumed.
   bool (*onOtaUrl)(void* ctx, const uint8_t* url, uint16_t len) = nullptr;
-  // Camera gate for the TCP stills pump (replaces direct cam_ calls;
-  // the fb acquire/release itself stays here via esp_camera.h).
+  // Camera gate for the TCP stills pump.
   bool (*isCameraOn)(void* ctx) = nullptr;
 };
 
@@ -100,7 +56,7 @@ struct LinkHandlers {
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <esp_camera.h>
-#include <esp_system.h>  // esp_random() for the per-boot bootId epoch
+#include <esp_system.h>
 
 #include "common/fault_manager.h"
 #include "common/logger.h"
@@ -108,8 +64,6 @@ struct LinkHandlers {
 #include "config.h"
 #include "head_context.h"
 
-// Fallbacks keep this header compilable if config keys ever drift; in-project
-// include/config.h always wins (same pattern as core's coordinator.h).
 #ifndef CFG_LINK_HEARTBEAT_MS
 #define CFG_LINK_HEARTBEAT_MS 1000
 #endif
@@ -149,37 +103,25 @@ class LinkClient {
         firstDrop_(true),
         firstStale_(true) {}
 
-  // Joins the core AP (STA only, modem-sleep) and binds UDP. Never blocks
-  // boot: association is async, absence of the AP only logs. Call once in
-  // setup(), AFTER g_link (stub) init — the stub stays PARKED and this
-  // client is the live path. Business edges arrive via setHandlers() (main
-  // binds PowerManager/OtaUpdater/CameraDriver there). Logging must be up.
+  // Call once in setup(). Never blocks boot: association is async.
   void begin() {
-    // Boot epoch for the HB seq domain (see linkcode::kHbLen note): drawn
-    // once here, never reseeded — the core uses it to resync after a head
-    // reboot instead of dropping our low seqs as stale forever.
-    bootId_ = esp_random();
+    bootId_ = esp_random();  // Per-boot epoch; never reseeded (core resyncs on it).
     WiFi.mode(WIFI_STA);
-    WiFi.setSleep(true);  // modem-sleep between HBs (idle floor, see header)
+    WiFi.setSleep(true);
     udp_.begin(CFG_LINK_UDP_PORT);
     LOG_I("LINK", "wifi sta up udp=%u tcp=%u ap=%s", static_cast<unsigned>(CFG_LINK_UDP_PORT),
           static_cast<unsigned>(CFG_LINK_TCP_PORT), CFG_LINK_SSID);
     beginAttempt(millis());
   }
 
-  // Business-edge binder (stored, never owned). Call once in setup() after
-  // begin(); main.cpp owns the handler targets.
+  // Stored, never owned. Call once in setup() after begin().
   void setHandlers(const LinkHandlers& h) { handlers_ = h; }
 
-  // Drains inbound UDP (commands/HB_ACK/ACK), drives association while
-  // down, and services one pending still. Quick by design — called every
-  // loop() alongside the stub poll; ordering in main.cpp is preserved.
+  // Drains inbound UDP, drives association while down, services one still.
   void poll() {
     const uint32_t now = millis();
     if (!associated_) {
-      // Attempt in flight: only CHECK it (cheap status read). A NEW attempt
-      // starts on the retry cadence — never re-begin() here: that aborts the
-      // in-flight handshake, so same-tick re-begin loops can never connect.
+      // Never re-begin() an in-flight handshake here: that aborts it.
       if (!connecting_) {
         if (wifilink::retryDue(now, lastAssocTryMs_, CFG_LINK_ASSOC_RETRY_MS)) {
           beginAttempt(now);
@@ -192,8 +134,6 @@ class LinkClient {
             onAssoc(now);
             break;
           case wifilink::AssocAction::kRestart:
-            // Handshake never completed: drop it and start fresh on the
-            // retry cadence. Only NOW may we say the AP is not visible.
             WiFi.disconnect();
             connecting_ = false;
             lastAssocTryMs_ = now;
@@ -204,7 +144,7 @@ class LinkClient {
               LOG_EVERY_N(12, "LINK", "no AP visible, retry (assoc timeout)");
             }
             break;
-          case wifilink::AssocAction::kBegin:  // unreachable: connecting_ is true
+          case wifilink::AssocAction::kBegin:
           case wifilink::AssocAction::kWait:
             break;
         }
@@ -227,8 +167,7 @@ class LinkClient {
     serviceStill();
   }
 
-  // 1Hz HB TX + link-down watch (~3s / 3 missed ACKs -> re-associate,
-  // re-AWAKE + seq resync from 0). Called every loop() after poll().
+  // 1Hz HB TX + link-down watch (3 missed ACKs -> re-associate). Called every loop() after poll().
   void heartbeatTick() {
     const uint32_t now = millis();
     if (!linkUp_) {
@@ -248,15 +187,10 @@ class LinkClient {
             static_cast<unsigned long>(hbSent_), static_cast<unsigned long>(hbAckRx_));
       WiFi.disconnect();
       markDown(now);
-      // NOTE: txSeq_ is NOT reset (stays monotonic for this boot). The core
-      // gates strictly-greater within our bootId epoch, so the post-reassoc
-      // HBs are fresh and the link self-heals. Resetting here used to wedge
-      // the link permanently (every re-assoc HB dropped as stale).
     }
   }
 
-  // One JPEG still on the next poll() (CLI `snap` trigger). Stills-first:
-  // at most one frame per trigger, never continuous.
+  // One JPEG still on the next poll() (`snap` trigger, never continuous).
   void requestStill() {
     if (!linkUp_) {
       LOG_W("LINK", "snap ignored, link down");
@@ -266,7 +200,7 @@ class LinkClient {
     stillPending_ = true;
   }
 
-  // CLI `link` / `status` door: one counters-only line (never payload bytes).
+  // CLI `link` / `status` door: counters only.
   void logStatus() const {
     LOG_I("LINK",
           "link state=%s assoc=%d rssi=%d ch=%u hb=%lu/%lu miss=%u cmd=%lu pair=%lu/%lu ota=%lu still=%lu/%lu "
@@ -281,15 +215,10 @@ class LinkClient {
           static_cast<unsigned long>(bootId_));
   }
 
-  // Checked-send failures (udpsend::udpSendChecked false): rare/backpressure
-  // class, WARNed at every occurrence (release-visible). Benign tear-tolerant
-  // read; loop context only, never ISR.
   uint32_t txFail() const { return txFail_; }
 
  private:
-  // Security-drop logging (bench lesson, same idiom as core's link_server.h):
-  // the first occurrence per boot per class always logs at INFO; afterwards
-  // the call-site LOG_EVERY_N throttle applies. Counters only here.
+  // First drop per boot per class logs at INFO; afterwards throttled.
   template <typename... Args>
   void dropFirst(bool& first, const char* fmt, Args... args) {
     if (first) {
@@ -309,13 +238,9 @@ class LinkClient {
   void onAssoc(uint32_t now) {
     associated_ = true;
     linkUp_ = true;
-    // txSeq_ is deliberately NOT reset here: the seq domain is monotonic
-    // within a boot (the epoch is bootId, sent in every HB). Resetting it
-    // would make every post-assoc HB look stale to the core's
-    // strictly-greater gate — an unrecoverable wedge (bench-proven).
     haveCmdSeq_ = false;
     hbSinceAck_ = 0;
-    lastAckMs_ = now;  // grace window for the first HB_ACK
+    lastAckMs_ = now;
     lastHbMs_ = now;
     const int rssiRaw = WiFi.RSSI();
     lastRssi_ = static_cast<int8_t>(rssiRaw < -128 ? -128 : (rssiRaw > 127 ? 127 : rssiRaw));
@@ -327,7 +252,7 @@ class LinkClient {
   void markDown(uint32_t now) {
     associated_ = false;
     linkUp_ = false;
-    connecting_ = false;  // next poll() starts a fresh attempt on cadence
+    connecting_ = false;
     lastAssocTryMs_ = now;
     if (stillPending_) {
       stillPending_ = false;
@@ -372,22 +297,19 @@ class LinkClient {
         handleCmd(f, rip, rport);
         break;
       case linkcode::kTypeAck:
-        ++hbAckRx_;  // receipt for our HB/ACK frames; counted, never re-ACKed
+        ++hbAckRx_;  // counted, never re-ACKed
         LOG_EVERY_N(20, "LINK", "ack acked=%u", static_cast<unsigned>(f.seq));
         break;
       case linkcode::kTypeHb:
       case linkcode::kTypeJpeg:
       case linkcode::kTypeQrBitmap:
-        // Wrong direction on this socket (HB is ours to send, JPEG rides
-        // TCP, QRBITMAP is reserved and never sent since the flag-day
-        // removal). Silent throttled drop, counters only.
+        // Wrong direction on this socket: throttled drop, counters only.
         dropFirst(firstDrop_, "drop link unexpected %s on udp (first of boot)", wifilink::typeName(f.type));
         LOG_EVERY_N(20, "LINK", "drop link unexpected %s on udp", wifilink::typeName(f.type));
         ++udpDrop_;
         break;
       default:
-        // Unreachable: decodeFrame rejects unknown types above. Kept so a
-        // future codec bump fails closed instead of falling through.
+        // Unreachable: decodeFrame rejects unknown types above (fails closed).
         dropFirst(firstDrop_, "drop link unknown type=0x%02X (first of boot)", static_cast<unsigned>(f.type));
         LOG_EVERY_N(20, "LINK", "drop link unknown type=0x%02X", static_cast<unsigned>(f.type));
         ++udpDrop_;
@@ -404,7 +326,7 @@ class LinkClient {
       ++udpDrop_;
       return;
     }
-    (void)era;  // transport-only link: no rekey domain (core sends 0)
+    (void)era;
     lastChannel_ = channel;
     lastAckMs_ = millis();
     hbSinceAck_ = 0;
@@ -417,14 +339,8 @@ class LinkClient {
     }
   }
 
-  // Core->head command: freshness-gated; fresh executes once via the injected
-  // edges + ACKs; duplicates only re-ACK, never re-execute; stale drops.
-  // FACE/OLED/CAMCTL frames are value-checked through the shared codec
-  // vocabulary (fail-closed, same drop shape as the old mapCmd gate) and
-  // handed to onCommand; PAIRSHOW hands its 6 digits + validity window to
-  // onPairShow + ACKs; PAIRDONE hands completion to onPairDone + ACKs;
-  // OTA hands its URL bytes to onOtaUrl + ACKs. Duplicates of any of these
-  // only re-ACK, never re-trigger.
+  // Fresh executes once via the injected edges + ACKs; duplicates only
+  // re-ACK, never re-execute; stale drops. Unappliable frames get no ACK.
   void handleCmd(const linkcode::Frame& f, const IPAddress& rip, uint16_t rport) {
     const wifilink::RxVerdict v = wifilink::classifyRx(haveCmdSeq_, lastCmdSeq_, f.seq);
     if (v == wifilink::RxVerdict::kStale) {
@@ -438,9 +354,7 @@ class LinkClient {
       LOG_EVERY_N(20, "LINK", "redeliver seq=%u", static_cast<unsigned>(f.seq));
       return;
     }
-    // Length gate mirrors wifilink::isOtaFrame (transport/link_codec.h); the
-    // byte grammar + updater trigger are
-    // the injected onOtaUrl edge (main binds OtaUpdater there).
+    // OTA length gate (mirrors wifilink::isOtaFrame).
     if (f.type == linkcode::kTypeOta && f.payloadLen >= linkcode::kOtaUrlMinLen &&
         f.payloadLen <= linkcode::kOtaUrlMaxLen) {
       haveCmdSeq_ = true;
@@ -461,15 +375,12 @@ class LinkClient {
       LOG_I("LINK", "ota seq=%u len=%u", static_cast<unsigned>(f.seq), static_cast<unsigned>(f.payloadLen));
       return;
     }
-    // Length gate mirrors wifilink::isPairShowFrame
-    // (abilities/pairing/pairing_codec.h); the 6-digit vocabulary lives once in unpackPairShow (shared
-    // digits+valid-secs contract). Duplicates only re-ACK, never re-render.
+    // PAIRSHOW length gate (mirrors wifilink::isPairShowFrame).
     if (f.type == linkcode::kTypePairShow && f.payloadLen == linkcode::kPairShowLen) {
       uint8_t pin[6] = {};
       uint16_t validSecs = 0;
       if (!linkcode::unpackPairShow(f.payload, f.payloadLen, pin, validSecs)) {
-        // Bad digits: unexecutable, no ACK for a frame we cannot apply
-        // (same fail-closed shape as the bad-value FACE/OLED/CAMCTL drop).
+        // Bad digits: unexecutable, no ACK for a frame we cannot apply.
         dropFirst(firstDrop_, "drop link bad pairshow seq=%u (first of boot)", static_cast<unsigned>(f.seq));
         LOG_EVERY_N(20, "LINK", "drop link bad pairshow seq=%u", static_cast<unsigned>(f.seq));
         ++udpDrop_;
@@ -480,39 +391,27 @@ class LinkClient {
       ++pairShowRx_;
       ++cmdRx_;
       sendAck(rip, rport, f.seq);
-      // Handoff (Pre-2): the 8B payload hands digits + window to the
-      // injected edge synchronously (stack pin outlives this call; no heap,
-      // no retained pointer). Any FACE/OTA command or the valid-secs
-      // deadline clears it downstream. Re-arms on every fresh show.
       if (handlers_.onPairShow != nullptr) {
         handlers_.onPairShow(handlers_.ctx, pin, validSecs);
       }
       LOG_I("LINK", "pairshow seq=%u valid=%us", static_cast<unsigned>(f.seq), static_cast<unsigned>(validSecs));
       return;
     }
-    // Length gate mirrors wifilink::isPairDoneFrame (canonical in the shim).
-    // Duplicates only re-ACK, never re-clear.
+    // PAIRDONE length gate (mirrors wifilink::isPairDoneFrame).
     if (f.type == linkcode::kTypePairDone && f.payloadLen == linkcode::kPairDoneLen) {
       haveCmdSeq_ = true;
       lastCmdSeq_ = f.seq;
       ++pairDoneRx_;
       ++cmdRx_;
       sendAck(rip, rport, f.seq);
-      // Handoff (Pre-2): pairing complete — the injected edge clears the
-      // PIN/QR show (no-op when nothing is up, so only real transitions log
-      // downstream).
       if (handlers_.onPairDone != nullptr) {
         handlers_.onPairDone(handlers_.ctx);
       }
       LOG_I("LINK", "pairdone seq=%u", static_cast<unsigned>(f.seq));
       return;
     }
-    // FACE/OLED/CAMCTL only (the handleFrame switch routes everything else
-    // elsewhere). Value-checked through the shared codec vocabulary — the
-    // wire values ARE the vocabulary, validated once in link/link_codec.h,
-    // never re-derived. False = unexecutable drop, no ACK for a frame we
-    // cannot apply (same fail-closed shape as the old mapCmd gate; the
-    // handler re-maps via wifilink::mapCmd, which cannot fail here).
+    // FACE/OLED/CAMCTL only. Value-checked through the shared codec
+    // vocabulary (fail-closed); the handler re-maps via wifilink::mapCmd.
     bool ok = false;
     switch (f.type) {
       case linkcode::kTypeFace: {
@@ -539,13 +438,11 @@ class LinkClient {
       dropFirst(firstDrop_, "drop link bad value seq=%u (first of boot)", static_cast<unsigned>(f.seq));
       LOG_W("LINK", "drop bad value seq=%u", static_cast<unsigned>(f.seq));
       ++udpDrop_;
-      return;  // unexecutable: no ACK for a frame we cannot apply
+      return;
     }
     haveCmdSeq_ = true;
     lastCmdSeq_ = f.seq;
-    // LINK_CMD publish rides the injected edge (main owns the bus + the ONE
-    // command table there): the wire type is NOT the CmdTarget value
-    // (kTypeCamCtl=0x03 vs CmdTarget::CAM=0), so transport must not publish.
+    // Publish rides the injected edge: the wire type is NOT the CmdTarget value.
     if (handlers_.onCommand != nullptr) {
       handlers_.onCommand(handlers_.ctx, f);
     }
@@ -596,11 +493,7 @@ class LinkClient {
     ++hbSinceAck_;
   }
 
-  // One pending still -> TCP 3335, chunked per the README MTU rule straight
-  // out of the camera fb (PSRAM) through the single static send buffer. Never
-  // holds two full frames. Feeds the WDT across the upload; failure only
-  // counts (never asserts, never blocks boot/loop). The camera power gate is
-  // the injected isCameraOn edge (main binds CameraDriver there).
+  // One pending still -> TCP 3335, chunked from the camera fb. Failure counts, never asserts.
   void serviceStill() {
     if (!stillPending_) {
       return;
@@ -666,33 +559,21 @@ class LinkClient {
     }
   }
 
-  LinkHandlers handlers_;  // injected business edges (main binds, never owned here)
+  LinkHandlers handlers_;
   WiFiUDP udp_;
-  // Static frame buffers (LinkClient is a setup()-time global -> BSS, never
-  // task stack, never heap). JPEG bytes stream from the camera fb in
-  // MTU-sized chunks; only one in-flight frame buffer exists.
   uint8_t rxBuf_[linkcode::kMaxFrame];
   uint8_t txBuf_[linkcode::kMaxFrame];
   bool associated_;
   bool linkUp_;
   uint32_t lastAssocTryMs_;
-  // Async-assoc attempt state: connecting_ is true between WiFi.begin() and
-  // the connect/timeout verdict (see assocStep). attemptStartMs_ bounds the
-  // attempt at CFG_LINK_ASSOC_TIMEOUT_MS.
   bool connecting_;
   uint32_t attemptStartMs_;
   bool firstAttempt_;
   uint32_t lastHbMs_;
   uint32_t lastAckMs_;
   uint8_t hbSinceAck_;
-  // Boot epoch for the HB seq domain (see linkcode::kHbLen note): drawn once
-  // per boot so the core resyncs instead of wedging as stale after a head
-  // reboot. NEVER reseeded, never zeroed after begin.
-  uint32_t bootId_;
-  // Link tx counter: MONOTONIC within a boot — never reset on re-assoc (the
-  // core gates strictly-greater within our bootId epoch; resetting here used
-  // to wedge the link permanently after every re-associate).
-  uint16_t txSeq_;
+  uint32_t bootId_;  // Per-boot epoch; never reseeded.
+  uint16_t txSeq_;   // Monotonic within a boot; never reset on re-assoc.
   bool haveCmdSeq_;
   uint16_t lastCmdSeq_;
   bool stillPending_;

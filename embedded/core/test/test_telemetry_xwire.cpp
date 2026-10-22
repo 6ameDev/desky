@@ -163,10 +163,9 @@ void test_telemetry_xwire_literals_are_live_frames() {
   }
 }
 
-// Slice 7: RX observation (noteCommand/isDriving) — the coverage gain of the
-// slice. TelemetryManager owns the stale window as a ctor passthrough (same
-// pattern as rateMs_); the driving bit is nonzero-stick AND fresh, never
-// coordinator state.
+// RX observation (noteCommand/isDriving): TelemetryManager owns the stale
+// window as a ctor passthrough (same pattern as rateMs_); the driving bit is
+// nonzero-stick AND fresh, never coordinator state.
 void test_telemetry_note_driving_while_fresh() {
   telemetry::TelemetryManager tm(66, 500);
   TEST_ASSERT_EQUAL_UINT32(500, tm.staleMs());

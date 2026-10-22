@@ -1,33 +1,9 @@
 #pragma once
-// desky-head USB serial CLI — header-only, laptop-terminal door.
-//
-// Top half (namespace headcmd) is Arduino-free line parsing so host Unity
-// tests cover it; the bottom half (class CliManager) is firmware-only
-// (#ifdef ARDUINO): fixed-buffer Serial line assembly dispatching into the
-// ONE command table (HeadCoordinator::dispatch).
-//
-// Reference:
-//   cam on|off            camera power gate (sensor deinit/re-init)
-//   face <id>             0 boot, 1 happy, 2 sad, 3 blink, 4 alert (or name)
-//   oled on|dim|off       display matrix row
-//   status                power + camera stats snapshot + LINK status line
-//   link                  WiFi link status line only (state/assoc/rssi/HB
-//                         misses/frames sent, via LinkClient::logStatus)
-//   snap                  queue one JPEG still head->core over TCP (stills-
-//                         first: 1 frame per trigger, never continuous)
-//   ota <url>             pull an OTA image over plain HTTP and reboot into
-//                         it (works link up OR down — standalone; link state
-//                         is logged alongside, never required). URL form:
-//                         http://host[:port]/path (https/ftp rejected,
-//                         '@' rejected — credentials never ride or log).
-//                         Standing rule: never ship without the OTA client
-//                         (see abilities/ota/ota_task.h).
-//   qr                    show the bench QR demo pattern (exercises the QR
-//                         show/clear path with no link)
-//   qr clear              clear the QR show mode (any `face` also clears it)
-//   help                  this reference
-// Lowercase verbs only (humans); the UART link door speaks UPPERCASE.
-// No String/heap anywhere in the path (static line buffer, strncmp math).
+// USB serial CLI (firmware + host-tested line parsing). Dispatches into
+// HeadCoordinator::dispatch(); STATUS/HELP/LINK/SNAP/OTA answered here.
+// Lowercase verbs only; no String/heap in the path.
+//   cam on|off | face <id|name> | oled on|dim|off | status | link | snap |
+//   ota <url> | qr | qr clear | help
 
 #include "head_context.h"
 
@@ -40,7 +16,6 @@ inline const char* skipSpaces(const char* p) {
   return p;
 }
 
-// Word match + clean tail (only spaces/CR/LF/NUL may follow the word).
 inline bool wordIs(const char* p, const char* word, size_t n) {
   if (strncmp(p, word, n) != 0) {
     return false;
@@ -68,7 +43,7 @@ inline bool parseFaceArg(const char* p, int32_t& idOut) {
     idOut = id;
     return true;
   }
-  // Name: copy the word onto a small stack buffer (no heap) for lookup.
+  // No heap: copy the word onto a small stack buffer for lookup.
   char name[16];
   size_t n = 0;
   while (*p != '\0' && *p != '\r' && *p != '\n' && *p != ' ' && *p != '\t') {
@@ -147,8 +122,7 @@ inline bool parseLine(const char* line, PowerCommand& out) {
     out.arg = 0;
     return true;
   }
-  // OTA carries a URL arg: parseLine only checks verb + non-empty tail (the
-  // full grammar lives in ota::parseUrl, single-sourced at dispatch/start).
+  // OTA: parseLine checks verb + non-empty tail; ota::parseUrl owns the grammar.
   if (strncmp(p, "ota", 3) == 0 && (p[3] == ' ' || p[3] == '\t')) {
     const char* rest = skipSpaces(p + 3);
     if (*rest == '\0' || *rest == '\r' || *rest == '\n') {
@@ -199,8 +173,6 @@ inline bool parseLine(const char* line, PowerCommand& out) {
 #include "services/power_manager.h"
 #include "transport/link_client.h"
 
-// Fallbacks keep this header compilable if config keys ever drift; in-project
-// include/config.h always wins (same pattern as core's coordinator.h).
 #ifndef CFG_CLI_LINE_LEN
 #define CFG_CLI_LINE_LEN 64
 #endif
@@ -214,21 +186,16 @@ class CliManager {
     printHelp();
   }
 
-  // Coordinator door for the CAM/OLED/FACE/QR fallback (stored, never owned;
-  // main() attaches the HeadCoordinator after PowerManager::begin).
+  // Stored, never owned.
   void attachCoordinator(HeadCoordinator* coord) { coord_ = coord; }
 
-  // Live-path door for the LINK status line + `snap` still trigger. Stored,
-  // never owned; main() attaches after both clients are begun.
+  // Stored, never owned.
   void attachLink(LinkClient* link) { link_ = link; }
 
-  // OTA door for the `ota <url>` verb. Stored, never owned; main() attaches
-  // the updater (the standing rule: a head image without it is unflashable).
+  // Stored, never owned.
   void attachOta(OtaUpdater* ota) { ota_ = ota; }
 
-  // Drain Serial into a fixed buffer; each newline parses and dispatches.
-  // STATUS/HELP are answered here; LINK/SNAP/OTA fan out to their clients;
-  // everything else lands in the ONE command table (HeadCoordinator::dispatch).
+  // Each newline parses and dispatches.
   void poll() {
     while (Serial.available() > 0) {
       const char c = static_cast<char>(Serial.read());
@@ -278,8 +245,6 @@ class CliManager {
       }
     } else if (cmd.target == CmdTarget::OTA) {
       if (ota_ != nullptr && line != nullptr) {
-        // URL rides the raw line (parseLine checked verb + non-empty tail);
-        // ota::parseUrl owns the grammar, single-sourced with host tests.
         const char* verb = headcmd::skipSpaces(line);
         ota_->start(headcmd::skipSpaces(verb + 3));
       } else {

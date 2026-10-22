@@ -3,22 +3,18 @@
 clean:
 	pio run -e desky-head -t clean
 
-# Verify compilation (face-unit: ESP32-CAM + OV3660 + OLED + link stub, PARKED)
 build:
 	pio run -e desky-head
 
-# Host unit tests, no hardware (Unity)
 test:
 	pio test -e native-test
 
-# Pin lint: exact pins only — no ^ ranges, no bare git URLs, no floating platform.
-# (PlatformIO has no lockfile; platformio.ini IS the lockfile.)
+# Pin lint: exact pins only.
 check-pins:
 	@! grep -E "@ \\^" platformio.ini
 	@! grep -E "\\.git$$" platformio.ini
 	@! grep -E "releases/download/stable" platformio.ini
 
-# Full gate: formatting + pin lint + firmware build (deprecation-scanned) + host tests
 check:
 	clang-format --dry-run --Werror src/main.cpp src/hal/*.h src/services/*.h src/behavior/*.h src/transport/*.h src/abilities/*/*.h include/*.h include/mcu/*.h ../shared/common/*.h ../shared/link/*.h test/*.cpp
 	$(MAKE) check-pins

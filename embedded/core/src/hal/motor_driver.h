@@ -1,26 +1,21 @@
 #pragma once
-// desky v2 L0 motor driver (dual-H-bridge role) — header-only HAL.
+// L0 motor driver (dual-H-bridge role) — header-only HAL.
 //
 // Currently wired to a DRV8833; valid for any dual-H-bridge with 4xIN +
-// active-low FAULT (e.g. DRV8871, A4950) with no change — only raw GPIO/PWM
-// below, no chip registers. A chip-bound bridge (SPI config, current sense)
-// would land in a separate drv<chip>_driver.h sibling instead.
+// active-low FAULT with no change — only raw GPIO/PWM below, no chip
+// registers. A chip-bound bridge (SPI config, current sense) would land in a
+// separate sibling instead.
 //
-// Ports the PROVEN V1 logic (main:src/drivers/MotorDriver.{h,cpp} +
-// main:include/Config.h) onto the S3 map (see
-// include/mcu/esp32s3_wroom1_n16r8.h): IN1=4, IN2=5, IN3=6, IN4=7 (LEDC
-// 20kHz 8-bit, Arduino-3.x ledcAttach(pin,freq,res)+ledcWrite API),
-// FAULT=8 INPUT_PULLUP active-low, MIN_PWM=65 floor, brake=all-255.
-// Pins here are cross-checked against the active MCU header
-// (MCU_MOTOR_IN1/IN2/IN3/IN4/FAULT, MCU_PWM_*): they match, no conflict.
+// IN1=4, IN2=5, IN3=6, IN4=7 (LEDC 20kHz 8-bit), FAULT=8 INPUT_PULLUP
+// active-low, MIN_PWM=65 floor, brake=all-255. Pins here are cross-checked
+// against the active MCU header (they match, no conflict).
 //
 // Implements IActuator (init/setPowerState/isEnabled) plus motor verbs:
 // setDuty(left,right) signed -255..255, brake(), coast(), fault().
 //
-// Power model: the board wires no SLEEP/EEP pin, so setPowerState(false)
-// is logical: it coasts the bridge (high-Z, same as V1 zero-drive) and
-// gates setDuty(); brake()/coast() still actuate so an e-stop can always
-// force a stop state. init() failure DESKY_ASSERTs (fault_manager.h).
+// Power model: no SLEEP/EEP pin is wired, so setPowerState(false) is logical:
+// it coasts the bridge (high-Z) and gates setDuty(); brake()/coast() still
+// actuate so an e-stop can always force a stop state.
 
 #include <Arduino.h>
 #include <stdint.h>
@@ -61,14 +56,14 @@ class MotorDriver : public IActuator {
       return;
     }
     enabled_ = enable;
-    // Both transitions land in a safe stop state (coast == V1 zero-drive).
+    // Both transitions land in a safe stop state.
     coast();
   }
 
   bool isEnabled() const override { return enabled_; }
 
-  // Signed open-loop duty per side, -255..255 (clamped). Zero (after the
-  // V1 deadband) coasts that side; use brake() for an active short-stop.
+  // Signed open-loop duty per side, -255..255 (clamped). Zero coasts that
+  // side; use brake() for an active short-stop.
   void setDuty(int left, int right) {
     if (!enabled_) {
       return;
@@ -106,8 +101,7 @@ class MotorDriver : public IActuator {
     return d;
   }
 
-  // V1 applyFloor, integer-identical: |d|<10 -> 0, else linear
-  // map 10..255 -> minDuty..255 preserving sign.
+  // |d|<10 -> 0, else linear map 10..255 -> minDuty..255 preserving sign.
   int applyFloor(int speed) const {
     int mag = speed >= 0 ? speed : -speed;
     if (mag < 10) {

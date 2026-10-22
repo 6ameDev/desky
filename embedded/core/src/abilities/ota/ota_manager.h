@@ -1,33 +1,29 @@
 #pragma once
-// desky v2 OTA staging manager — abilities/ota (ability layer).
+// OTA staging manager — abilities/ota.
 //
-// ota::StagingManager: the upload state machine extracted verbatim from the
-// former middleware/ota_staging.h (Slice 5), host-testable. Pure logic only:
-// byte spans + plain POD views, zero sockets, zero mbedTLS, zero NVS.
+// ota::StagingManager: the upload state machine, host-testable. Pure logic
+// only: byte spans + plain POD views, zero sockets, zero mbedTLS, zero NVS.
 //
-// ── Seam ────────────────────────────────────────────────────────────────
 // The firmware binder (ota_task.h) owns everything that needs firmware
 // types and never lets it leak here: the AsyncWebServer routes, the mutex,
-// the one permanent PSRAM buffer (ps_malloc, never freed once allocated so
-// an in-flight GET can never dangle), and the mbedTLS SHA-256 context. It
-// drives this manager in the exact order the former handler did:
-//   index==0: parse ?version= via ota::parseVersionParam -> beginUpload ->
-//             (unless rejected) allocate/reuse storage + start the digest ->
-//             storageReady
-//   chunks:   memcpy happens HERE (writeChunk) so the overflow rule below
-//             stays byte-faithful; the task feeds the mbedTLS context with
-//             the same bytes and reports the update outcome
+// the one permanent PSRAM buffer (never freed once allocated so an in-flight
+// GET can never dangle), and the mbedTLS SHA-256 context. It drives this
+// manager in this order:
+//   index==0: parse ?version= -> beginUpload -> (unless rejected)
+//             allocate/reuse storage + start the digest -> storageReady
+//   chunks:   memcpy happens HERE (writeChunk); the task feeds the mbedTLS
+//             context with the same bytes and reports the update outcome
 //   final:    task finishes the digest -> finishUpload
 //   POST-done / GETs: takePostResult / binView / versionView snapshots.
 // Digest outcomes cross the seam as plain bools + a 32B array (null when
 // the digest failed); the manager only tracks the shaValid_ flag and the
-// hex string, exactly as before.
+// hex string.
 //
 // Preserved semantics (any change here is a wire-visible behavior change):
 // - One permanent buffer, never freed; chunks memcpy in place, so an
 //   aborted/oversize upload leaves the committed prefix clobbered while
-//   imgLen_/version_ still report the previous commit (faithful to the
-//   original — the buffer is only ever read at the committed length).
+//   imgLen_/version_ still report the previous commit (the buffer is only
+//   ever read at the committed length).
 // - Version applies atomically at commit via the shared
 //   otamanifest::decideUploadVersion (missing keeps, valid adopts, malformed
 //   rejects the whole upload with previous bytes + label preserved).
@@ -98,7 +94,7 @@ class StagingManager {
   }
 
   // Manifest version: set ONLY by a committed POST ?version= (single source
-  // of truth — no second channel). Safe pre-begin (stored, served later).
+  // of truth). Safe pre-begin (stored, served later).
   uint32_t version() const { return version_; }
 
   size_t imageBytes() const { return imgLen_; }
@@ -117,8 +113,7 @@ class StagingManager {
   // Upload start (index==0): records the pending ?version= label and decides
   // the reject up front. True = rejected (uploading_ forced false, previous
   // bytes + label preserved); false = proceed to storageReady. Never touches
-  // the buffer or the digest flag — the task allocates/starts those next,
-  // exactly as the former handler did after the version gate.
+  // the buffer or the digest flag.
   bool beginUpload(bool verPresent, bool verValid, uint32_t verVal) {
     uploadRejected_ = false;
     pendingVerPresent_ = verPresent;
@@ -134,8 +129,7 @@ class StagingManager {
 
   // Storage + digest outcome for a non-rejected start: reuses the permanent
   // buffer (attaches `storage` on first use), arms the upload, records the
-  // digest-start outcome. Null storage = allocation failed (upload stops;
-  // the digest flag is left untouched, as before).
+  // digest-start outcome. Null storage = allocation failed (upload stops).
   StartResult storageReady(uint8_t* storage, bool digestOk) {
     if (img_ == nullptr) {
       img_ = storage;
@@ -153,7 +147,7 @@ class StagingManager {
 
   // One upload chunk: size gate, in-place memcpy, in-flight accounting. The
   // task feeds the same bytes to its digest and reports a failed update via
-  // noteDigestFailed (the upload continues, the digest dies — as before).
+  // noteDigestFailed (the upload continues, the digest dies).
   WriteResult writeChunk(const uint8_t* data, size_t len) {
     if (!uploading_ || img_ == nullptr || data == nullptr || len == 0) {
       return WriteResult::kIgnored;
@@ -174,7 +168,7 @@ class StagingManager {
   // Upload end (final): commits length + label atomically and records the
   // hex when the digest finished; a non-uploading final only fails the
   // pending POST-done. digest32 is the finished 32B digest, or null when
-  // the digest failed (hex then clears, upload still commits — as before).
+  // the digest failed (hex then clears, upload still commits).
   // True = committed.
   bool finishUpload(bool digestOk, const uint8_t* digest32) {
     if (!uploading_) {
@@ -184,7 +178,7 @@ class StagingManager {
     uploading_ = false;
     imgLen_ = uploadLen_;
     // Atomic with the bytes: adopt the upload's label, keep previous when
-    // the upload carried none (re-POST never resets the label).
+    // the upload carried none.
     const otamanifest::VersionDecision vd =
         otamanifest::decideUploadVersion(pendingVerPresent_, pendingVerValid_, pendingVerVal_, version_);
     if (vd.action == otamanifest::VersionApply::kAdopt) {
@@ -235,7 +229,7 @@ class StagingManager {
   }
 
  private:
-  // One permanent buffer (never freed once attached — see above).
+  // One permanent buffer (never freed once attached).
   uint8_t* img_;
   size_t imgLen_;
   size_t uploadLen_;

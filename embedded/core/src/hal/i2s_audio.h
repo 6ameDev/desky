@@ -1,29 +1,22 @@
 #pragma once
-// desky v2 I2S duplex port owner — header-only, peripheral only, NO policy
-// and NO part format (amp packing lives in hal/speaker.h, mic unpacking in
-// hal/microphone.h; beep synth + loudness live in abilities/audio/audio_manager.h,
-// which owns this port + the audio task).
+// I2S duplex port owner — header-only, peripheral only, NO policy and NO part
+// format (amp packing lives in speaker.h, mic unpacking in microphone.h;
+// synth + meters live in abilities/audio).
 //
-// Owns one I2S_NUM_0 port @CFG_AUDIO_RATE_HZ (16kHz): TX feeds the amp,
-// RX drains the mics, both on the one BCLK/WS clock (BCLK = 16kHz x 64 =
-// 1.024MHz). Wiring in include/mcu/esp32s3_wroom1_n16r8.h, never hardcoded
-// here (shared WS=15/BCLK=16, DOUT=17 amp DIN, DIN=18 mics SD).
-// pioarduino platform-espressif32 55.03.311 (Arduino-ESP32 3.x / ESP-IDF
-// 5.x): ESP-IDF driver/i2s_std.h directly (full-duplex: i2s_new_channel
-// with both tx+rx handles). The legacy Arduino I2S library is NOT used.
+// One I2S_NUM_0 port @CFG_AUDIO_RATE_HZ: TX feeds the amp, RX drains the
+// mics, both on the one BCLK/WS clock. Wiring in the MCU header, never
+// hardcoded here. ESP-IDF i2s_std driver directly (full-duplex); the legacy
+// Arduino I2S library is NOT used.
 //
-// The single frame width below is load-bearing: TX and RX share the port
-// clock, so mixed widths would mis-clock one side (static_assert enforces
-// the part headers agree; the slot literals in init() must match).
+// The single frame width is load-bearing: TX and RX share the port clock, so
+// mixed widths would mis-clock one side (static_assert enforces the part
+// headers agree; the slot literals in init() must match).
 //
-// Structure: Arduino-free includes only (the part headers are stdint-only
-// so host tests reach them directly); class I2sAudio is firmware-only
-// (#ifdef ARDUINO): duplex init/deinit + blocking-with-timeout raw frame
-// read/write + last-error accessor. init() returns bool for DESKY_ASSERT
-// at the call site. No ISR work (the manager polls DMA in its task).
+// Class I2sAudio is firmware-only: duplex init/deinit + blocking-with-timeout
+// raw frame read/write + last-error accessor. init() returns bool for
+// DESKY_ASSERT at the call site. No ISR work (the manager polls DMA).
 //
-// Rules: no String/heap in read/write, no hardcoded pins (MCU_I2S_* via
-// config), keep the task feeding the WDT (manager-side).
+// Rules: no String/heap in read/write, no hardcoded pins.
 
 #include <stdint.h>
 
@@ -36,8 +29,7 @@
 static_assert(speaker::kSlotBitWidth == microphone::kSlotBitWidth,
               "I2S duplex shares one BCLK: speaker/mic slot widths must match");
 
-// Fallbacks keep this header compilable if config keys ever drift; in-project
-// include/config.h always wins (same pattern as tcrt5000_driver.h).
+// Fallbacks if config keys drift; in-project include/config.h always wins.
 #ifndef CFG_AUDIO_RATE_HZ
 #define CFG_AUDIO_RATE_HZ 16000
 #endif
@@ -63,10 +55,9 @@ class I2sAudio {
 
   I2sAudio() : tx_(nullptr), rx_(nullptr), lastErr_(ESP_OK), ready_(false) {}
 
-  // Duplex init: one 16kHz BCLK/WS clock, TX 16-bit stereo slots on DOUT
-  // (amp DIN), RX 32-bit stereo slots on DIN (mics SD). GPIOs from the MCU
-  // header via config. Returns false (never halts) on any ESP-IDF error so
-  // setup() DESKY_ASSERTs with the code in lastError().
+  // Duplex init: one BCLK/WS clock, TX 16-bit stereo slots on DOUT, RX 32-bit
+  // stereo slots on DIN. GPIOs from the MCU header via config. Returns false
+  // (never halts) on any ESP-IDF error.
   bool init() {
     i2s_chan_config_t chanCfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     chanCfg.dma_desc_num = kDmaDescNum;
@@ -97,8 +88,8 @@ class I2sAudio {
       return false;
     }
 
-    // Same 16kHz BCLK/WS clock, 32-bit stereo slots for the INMP441 pair
-    // (format: hal/microphone.h — 24-bit samples top-justified).
+    // Same BCLK/WS clock, 32-bit stereo slots for the mic pair (24-bit
+    // samples top-justified; see microphone.h).
     i2s_std_clk_config_t rxClk = I2S_STD_CLK_DEFAULT_CONFIG(kRateHz);
     i2s_std_slot_config_t rxSlot = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO);
     i2s_std_gpio_config_t rxGpio = {
@@ -139,9 +130,8 @@ class I2sAudio {
 
   void deinit() { teardown(); }
 
-  // Blocking-with-timeout write of raw TX frames (32-bit stereo interleaved,
-  // bytes = frames * 8; int16 beep samples sit in the TOP 16 bits of each
-  // slot). Returns bytes actually written (short on timeout).
+  // Blocking-with-timeout write of raw TX frames (32-bit stereo interleaved).
+  // Returns bytes actually written (short on timeout).
   size_t writeTx(const void* frames, size_t bytes, uint32_t timeoutMs) {
     if (!ready_ || frames == nullptr || bytes == 0) {
       return 0;
@@ -151,8 +141,8 @@ class I2sAudio {
     return written;
   }
 
-  // Blocking-with-timeout read of raw RX frames (32-bit stereo interleaved,
-  // bytes = frames * 8). Returns bytes actually read (short on timeout).
+  // Blocking-with-timeout read of raw RX frames (32-bit stereo interleaved).
+  // Returns bytes actually read (short on timeout).
   size_t readRx(void* frames, size_t bytes, uint32_t timeoutMs) {
     if (!ready_ || frames == nullptr || bytes == 0) {
       return 0;

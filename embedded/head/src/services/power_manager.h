@@ -1,36 +1,14 @@
 #pragma once
-// desky-head power manager — header-only, REAL rails matrix (not a stub).
-//
-// Camera+display are power-hungry: camera {ON,OFF} + display {ON,DIM,OFF}.
-// Narrowed rails owner (Task 6): the ONE command table lives in
-// behavior/coordinator.h (HeadCoordinator::dispatch, the SINGLE dispatch
-// point both doors call) and routes CAM/OLED here; FACE/QR route to the
-// FaceRenderer there. The PairShow/PairDone PIN handoff bypasses these rails
-// entirely (PairingManager -> the shared FaceOverlayManager, Task 7). Boot
-// applies HEAD_BOOT_LEAN (0 = validation: everything on; 1 = lean: camera
-// off, display dim).
-//
-// Matrix rows (pure transitions in head_context.h, unit-tested):
-// - cam on/off flips the sensor+task gate, display untouched.
-// - oled on/dim/off; OFF gates the render task, DIM = low refresh + low
-//   contrast. A face id is stored regardless of display state and rendered
-//   whenever the display is next on.
-// - face <id> never blanks on bad input (clampFace falls back to BOOT).
-//
-// Rules: no String/heap in the command path, never blocks boot (drivers own
-// their absent-hardware policy; the OLED's "not found" is expected on-MB).
+// Power manager (header-only): camera {ON,OFF} + display {ON,DIM,OFF} rails.
+// CAM/OLED route here via HeadCoordinator::dispatch; no String/heap; never
+// blocks boot (absent OLED on-MB is expected).
 
 #include "head_context.h"
 
-// ── Arduino-free command-value table (host-testable) ───────────────────────
-// The pure value mapping PowerManager::apply() enforces below. apply() calls
-// these so firmware and host tests share one definition (behavior-identical
-// by construction): OLED accepts exactly the DisplayState range 0..2,
-// CAM is a nonzero gate, FACE clamps downstream (never blanks on bad input).
+// Arduino-free command-value table: one definition shared by firmware + host tests.
 namespace headapply {
 
-// OLED arg must be a DisplayState value (0..2); false = apply LOG_Ws and
-// keeps state.
+// False when arg is not a DisplayState value.
 inline bool resolveOled(int32_t arg, DisplayState& out) {
   if (arg < static_cast<int32_t>(OLED_OFF) || arg > static_cast<int32_t>(OLED_ON)) {
     return false;
@@ -39,10 +17,8 @@ inline bool resolveOled(int32_t arg, DisplayState& out) {
   return true;
 }
 
-// CAM arg is a boolean gate: nonzero -> on, zero -> off.
 inline CameraState resolveCam(int32_t arg) { return (arg != 0) ? CAM_ON : CAM_OFF; }
 
-// FACE arg clamps downstream: out-of-range -> BOOT.
 inline uint8_t resolveFace(int32_t arg) { return clampFace(arg); }
 
 }  // namespace headapply
@@ -58,8 +34,6 @@ inline uint8_t resolveFace(int32_t arg) { return clampFace(arg); }
 #include "hal/camera_driver.h"
 #include "services/event_bus.h"
 
-// Fallbacks keep this header compilable if config keys ever drift; in-project
-// include/config.h always wins (same pattern as core's coordinator.h).
 #ifndef HEAD_BOOT_LEAN
 #define HEAD_BOOT_LEAN 0
 #endif
@@ -68,7 +42,6 @@ class PowerManager {
  public:
   PowerManager() : cam_(nullptr), disp_(nullptr), camState_(CAM_ON), oledState_(OLED_ON), faceId_(FACE_BOOT) {}
 
-  // Latches drivers, applies the boot default, paints the boot face.
   void begin(CameraDriver* cam, FaceRenderer* disp) {
     cam_ = cam;
     disp_ = disp;
@@ -79,11 +52,7 @@ class PowerManager {
           oledStateName(oledState_), faceName(faceId_));
   }
 
-  // Rails entry: CAM/OLED only. FACE/QR route through
-  // HeadCoordinator::dispatch() (behavior layer), which calls back here for
-  // these two rails. Anything else (STATUS/HELP/LINK/SNAP/OTA/INVALID, or a
-  // FACE/QR that bypassed the coordinator) never changes rail state.
-  // Guarded, not silent.
+  // Rails entry: CAM/OLED only. Anything else is guarded, never silent.
   void apply(const PowerCommand& cmd) {
     switch (cmd.target) {
       case CmdTarget::CAM: {
@@ -116,10 +85,6 @@ class PowerManager {
         break;
       }
       default:
-        // STATUS/HELP/LINK/SNAP/OTA are answered by the CLI door itself (LINK
-        // prints the WiFi status line, SNAP queues a JPEG still, OTA starts
-        // the pull updater); INVALID never reaches apply (doors reject at
-        // parse). FACE/QR route through the coordinator, never here.
         // Guarded, not silent.
         LOG_W("PWR", "apply ignored (no state change)");
         break;
@@ -130,9 +95,6 @@ class PowerManager {
     const uint32_t frames = (cam_ != nullptr) ? cam_->frames() : 0;
     const uint32_t dropped = (cam_ != nullptr) ? cam_->dropped() : 0;
     const size_t lastBytes = (cam_ != nullptr) ? cam_->lastSizeBytes() : 0;
-    // Pair flag is reporting only, read through the face side (FaceRenderer
-    // fronts the single FaceOverlayManager — no pairing policy lives here
-    // since Task 7 narrowed these rails).
     const bool pair = disp_ != nullptr && disp_->pairActive();
     LOG_I("PWR", "cam=%s oled=%s face=%s qr=%s pair=%s frames=%lu drops=%lu last=%uB fps=%lum", camStateName(camState_),
           oledStateName(oledState_), faceName(faceId_), qrActive() ? "on" : "off", pair ? "on" : "off",
@@ -140,11 +102,7 @@ class PowerManager {
           (unsigned long)((cam_ != nullptr) ? cam_->fpsMilli() : 0));
   }
 
-  // Bench demo door: the USB CLI `qr` verb paints the deterministic demo
-  // pattern (FaceRenderer::showQrDemo) with no link involved. (Historical:
-  // the LinkClient handed the 63B wire bitmap through a showQr() wrapper
-  // here; the flag-day removal dropped that trigger and the dead wrapper
-  // with it — the demo path below is untouched.)
+  // Demo door: the USB CLI qr verb with no link involved.
   void showQrDemo() {
     if (disp_ != nullptr) {
       disp_->showQrDemo();
@@ -163,8 +121,6 @@ class PowerManager {
   DisplayState oledState() const { return oledState_; }
   uint8_t faceId() const { return faceId_; }
 
-  // Coordinator FACE-branch handoff (behavior layer owns the FACE dispatch;
-  // the stored id stays here so boot/status read one source).
   void setFaceId(uint8_t id) { faceId_ = id; }
 
  private:

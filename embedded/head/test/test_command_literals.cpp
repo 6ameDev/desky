@@ -1,25 +1,12 @@
-// Command LITERALS test (S): literal wire bytes through the REAL consumer
-// seam (linkcode::decodeFrame -> wifilink::mapCmd) plus the CLI door
-// (headcmd::parseLine) and the shared value table (headapply::).
-//
-// Every frame below is a literal 11B link frame [4C|type|seq0001|frag00/01|
-// len0001|payload|CRC16BE] printed by the real encoder and pasted verbatim —
-// never symbolic constants. A constant renumber on either side (wire type,
-// kOledOn/Dim/Off, DisplayState, FaceId) breaks this test by construction:
-//   OLED  {0x00}->arg 2 (ON), {0x01}->arg 1 (DIM), {0x02}->arg 0 (OFF),
-//         {0x03}->mapCmd false.
-//   CAMCTL {0x00}->0, {0x01}->1, {0x02}->mapCmd false.
-//   FACE  {0x00..0x04}->same id, {0x05,0x63,0xFF}->mapCmd true then clamp->0.
-//   CLI   "oled on" identical to wire {0x00}, "oled off" to wire {0x02}.
-// Run: pio test -e native-test (runner: test_main.cpp).
+// Command LITERALS: literal wire bytes through decode -> mapCmd + CLI door.
+// Frames are literal [4C|type|seq|frag|len|payload|CRC16BE] from the encoder;
+// any constant renumber breaks these by construction.
 
 #include <unity.h>
 
-#include "../src/transport/link_codec.h"  // linkcode:: alias + wifilink:: (canonical
-// linkcode:: spelling is pinned by core's test_link_codec.cpp goldens; head TUs
-// must use the alias — see the POSIX ::link note in link_codec.h)
 #include "../src/services/cli_manager.h"
 #include "../src/services/power_manager.h"  // headapply:: (Arduino-free top half)
+#include "../src/transport/link_codec.h"    // linkcode:: alias + wifilink::
 
 namespace {
 
@@ -56,11 +43,11 @@ void test_cmd_literals_oled_wire_values() {
   TEST_ASSERT_TRUE(decodeAndMap(kOled00, cmd, f));
   TEST_ASSERT_EQUAL_UINT8(0x02, f.type);  // literal OLED type byte
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::OLED), static_cast<uint8_t>(cmd.target));
-  TEST_ASSERT_EQUAL_INT32(2, cmd.arg);  // literal: wire 0x00 == DisplayState ON (2)
+  TEST_ASSERT_EQUAL_INT32(2, cmd.arg);
   TEST_ASSERT_TRUE(decodeAndMap(kOled01, cmd, f));
-  TEST_ASSERT_EQUAL_INT32(1, cmd.arg);  // literal: wire 0x01 == DIM (1)
+  TEST_ASSERT_EQUAL_INT32(1, cmd.arg);
   TEST_ASSERT_TRUE(decodeAndMap(kOled02, cmd, f));
-  TEST_ASSERT_EQUAL_INT32(0, cmd.arg);  // literal: wire 0x02 == OFF (0)
+  TEST_ASSERT_EQUAL_INT32(0, cmd.arg);
   // 0x03 is a live frame (CRC valid) but not a mappable value.
   TEST_ASSERT_TRUE(linkcode::decodeFrame(kOled03, 11, f));
   TEST_ASSERT_FALSE(wifilink::mapCmd(f.type, f.payload, f.payloadLen, cmd));
@@ -70,7 +57,7 @@ void test_cmd_literals_camctl_wire_values() {
   PowerCommand cmd;
   linkcode::Frame f;
   TEST_ASSERT_TRUE(decodeAndMap(kCam00, cmd, f));
-  TEST_ASSERT_EQUAL_UINT8(0x03, f.type);  // literal CAMCTL type byte
+  TEST_ASSERT_EQUAL_UINT8(0x03, f.type);
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::CAM), static_cast<uint8_t>(cmd.target));
   TEST_ASSERT_EQUAL_INT32(0, cmd.arg);
   TEST_ASSERT_TRUE(decodeAndMap(kCam01, cmd, f));
@@ -85,7 +72,7 @@ void test_cmd_literals_face_ids_and_clamp() {
   const uint8_t* frames[5] = {kFace00, kFace01, kFace02, kFace03, kFace04};
   for (int32_t id = 0; id < 5; ++id) {
     TEST_ASSERT_TRUE(decodeAndMap(frames[id], cmd, f));
-    TEST_ASSERT_EQUAL_UINT8(0x01, f.type);  // literal FACE type byte
+    TEST_ASSERT_EQUAL_UINT8(0x01, f.type);
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::FACE), static_cast<uint8_t>(cmd.target));
     TEST_ASSERT_EQUAL_INT32(id, cmd.arg);
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(id), headapply::resolveFace(cmd.arg));  // passthrough
@@ -108,12 +95,12 @@ void test_cmd_literals_cli_equivalence() {
   TEST_ASSERT_TRUE(headcmd::parseLine("oled on", cli));
   TEST_ASSERT_TRUE(decodeAndMap(kOled00, wire, f));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(cli.target), static_cast<uint8_t>(wire.target));
-  TEST_ASSERT_EQUAL_INT32(2, cli.arg);  // literal DisplayState ON
+  TEST_ASSERT_EQUAL_INT32(2, cli.arg);
   TEST_ASSERT_EQUAL_INT32(cli.arg, wire.arg);
   // "oled off" (human door) is the same command as wire {0x02}.
   TEST_ASSERT_TRUE(headcmd::parseLine("oled off", cli));
   TEST_ASSERT_TRUE(decodeAndMap(kOled02, wire, f));
-  TEST_ASSERT_EQUAL_INT32(0, cli.arg);  // literal DisplayState OFF
+  TEST_ASSERT_EQUAL_INT32(0, cli.arg);
   TEST_ASSERT_EQUAL_INT32(cli.arg, wire.arg);
 }
 
@@ -132,8 +119,7 @@ void test_cmd_literals_tampered_frames_reject() {
   TEST_ASSERT_FALSE(linkcode::decodeFrame(kFace02, 10, f));  // truncated
 }
 
-// The shared value table apply() runs on (firmware-guarded class, so pinned
-// here through the Arduino-free helper — minimal diff, behavior-identical).
+// Shared value table (pinned through the Arduino-free helper).
 void test_headapply_value_table() {
   DisplayState oled = OLED_OFF;
   TEST_ASSERT_TRUE(headapply::resolveOled(0, oled));
@@ -152,10 +138,7 @@ void test_headapply_value_table() {
   TEST_ASSERT_EQUAL_UINT8(0, headapply::resolveFace(5));
 }
 
-// Shared-entity guards: the literal wire bytes above must validate through
-// the shared codec vocabulary (linkcode::pack/unpack), not just the consumer
-// seam. Literals in, validated modes out, 0x03-style rejects — a renumber on
-// either side breaks these by construction, same as the consumer asserts.
+// Shared codec vocabulary guards.
 void test_cmd_literals_shared_codec_oled() {
   uint8_t wire = 0xFF;
   TEST_ASSERT_TRUE(linkcode::packOled(0x00, wire));
@@ -191,9 +174,7 @@ void test_cmd_literals_shared_codec_camctl() {
 }
 
 void test_cmd_literals_shared_codec_face() {
-  // Map-then-clamp contract: every wire byte maps (identity passthrough);
-  // the valid display ids 0x00..0x04 survive, 0x05 (FACE_QR: never a FACE
-  // id), 0x63 and 0xFF fall back to BOOT downstream via clampFace.
+  // Map-then-clamp: 0x00..0x04 survive, rest fall back to BOOT.
   uint8_t id = 0xFF;
   for (uint8_t lit = 0x00; lit <= 0x04; ++lit) {
     TEST_ASSERT_TRUE(linkcode::unpackFace(lit, id));

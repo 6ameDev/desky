@@ -1,22 +1,14 @@
 #pragma once
-// desky v2 MPU6500 driver (behind ISensor) — header-only HAL.
+// MPU6500 driver (behind ISensor) — header-only HAL.
 //
-// Ports the PROVEN V1 probe path (main:src/main.cpp mpuProbeAddr/mpuProbe):
-// dual-address probe (0x68 primary, 0x69 fallback, MCU defines only),
-// then 4G accel / 500DPS gyro / 20Hz DLPF via the pinned Bolderflight lib.
-// V1-vs-new deltas:
-// - WHO_AM_I (reg 0x75) must read 0x70 or the address is rejected, and
-//   init() DESKY_ASSERTs the ID after a successful probe (AGENTS.md
-//   silkscreen rule — V1's "MPU6050" is a 6500; the lib's Begin() checks
-//   the ID internally too, this is the explicit silicon assert).
-// - Orientation compensation (V1's -Z flip, FWD/RIGHT mapping, pitch/roll)
-//   is NOT done here: the driver reports sensor-frame raw. Tilt math owns
-//   to fusion. Units are documented on the struct: accel in g, gyro in dps.
-// - V1's mpuEnabled/reprobe gating lives with the power manager / sensor
-//   task later; update() here only skips when the bus is contended.
+// Dual-address probe (0x68 primary, 0x69 fallback), then 4G accel / 500DPS
+// gyro / 20Hz DLPF via the pinned Bolderflight lib. WHO_AM_I (reg 0x75) must
+// read 0x70 or the address is rejected — silkscreen lies (the "MPU6050" is a
+// 6500), so init() asserts the chip ID after a successful probe.
+// Orientation compensation is NOT done here: the driver reports sensor-frame
+// raw; tilt math owns it. Units on the struct: accel in g, gyro in dps.
 //
-// Power: enable-flag only (setPowerState gates update()). Hardware
-// sleep-mode is deferred to the power-manager work (documented, not wired).
+// Power: enable-flag only (setPowerState gates update()).
 //
 // Rules: no String/heap in update(), no hardcoded addresses, mutex never
 // held across delays (init retries delay OUTSIDE the lock).
@@ -44,13 +36,13 @@ class Mpu6500Driver : public ISensor {
  public:
   static constexpr uint8_t kWhoAmIReg = 0x75;
   static constexpr uint8_t kWhoAmI6500 = 0x70;
-  static constexpr int kInitAttempts = 3;         // V1 setup retry budget
-  static constexpr uint32_t kRetryDelayMs = 100;  // V1 setup retry gap
+  static constexpr int kInitAttempts = 3;
+  static constexpr uint32_t kRetryDelayMs = 100;
 
   explicit Mpu6500Driver(I2CManager& bus) : bus_(bus), addr_(0), enabled_(false), healthy_(false) {}
 
-  // Dual-addr probe with V1's 3-attempt budget. Returns false (no halt here)
-  // so setup() applies the motor-task policy: DESKY_ASSERT on failure.
+  // Dual-addr probe with a 3-attempt budget. Returns false (no halt here)
+  // so setup() applies the assert-on-failure policy.
   bool init() override {
     for (int attempt = 0; attempt < kInitAttempts && addr_ == 0; ++attempt) {
       if (attempt > 0) {
@@ -95,7 +87,7 @@ class Mpu6500Driver : public ISensor {
     healthy_ = true;
   }
 
-  // Enable-flag power only; hardware sleep-mode is power-manager work.
+  // Enable-flag power only.
   void setPowerState(bool enable) override {
     enabled_ = enable;
     if (!enabled_) {

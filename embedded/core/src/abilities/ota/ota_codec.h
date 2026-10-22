@@ -1,13 +1,11 @@
 #pragma once
-// desky v2 OTA staging codec — abilities/ota (ability layer).
+// OTA staging codec — abilities/ota.
 //
-// Pure wire/format vocabulary for the carrier head-image staging server,
-// moved verbatim from the former middleware/ota_staging.h (Slice 5): route
-// paths, content types, size caps derived from the CFG_OTA_* config keys,
-// response message literals, the POST ?version= grammar, and the SHA-hex
-// helpers. Arduino-free (stdint/stddef only) so host Unity tests include it
-// directly. State machine lives in ota_manager.h, the AsyncWebServer binder
-// in ota_task.h. Version single-source rule stays in the shared contract
+// Pure wire/format vocabulary for the carrier head-image staging server:
+// route paths, content types, size caps from the CFG_OTA_* keys, response
+// message literals, the POST ?version= grammar, and the SHA-hex helpers.
+// Arduino-free (stdint/stddef only) so host tests include it directly.
+// Version single-source rule stays in the shared contract
 // (link/ota_manifest.h decideUploadVersion — never re-derived here).
 
 #include <stddef.h>
@@ -15,8 +13,7 @@
 
 #include "link/ota_manifest.h"
 
-// Fallbacks keep this header compiling if config keys ever drift; in-project
-// include/config.h always wins (same pattern as coordinator.h).
+// Fallbacks if config keys drift; in-project include/config.h always wins.
 #ifndef CFG_OTA_STAGE_PORT
 #define CFG_OTA_STAGE_PORT 8080
 #endif
@@ -41,7 +38,7 @@ constexpr char kParamVersion[] = "version";
 constexpr char kTypeBin[] = "application/octet-stream";
 constexpr char kTypeText[] = "text/plain";
 
-// Response bodies, byte-identical to the former middleware server.
+// Response bodies.
 constexpr char kMsgBusy[] = "upload in progress";                    // 409: GET while a POST streams
 constexpr char kMsgEmpty[] = "no image staged";                      // 404: GET with nothing committed
 constexpr char kMsgManifestFail[] = "manifest build failed";         // 500: buildManifest refused
@@ -52,10 +49,9 @@ constexpr char kMsgUploadFail[] = "upload failed";                   // 500: POS
 constexpr char kHeaderVersion[] = "X-Firmware-Version";
 constexpr char kHeaderSha[] = "X-Firmware-Sha256";
 
-// POST ?version= grammar (mirrors the inline parse in the former upload
-// handler verbatim): 1..10 ASCII chars, strict u32 decimal via the shared
-// otamanifest::parseU32. Longer or non-decimal values reject (the whole
-// upload rejects, previous bytes + label preserved).
+// POST ?version= grammar: 1..10 ASCII chars, strict u32 decimal via the
+// shared otamanifest::parseU32. Longer or non-decimal values reject (the
+// whole upload rejects, previous bytes + label preserved).
 inline bool parseVersionParam(const char* s, size_t len, uint32_t& out) {
   if (s == nullptr || len == 0 || len > 10) {
     return false;
@@ -68,8 +64,7 @@ inline bool parseVersionParam(const char* s, size_t len, uint32_t& out) {
   return otamanifest::parseU32(vb, out);
 }
 
-// Lowercase hex of a 32B digest (the 0123456789abcdef mapping from the
-// former commit path, verbatim). out must hold otamanifest::kShaHexLen + 1.
+// Lowercase hex of a 32B digest. out must hold kShaHexLen + 1.
 inline void shaHexFromDigest(const uint8_t digest[32], char* outHex65) {
   if (digest == nullptr || outHex65 == nullptr) {
     return;
@@ -83,9 +78,8 @@ inline void shaHexFromDigest(const uint8_t digest[32], char* outHex65) {
 }
 
 // Manifest sha field for GET /head-version: the stored hex when an upload
-// committed one, else 64 '0' chars (the head pull-gate treats version=0 as
-// up-to-date — fail-closed by construction). haveHex mirrors the former
-// shaHex_[0] != '\0' test.
+// committed one, else 64 '0' chars (version=0 reads as up-to-date -
+// fail-closed).
 inline void shaOrZeros(bool haveHex, const char* storedHex65, char* outHex65) {
   if (outHex65 == nullptr) {
     return;

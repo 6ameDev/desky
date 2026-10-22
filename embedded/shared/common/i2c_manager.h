@@ -1,20 +1,6 @@
 #pragma once
-// desky v2 I2C manager — header-only, owns the shared bus lifecycle.
-//
-// Bus-agnostic by construction: drivers hold an I2CManager reference and
-// reach Wire only through it (bus().wire()), never a global directly.
-// A second bus later is a second instance — no driver changes.
-//
-// Locking model (mirrors proven V1 i2cMutex use): one FreeRTOS mutex per
-// bus. acquire() with a short wait (default 5ms, V1's budget — a slow
-// subordinate can hold the bus for tens of ms); on failure the caller SKIPS the cycle and keeps last-good data,
-// never blocks the control loop. The mutex is NEVER held across delays:
-// device boot/XSHUT waits happen outside acquire/release pairs.
-//
-// Recovery primitives port V1 tofPulseClock/tofReinit (main:src/main.cpp):
-// pulseClock() frees a subordinate stuck holding SDA low (9 SCL pulses),
-// reinit() re-attaches the peripheral. Device re-begin after reinit is the
-// DRIVER's job (reinit is bus-level only).
+// Owns the shared I2C bus lifecycle. Drivers hold a reference, never the Wire global.
+// acquire() times out fast: skip the cycle, keep last-good, never block. Never hold across delays.
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -28,8 +14,7 @@ class I2CManager {
              uint32_t timeoutMs = CFG_I2C_TIMEOUT_MS)
       : wire_(wire), sda_(sda), scl_(scl), freqHz_(freqHz), timeoutMs_(timeoutMs), mutex_(nullptr) {}
 
-  // Creates the bus mutex and brings the peripheral up. Call once in setup()
-  // before any driver init. Returns false only if the mutex cannot be made.
+  // Call once in setup() before driver init.
   bool begin() {
     mutex_ = xSemaphoreCreateMutex();
     if (mutex_ == nullptr) {
@@ -41,8 +26,7 @@ class I2CManager {
     return true;
   }
 
-  // (Re)attach the peripheral: end + begin + timeout + clock.
-  // No delays, no locking — safe to call from recovery paths.
+  // (Re)attach the peripheral. No delays, no locking.
   void busInit() {
     wire_.end();
     wire_.begin(sda_, scl_);
@@ -50,10 +34,9 @@ class I2CManager {
     wire_.setClock(freqHz_);
   }
 
-  // Bus-level reinit after pulseClock() (V1 tofReinit's Wire half).
   void reinit() { busInit(); }
 
-  // Take the bus. Returns false on timeout — skip the cycle, keep last-good.
+  // False on timeout: skip the cycle, keep last-good.
   bool acquire(uint32_t waitMs = 5) {
     if (mutex_ == nullptr) {
       return true;
@@ -68,12 +51,8 @@ class I2CManager {
   }
 
   TwoWire& wire() { return wire_; }
-  int sda() const { return sda_; }
-  int scl() const { return scl_; }
 
-  // 9 SCL pulses to release a stuck subordinate (V1 tofPulseClock,
-  // generalized to this bus's pins). Leaves pins in GPIO mode — the caller
-  // must follow with reinit() to hand them back to the peripheral.
+  // 9 SCL pulses free a stuck subordinate. Leaves pins in GPIO mode: follow with reinit().
   void pulseClock() {
     pinMode(scl_, OUTPUT);
     pinMode(sda_, INPUT_PULLUP);
@@ -87,8 +66,7 @@ class I2CManager {
     }
   }
 
-  // Setup-time visibility: logs every ACKing address. Not for the poll path
-  // (holds the mutex across the whole sweep, no delays inside).
+  // Setup-time only: holds the mutex across the whole sweep.
   void scanBus() {
     if (!acquire(100)) {
       LOG_W("I2C", "scan skipped, bus busy");

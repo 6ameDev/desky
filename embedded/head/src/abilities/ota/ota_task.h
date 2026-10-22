@@ -1,44 +1,8 @@
 #pragma once
-// desky-head OTA ability — HTTP pull pump binding (firmware only).
-//
-// Ability layer: ota_task (RTOS/event binder gluing the OTA manager to the
-// WiFiClient/Update pump). Moved from middleware/ota_client.h (Task 5 split):
-// class OtaUpdater keeps its exact public API and name (attachFace / active /
-// startIfNewer / start / poll, plus the faceShow/faceHide/faceFail hooks and
-// the fetchManifest/readLineFrom privates). Grammar + versions delegate to
-// ota_codec.h, lifecycle policy (start-gate, header validation, 10% progress
-// rule, VERIFY/COMMIT verdicts, torn/stall abort mapping) to ota_manager.h —
-// the single ota::State still lives in the codec (applied via
-// otapolicy::applyEvent, never forked).
-//
-// STANDING RULE — do NOT ship a head image without this client: once the
-// single USB session ends the head has no wired door (the MB board occupies
-// every pin; field units expose no USB), so an image without the OTA path is
-// unflashable except by re-opening the unit. main.cpp references this rule
-// where the updater is constructed.
-//
-// Transport: plain HTTP ONLY (no TLS). The head joins a closed AP it never
-// selects (channel follows the core AP); there is no CA story on a 4MB
-// classic ESP32, so TLS would be cert theater. Integrity comes from the
-// manifest (optional X-Firmware-Sha256 response header, SHA256 over the
-// exact image bytes) plus the 0xE9 image-magic + Content-Length-vs-slot
-// checks — a torn or tampered stream never commits.
-//
-// Torn-download safety: Update writes the INACTIVE ota slot while the
-// running image is untouched; only a full-length, magic-checked,
-// manifest-matching (when a manifest was sent) stream reaches Update.end().
-// Anything else (short stream, stall, bad magic, manifest mismatch, commit
-// failure) calls Update.abort() and the next boot runs the old image.
-// USB reflash from the erase-session procedure is the backstop.
-//
-// No-auto-rollback: the Arduino Update path has no rollback/valid-marking
-// (a bad-but-bootable image stays booted). Mark-valid stub is future work —
-// see the OTA section in embedded/docs/link-learnings.md.
-//
-// Frozen-wire note: this client adds no :3333/:3334 traffic and touches no
-// HB/link timing — it opens its own short-lived TCP connection to the URL
-// host and closes it. Never logs URL credentials: parseUrl() rejects any
-// authority containing '@', and start() logs host + counters only.
+// OTA HTTP pull pump binding (firmware only).
+// Plain HTTP only: integrity is the manifest (X-Firmware-Sha256) + 0xE9
+// image-magic + Content-Length-vs-slot checks; torn streams never commit.
+// Never logs URL credentials (parseUrl rejects '@').
 
 #ifdef ARDUINO
 // ── Firmware: HTTP pull updater (WiFiClient + Update, short-lived) ──────────
@@ -56,18 +20,14 @@
 #include "config.h"
 #include "link/ota_manifest.h"
 
-// Fallbacks keep this header compiling if config keys ever drift; in-project
-// include/config.h always wins (same pattern as core's coordinator.h).
 #ifndef CFG_OTA_SLOT_BYTES
-#define CFG_OTA_SLOT_BYTES 0x1F0000  // must match partitions_ota_nospiffs.csv app slots
+#define CFG_OTA_SLOT_BYTES 0x1F0000  // matches partitions_ota_nospiffs.csv app slots
 #endif
 #ifndef CFG_OTA_TIMEOUT_MS
 #define CFG_OTA_TIMEOUT_MS 15000
 #endif
 
-// SHA256 comes from the already-linked Arduino/mbedTLS (no new lib_deps).
-// Guarded so a toolchain without the header degrades to size+magic checks
-// with a loud log instead of breaking the build.
+// SHA256 via Arduino/mbedTLS; guarded so toolchains without it still build.
 #if __has_include(<mbedtls/sha256.h>)
 #include <mbedtls/sha256.h>
 #define OTA_HAVE_SHA256 1
@@ -88,26 +48,13 @@ class OtaUpdater {
     manifest_[0] = '\0';
   }
 
-  // Progress door for the OLED bar (carrier trigger): the updater drives
-  // FaceRenderer::showOta/hideOta/failOta through this pointer (FETCH fill,
-  // VERIFY/COMMIT full bar, success hides, abort/failure alerts). Stored,
-  // never owned; main() attaches after both are begun. Null-safe throughout.
+  // Stored, never owned; null-safe. Updater drives the OLED bar through it.
   void attachFace(FaceRenderer* face) { face_ = face; }
 
-  // Main-loop camera gate: while active, loop() skips CameraDriver::update()
-  // (grab suspended — a JPEG grab mid-flash contends PSRAM/flash cache with
-  // the single fb_count=1 buffer; see camera_driver.h). The sensor stays
-  // powered (no deinit/re-init cycle); only the periodic grab is paused.
+  // While active, loop() skips the camera grab (flash/cache contention).
   bool active() const { return state_ != ota::State::kIdle; }
 
-  // Carrier entry: pull only when the staged manifest says the image is
-  // newer than the running HEAD_FW_VERSION. Manifest convention: the bin URL
-  // ends in "/head.bin" and the manifest rides the sibling "/head-version"
-  // path (derived by the shared otamanifest helper, single-sourced). No
-  // manifest convention (other URLs) -> direct start() pull. A derivable but
-  // unfetchable/unparsable manifest refuses the pull (fail-closed — the
-  // operator repeats the trigger); an up-to-date manifest logs and skips
-  // (not an error). Never logs URL bytes (versions + counters only).
+  // Carrier entry: pulls only when the staged manifest says the image is newer.
   bool startIfNewer(const char* url) {
     if (!otapolicy::canStart(state_)) {
       LOG_W("OTA", "busy state=%s, ignored", ota::stateName(state_));
@@ -132,11 +79,7 @@ class OtaUpdater {
     return start(url);
   }
 
-  // Start an OTA from a plain-http URL. Works standalone — requires nothing
-  // (link up OR down; association is the STA torrent below, not the B-link),
-  // but logs the link state alongside for triage. Never logs the URL beyond
-  // host + counters (parseUrl rejects '@', so no credentials can arrive).
-  // Blocks briefly for connect + headers (WDT fed); the body pumps in poll().
+  // Start an OTA from a plain-http URL. Blocks briefly; the body pumps in poll().
   bool start(const char* url) {
     if (!otapolicy::canStart(state_)) {
       LOG_W("OTA", "busy state=%s, ignored", ota::stateName(state_));
@@ -173,9 +116,7 @@ class OtaUpdater {
       fail();
       return false;
     }
-    // Headers: Content-Length is REQUIRED (Update needs the size up front;
-    // chunked encoding is refused). X-Firmware-Sha256 is the optional
-    // manifest (64 hex chars over the exact image bytes).
+    // Content-Length is required (chunked refused); X-Firmware-Sha256 is optional.
     uint32_t length = 0;
     while (readLine(line, sizeof(line))) {
       if (line[0] == '\0') {
@@ -228,14 +169,12 @@ class OtaUpdater {
     lastPct_ = 0;
     received_ = 0;
     otapolicy::applyEvent(state_, ota::Event::kStart);
-    faceShow(0);  // FETCH: bar starts empty, fills per 10% step below
+    faceShow(0);
     LOG_I("OTA", "fetch bytes=%u manifest=%d", static_cast<unsigned>(total_), manifestSet_ ? 1 : 0);
     return true;
   }
 
-  // Body pump: call every loop(). Reads available bytes, writes Update,
-  // feeds the WDT per chunk (a ~2MB pull spans seconds), logs counters only
-  // (bytes + 10% progress steps — never URL bytes, never payload bytes).
+  // Body pump: call every loop(). Counters only, never URL/payload bytes.
   void poll() {
     if (state_ != ota::State::kFetch) {
       return;
@@ -265,7 +204,7 @@ class OtaUpdater {
       otapolicy::applyEvent(state_, ota::Event::kChunk);
       uint32_t report = 0;
       if (otapolicy::progressDue(received_, total_, lastPct_, report)) {
-        faceShow(static_cast<uint8_t>(report));  // FETCH: fill proportion
+        faceShow(static_cast<uint8_t>(report));
         LOG_I("OTA", "progress bytes=%u/%u pct=%u", static_cast<unsigned>(received_), static_cast<unsigned>(total_),
               static_cast<unsigned>(lastPct_));
       }
@@ -287,15 +226,11 @@ class OtaUpdater {
   }
 
  private:
-  // Blocking line read (start() only, never the pump): '\n'-terminated,
-  // '\r' stripped, capped, 5s deadline with WDT feeds.
   bool readLine(char* buf, size_t cap) { return readLineFrom(client_, buf, cap); }
 
-  // VERIFY -> COMMIT: manifest (when sent) then Update.end(). Success
-  // reboots into the new slot; anything else aborts (old image boots).
   void finish() {
-    otapolicy::applyEvent(state_, ota::Event::kStreamEnd);  // -> VERIFY
-    faceShow(100);                                          // VERIFY: full bar
+    otapolicy::applyEvent(state_, ota::Event::kStreamEnd);
+    faceShow(100);
 #if OTA_HAVE_SHA256
     uint8_t digest[32];
     mbedtls_sha256_finish(&sha_, digest);
@@ -307,7 +242,7 @@ class OtaUpdater {
       LOG_W("OTA", "manifest mismatch, discarded");
       Update.abort();
       otapolicy::applyEvent(state_, verdict);
-      faceFail();  // alert face, timeout back to the stored face
+      faceFail();
       client_.stop();
       return;
     }
@@ -315,12 +250,12 @@ class OtaUpdater {
     if (!manifestSet_) {
       LOG_I("OTA", "no manifest, size+magic only");
     }
-    otapolicy::applyEvent(state_, ota::Event::kVerifyOk);  // -> COMMIT
-    faceShow(100);                                         // COMMIT: full bar
+    otapolicy::applyEvent(state_, ota::Event::kVerifyOk);
+    faceShow(100);
     const ota::Event commit = otapolicy::commitOutcome(Update.end(true));
     otapolicy::applyEvent(state_, commit);
     if (commit == ota::Event::kCommitOk) {
-      faceHide();  // success: stored face (the reboot follows)
+      faceHide();
       LOG_I("OTA", "ok bytes=%u rebooting", static_cast<unsigned>(received_));
       client_.stop();
       delay(100);
@@ -339,12 +274,7 @@ class OtaUpdater {
     client_.stop();
   }
 
-  // Manifest fetch for the carrier pull-gate (startIfNewer above):
-  // plain-HTTP GET of the sibling /head-version text, Content-Length
-  // required (manifests are tiny; chunked refused like the image path),
-  // parsed by the shared otamanifest contract. Blocking with WDT feeds
-  // (trigger context only, never the body pump). False on any failure
-  // (fail-closed at the call site). Never logs URL bytes.
+  // Manifest fetch for the carrier pull-gate (fail-closed, never logs URL bytes).
   bool fetchManifest(const char* murl, otamanifest::Manifest& man) {
     man.version = 0;
     man.size = 0;
@@ -352,8 +282,7 @@ class OtaUpdater {
     if (murl == nullptr) {
       return false;
     }
-    // Re-validate the derived URL through the full grammar (single-sourced
-    // with the CLI door) — never fetch a URL parseUrl rejects.
+    // Never fetch a URL parseUrl rejects.
     ota::Url parts;
     if (!ota::parseUrl(murl, parts)) {
       return false;
@@ -412,7 +341,6 @@ class OtaUpdater {
     return otamanifest::parseManifest(body, man);
   }
 
-  // Blocking line read on any WiFiClient (start() + fetchManifest share it).
   bool readLineFrom(WiFiClient& c, char* buf, size_t cap) {
     size_t n = 0;
     const uint32_t t0 = millis();
@@ -439,7 +367,6 @@ class OtaUpdater {
     return true;
   }
 
-  // OLED progress hooks (null-safe): the bar lives only while attached.
   void faceShow(uint8_t pct) {
     if (face_ != nullptr) {
       face_->showOta(pct);
@@ -470,7 +397,6 @@ class OtaUpdater {
 #if OTA_HAVE_SHA256
   mbedtls_sha256_context sha_;
 #endif
-  // Static chunk buffer (member -> BSS, never task stack, never heap).
   uint8_t chunk_[1460];
 };
 

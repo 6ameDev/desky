@@ -49,7 +49,7 @@ upload-sta:
 	pio run -e desky-sta -t upload > /tmp/desky-sta-upload.log 2>&1; CODE=$$?; cat /tmp/desky-sta-upload.log; test $$CODE -eq 0
 	grep -q "Hash of data verified" /tmp/desky-sta-upload.log && grep -q "Hard resetting" /tmp/desky-sta-upload.log
 
-# Verify compilation (bench env: WiFi off for the ADC2 TCRT rails).
+# Verify compilation (bench env: WiFi off for TCRT bring-up).
 # Deliberately NOT part of `check` — the gate stays desky/desky-release.
 build-bench:
 	pio run -e desky-bench

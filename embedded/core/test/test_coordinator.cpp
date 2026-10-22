@@ -6,10 +6,8 @@
 // (#ifdef ARDUINO) and exercised on hardware via synthetic events.
 //
 // Vocabulary is per-direction ground: gndFwd/gndRev levels (1 = ground),
-// groundEvent edge (fresh 1→0 on either rail), emergencyLatched. The 16 legacy
-// scenarios replay with rev pinned true (gndRev=true) with identical verdicts
-// to the old single-rail cliff suite; the rev/bit suites below cover the new
-// direction (entry on rev edge, reverse veto, escape-forward, resume variants).
+// groundEvent edge (fresh 1→0 on either rail), emergencyLatched. Suites cover
+// both directions (entry on either edge, vetoes, resume variants).
 
 #include <unity.h>
 

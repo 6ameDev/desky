@@ -1,35 +1,8 @@
 #pragma once
 // Shared event-bus mechanics — header-only, direct fan-out pub/sub.
-// Board-agnostic: lives in shared/common, wired into each firmware via
-// build_flags -I (see core/head platformio.ini). Event-type headers stay
-// per-firmware (core: include/system_context.h, head: include/head_context.h)
-// and each firmware aliases its bus over this template (core:
-// src/services/event_bus.h, head: src/services/head_event_bus.h) so the
-// implementation is never forked.
-//
-// Template contract:
-//   EventT: event struct with `.type` (TypeT), `.payload` (uint32_t),
-//           `.timestampMs` (uint32_t) fields.
-//   TypeT:  event-type enum.
-//   NameFn: `const char* (*)(TypeT)` naming function for log lines.
-//
-// Topology: NO broker task. publish() copies the event into every
-// subscriber's private FreeRTOS queue, so one slow consumer only fills its
-// own queue and never blocks publishers or other subscribers.
-//
-// Usage (via a firmware alias, e.g. `using EventBus = ...`):
-//   EventBus::begin();                                  // setup(), after
-//   Logger::begin() EventBus::Subscription sub = EventBus::subscribe();  //
-//   setup-time; NOT ISR-safe EventBus::publish(EVENT_USER_TOUCH, 1); // task
-//   context (logs) EventBus::publishFromISR(type, payload);            // ISR
-//   context (never logs) MyEvent ev;                                         //
-//   consumer task: while (sub.receive(ev)) { ... }
-//
-// Rules: no String/heap in the publish/receive path (queues are created
-// once in subscribe()), never call publish() (the logging variant) from
-// ISR, subscribe()/unsubscribe() are task-context only and must have
-// settled before any ISR publishing starts (the ISR path takes no mutex
-// and snapshots the slot array as-is).
+// No broker task: publish() fan-outs into each subscriber's private queue,
+// so one slow consumer fills only its own and never blocks publishers.
+// Never publish() from ISR (it logs); subscribe/unsubscribe are task-context only.
 
 #include <Arduino.h>
 
@@ -51,9 +24,6 @@ class EventBusT {
 
     bool valid() const { return queue_ != nullptr; }
 
-    // Blocking take. Returns true with `out` filled on success, false on
-    // timeout (or if the subscription is invalid). timeoutMs defaults to
-    // forever; pdMS_TO_TICKS overflow is avoided by special-casing it.
     bool receive(EventT& out, uint32_t timeoutMs = kWaitForever) {
       if (queue_ == nullptr) {
         return false;
@@ -62,27 +32,15 @@ class EventBusT {
       return xQueueReceive(queue_, &out, ticks) == pdPASS;
     }
 
-    // Lifetime drops for this slot (queue full at publish time). Monotonic
-    // per slot; reset only by unsubscribe() + re-subscribe.
-    uint32_t droppedCount() const {
-      if (slot_ >= kMaxSubscribers) {
-        return 0;
-      }
-      return __atomic_load_n(&s_dropped[slot_], __ATOMIC_RELAXED);
-    }
-
    private:
     friend class EventBusT;
     QueueHandle_t queue_;
     uint8_t slot_;
   };
 
-  // Idempotent; creates the subscriber-list mutex on first use.
   static void begin() { ensureMutex(); }
 
-  // Registers a private queue of `depth` events. Returns an invalid
-  // Subscription when the table is full (kMaxSubscribers) or the queue
-  // allocation fails. Task context only.
+  // Returns an invalid Subscription when the table is full or alloc fails.
   static Subscription subscribe(UBaseType_t depth = kDefaultDepth) {
     ensureMutex();
     if (depth == 0) {
@@ -124,17 +82,14 @@ class EventBusT {
     sub->slot_ = kInvalidSlot;
   }
 
-  // Fan-out copy to every subscriber. Stamps millis(), logs at DEBUG,
-  // never blocks (zero-timeout sends). Full queues drop + count + WARN.
-  // Task context only — never call from ISR (logging takes a mutex).
+  // Fan-out copy; never blocks; full queues drop + WARN. Task context only, never ISR.
   static void publish(TypeT type, uint32_t payload = 0) {
     EventT ev;
     ev.type = type;
     ev.payload = payload;
     ev.timestampMs = millis();
 
-    // Snapshot handles under the mutex, then send without holding it so a
-    // slow consumer (or LOG_W below) cannot stall other publishers.
+    // Snapshot under the mutex, send without holding it.
     struct Target {
       QueueHandle_t queue;
       uint8_t slot;
@@ -160,11 +115,7 @@ class EventBusT {
     }
   }
 
-  // ISR-safe fan-out: FromISR queue calls, no mutex, NO logging (the log
-  // path takes a mutex and vsnprintf stack — both forbidden in ISR).
-  // Passes `woken` through to xQueueSendFromISR; when omitted (nullptr) and
-  // a higher-priority task was woken, yields here. Timestamp uses the ISR
-  // tick count, not millis().
+  // ISR-safe fan-out: FromISR calls, no mutex, no logging.
   static void publishFromISR(TypeT type, uint32_t payload = 0, BaseType_t* woken = nullptr) {
     EventT ev;
     ev.type = type;
@@ -187,16 +138,12 @@ class EventBusT {
     }
   }
 
-  static const char* eventName(TypeT type) { return NameFn(type); }
-
  private:
   static void ensureMutex() {
     if (s_mutex == nullptr) {
 #if defined(portTICK_PERIOD_MS)
-      // Safe to call repeatedly; first writer wins.
       SemaphoreHandle_t m = xSemaphoreCreateMutex();
       if (m != nullptr) {
-        // Avoid clobbering if two tasks race here.
         if (s_mutex == nullptr) {
           s_mutex = m;
         } else {

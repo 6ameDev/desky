@@ -1,11 +1,9 @@
 #pragma once
-// desky v2 sensors task — abilities/sensors (ability layer).
+// Sensors task — abilities/sensors.
 //
 // Firmware-only SensorTask binder: Core 1 RTOS task, HAL polling, EventBus
-// publish — no sockets involved. Moved verbatim from the bottom half of
-// the former middleware task header (Slice 3); zero behavior change. Pure pieces live
-// in sensors_codec.h, the shared production Fusion home in sensors_manager.h
-// (included here, which pulls the codec).
+// publish — no sockets involved. Pure pieces live in sensors_codec.h, the
+// shared production Fusion home in sensors_manager.h.
 
 #include "sensors_manager.h"
 
@@ -23,8 +21,7 @@
 #include "hal/vl53l0x_driver.h"
 #include "services/event_bus.h"
 
-// Fallbacks keep this header compilable if config keys ever drift; in-project
-// include/config.h always wins (same pattern as coordinator.h).
+// Fallbacks if config keys drift; in-project include/config.h always wins.
 #ifndef CFG_SENSOR_STACK_WORDS
 #define CFG_SENSOR_STACK_WORDS 4096
 #endif
@@ -74,10 +71,7 @@ class SensorTask {
         lastTofMs_(0),
         lastTcrtMs_(0) {}
 
-  // Pins the sensor task to Core 1. Call once in setup(), after
-  // Coordinator::begin (ground events have a subscriber from the first
-  // publish; obstacle events are explicitly ignored by the coordinator — no
-  // behavior action yet) and before UdpServer::begin, with logging already up.
+  // Pins the sensor task to Core 1. Call once in setup(), with logging up.
   bool begin(Mpu6500Driver* mpu, Vl53l0xDriver* tof, Tcrt5000Driver* tcrtFwd, Tcrt5000Driver* tcrtRev) {
     DESKY_ASSERT(mpu != nullptr);
     DESKY_ASSERT(tof != nullptr);
@@ -108,8 +102,8 @@ class SensorTask {
     TickType_t lastWake = xTaskGetTickCount();
     const TickType_t period = pdMS_TO_TICKS(kLoopMs);
     uint32_t ticks = 0;
-    // Never returns / never halts by design: a halted task that stays
-    // WDT-subscribed becomes a panic-reboot loop (see coordinator.h).
+    // Never returns / never halts. (A halted WDT-subscribed task becomes a
+    // panic-reboot loop.)
     for (;;) {
       vTaskDelayUntil(&lastWake, period);
       const uint32_t nowMs = millis();
@@ -125,9 +119,9 @@ class SensorTask {
         tcrtRev_->update();
       }
 
-      // Live gates: a ground tick needs the MPU plus at least one enabled
-      // TCRT rail; a ToF tick needs a valid ranging. Either live rail makes
-      // the fusion run; dead ticks hold in silence.
+      // A ground tick needs the MPU plus at least one enabled TCRT rail; a
+      // ToF tick needs a valid ranging. Either live rail runs the fusion;
+      // dead ticks hold in silence.
       const uint16_t distMm = tof_->distanceMm();
       const bool tofLive = sensortask::tofReadingValid(tof_->isEnabled(), distMm);
       const bool groundLive = mpu_->isHealthy() && (tcrtFwd_->isEnabled() || tcrtRev_->isEnabled());
@@ -151,8 +145,7 @@ class SensorTask {
         snap.tcrtRevGround = tcrtRev_->groundPresent();
         snap.tcrtRevValid = tcrtRev_->isEnabled();
         // Seed with the last published levels: fusion is stateless and dead
-        // rails must hold (never clear), so a one-sided dead rail can never
-        // synthesize a transition against its default.
+        // rails hold (never clear).
         SystemState fused;
         fused.gndFwd = lastGndFwd_;
         fused.gndRev = lastGndRev_;
@@ -170,8 +163,7 @@ class SensorTask {
               tcrtRev_->rawCount(), tcrtRev_->groundPresent() ? 1u : 0u, distMm, pitchDeg, gndFwdNow ? 1u : 0u,
               gndRevNow ? 1u : 0u);
       }
-      // Obstacle assert edge (forward ToF only): plumbed now, the
-      // coordinator explicitly ignores it — no behavior action yet.
+      // Obstacle assert edge (forward ToF only).
       uint32_t obsPayload = 0;
       if (sensortask::obstacleTransition(tofLive, distMm, lastObstacle_, obsPayload)) {
         EventBus::publish(EVENT_OBSTACLE_DETECTED, obsPayload);
