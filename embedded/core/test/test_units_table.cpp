@@ -2,7 +2,7 @@
 // Run: pio test -e native-test (runner lives in test_udp_codec.cpp).
 //
 // Every timeout/rate below is already tested where it is defined; what was
-// missing (gap 9) is the products and orderings that otherwise live only in
+// missing is the products and orderings that otherwise live only in
 // developers' heads. Each test asserts one intended relation with literals
 // on at least one side plus a comment stating the intent, so flipping either
 // constant breaks the test and forces a conscious decision.

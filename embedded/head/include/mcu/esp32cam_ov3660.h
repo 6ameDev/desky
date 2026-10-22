@@ -1,16 +1,7 @@
 #pragma once
-// MCU definition: AI Thinker ESP32-CAM (classic ESP32, desky-head face-unit).
-// Eyes OV3660 via ribbon + face OLED + link UART (PARKED, unrouted).
-// Flashed/monitored via the ESP32-CAM-MB USB board (UART0 console — Serial
-// just works). Framework: Arduino + FreeRTOS, board = esp32cam.
-// Swap back via include/mcu/active_mcu.h — no driver changes.
-//
-// MB-board rule (load-bearing for every USB run): the MB occupies ALL module
-// pins, so the face OLED can NEVER be attached during USB runs. The camera
-// works on-MB (ribbon only). Consequence, enforced in the display driver:
-// OLED init must SCAN (never assume an address) and a "not found" result
-// logs cleanly and never blocks boot. Full face validation is deferred to
-// the field harness (OLED on 14/15, camera + OLED + link live together).
+// AI Thinker ESP32-CAM (classic ESP32) face-unit: OV3660 eyes, face OLED,
+// link UART (PARKED, unrouted). UART0 console via the ESP32-CAM-MB board.
+// Swap via include/mcu/active_mcu.h.
 
 #include "mcu_common.h"
 
@@ -25,28 +16,21 @@
                           // via the ESP32-CAM-MB board — Serial just works
 #define MCU_HAS_CAMERA 1  // OV3660 eyes on the board-fixed bus below
 
-// ── Face OLED (SSD1306 128x64, address SCANNED, never assumed) ──
-// SDA=14/SCL=15: PROVEN booting with the OLED attached (bench 2026-09-28).
-// The previous SDA=12 map bricked the boot — GPIO12/MTDI must read LOW at
-// reset for the 3.3V flash, but the OLED's SDA pullup holds it HIGH, giving
-// "invalid header: 0xffffffff" + RTCWDT loop before our code ever runs. No
-// passive-resistor fix exists (a pulldown strong enough for boot breaks the
-// I2C idle level). NEVER move SDA back to GPIO12.
+// Face OLED (SSD1306 128x64, address scanned, never assumed).
+// SDA=14/SCL=15: never move SDA to GPIO12 (MTDI strapping: must read LOW at reset).
 #define MCU_OLED_SDA 14
 #define MCU_OLED_SCL 15
 #define MCU_ADDR_OLED_PRIMARY 0x3C  // Module-fixed: scan BOTH, never hardcode one
 #define MCU_ADDR_OLED_ALT 0x3D
 
-// ── Link UART2 (PARKED — defines kept for switch-back, do NOT route) ──
-// Was TX=12/RX=13 @115200. TX=12 is an output (strapping-safe); wireless TBD.
+// Link UART2 (PARKED, do not route).
 #define MCU_LINK_UART_NUM 2
 #define MCU_LINK_UART_TX 12
 #define MCU_LINK_UART_RX 13
 
-// ── Camera bus: board-fixed AI-Thinker map (CAMERA_PIN_*) ──
-// Ribbon-defined, never remapped. XCLK=20MHz, QVGA JPEG (see config.h).
+// Camera bus: board-fixed AI-Thinker map (XCLK=20MHz, QVGA JPEG).
 #define MCU_CAM_PIN_PWDN 32
-#define MCU_CAM_PIN_RESET -1  // Tied high on-module, no software reset
+#define MCU_CAM_PIN_RESET -1
 #define MCU_CAM_PIN_XCLK 0
 #define MCU_CAM_PIN_SIOD 26
 #define MCU_CAM_PIN_SIOC 27
@@ -62,24 +46,10 @@
 #define MCU_CAM_PIN_HREF 23
 #define MCU_CAM_PIN_PCLK 22
 
-// ── Reserved (comment-only: firmware never touches these) ──
-// GPIO2: reserved (strapping pin + on-module LED — never drive it).
-// GPIO4: flash-LED spare (leave alone in this task).
+// Reserved: GPIO2 (strapping + LED, never drive), GPIO4 (flash-LED spare).
 
-// ── Hard constraints (do not violate without a new MCU file) ──
-// - GPIO12 is a BOOT-STRAPPING pin (MTDI): must read LOW at reset. NEVER
-//   attach a pullup-holding peripheral (e.g. OLED SDA) to GPIO12 —
-//   bench-proven 2026-09-28 to brick boot ("invalid header: 0xffffffff" +
-//   RTCWDT loop). GPIO15 (OLED SCL) strapping is flash-voltage-safe.
-// - MB occupies ALL pins: OLED can NEVER be attached during USB runs;
-//   display code is compile-tested + boot-scan negative-tested on-MB only.
-// - UART0 (module TX0/RX0 via MB) is RESERVED — Serial (USB CLI) only.
-// - GPIO0 (XCLK!) + GPIO16 (PSRAM CS): camera/flash use — NEVER reuse.
-// - GPIO34-39 (camera Y6-Y9): input-only, no pullups — camera use only.
-// - WiFi is ON for the B-link (STA only against the core AP, modem-sleep
-//   between HBs, NO SoftAP on head; channel follows the AP — never selected
-//   here). Camera data/clock pins are digital-only (no ADC2 use anywhere, so
-//   no ADC2-vs-WiFi conflict). Star 5V rail budgets module + camera + OLED +
-//   radio peak together.
-// - Star 5V power assumed: module + camera + OLED peak together, and the
-//   camera+display pair is power-hungry (see head power manager).
+// Hard constraints (new MCU file to violate):
+// GPIO12/MTDI must read LOW at reset (no pullup peripheral on GPIO12).
+// UART0 is Serial-only; GPIO0/16 are camera/flash; GPIO34-39 camera-only.
+// WiFi STA-only, no SoftAP, channel follows the AP; camera pins are
+// digital-only (no ADC2-vs-WiFi conflict).

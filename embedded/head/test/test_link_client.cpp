@@ -1,10 +1,4 @@
-// Host unit tests for the WiFi link client pure top half (no hardware).
-// Run: pio test -e native-test
-//
-// Covers namespace wifilink (seq gate, type names, command mapping,
-// QR validation, HB/retry gates, link-down rule, MTU fragmentation) plus
-// the CLI `link` / `snap` verbs. Firmware socket paths are compile-tested
-// by the desky-head build, not here (Arduino-free headers only).
+// WiFi link client pure top half (no hardware).
 
 #include <unity.h>
 
@@ -25,8 +19,7 @@ void test_wifilink_seq_wraps() {
   using V = wifilink::RxVerdict;
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(V::kFresh), static_cast<uint8_t>(wifilink::classifyRx(true, 0xFFFF, 0)));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(V::kStale), static_cast<uint8_t>(wifilink::classifyRx(true, 0, 0xFFFF)));
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(V::kStale),
-                          static_cast<uint8_t>(wifilink::classifyRx(true, 0, 0x8000)));  // half-range rejected
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(V::kStale), static_cast<uint8_t>(wifilink::classifyRx(true, 0, 0x8000)));
 }
 
 void test_wifilink_type_names() {
@@ -49,7 +42,7 @@ void test_wifilink_map_face() {
   TEST_ASSERT_TRUE(wifilink::mapCmd(linkcode::kTypeFace, &id, 1, cmd));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::FACE), static_cast<uint8_t>(cmd.target));
   TEST_ASSERT_EQUAL_INT32(3, cmd.arg);
-  TEST_ASSERT_FALSE(wifilink::mapCmd(linkcode::kTypeFace, &id, 2, cmd));  // codec length, never maps
+  TEST_ASSERT_FALSE(wifilink::mapCmd(linkcode::kTypeFace, &id, 2, cmd));
   TEST_ASSERT_FALSE(wifilink::mapCmd(linkcode::kTypeFace, nullptr, 1, cmd));
 }
 
@@ -65,7 +58,7 @@ void test_wifilink_map_oled_rows() {
   TEST_ASSERT_TRUE(wifilink::mapCmd(linkcode::kTypeOled, &off, 1, cmd));
   TEST_ASSERT_EQUAL_INT32(OLED_OFF, cmd.arg);
   const uint8_t bad = 3;
-  TEST_ASSERT_FALSE(wifilink::mapCmd(linkcode::kTypeOled, &bad, 1, cmd));  // bad value drops
+  TEST_ASSERT_FALSE(wifilink::mapCmd(linkcode::kTypeOled, &bad, 1, cmd));
 }
 
 void test_wifilink_map_cam() {
@@ -77,7 +70,7 @@ void test_wifilink_map_cam() {
   TEST_ASSERT_TRUE(wifilink::mapCmd(linkcode::kTypeCamCtl, &off, 1, cmd));
   TEST_ASSERT_EQUAL_INT32(0, cmd.arg);
   const uint8_t bad = 2;
-  TEST_ASSERT_FALSE(wifilink::mapCmd(linkcode::kTypeCamCtl, &bad, 1, cmd));  // bad value drops
+  TEST_ASSERT_FALSE(wifilink::mapCmd(linkcode::kTypeCamCtl, &bad, 1, cmd));
 }
 
 void test_wifilink_map_rejects_non_commands() {
@@ -101,15 +94,11 @@ void test_wifilink_hb_and_retry_gates() {
   TEST_ASSERT_FALSE(wifilink::retryDue(4999, 0, 5000));
 }
 
-// Assoc-attempt driver: begin() is async, so the verdict must arrive on a
-// later tick — a same-tick re-begin loop (the pre-fix bug) aborts the
-// handshake on every retry and can never connect.
+// Assoc-attempt driver: begin() is async; the verdict arrives on a later tick.
 void test_wifilink_assoc_step_begins_once_then_waits() {
   using A = wifilink::AssocAction;
-  // Idle + disconnected -> start one attempt.
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(A::kBegin),
                           static_cast<uint8_t>(wifilink::assocStep(false, false, 6000, 0, 10000)));
-  // In-flight + disconnected + inside timeout -> wait (never re-begin).
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(A::kWait),
                           static_cast<uint8_t>(wifilink::assocStep(true, false, 6000, 1000, 10000)));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(A::kWait),
@@ -118,7 +107,6 @@ void test_wifilink_assoc_step_begins_once_then_waits() {
 
 void test_wifilink_assoc_step_connects_on_later_tick() {
   using A = wifilink::AssocAction;
-  // Connected wins regardless of the connecting flag (handshake done async).
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(A::kConnected),
                           static_cast<uint8_t>(wifilink::assocStep(true, true, 6000, 1000, 10000)));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(A::kConnected),
@@ -127,7 +115,6 @@ void test_wifilink_assoc_step_connects_on_later_tick() {
 
 void test_wifilink_assoc_step_timeout_restarts() {
   using A = wifilink::AssocAction;
-  // In-flight + disconnected + timeout elapsed -> restart (fresh begin).
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(A::kRestart),
                           static_cast<uint8_t>(wifilink::assocStep(true, false, 11000, 1000, 10000)));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(A::kRestart),
@@ -136,8 +123,6 @@ void test_wifilink_assoc_step_timeout_restarts() {
 
 void test_wifilink_assoc_step_wrap_safe() {
   using A = wifilink::AssocAction;
-  // attemptStart near the u32 wrap: 20ms later is still waiting, 11s later
-  // is a restart — unsigned subtraction throughout.
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(A::kWait),
                           static_cast<uint8_t>(wifilink::assocStep(true, false, 10, 0xFFFFFFF0u, 10000)));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(A::kRestart),
@@ -164,9 +149,9 @@ void test_wifilink_frag_plan() {
   TEST_ASSERT_TRUE(wifilink::fragSlice(2500, 1024, 2, 3, off, len));
   TEST_ASSERT_EQUAL_size_t(2048, off);
   TEST_ASSERT_EQUAL_size_t(452, len);
-  TEST_ASSERT_FALSE(wifilink::fragSlice(2500, 1024, 3, 3, off, len));  // idx >= total
-  TEST_ASSERT_FALSE(wifilink::fragSlice(2500, 0, 0, 3, off, len));     // no MTU room
-  TEST_ASSERT_TRUE(wifilink::fragSlice(0, 1024, 0, 1, off, len));      // empty rides one frame
+  TEST_ASSERT_FALSE(wifilink::fragSlice(2500, 1024, 3, 3, off, len));
+  TEST_ASSERT_FALSE(wifilink::fragSlice(2500, 0, 0, 3, off, len));
+  TEST_ASSERT_TRUE(wifilink::fragSlice(0, 1024, 0, 1, off, len));
   TEST_ASSERT_EQUAL_size_t(0, len);
   TEST_ASSERT_FALSE(wifilink::fragSlice(0, 1024, 1, 2, off, len));
 }
@@ -177,9 +162,9 @@ void test_cli_link_and_snap_parse() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::LINK), static_cast<uint8_t>(cmd.target));
   TEST_ASSERT_TRUE(headcmd::parseLine("snap", cmd));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::SNAP), static_cast<uint8_t>(cmd.target));
-  TEST_ASSERT_TRUE(headcmd::parseLine("  snap  ", cmd));  // padding tolerated
-  TEST_ASSERT_FALSE(headcmd::parseLine("LINK", cmd));     // CLI dialect stays lowercase
+  TEST_ASSERT_TRUE(headcmd::parseLine("  snap  ", cmd));
+  TEST_ASSERT_FALSE(headcmd::parseLine("LINK", cmd));
   TEST_ASSERT_FALSE(headcmd::parseLine("SNAP", cmd));
-  TEST_ASSERT_FALSE(headcmd::parseLine("link status", cmd));  // trailing garbage
+  TEST_ASSERT_FALSE(headcmd::parseLine("link status", cmd));
   TEST_ASSERT_FALSE(headcmd::parseLine("snapshot", cmd));
 }

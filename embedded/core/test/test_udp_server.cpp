@@ -43,9 +43,8 @@ static_assert(udpstatus::kRekeyAckHeader == 0x54, "REKEY_ACK header is 0x54");
 static_assert(pairing::kPairOkSize == 39, "PAIR_OK is 39B (v1.1)");
 static_assert(pairing::kPairOkLegacySize == 38, "v1 PAIR_OK was 38B");
 static_assert(udpstatus::kRekeyAckSize == 10, "REKEY_ACK is 10B");
-// NOTE (M9): PAIR_OK header (0x51) lives in pairing_codec.h (Arduino-free
-// sizes since the abilities split) and PAIR_ERR (0x52/4) is a firmware-only
-// in sendPairErr — neither has a host-visible constexpr, so both are pinned
+// NOTE: PAIR_OK header (0x51) lives in pairing_codec.h and PAIR_ERR (0x52/4) is a firmware-only
+// literal in sendPairErr — neither has a host-visible constexpr, so both are pinned
 // as literals in test_udp_mirror_freeze / test_udp_pair_*_frame_golden below
 // (literals reviewed against the udp_codec.h freeze table + Codec.kt + README).
 static_assert(pairing::kRekeyAckSize == 10, "REKEY_ACK is 10B (pairing owner)");
@@ -151,7 +150,7 @@ void test_deg_to_decideg_edges_and_clamp() {
   TEST_ASSERT_EQUAL_INT16(-32768, udpstatus::degToDecideg(-4000.0f));
 }
 
-// Pairing/auth v1 (Task 5): frozen wire constants, wrap-aware counter
+// Pairing/auth v1: frozen wire constants, wrap-aware counter
 // freshness, and the RX demux table. The firmware verify path (HMAC, NVS,
 // sockets) is #ifdef ARDUINO and exercised on hardware.
 
@@ -160,12 +159,9 @@ void test_udp_wire_constants() {
   TEST_ASSERT_TRUE(udpstatus::kDriveV2Size == 16);
   TEST_ASSERT_EQUAL_UINT8(0x50, udpstatus::kPairReqHeader);
   TEST_ASSERT_TRUE(udpstatus::kPairReqSize == 12);
-  // M9 cross-check: the RX demux hard-codes the legacy 6B/0xAA shape instead
-  // of including udp_codec.h (see the comment above kDriveV2Header). Pin the
-  // copy to the canonical udp::kControlHeader/kControlSize so drift fails
-  // here. Single source of truth: shared/protocol (normative:
-  // embedded/src/transport/udp_codec.h). (static_cast: rxKindInt is
-  // declared further below, after the classify tests.)
+  // Cross-check: the RX demux hard-codes the legacy 6B/0xAA shape instead
+  // of including udp_codec.h. Pin the copy to the canonical
+  // udp::kControlHeader/kControlSize so drift fails here.
   TEST_ASSERT_EQUAL_UINT8(udp::kControlHeader, 0xAA);
   TEST_ASSERT_TRUE(udp::kControlSize == 6);
   TEST_ASSERT_EQUAL(static_cast<int>(udpstatus::RxKind::kLegacy),
@@ -237,7 +233,7 @@ void test_udp_classify_wrong_header_or_size_drops() {
 // Runner lives in test_udp_codec.cpp (single main for the native-test
 // binary): the udpstatus tests are declared extern there.
 
-// PAIR_OK redelivery predicate (Task 1): same code+nonce inside the window
+// PAIR_OK redelivery predicate: same code+nonce inside the window
 // redelivers; anything else does not. Window is CFG_PAIR_REDELIVERY_MS (60s).
 
 void test_udp_redeliver_same_true() {
@@ -283,7 +279,7 @@ void test_udp_redeliver_millis_wrap_true() {
   TEST_ASSERT_TRUE(udpstatus::shouldRedeliver(true, code, nonce, code, nonce, 0xFFFFFF00u, 100u));
 }
 
-// Signed UNBOND (Task 2): wire constants, demux, and the tag-message golden.
+// Signed UNBOND: wire constants, demux, and the tag-message golden.
 
 void test_udp_unbond_wire_constants() {
   TEST_ASSERT_EQUAL_UINT8(0xAD, udpstatus::kUnbondHeader);
@@ -427,8 +423,8 @@ void test_udp_telemetry_gate_wrap() {
   TEST_ASSERT_FALSE(udpstatus::shouldSendTelemetry(true, true, 0xFFFFFF00u, 6000u));
 }
 
-// Platform split 1.1, step 5: runtime mirror of the frozen-size static
-// asserts above (keeps the sizes visible in the test log too).
+// Runtime mirror of the frozen-size static asserts above (keeps the sizes
+// visible in the test log too).
 void test_udp_frozen_sizes() {
   TEST_ASSERT_EQUAL(39, static_cast<int>(pairing::kPairOkSize));
   TEST_ASSERT_EQUAL(38, static_cast<int>(pairing::kPairOkLegacySize));
@@ -507,8 +503,8 @@ void test_conn_refresh_then_clear() {
 }
 
 void test_conn_pin_peer_no_stamp() {
-  // Legacy pre-bond quirk (preserved exactly): pinning records the peer
-  // WITHOUT touching the alive stamp.
+  // Pre-bond quirk: pinning records the peer WITHOUT touching the alive
+  // stamp.
   connection::ConnectionManager mgr(udpstatus::kAliveMs);
   mgr.pinPeer(0xC0A80401u);
   TEST_ASSERT_TRUE(mgr.havePeer());
@@ -550,8 +546,7 @@ void test_tokens_move_transfers_validity() {
   TEST_ASSERT_FALSE(r2.valid());
 }
 
-// Platform split 1.1, step 2: TelemetryManager — encode moved verbatim
-// (same udpstatus pack lines sendTelemetry used), cadence + edge decide,
+// TelemetryManager — encode, cadence + edge decide,
 // bytes leave via the caller-provided send fn (no sockets here).
 void test_telemetry_encode_snapshot_golden() {
   telemetry::Snapshot s;
@@ -651,7 +646,7 @@ void test_telemetry_publish_edge_forces_early() {
   TEST_ASSERT_EQUAL_UINT32(2, calls);
 }
 
-// ── M9 three-way mirror gate ─────────────────────────────────────────────
+// ── Wire mirror gate ─────────────────────────────────────────────
 // Literal freeze of every header/size in the udp_codec.h table (firmware
 // udp_server.h top half + pairing_codec.h vs client domain/Codec.kt vs
 // shared/protocol/README.md). Host-visible constexprs are pinned against
@@ -739,7 +734,7 @@ void test_udp_pair_err_frame_golden() {
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(4, 0xFF)));
 }
 
-// M11 additive reason 4 (internal_retry_fresh) PAIR_ERR golden:
+// Additive reason 4 (internal_retry_fresh) PAIR_ERR golden:
 // 4B [0x52|0x04|0x00|0x56] (0x52^0x04^0x00 = 0x56). This is the exact wire
 // byte string UdpServer::handlePairReq sends on burn-failure after tryCode
 // kOk (saveBond/deriveKek/wrapPsk fail — code already burned single-use),

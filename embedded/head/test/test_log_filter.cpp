@@ -1,17 +1,8 @@
-// Host unit tests for the shared log filter (no hardware).
-// Run: pio test -e native-test
-//
-// The matcher + registry are Arduino-free, so the firmware shim's policy
-// half is fully covered here; the vprintf install itself is proven on
-// hardware (quirk line gone, real errors still print).
+// Shared log filter (no hardware).
 
 #include <unity.h>
 
 #include "common/log_filter.h"
-
-// NOTE: the shared runner (test_main.cpp) owns setUp/tearDown, so each
-// test clears the registry explicitly first — rules never leak between
-// cases in the single test program.
 
 void test_empty_table_suppresses_nothing() {
   logfilter::clear();

@@ -1,52 +1,28 @@
 #pragma once
-// desky v2 pairing task binding — abilities/pairing (firmware-only crypto).
+// Pairing task binding — abilities/pairing (firmware-only crypto).
 //
 // mbedTLS glue (deriveKek/wrapPsk/ctEqual/deriveRekeyPsk) + the PairingTask
-// session class below. Slice 6b moved the handlers
-// (handlePairReq/Unbond/Rekey/Alive/Disconnect, LastPair cache, PairShow
-// staging) here from udp_server.h, leaving transport as dumb pipes. Slice 7
-// moves drive/alive/disconnect back out to their semantic owners (coordinator
-// drive, transport alive/disconnect) behind the atomic tryConsume auth
-// service; pairing retains enrolment + bond destruction + rekey
-// (handlePairReq/Unbond/Rekey) plus the LastPair/QR state. Slice 8b moves
-// the pair-family RX dispatch in too (handlePairFrame maps header ->
-// handler); transport keeps only the framing demux (classifyRx len/header +
-// XOR) and routes the family here. Never included
-// by host tests.
+// session class below (enrolment + bond destruction + rekey + LastPair/QR
+// state + pair-family RX dispatch). Never included by host tests.
 
 #include "pairing_codec.h"
 #include "pairing_manager.h"
 
 #ifdef ARDUINO
-// ── Firmware: pairing crypto glue (mbedTLS, Task 4) ───────────────────────
+// ── Firmware: pairing crypto glue (mbedTLS) ───────────────────────
 // Arduino-ESP32 (S3) bundles mbedTLS; headers live under the framework
-// package and are included as <mbedtls/...>. No heap, no String, and no
-// logging of key material anywhere in this section (never LOG key, nonce,
-// or code bytes) — failures surface as silent bools for the PAIR_ERR path.
+// package as <mbedtls/...>. No heap, no String, no logging of key material
+// (never LOG key, nonce, or code bytes) — failures surface as silent bools
+// for the PAIR_ERR path.
 //
-// CALL-ORDER CONTRACT (store-before-send; the PAIR_OK send path must follow
-// it exactly so app-bonded/robot-unbonded is impossible):
-//   1. Core::tryCode(in, len, nowMs) == Result::kOk (code verified + burned
-//      inside Core; single-use, window/lockout enforced by the top half).
-//   2. Fresh PSK = 16 esp_random bytes into a caller-owned stack buffer.
-//   3. ConfigStore::saveBond(psk, 1) FIRST — persist before anything leaves
-//      the radio. A failed save aborts: answer PAIR_ERR, never PAIR_OK.
-//   4. deriveKek(code, clientNonce, serverNonce, kek), then
-//      wrapPsk(psk, kek, clientNonce, serverNonce, persistU8, ct, tag)
-//      with persistU8 = kPairPersistDefault (128) — sanitized inside wrap.
-//   5. Send PAIR_OK ([0x51 | server_nonce | ct17 | tag | XOR]); zeroize the
-//      kek/psk stack copies after the send.
-// Layer rule: crypto glue is abilities/pairing (this header); NVS persistence
-// is services/ConfigStore; policy/state is pairing::Core (pairing_manager.h).
+// CALL-ORDER CONTRACT (store-before-send): saveBond BEFORE PAIR_OK leaves
+// the radio; a failed save answers PAIR_ERR, never PAIR_OK.
 
 #include <Arduino.h>
 #include <esp_system.h>
 #include <mbedtls/cipher.h>
-// NOTE: this vendored constant_time.h ships WITHOUT the extern "C" guard
-// every other mbedtls header has, so a plain include mangles
-// mbedtls_ct_memcmp in C++ and ctEqual below fails at link (undefined
-// _Z17mbedtls_ct_memcmp...). The prebuilt lib provides the C symbol, hence
-// the explicit C-linkage wrapper (harmless if a future header adds its own).
+// constant_time.h ships WITHOUT the extern "C" guard the other mbedtls
+// headers have, so include it wrapped or ctEqual fails at link.
 extern "C" {
 #include <mbedtls/constant_time.h>
 }
@@ -65,10 +41,9 @@ extern "C" {
 
 namespace pairing {
 
-// Derives the pairing KEK: KEK = HKDF-SHA256(salt=client_nonce||server_nonce,
-// IKM=6 ASCII code digits, info="desky-pair-v1", L=16). Returns false on null
-// input or any mbedTLS error (kekOut zeroized on failure). Salt lives in a
-// fixed-size stack buffer and is zeroized on all paths.
+// Derives the pairing KEK: HKDF-SHA256(salt=client||server nonce,
+// IKM=6 ASCII code digits, info="desky-pair-v1", L=16). False on null input
+// or mbedTLS error (kekOut zeroized on failure).
 inline bool deriveKek(const uint8_t code6[kCodeLen], const uint8_t clientNonce[kPairNonceLen],
                       const uint8_t serverNonce[kPairNonceLen], uint8_t kekOut[kKekLen]) {
   DESKY_ASSERT(code6 != nullptr);
@@ -101,15 +76,9 @@ inline bool deriveKek(const uint8_t code6[kCodeLen], const uint8_t clientNonce[k
 }
 
 // Wraps the bonded PSK + persist-interval byte for PAIR_OK:
-// ct||tag = AES-128-GCM(KEK, nonce12=server_nonce||client_nonce||00 00 00
-// 00, AAD=0x51||client_nonce||server_nonce, psk16||persist_u8). The 17th
-// plaintext byte carries sanitizePersistEvery(persistU8) (default 128), so
-// the cadence is authenticated by the GCM tag+AAD exactly like the PSK.
-// Layout: PAIR_OK 39B [0x51|srvNonce4|ct17|tag16|XOR] (see
-// shared/protocol/README.md §v1.1 addendum). Returns false on null input
-// or any mbedTLS error; gcm_free runs on all paths, and ct/tag outputs are
-// zeroized on failure (caller still owns psk/kek — const here — and must
-// zeroize its own copies after the send per the contract above).
+// ct||tag = AES-128-GCM(KEK, nonce12=server||client nonce||00s,
+// AAD=0x51||client||server nonce, psk16||persist_u8). False on null input or
+// mbedTLS error (ct/tag zeroized on failure; caller zeroizes psk/kek).
 inline bool wrapPsk(const uint8_t psk[kPskLen], const uint8_t kek[kKekLen], const uint8_t clientNonce[kPairNonceLen],
                     const uint8_t serverNonce[kPairNonceLen], uint8_t persistU8, uint8_t ctOut[kPairCtLen],
                     uint8_t tagOut[kPairTagLen]) {
@@ -165,11 +134,7 @@ inline bool wrapPsk(const uint8_t psk[kPskLen], const uint8_t kek[kKekLen], cons
   return true;
 }
 
-// Constant-time buffer compare for the Task 5 DRIVE_V2 verify path
-// (HMAC tag check). Thin wrapper over mbedtls_ct_memcmp; returns false on
-// null input. Note: pairing::constantTimeEqual6 above stays the host-testable
-// semantic for the 6-byte code compare — same no-early-exit rule, Arduino-free
-// so Unity pins it; this wrapper is just the firmware call-site rule.
+// Constant-time buffer compare (HMAC tag check); false on null input.
 inline bool ctEqual(const void* a, const void* b, size_t n) {
   DESKY_ASSERT(a != nullptr);
   DESKY_ASSERT(b != nullptr);
@@ -179,14 +144,9 @@ inline bool ctEqual(const void* a, const void* b, size_t n) {
   return mbedtls_ct_memcmp(a, b, n) == 0;
 }
 
-// Tier-1 rekey key schedule (firmware side):
-//   PSK_next = HKDF-SHA256(salt="desky-rekey-v1", IKM=oldPsk16,
-//                           info=eraBE2(new), L=16).
-// Salt lives in ROM (string literal, no stack copy needed); the 2-byte era
-// info is built on the stack and zeroized. Returns false on null input or
-// any mbedTLS error (out zeroized on failure). Caller owns oldPsk/newPsk
-// lifetime and must zeroize its own copies after the switch per the
-// store-before-ACK contract (see udp_server.h handleRekey).
+// Tier-1 rekey key schedule: PSK_next = HKDF-SHA256(salt="desky-rekey-v1",
+// IKM=oldPsk16, info=eraBE2(new), L=16). False on null input or mbedTLS
+// error (out zeroized on failure).
 inline bool deriveRekeyPsk(const uint8_t oldPsk[kPskLen], uint16_t nextEra, uint8_t nextPskOut[kPskLen]) {
   DESKY_ASSERT(oldPsk != nullptr);
   DESKY_ASSERT(nextPskOut != nullptr);
@@ -211,21 +171,14 @@ inline bool deriveRekeyPsk(const uint8_t oldPsk[kPskLen], uint16_t nextEra, uint
   return true;
 }
 
-// ── PairingTask: pairing/auth session policy (Slice 6b) + PIN PairShow
-// link stage (Pre-2, supersedes the Slice 6c QR bitmap stage) + atomic auth
-// service (Slice 7) ──────────────────────────
-// Owns ALL session state moved verbatim from UdpServer: bonded_, psk_,
-// lastCounter_, era_, validCount_, pairCore_, the LastPair redelivery cache,
-// stagedCode_/stagedValid_, and the dropFirst flags for the retained
-// handlers (pair/unbond/rekey). Pre-2 sends the authoritative PIN: the open
-// window's 6-digit code + valid-seconds go out once per window via
-// pumpPairShow below (transport only unicasts); pairing completion goes out
-// via notifyPairingDone (empty PairDone frame, fire-and-forget). Slice 7 removes the drive/alive/disconnect handlers —
-// they live with their semantic owners now (coordinator drive, transport
-// alive/disconnect) and authenticate through the atomic tryConsume service
-// below. pairing::Core (pairing_manager.h) stays untouched —
-// window/tries/lockout policy only; this class is the firmware session
-// layer around it.
+// PairingTask: pairing/auth session policy + PIN PairShow link stage +
+// atomic auth service. Owns ALL session state: bonded_, psk_, lastCounter_,
+// era_, validCount_, pairCore_, the LastPair redelivery cache, stagedCode_/stagedValid_,
+// and the dropFirst flags for the retained handlers. The open window's 6-digit
+// code + valid-seconds go out once per window via pumpPairShow (transport only
+// unicasts); completion goes out via notifyPairingDone (empty PairDone frame,
+// fire-and-forget). pairing::Core stays window/tries/lockout policy only;
+// this class is the firmware session layer around it.
 //
 // Transport back-call contract (duck-typed `Transport& t`, always UdpServer):
 // the ability never touches sockets — byte composition lives here, the
@@ -239,16 +192,13 @@ inline bool deriveRekeyPsk(const uint8_t oldPsk[kPskLen], uint16_t nextEra, uint
 //   t.sendRekeyAckImpl(IPAddress, uint16_t, ack10) (idempotent duplicate path)
 //   t.isFreshCounter(lastSeen, got) -> bool (udpstatus bridge)
 //   t.shouldRedeliver(...) -> bool (udpstatus bridge)
-// (Slice 8c deleted the drive back-calls — publishDrive / noteDriveCommand /
-// driveDropFirst: drive dispatch is transport-inline now, and the coordinator
-// reports to telemetry directly.)
 // Shared socket-adjacent state (peer slot + alive stamp) stays in transport:
 // attach() pins the ConnectionManager + IPAddress peer pointers (set once
 // from UdpServer::attachPairing before the task reads the radio).
-// Link back-call (pinned by attachLink from setup after UdpServer::begin +
-// LinkServer::begin; null-checked like Coordinator::pairing_): the ability
-// never touches sockets — notifyPairingDone fire-and-forgets the empty
-// PairDone frame via LinkServer::sendUnicast (peerless = silent no-op).
+// Link back-call (pinned by attachLink from setup; null-checked at every
+// notify site): the ability never touches sockets — notifyPairingDone
+// fire-and-forgets the empty PairDone frame via LinkServer::sendUnicast
+// (peerless = silent no-op).
 class PairingTask {
  public:
   PairingTask()
@@ -286,12 +236,10 @@ class PairingTask {
     link_ = link;
   }
 
-  // Bond-restore block moved verbatim from UdpServer::begin: bonded ->
-  // DRIVE_V2 verifies against the stored PSK; unbonded -> opens a pairing
-  // window (the code LOG_I line IS the display for now).
-  // ConfigStore::begin() already ran in setup(), so loadBond is safe here.
-  // The PAIR_OK redelivery cache stays invalid across reboot on both paths
-  // (RAM-only: a rebooted robot answers already_bonded until a fresh pair).
+  // Bond-restore: bonded -> DRIVE_V2 verifies against the stored PSK;
+  // unbonded -> opens a pairing window (the code LOG_I line is the display).
+  // ConfigStore::begin() already ran in setup(). The PAIR_OK redelivery cache
+  // stays invalid across reboot (RAM-only).
   void restoreFromStore() {
     lastPair_.valid = false;
     uint8_t loadedPsk[16] = {};
@@ -317,10 +265,8 @@ class PairingTask {
     mbedtls_platform_zeroize(loadedPsk, sizeof(loadedPsk));
   }
 
-  // Opens a pairing window showing a fresh esp_random 6-digit code (the
-  // LOG_I code line IS the display for now). Refused while bonded (single
-  // owner: clearBond() first — rotation never evicts). Public for the Task
-  // 10 bench procedure (10s-hold factory reset path).
+  // Opens a pairing window showing a fresh esp_random 6-digit code (the LOG_I
+  // code line is the display). Refused while bonded (clearBond() first).
   // TODO(PHYSICAL-TRIGGER): button-vs-power-cycle decision pending — implements the 10s-hold promise; see
   // DECISION-ISSUE.
   bool openPairingWindow() {
@@ -348,16 +294,12 @@ class PairingTask {
     return true;
   }
 
-  // Pre-2 PIN link pump: ability-side policy half of the head display path.
-  // Called from the main loop: while a pairing window is open, composes the
-  // 8B PairShow payload (6 digits + valid-seconds) via the shared
-  // linkcode::packPairShow and hands it to the transport's pinned-peer
-  // sendUnicast exactly once per window (pairShowSent_ latch). No head
-  // linked -> sendUnicast fails closed and the pump waits silently for a
-  // late joiner (same as before); window closed -> unlatch for the next
-  // window. Returns true iff a frame was handed to the radio. Never touches
-  // sockets (LinkServer::sendUnicast owns the send); never logs code bytes
-  // (seq/len only — the code itself stays on the UDP LOG_I line above).
+  // PIN link pump: ability-side policy half of the head display path. Called
+  // from the main loop: while a pairing window is open, composes the 8B
+  // PairShow payload and hands it to the transport's pinned-peer sendUnicast
+  // exactly once per window. No head linked -> waits silently for a late
+  // joiner; window closed -> unlatch for the next window. Never touches
+  // sockets; never logs code bytes (seq/len only).
   bool pumpPairShow(LinkServer& link) {
     if (!stagedValid_) {
       pairShowSent_ = false;  // Window closed: unlatch for the next window.
@@ -381,55 +323,43 @@ class PairingTask {
     return true;
   }
 
-  // Pairing-complete signal (Pre-2): fire-and-forget empty PairDone frame to
-  // the HB-pinned head. Peerless = silent no-op (sendUnicast fails closed).
-  // Call sites use the attachLink() back-call (null-checked); this overload
-  // takes the link explicitly for the main-loop/test seam.
+  // Pairing-complete signal: fire-and-forget empty PairDone frame to the
+  // HB-pinned head. Peerless = silent no-op. The link overload below takes
+  // the link explicitly for the main-loop/test seam.
   bool notifyPairingDone(LinkServer& link) {
     uint16_t seq = 0;
     return link.sendUnicast(linkcode::kTypePairDone, nullptr, 0, seq);
   }
 
-  // Bonded-state read for the transport-retained paths (pre-bond legacy
-  // quirk + telemetry gate): the session flag lives here.
+  // Bonded-state read for the transport-retained paths: the session flag
+  // lives here.
   bool bonded() const { return bonded_; }
 
-  // Session-era read for the transport-owned ALIVE/DISCONNECT handlers
-  // (eraOk = wireEra == era()) and the coordinator drive handler's markAlive
-  // pin (session era rides along: DRIVE_V2 carries no era).
+  // Session-era read for the ALIVE/DISCONNECT handlers and the drive
+  // publish pin (DRIVE_V2 carries no era).
   uint16_t era() const { return era_; }
 
-  // Last-consumed-counter read for the LOGGING-ONLY freshness pre-checks in
-  // the opcode handlers (coordinator drive, transport alive/disconnect):
-  // lets them emit the per-cause replay drop before calling tryConsume. The
-  // AUTHORITATIVE freshness gate is inside tryConsume below (same thread, no
-  // interleaving between the pre-check and the commit).
+  // Last-consumed-counter read for the logging-only freshness pre-checks in
+  // the opcode handlers. The authoritative freshness gate is inside tryConsume
+  // (same thread, no interleaving between pre-check and commit).
   uint32_t lastCounter() const { return lastCounter_; }
 
-  // Atomic session-auth service (Slice 7): separates proving a frame belongs
-  // to the session from acting on it. Folds bonded_ + eraOk + counter
-  // freshness + constant-time HMAC-SHA256(psk_, msg) == tag (first 6 bytes)
-  // into one atomic step. On success consumes the counter (lastCounter_ =
-  // ctr), bumps validCount_, runs the periodic ConfigStore::saveCounter
-  // cadence (kPairPersistDefault, unchanged), and returns a valid Verified;
-  // on ANY failure returns invalid with ZERO state change (fail-closed).
+  // Atomic session-auth service: separates proving a frame belongs to the
+  // session from acting on it. Folds bonded_ + eraOk + counter freshness +
+  // constant-time HMAC-SHA256(psk_, msg) == tag (first 6 bytes) into one
+  // atomic step. On success consumes the counter, bumps validCount_, runs the
+  // periodic saveCounter cadence, and returns a valid Verified; on ANY failure
+  // returns invalid with zero state change.
   //
-  // Callers pass eraOk per the connection::Checks mapping (documented on
-  // connection::Checks): drive -> true (no era on the wire), alive/
-  // disconnect -> (wireEra == era()), unbond -> true (no era on the wire).
-  // Rekey does NOT use this (bespoke: derivation + saveRekey + switch), and
-  // unbond does NOT use this (it destroys the session — no consume/persist —
-  // so its verify stays inline in handleUnbond below).
+  // Callers pass eraOk per the connection::Checks mapping: drive -> true (no
+  // era on the wire), alive/disconnect -> (wireEra == era()), unbond -> true
+  // (no era on the wire). Rekey does NOT use this (bespoke: derivation +
+  // saveRekey + switch), and unbond does NOT use this (it destroys the
+  // session, so its verify stays inline in handleUnbond).
   //
-  // Freshness is the wrap-aware strictly-greater idiom, textually identical
-  // to udpstatus::isFreshCounter (single owner stays there — this header
-  // cannot include transport/udp_server.h: it includes this header, so the
-  // one line is mirrored with this note; the callers' logging pre-checks go
-  // through the canonical transport bridge). All session tags are first6
-  // (drive/alive/disconnect/unbond/rekey all truncate to 6B), so the compare
-  // length is the literal 6. HMAC timing feeds the shared maxVerifyUs_ funnel
-  // (message kept verbatim; now fed by every verified frame, not drive
-  // alone — drive at 50Hz still dominates the throttled line).
+  // Freshness is the wrap-aware strictly-greater idiom. All session tags are
+  // first6, so the compare length is the literal 6. HMAC timing feeds the
+  // shared maxVerifyUs_ funnel (throttled line, drive at 50Hz dominates).
   connection::Verified tryConsume(uint32_t ctr, bool eraOk, const uint8_t* tag, const uint8_t* msg, size_t msgLen) {
     bool fresh = false;
     bool hmacOk = false;
@@ -471,10 +401,9 @@ class PairingTask {
     return verified;
   }
 
-  // Explicit unpair / 10s-hold factory reset hook (Task 10 bench procedure;
-  // no button wired yet): clears the NVS bond + in-memory Core + key
-  // material. The next begin() (or openPairingWindow()) starts fresh.
-  // Also invalidates the PAIR_OK redelivery cache (+zeroizes its secrets).
+  // Explicit unpair / 10s-hold factory reset hook: clears the NVS bond +
+  // in-memory Core + key material. Also invalidates the PAIR_OK redelivery
+  // cache (+zeroizes its secrets).
   // TODO(PHYSICAL-TRIGGER): button-vs-power-cycle decision pending — implements the 10s-hold promise; see
   // DECISION-ISSUE.
   bool clearBond() {
@@ -499,11 +428,10 @@ class PairingTask {
     return ConfigStore::clearBond();
   }
 
-  // Slice 8b pair-family RX entry (transport -> ability): the UdpServer RX
-  // path calls this (and ONLY this) for the pair family after its framing
-  // demux (classifyRx len/header + XOR). The header -> handler map lives
-  // here — transport never names a pair opcode. Default is unreachable
-  // (transport pre-classified) and fail-closed silent.
+  // Pair-family RX entry (transport -> ability): the UdpServer RX path calls
+  // this (and ONLY this) for the pair family after its framing demux. The
+  // header -> handler map lives here. Default is unreachable and fail-closed
+  // silent.
   template <typename Transport>
   void handlePairFrame(uint8_t header, const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
                        Transport& t) {
@@ -522,14 +450,13 @@ class PairingTask {
     }
   }
 
-  // PAIR_REQ layout [0x50|code6 1..6|clientNonce4 7..10|XOR] (len + header +
-  // XOR checked by the caller). Bonded -> PAIR_ERR already_bonded. Else
-  // tryCode; kOk mints a fresh PSK with store-before-send ordering
-  // (saveBond FIRST, then KEK->wrap->PAIR_OK unicast). Crypto/store failures
-  // after kOk answer PAIR_ERR internal_retry_fresh (4, M11 additive): the
-  // code is already burned, so the client must pair again with a fresh
-  // display code. Genuine not_in_window (tryCode != kOk) still sends reason
-  // 2. Every reply is unicast to the requester.
+  // PAIR_REQ layout [0x50|code6|clientNonce4|XOR] (len + header + XOR checked
+  // by the caller). Bonded -> PAIR_ERR already_bonded. Else tryCode; kOk
+  // mints a fresh PSK with store-before-send ordering (saveBond FIRST, then
+  // KEK->wrap->PAIR_OK unicast). Crypto/store failures after kOk answer
+  // PAIR_ERR internal_retry_fresh (reason 4): the code is already burned, so
+  // must pair again with a fresh display code. Genuine not_in_window still
+  // sends reason 2. Every reply is unicast to the requester.
   template <typename Transport>
   void handlePairReq(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs, Transport& t) {
     DESKY_ASSERT(buf != nullptr);
@@ -590,10 +517,10 @@ class PairingTask {
     const uint8_t* clientNonce = buf + 7;
     bool sent = false;
     uint8_t out[pairing::kPairOkSize] = {};  // Function scope: cached into lastPair_ on send.
-    // Bond baseline is counter 0 (never valid on the wire): the client's
-    // first DRIVE_V2 uses counter 1, matching the spec's "starts 1".
-    // Platform split 1.1: the receipt overload mints the store-before-ACK
-    // proof consumed by sendPairOk below (invalid until the NVS save lands).
+    // Bond baseline is counter 0 (never valid on the wire): the first
+    // DRIVE_V2 uses counter 1. The receipt overload mints the
+    // store-before-send proof consumed by sendPairOk (invalid until the NVS
+    // save lands).
     connection::PersistReceipt receipt;
     if (ConfigStore::saveBond(newPsk, 0, receipt)) {
       uint8_t kek[pairing::kKekLen];
@@ -659,12 +586,10 @@ class PairingTask {
       }
       LOG_I("UDP", "pair ok");
     } else {
-      // M11 additive reason 4 (internal_retry_fresh): the code is already
-      // burned (single-use), so an NVS or crypto failure after kOk
-      // (saveBond/deriveKek/wrapPsk) sends 4, not 2. The client maps 4 to
-      // "robot error, try a fresh code": open a new window and pair again
-      // with the fresh display code. Reasons 0-3 are frozen (never renumber;
-      // genuine not_in_window still sends 2 via the tryCode path above).
+      // internal_retry_fresh (reason 4): the code is already burned
+      // (single-use), so an NVS or crypto failure after kOk sends 4, not 2.
+      // The client pairs again with a fresh display code. Reasons 0-3 are
+      // frozen (genuine not_in_window still sends 2).
       uint8_t err[4];
       err[0] = 0x52;
       err[1] = pairing::toWireReason(pairing::Result::kInternal);
@@ -678,11 +603,10 @@ class PairingTask {
     mbedtls_platform_zeroize(serverNonce, sizeof(serverNonce));
   }
 
-  // UNBOND layout [0xAD|ctrBE4 1..4|tag6 5..10|XOR] (len + header + XOR
-  // checked by the caller). Symmetric forget: a signed fire-and-forget from
-  // the bonded owner. Fail = silent drop (stale/replay/bad-tag). Pass clears
-  // the NVS bond + Core + key material + redelivery cache and opens a fresh
-  // pairing window so a new phone can pair immediately. No reply packet.
+  // UNBOND layout [0xAD|ctrBE4|tag6|XOR] (len + header + XOR checked by the
+  // caller). Symmetric forget: a signed fire-and-forget from the bonded
+  // owner. Fail = silent drop. Pass clears the NVS bond + Core + key material
+  // + redelivery cache and opens a fresh pairing window. No reply packet.
   template <typename Transport>
   void handleUnbond(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs, Transport& t) {
     (void)rip;
@@ -723,9 +647,8 @@ class PairingTask {
       LOG_EVERY_N(20, "UDP", "drop unbond auth");
       return;
     }
-    // Platform split 1.1: fold the passed prechecks into Verified (same
-    // pattern as drive; per-cause drops+logs above stay verbatim), consumed
-    // by the refresh-then-clear below.
+    // Fold the passed prechecks into Verified (per-cause drops+logs above
+    // stay verbatim), consumed by the refresh-then-clear below.
     const connection::Checks unbondChecks{bonded_, true, t.isFreshCounter(lastCounter_, ctr), ok};
     connection::Verified unbondVerified = connection::AuthVerifier::verify(unbondChecks, ctr, era_);
     ConfigStore::clearBond();
@@ -734,8 +657,8 @@ class PairingTask {
     bonded_ = false;
     lastCounter_ = 0;
     era_ = 0;
-    // Refresh-then-clear: the signed goodbye still proves the owner was
-    // alive at nowMs; the net peer is gone (no more unicast to a dead app).
+    // Refresh-then-clear: the signed goodbye still proves the owner was alive
+    // at nowMs; the net peer is gone.
     conn_->refreshThenClear(std::move(unbondVerified), nowMs);
     lastPair_.valid = false;
     mbedtls_platform_zeroize(lastPair_.code6, sizeof(lastPair_.code6));
@@ -754,22 +677,16 @@ class PairingTask {
     }
   }
 
-  // REKEY_REQ layout [0x53|eraBE2 1..2|ctrBE4 3..6|tag6 7..12|XOR] (len +
-  // header + XOR checked by the caller). Silent Tier-1 rotation: the app
-  // derives PSK_next under the OLD psk well before EXHAUSTION_GATE and asks
-  // to move to era+1; the robot verifies (bonded -> era is exactly next ->
-  // counter fresh -> HMAC constant-time under the OLD psk), persists
-  // (era+1/psk_next/counter 0) BEFORE the ACK, then switches atomically and
-  // replies REKEY_ACK. Next drive uses counter 1 under the new PSK.
-  // Store-before-ACK ordering mirrors pairing (a failed NVS save answers
-  // nothing — the app retries, then falls back to the Tier-2 repair copy).
-  // Old PSK is dropped immediately on switch (no reorder window): stale
-  // in-flight drive frames under the old key drop via HMAC — documented in
-  // shared/protocol/README.md. Duplicate REQ with era == current era
-  // re-ACKs idempotently WITHOUT re-deriving or re-verifying (the lost-ACK
-  // retry reuses the same era; the ACK carries no secret — era + HMAC tag
-  // under the new PSK — so the unverified re-ACK leaks nothing). Any other
-  // era (replay or future jump) is a silent drop. No reply on failure.
+  // REKEY_REQ layout [0x53|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR
+  // checked by the caller). Silent Tier-1 rotation: the app derives PSK_next
+  // under the old psk and asks to move to era+1; the robot verifies (bonded
+  // -> era is exactly next -> counter fresh -> HMAC under the old psk),
+  // persists BEFORE the ACK, then switches atomically and replies REKEY_ACK.
+  // Next drive uses counter 1 under the new PSK. A failed NVS save answers
+  // nothing (the app retries). Old PSK is dropped immediately on switch (no
+  // reorder window). Duplicate REQ with era == current era re-ACKs
+  // idempotently without re-deriving or re-verifying (the ACK carries no
+  // secret). Any other era is a silent drop. No reply on failure.
   template <typename Transport>
   void handleRekey(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs, Transport& t) {
     DESKY_ASSERT(buf != nullptr);
@@ -826,8 +743,8 @@ class PairingTask {
       LOG_EVERY_N(20, "UDP", "drop rekey auth");
       return;
     }
-    // Platform split 1.1: fold the passed prechecks into Verified (same
-    // pattern as drive; per-cause drops+logs above stay verbatim).
+    // Fold the passed prechecks into Verified (per-cause drops+logs above
+    // stay verbatim).
     const connection::Checks rekeyChecks{bonded_, era == static_cast<uint16_t>(era_ + 1),
                                          t.isFreshCounter(lastCounter_, ctr), ok};
     connection::Verified rekeyVerified = connection::AuthVerifier::verify(rekeyChecks, ctr, era);
@@ -861,12 +778,10 @@ class PairingTask {
   }
 
  private:
-  // REKEY_ACK 10B composer (moved from UdpServer::sendRekeyAckImpl):
-  // [0x54|eraBE2|tag6|XOR] with tag = first6(HMAC-SHA256(newPsk,
-  // "REKEYACK"||eraBE2)). `psk_` IS the new key at both call sites
-  // (post-switch + idempotent duplicate). Returns false on HMAC failure
-  // (no send — same silent behavior as the Impl's early return). Key
-  // material never logged.
+  // REKEY_ACK 10B composer: [0x54|eraBE2|tag6|XOR] with tag =
+  // first6(HMAC-SHA256(newPsk, "REKEYACK"||eraBE2)). `psk_` IS the new key at
+  // both call sites. False on HMAC failure (no send). Key material never
+  // logged.
   bool composeRekeyAck(uint16_t era, uint8_t out[pairing::kRekeyAckSize]) {
     uint8_t msg[pairing::kRekeyAckMsgLen];
     pairing::rekeyAckTagMsg(era, msg);
@@ -896,8 +811,6 @@ class PairingTask {
     return true;
   }
 
-  // Security-drop logging (bench lesson, Task 10): LOG_EVERY_N alone hides
-  // the first N-1 occurrences per call site, which blinded the bench run.
   // First occurrence per boot per class always logs at INFO; afterwards the
   // call-site LOG_EVERY_N throttle applies. No key/code/nonce material here.
   template <typename... Args>
@@ -913,36 +826,30 @@ class PairingTask {
   IPAddress* peerIp_;
   uint16_t* peerPort_;
   // Core->head link endpoint (pinned by attachLink(); never owned here).
-  // Null until setup() pins it and in bench builds without the link —
-  // every notify site null-checks (same posture as Coordinator::pairing_).
+  // Null until setup() pins it — every notify site null-checks.
   LinkServer* link_;
   pairing::Core pairCore_;
   uint8_t psk_[16];
   uint32_t lastCounter_;
   bool bonded_;
-  // Tier-1 rekey era (u16, NVS "bera", fresh pair resets to 0). DRIVE_V2
-  // carries no era — post-switch old-key frames drop via HMAC, so no drive
-  // layout change was needed.
+  // Tier-1 rekey era (u16, NVS; fresh pair resets to 0). DRIVE_V2 carries no
+  // era — post-switch old-key frames drop via HMAC.
   uint16_t era_;
   uint32_t validCount_;
   uint32_t maxVerifyUs_;
-  // Staged 6-digit code of the CURRENT open window (Pre-2 PIN show; see the
-  // normative payload contract in shared/link/link_codec.h packPairShow —
-  // 6 ASCII digits + valid-seconds u16BE). Copied on every window open in
-  // ALL builds (release included) so the main-loop pump reads it without
-  // re-generating; the UDP LOG_I code line stays the serial display. Invalid
-  // whenever no window is open (bonded, burned, or cleared).
+  // Staged 6-digit code of the current open window (6 ASCII digits +
+  // valid-seconds u16BE; see packPairShow in shared/link/link_codec.h).
+  // Copied on every window open so the main-loop pump reads it without
+  // re-generating. Invalid whenever no window is open.
   uint8_t stagedCode_[pairing::kCodeLen] = {};
   bool stagedValid_ = false;
-  // Once-per-window PairShow link send latch (Pre-2): set by pumpPairShow
-  // when a frame is handed to the radio; cleared when the window closes
-  // (pump) or a fresh window opens / the bond clears (above). Written by the
-  // main loop only — same cross-task posture as stagedValid_ itself.
+  // Once-per-window PairShow link send latch: set by pumpPairShow when a
+  // frame is handed to the radio; cleared when the window closes or the bond
+  // clears. Main-loop-written.
   bool pairShowSent_ = false;
   // Last PAIR_OK redelivery cache (RAM-only, never persisted): an identical
-  // PAIR_REQ (same code + client nonce) inside kRedeliveryMs re-unicasts the
-  // cached bytes. Invalidated on reboot (restoreFromStore both paths),
-  // clearBond, and signed UNBOND; secrets zeroized alongside psk_.
+  // PAIR_REQ inside kRedeliveryMs re-unicasts the cached bytes. Invalidated
+  // on reboot, clearBond, and signed UNBOND; secrets zeroized alongside psk_.
   struct LastPair {
     bool valid = false;
     uint8_t code6[6] = {};
@@ -951,16 +858,12 @@ class PairingTask {
     uint8_t ok39[pairing::kPairOkSize] = {};
     uint32_t bondMs = 0;
   };
-  // Static assert #3 (platform split 1.1): the redelivery cache holds
-  // exactly one PAIR_OK frame — a size drift here breaks the unicast on the
-  // lost-PAIR_OK race. Host-side size pins live in test_udp_server.cpp.
+  // The redelivery cache holds exactly one PAIR_OK frame — a size drift here
+  // breaks the unicast on the lost-PAIR_OK race.
   static_assert(sizeof(LastPair::ok39) == pairing::kPairOkSize, "LastPair cache must hold exactly one PAIR_OK frame");
   LastPair lastPair_;
-  // First-drop flags for dropFirst() (bench lesson: first occurrence per
-  // boot per class always logs). Reset only by reboot — never per window.
-  // (firstMalformedDrop_/firstLegacyDrop_/firstDriveDrop_/firstTelemetryDrop_/
-  // firstAliveDrop_/firstDisconnectDrop_ stay in transport with the paths
-  // that log them — Slice 7 moved the alive/disconnect handlers there.)
+  // First-drop flags: first occurrence per boot per class always logs.
+  // Reset only by reboot.
   bool firstPairDrop_ = true;
   bool firstUnbondDrop_ = true;
   bool firstRekeyDrop_ = true;

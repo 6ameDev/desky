@@ -1,10 +1,7 @@
 #pragma once
-// Carrier OTA staging server — abilities/ota (ability layer, Slice 5).
-//
-// Firmware-only HTTP binder owning an ota::StagingManager and delegating to
-// it. Moved verbatim from middleware/ota_staging.h; zero behavior or wire
-// change — routes, caps, version semantics, and state transitions are
-// byte-identical (see ota_codec.h / ota_manager.h).
+// Carrier OTA staging server — abilities/ota (firmware-only HTTP binder owning
+// an ota::StagingManager and delegating to it; see ota_codec.h / ota_manager.h
+// for routes, caps, version semantics, and state transitions).
 //
 // Serves the head image the carrier pulls over the link-triggered OTA:
 //   POST /head.bin[?version=N] upload a head image into PSRAM staging (2MB cap)
@@ -18,20 +15,17 @@
 // the previous label; malformed ?version rejects the upload with previous
 // bytes + label preserved. The `otahead` console verb only triggers.
 //
-// The `otahead` console verb stages the link URL here (Slice 6c: the old
-// LinkServer stage lives in this ability now); the manifest version
-// arrives only via POST ?version= (single source). An empty stage serves
-// version=0 (the head pull-gate treats it as up-to-date and never pulls —
-// fail-closed by construction).
+// The `otahead` console verb stages the link URL here; the manifest version
+// arrives only via POST ?version=. An empty stage serves version=0 (the head
+// treats it as up-to-date and never pulls — fail-closed).
 //
 // Buffer: one kMaxImage PSRAM allocation, kept forever once allocated (the
-// GET fill path streams it without copying, so it is never freed — no
-// use-after-free across the async upload/serve interleavings). Uploads while
+// GET path streams it without copying, so it is never freed). Uploads while
 // a serve is in flight are refused (409); concurrent GETs share the stable
 // pointer + a length snapshot. Async handlers run on the async TCP task, so
-// no WDT subscription is needed here; the head-side pump feeds its own WDT.
-// String use is confined to the AsyncWebServer handler boundary (its API is
-// String-based); the link RX/TX data paths stay String-free per the rules.
+// no WDT subscription is needed here. String use is confined to the
+// AsyncWebServer handler boundary (its API is String-based); the link data
+// paths stay String-free.
 
 #include "ota_manager.h"
 
@@ -57,9 +51,8 @@ class OtaStaging {
   OtaStaging() : server_(kPort), mutex_(nullptr), shaActive_(false) {}
 
   // Binds the staging routes + starts the server. Call once in setup(),
-  // AFTER UdpServer::begin (sockets ride the already-up stack; no WiFi mode
-  // owned here). False + caller LOG_W on mutex failure — the caller continues
-  // (the `otahead` verb fails closed without staging, driving never bricks).
+  // AFTER UdpServer::begin. False + caller LOG_W on mutex failure — the
+  // caller continues (the `otahead` verb fails closed without staging).
   bool begin() {
     mutex_ = xSemaphoreCreateMutex();
     DESKY_ASSERT(mutex_ != nullptr);
@@ -86,17 +79,13 @@ class OtaStaging {
 
   bool hasImage() const { return mgr_.hasImage(); }
 
-  // Slice 6c link-delivery stage: ability-side home of the old
-  // LinkServer::stageOtaUrl/clearOta/stagedOtaLen trio (policy side, never
-  // sockets). Stage a carrier OTA URL for the head pull, fed by the
-  // `otahead <url>` console verb; copies under lock. The main-loop pump
-  // below unicasts it once as a kTypeOta frame to the HB-pinned head.
-  // Validation is the shared otamanifest grammar (1..128 printable-ASCII
-  // bytes, no '@'/whitespace — credentials never ride or log);
-  // invalid/null/pre-begin -> false, fail-closed. Every valid command
-  // REPLACES the stage and re-arms the send (console-verb semantics: latest
-  // command wins — a head mid-download ignores the re-trigger via its
-  // in-flight guard, an idle head pulls the newest URL).
+  // Link-delivery stage (policy side, never sockets): the `otahead <url>`
+  // console verb stages the pull URL here; the main-loop pump below unicasts
+  // it once as a kTypeOta frame to the HB-pinned head. Validation is the
+  // shared otamanifest grammar (1..128 printable-ASCII bytes, no '@'/
+  // whitespace — credentials never ride or log); invalid/null/pre-begin ->
+  // false, fail-closed. Every valid command REPLACES the stage and re-arms
+  // the send (latest wins).
   bool stageOtaUrl(const char* url) {
     if (url == nullptr || mutex_ == nullptr) {
       return false;
@@ -150,17 +139,13 @@ class OtaStaging {
     return len;
   }
 
-  // Slice 6c OTA link pump: called from the main loop (replaces the old
-  // link-task trySendOta). Hands the staged URL to the transport's
-  // pinned-peer sendUnicast exactly once per `otahead` command (otaSent_
-  // latch, same linkserver::otaReadyToSend gate the old task path used).
-  // No head linked -> silent wait for a late joiner; nothing staged or
+  // OTA link pump: called from the main loop. Hands the staged URL to the
+  // transport's pinned-peer sendUnicast exactly once per `otahead` command
+  // (otaSent_ latch). No head linked -> silent wait; nothing staged or
   // already sent -> no-op. Consume-on-attempt: the latch sets once a peer
-  // is present, even if the radio refuses the datagram — same as the old
-  // task path (a failed unicast is dropped for this command, never
-  // retried; the next `otahead` re-arms via stageOtaUrl). Returns true iff
-  // a frame was handed to the radio. Never touches sockets; never logs URL
-  // bytes (length only).
+  // is present, even if the radio refuses the datagram (never retried; the
+  // next `otahead` re-arms via stageOtaUrl). Never touches sockets; never
+  // logs URL bytes (length only).
   bool pumpOtaLink(LinkServer& link) {
     if (mutex_ == nullptr) {
       return false;
@@ -221,9 +206,9 @@ class OtaStaging {
       req->send(404, ota::kTypeText, ota::kMsgEmpty);
       return;
     }
-    // No copy: streams the stable PSRAM buffer via memcpy_P (plain memcpy on
-    // ESP32) with an explicit Content-Length (the head updater requires it
-    // and refuses chunked encoding).
+    // No copy: streams the stable PSRAM buffer with an explicit
+    // Content-Length (the head updater requires it and refuses chunked
+    // encoding).
     AsyncWebServerResponse* res = req->beginResponse(200, ota::kTypeBin, v.image, v.len);
     char verStr[12];
     snprintf(verStr, sizeof(verStr), "%lu", static_cast<unsigned long>(v.version));
@@ -285,9 +270,8 @@ class OtaStaging {
     xSemaphoreTake(mutex_, portMAX_DELAY);
     if (index == 0) {
       // Single source of truth: the version rides the upload (?version=N).
-      // Missing -> keep previous label (re-POST never resets it); malformed ->
-      // reject the whole upload up front, previous bytes + label preserved.
-      // Query read only (never URL-logged beyond counters at the end).
+      // Missing -> keep previous label; malformed -> reject the whole upload
+      // up front, previous bytes + label preserved.
       bool present = false;
       bool valid = false;
       uint32_t val = 0;
@@ -304,7 +288,7 @@ class OtaStaging {
       } else {
         // Start: (re)use the one permanent PSRAM buffer — never freed, so an
         // in-flight GET can never dangle. Skipped wholesale on version reject
-        // (previous bytes + label preserved, never half-written).
+        // (previous bytes + label preserved).
         uint8_t* storage = mgr_.imageBuffer();
         if (storage == nullptr) {
           storage = static_cast<uint8_t*>(ps_malloc(kMaxImage));
@@ -372,13 +356,10 @@ class OtaStaging {
   ota::StagingManager mgr_;
   mbedtls_md_context_t shaCtx_;
   bool shaActive_;
-  // Slice 6c link-delivery stage (policy side, never sockets): the
-  // `otahead` console verb stages the pull URL here; pumpOtaLink above
-  // unicasts it ONCE to the pinned head (otaSent_ latches until the next
-  // stageOtaUrl / clearOta). Same shape as the pairing QR stage; the URL
-  // bytes are validated by stageOtaUrl and never logged. All writers run
-  // on the main loop (console poll + pump), guarded by mutex_ like the
-  // staging manager state above.
+  // The `otahead` console verb stages the pull URL here; pumpOtaLink above
+  // unicasts it ONCE to the pinned head (latched until the next
+  // stageOtaUrl / clearOta). URL bytes are validated by stageOtaUrl and never
+  // logged. Main-loop-written, guarded by mutex_.
   uint8_t stagedOta_[linkcode::kOtaUrlMaxLen] = {};
   size_t stagedOtaLen_ = 0;
   bool stagedOtaValid_ = false;

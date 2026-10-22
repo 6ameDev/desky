@@ -1,7 +1,7 @@
 // Host unit tests for the carrier OTA trigger (no hardware).
 // Run: pio test -e native-test
 //
-// Covers the additive kTypeOta=0x05 bump (both sides together): the shared
+// Covers kTypeOta=0x05 (both sides together): the shared
 // codec length contract (1..128, range shape like JPEG), the shared URL
 // grammar + manifest text contract (link/ota_manifest.h), the core staging
 // gate vocabulary (linkserver::otaReadyToSend), and the `otahead` console

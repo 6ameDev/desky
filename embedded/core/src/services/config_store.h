@@ -1,22 +1,12 @@
 #pragma once
-// desky v2 config store — header-only, Arduino Preferences (NVS) wrapper.
+// Config store — header-only, Arduino Preferences (NVS) wrapper.
 //
-// Day-1 schema discipline: every persisted setting lives under namespace
-// "desky" alongside a `cfg_version` key. Bump kConfigVersion only when a
-// key's SEMANTICS change (not for additive keys). On missing/mismatched
-// version the namespace is cleared and defaults reapplied — a stale motor
-// trim or sensor threshold silently bricking behavior is worse than losing
-// a user tweak. Per-key migration (preserving values) is a later upgrade
-// once settings are user-valuable; full nvs_flash_erase is never used
-// (it would destroy other namespaces, e.g. provisioning).
-//
-// First real keys: pairing/auth v1 bond (PSK + counter + bonded flag).
-// Later keys (motor trim, display brightness, ...) slot in below.
-//
-// M12 PRE-SHIP #16: the version-mismatch clear in begin() and the app-side Room
-// fallbackToDestructiveMigration (DeskyDatabase KDoc) both wipe today — accepted
-// until first customer ship, do NOT flag before then. Replace the wipe with a
-// real Migration (firmware NVS + app Room together) per #16.
+// Every persisted setting lives under namespace "desky" alongside a
+// `cfg_version` key. Bump kConfigVersion only when a key's SEMANTICS change
+// (not for additive keys). On missing/mismatched version the namespace is
+// cleared and defaults reapplied — a stale setting silently bricking behavior
+// is worse than losing a user tweak. Full nvs_flash_erase is never used (it
+// would destroy other namespaces).
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -29,14 +19,13 @@ class ConfigStore {
   static constexpr const char* kNamespace = "desky";
   static constexpr const char* kVersionKey = "cfg_version";
   // v1 -> v2: pairing bond added. Per the discipline above a version bump
-  // clears the namespace (a stale PSK silently bricking control is worse
-  // than one re-pairing after the firmware upgrade).
+  // clears the namespace.
   static constexpr uint8_t kConfigVersion = 2;
   static constexpr const char* kPskKey = "psk";
   static constexpr const char* kCounterKey = "bctr";
   static constexpr const char* kBondedKey = "bonded";
   // Tier-1 rekey era (u16, additive key — no version bump: bonds written
-  // before the rekey feature read back era 0, matching the fresh-pair era).
+  // before the rekey feature read back era 0).
   static constexpr const char* kEraKey = "bera";
   static constexpr size_t kPskLen = 16;
 
@@ -64,12 +53,10 @@ class ConfigStore {
   }
 
   // Persists a fresh bond: 16-byte PSK + starting counter. Overwrites any
-  // previous owner (single-owner rule). Returns false if NVS is unavailable
-  // or psk is null (nothing is partially written on invalid input).
-  // Platform split 1.1: the Receipt& overload is the minter (marks the
-  // receipt valid ONLY on a full persist — the store-before-ACK proof
-  // consumed by UdpServer::sendPairOk/sendRekeyAck); the plain overload
-  // delegates so existing callers keep compiling.
+  // previous owner (single-owner rule). False if NVS is unavailable or psk is
+  // null (nothing partially written). The Receipt& overload is the minter
+  // (marks the receipt valid ONLY on a full persist — the store-before-send
+  // proof); the plain overload delegates.
   static bool saveBond(const uint8_t* psk, uint32_t counter) {
     connection::PersistReceipt receipt;
     return saveBond(psk, counter, receipt);
@@ -95,8 +82,7 @@ class ConfigStore {
       LOG_E("CONFIG", "psk write short (%u)", (unsigned)written);
       return false;
     }
-    // M10: putUInt/putUChar failures used to be ignored while saveBond still
-    // returned true (half-persisted bond). All three writes must succeed.
+    // All writes must succeed — a half-persisted bond is worse than none.
     if (counterWritten == 0 || bondedWritten == 0 || eraWritten == 0) {
       LOG_E("CONFIG", "bond counter/flag write failed (%u/%u)", (unsigned)counterWritten, (unsigned)bondedWritten);
       return false;
@@ -105,11 +91,9 @@ class ConfigStore {
     return true;
   }
 
-  // Persists the drive counter alone (called periodically from the drive
-  // verify path so a reboot resyncs without replaying old packets). Cheap
-  // enough for every N packets; not per-packet (flash wear).
-  // NOTE: counter-only saves never touch the era key (era changes only via
-  // saveBond fresh-pair reset or saveRekey rotation).
+  // Persists the drive counter alone (a reboot resyncs without replaying old
+  // packets). Cheap enough for every N packets; not per-packet (flash wear).
+  // NOTE: counter-only saves never touch the era key.
   static bool saveCounter(uint32_t counter) {
     Preferences prefs;
     if (!prefs.begin(kNamespace, false)) {
@@ -155,7 +139,7 @@ class ConfigStore {
   }
 
   // Tier-1 rekey era accessors (additive: a bond written before the rekey
-  // feature has no era key and reads back 0 — the fresh-pair era).
+  // feature reads back 0).
   static uint16_t loadEra() {
     Preferences prefs;
     if (!prefs.begin(kNamespace, true)) {
@@ -167,8 +151,7 @@ class ConfigStore {
   }
 
   // Persists a rekeyed bond atomically: next PSK + next era + baseline
-  // counter 0 (first post-rekey drive uses 1 — same as fresh pair).
-  // Same minter/delegating split as saveBond above.
+  // counter 0. Same minter/delegating split as saveBond above.
   static bool saveRekey(const uint8_t* psk, uint16_t era, uint32_t counter) {
     connection::PersistReceipt receipt;
     return saveRekey(psk, era, counter, receipt);

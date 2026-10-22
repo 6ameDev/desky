@@ -1,5 +1,5 @@
 #pragma once
-// Abstract actuator interface (v2 HAL). Phase 1 fills in drivers.
+// Abstract actuator interface.
 
 class IActuator {
  public:

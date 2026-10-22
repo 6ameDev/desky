@@ -1,23 +1,20 @@
 #pragma once
-// desky-core USB serial CLI — header-only, minimal carrier door.
+// Core USB serial CLI — header-only, minimal carrier door.
 //
-// The core has no interactive console otherwise (setup()/loop() only log):
-// this door exists for one carrier op — staging the head OTA pull URL in
-// the OTA ability (`otahead <url> [version]`), which the main-loop pump
-// unicasts to the HB-pinned head. Lowercase verbs only (humans).
-// No String/heap anywhere in the path (static line buffer, strncmp math).
+// The core has no interactive console otherwise: this door exists for one
+// carrier op — staging the head OTA pull URL (`otahead <url>`), which the
+// main-loop pump unicasts to the HB-pinned head. Lowercase verbs only.
+// No String/heap anywhere in the path (static line buffer).
 //
 // Reference:
-//   otahead <url>  stage a head pull URL (1..128B, '@' rejected — credentials
-//                  never ride or log) for one link unicast to the HB-pinned
-//                  head. The manifest version rides the POST ?version=
+//   otahead <url>  stage a head pull URL (1..128B, '@' rejected) for one link
+//                  unicast. The manifest version rides the POST ?version=
 //                  (single source); this verb only triggers.
 //   help           this reference
 //
 // Dispatch re-parses the raw line (the URL rides the line, not the command
-// struct — same pattern as head's `ota <url>` verb): parseLine only gates
-// verb + non-empty tail, the grammar lives in the pure helpers below so host
-// Unity tests cover it.
+// struct): parseLine only gates verb + non-empty tail, the grammar lives in
+// the pure helpers below so host tests cover it.
 
 #include <stddef.h>
 #include <stdint.h>
@@ -88,8 +85,8 @@ inline bool parseLine(const char* line, CoreCommand& out) {
 
 // Split the `otahead` tail into its single URL argument. Bounded copy into
 // the caller-owned 129B buffer. False on: null input, empty URL, URL over
-// 128B, or any trailing token (the version used to ride here — it now rides
-// the POST ?version= exclusively, so extra tokens fail closed).
+// 128B, or any trailing token (the version rides the POST ?version=
+// exclusively, so extra tokens fail closed).
 inline bool parseOtaheadTail(const char* tail, char* urlOut129) {
   if (tail == nullptr || urlOut129 == nullptr) {
     return false;
@@ -125,8 +122,7 @@ inline bool parseOtaheadTail(const char* tail, char* urlOut129) {
 #include "common/logger.h"
 #include "config.h"
 
-// Fallbacks keep this header compiling if config keys ever drift; in-project
-// include/config.h always wins (same pattern as core's coordinator.h).
+// Fallbacks if config keys drift; in-project include/config.h always wins.
 #ifndef CFG_CLI_LINE_LEN
 #define CFG_CLI_LINE_LEN 160
 #endif
@@ -177,9 +173,8 @@ class CoreCli {
       LOG_W("CLI", "otahead not attached");
       return;
     }
-    // URL rides the raw line (parseLine checked verb + non-empty tail);
-    // corecmd::parseOtaheadTail owns the arg grammar, the ability stage gate
-    // owns the URL byte grammar (fail-closed, '@' rejected — never logged).
+    // URL rides the raw line; parseOtaheadTail owns the arg grammar, the
+    // ability stage gate owns the URL byte grammar (fail-closed).
     const char* verb = corecmd::skipSpaces(line);
     char url[otamanifest::kUrlMax + 1];
     if (!corecmd::parseOtaheadTail(verb + 7, url)) {
@@ -190,9 +185,8 @@ class CoreCli {
       LOG_W("CLI", "otahead refused (bad url or ota not ready)");
       return;
     }
-    // Length only: the manifest version rides POST ?version= and is reported
-    // by the staging server itself — this door never reads it (no second
-    // source, no attach pointer to go stale).
+    // Length only: the manifest version is reported by the staging server
+    // itself — this door never reads it.
     LOG_I("CLI", "otahead staged len=%u", static_cast<unsigned>(ota_->stagedOtaLen()));
   }
 

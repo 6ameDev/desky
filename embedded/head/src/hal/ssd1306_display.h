@@ -1,16 +1,8 @@
 #pragma once
-// desky-head SSD1306 panel driver (behind IActuator) — header-only HAL.
-//
-// Panel primitives ONLY: probe, on/off, clear, contrast, push, and a gfx()
-// accessor for drawing. No face vocabulary, no render task, no usage
-// knowledge — faces live one layer up in abilities/face/face_task.h. Named
-// for the chip because it IS chip-bound (Adafruit_SSD1306 API,
-// SSD1306_* commands); an SH1106 panel would land in a sibling file.
-//
-// MB-board rule: the OLED can NEVER be attached during USB runs, so init()
-// SCANS {0x3C, 0x3D} (never hardcodes one) and a "not found" result logs
-// cleanly and returns true WITHOUT blocking boot. Full panel validation is
-// deferred to the field harness.
+// SSD1306 panel driver (behind IActuator), header-only HAL: probe, on/off,
+// clear, contrast, push, gfx accessor. No face vocabulary (see face_task.h).
+// OLED can never attach during USB runs: init() scans {0x3C, 0x3D} and a
+// "not found" result never blocks boot.
 
 #include "head_context.h"
 
@@ -35,9 +27,7 @@ class Ssd1306Display : public IActuator {
 
   explicit Ssd1306Display(I2CManager& bus) : bus_(bus), display_(kWidth, kHeight, &bus.wire()) {}
 
-  // Probe-then-claim. NEVER asserts: absent OLED (every on-MB run) is an
-  // expected configuration, not a fault. Returns true always; present()
-  // reports whether the panel is live.
+  // Probe-then-claim. Never asserts: absent OLED is expected. Always returns true.
   bool init() override {
     const uint8_t candidates[2] = {MCU_ADDR_OLED_PRIMARY, MCU_ADDR_OLED_ALT};
     uint8_t found = 0;
@@ -54,8 +44,7 @@ class Ssd1306Display : public IActuator {
       LOG_W("OLED", "scan skipped, bus busy");
     }
     if (found == 0) {
-      // Expected on the MB USB board (it occupies all pins): log cleanly,
-      // gate everything, boot continues.
+      // Expected on-MB: gate everything, boot continues.
       LOG_W("OLED", "not found at 0x3C/0x3D (expected on-MB) — display gated");
       present_ = false;
       return true;
@@ -107,8 +96,7 @@ class Ssd1306Display : public IActuator {
     }
   }
 
-  // Draw target for the renderer (abilities/face/face_task.h) — the ONLY
-  // caller. Raw GFX access stays inside this project (pinned lib_dep).
+  // Draw target for the renderer (face_task.h), the only caller.
   Adafruit_SSD1306& gfx() { return display_; }
 
  private:

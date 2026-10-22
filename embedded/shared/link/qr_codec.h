@@ -1,35 +1,20 @@
 #pragma once
-// desky v2 shared QR V1-L bitmap encoder — shared/link (single source).
-//
-// Single owner of the 6-digit -> 21x21 bitmap encoding. Consumers:
-//   - core pairing ability (stages the open window's 6 digits for the
-//     PairShow pump: packPairShow/unpackPairShow in link_codec.h; no
-//     bitmap rides the wire);
-//   - head pairing show (re-derives the bitmap locally via encode6Digits
-//     into the existing 63B staging path) + legacy-QR display (decodes
-//     the reserved 63B QRBITMAP payload).
-// Fixed V1-L (single block, mask 0, numeric mode): takes no config keys.
-// Arduino-free (stdint/stddef only) so host Unity tests include it directly.
-// Provenance: Terasaki "Nayuki" QR generator (MIT) port, via git history of
-// qr_pairing.h. Any encoder change re-pins the 123456 golden in
-// core/test/test_qr_pairing.cpp on both sides.
+// QR V1-L bitmap encoder: 6 ASCII digits -> 21x21 modules. Fixed params, no config keys.
 
 namespace qr {
 
-// QR Version 1 edge length in modules (no quiet zone included).
+// QR Version 1 edge length in modules.
 constexpr int kSize = 21;
-// Packed row width: ceil(21/8) bytes, MSB-first (module x=0 -> bit 7).
+// Packed row width: MSB-first (module x=0 -> bit 7).
 constexpr int kRowBytes = 3;
-// Flat bitmap length: 21*21 modules, one byte per module (0 = light, 1 = dark).
 constexpr int kModules = kSize * kSize;
-// Fixed code parameters for V1-L (single block, no interleave).
 constexpr int kDataCodewords = 19;
 constexpr int kEcCodewords = 7;
 constexpr int kTotalCodewords = kDataCodewords + kEcCodewords;
 
 namespace detail {
 
-// GF(2^8/0x11D) multiply (Nayuki Russian-peasant form, no lookup tables).
+// GF(2^8/0x11D) multiply, no lookup tables.
 inline uint8_t rsMul(uint8_t x, uint8_t y) {
   uint16_t z = 0;
   for (int i = 7; i >= 0; --i) {
@@ -47,7 +32,6 @@ inline void setModule(uint8_t* modules, bool* isFunc, int x, int y, bool dark) {
 }
 
 // 9x9 finder block (7x7 pattern + white separator ring) centred at (cx, cy).
-// Out-of-bounds cells are skipped, so the three corner calls clip cleanly.
 inline void drawFinder(uint8_t* modules, bool* isFunc, int cx, int cy) {
   for (int dy = -4; dy <= 4; ++dy) {
     for (int dx = -4; dx <= 4; ++dx) {
@@ -68,11 +52,7 @@ inline void drawFinder(uint8_t* modules, bool* isFunc, int cx, int cy) {
 
 }  // namespace detail
 
-// Encodes 6 ASCII digits ('0'..'9') into a 21x21 bitmap (0 = light,
-// 1 = dark, row-major `modules[y * kSize + x]`). Returns false on
-// null input or any non-digit byte (mirror pairing::openWindow: embedded
-// NULs reject, so short NUL-terminated strings fail closed). True on
-// success; the output is fully deterministic for a given input.
+// 6 ASCII digits -> 21x21 bitmap (0 = light, 1 = dark, row-major).
 inline bool encode6Digits(const uint8_t code6[6], uint8_t modules[kModules]) {
   if (code6 == nullptr || modules == nullptr) {
     return false;
@@ -165,13 +145,12 @@ inline bool encode6Digits(const uint8_t code6[6], uint8_t modules[kModules]) {
     detail::setModule(modules, isFunc, i, 6, (i % 2) == 0);
     detail::setModule(modules, isFunc, 6, i, (i % 2) == 0);
   }
-  // …overwritten by the finders where they overlap (Nayuki order).
+  // …overwritten by the finders where they overlap.
   detail::drawFinder(modules, isFunc, 3, 3);
   detail::drawFinder(modules, isFunc, kSize - 4, 3);
   detail::drawFinder(modules, isFunc, 3, kSize - 4);
 
-  // Format bits for ECC-L (01) + mask 0: data=01000, BCH(15,5) remainder,
-  // XOR mask 101010000010010 (Nayuki _draw_format_bits verbatim, mask=0).
+  // Format bits for ECC-L (01) + mask 0: data=01000, BCH(15,5) remainder, XOR mask 101010000010010.
   const uint16_t fmtData = 0x08;  // 01 (L) || 000 (mask 0).
   uint16_t rem = fmtData;
   for (int i = 0; i < 10; ++i) {
@@ -195,7 +174,7 @@ inline bool encode6Digits(const uint8_t code6[6], uint8_t modules[kModules]) {
   }
   detail::setModule(modules, isFunc, 8, kSize - 8, true);  // Dark module.
 
-  // ── Codeword zigzag (Nayuki _draw_codewords, V1 has no remainder bits) ─
+  // ── Codeword zigzag (V1 has no remainder bits) ─
   int bit = 0;
   const int totalBits = kTotalCodewords * 8;
   for (int right = kSize - 1; right >= 1; right -= 2) {
@@ -216,7 +195,7 @@ inline bool encode6Digits(const uint8_t code6[6], uint8_t modules[kModules]) {
     }
   }
 
-  // ── Fixed mask 0: (x + y) % 2 == 0 flips data modules only ──────────
+  // ── Fixed mask 0: (x + y) % 2 == 0 flips data modules only ─
   for (int y = 0; y < kSize; ++y) {
     for (int x = 0; x < kSize; ++x) {
       if (!isFunc[y * kSize + x] && ((x + y) % 2 == 0)) {
@@ -227,8 +206,6 @@ inline bool encode6Digits(const uint8_t code6[6], uint8_t modules[kModules]) {
   return true;
 }
 
-// Reads one module (0 = light, 1 = dark). Returns 0 for null bitmap or
-// out-of-range coordinates (fail-closed, never crashes the call site).
 inline uint8_t getModule(const uint8_t modules[kModules], int x, int y) {
   if (modules == nullptr || x < 0 || x >= kSize || y < 0 || y >= kSize) {
     return 0;
@@ -236,10 +213,7 @@ inline uint8_t getModule(const uint8_t modules[kModules], int x, int y) {
   return static_cast<uint8_t>(modules[y * kSize + x] & 1u);
 }
 
-// Packs row y into 3 bytes MSB-first (module x -> bit (7 - x % 8) of
-// byte x / 8; unused low bits of byte 2 are zero). No-op on null/out.
-// Serial-dump shape for the future Tier-A hook: one `QR row=NN:HHHHHH`
-// line per row, 6 uppercase hex chars from these 3 bytes.
+// Row y -> 3 bytes MSB-first; unused low bits of byte 2 are zero.
 inline void rowBytes(const uint8_t modules[kModules], int y, uint8_t out[kRowBytes]) {
   if (modules == nullptr || out == nullptr || y < 0 || y >= kSize) {
     return;
@@ -254,14 +228,8 @@ inline void rowBytes(const uint8_t modules[kModules], int y, uint8_t out[kRowByt
   }
 }
 
-// Wire payload length: 21 rows x 3 packed bytes = 63B (the QRBITMAP
-// contract — link_codec.h kQrBitmapLen; kept in sync by
-// test_qr_packed_matches_golden_rows, never redefined here).
 constexpr int kPackedLen = kSize * kRowBytes;
 
-// Packs the whole 21x21 bitmap into the 63B wire payload (row-major
-// MSB-first: payload[y * kRowBytes + i] is row y's ith packed byte).
-// No-op on null input/output. Null-safe, no heap — the caller owns `out`.
 inline void packBitmap(const uint8_t modules[kModules], uint8_t out[kPackedLen]) {
   if (modules == nullptr || out == nullptr) {
     return;

@@ -1,2 +1,2 @@
 #pragma once
-// Power manager stub — per-state power matrix lands in Phase 3.
+// Power manager stub — per-state power matrix lands here.

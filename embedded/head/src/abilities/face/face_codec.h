@@ -1,11 +1,5 @@
 #pragma once
-// desky-head face ability — pure display contracts (Arduino-free, host-tested).
-//
-// Ability layer: face_codec (pure serialization/geometry, 100% native-testable).
-// Moved verbatim from middleware/face_renderer.h (Task 3 split): the QR show
-// mode geometry + payload contract, the pairing show mode state, and the OTA
-// progress mode geometry + state. No ARDUINO, no GFX — host Unity tests pin
-// every constant and transition here.
+// Face ability codec: pure display contracts (Arduino-free, host-tested).
 
 #include <stddef.h>
 #include <stdint.h>
@@ -13,17 +7,10 @@
 #include "head_context.h"
 #include "link/qr_codec.h"
 
-// ── QR show mode geometry + payload contract (Arduino-free, host-tested) ─
-// QR symbol: Version 1, 21x21 modules. The link QRBITMAP payload is 63B
-// row-major MSB-first (3 packed bytes/row); kQrLen pins the same 63 here
-// and the host tests cross-check it against linkcode::kQrBitmapLen, so the
-// frozen link contract stays single-sourced.
-// Render: 2px/module + spec 4-module quiet zone per side (8px @2px; 16px
-// total) -> 21*2+16 = 58px square. The block sits LEFT on the 128x64 panel
-// (origin (3, 3), right edge 61) so the 6-digit pairing PIN renders beside
-// it in the default 5x7 font (6px/char -> 36px at x=66, vertically centered
-// at y=28). The full quiet zone is load-bearing for phone scanners;
-// never shrink it to gain margins.
+// QR show mode geometry + payload contract.
+// Symbol: 21x21 modules, 63B payload row-major MSB-first (3 packed bytes/row).
+// Render: 2px/module + 8px quiet zone per side -> 58px square at (3, 3);
+// the pairing PIN prints right of the block (x=66). Never shrink the quiet zone.
 namespace qrdisplay {
 constexpr int kModules = 21;
 constexpr size_t kQrLen = 63;
@@ -31,18 +18,17 @@ constexpr int kScale = 2;
 constexpr int kQuietPx = 8;
 constexpr int kPanelW = 128;
 constexpr int kPanelH = 64;
-constexpr int kExtentPx = kModules * kScale + 2 * kQuietPx;  // 58
-constexpr int kX0 = 3;                                       // left block (PIN beside it)
-constexpr int kY0 = (kPanelH - kExtentPx) / 2;               // 3
-// Pairing PIN text line (default font, 6px/char x 8px line): "123456" spans
-// 36px at x=66..102, y=28..36 — right of the QR block (gap 61->66 = 5px).
+constexpr int kExtentPx = kModules * kScale + 2 * kQuietPx;
+constexpr int kX0 = 3;
+constexpr int kY0 = (kPanelH - kExtentPx) / 2;
+
 constexpr int kPinX = 66;
 constexpr int kPinY = 28;
 constexpr int kPinCols = 6;
 constexpr int kPinCharW = 6;
 constexpr int kPinCharH = 8;
-constexpr int kPinW = kPinCols * kPinCharW;  // 36
-constexpr int kPinH = kPinCharH;             // 8
+constexpr int kPinW = kPinCols * kPinCharW;
+constexpr int kPinH = kPinCharH;
 
 static_assert(kX0 >= 0 && kY0 >= 0 && kX0 + kExtentPx <= kPanelW && kY0 + kExtentPx <= kPanelH,
               "qr block must fit the panel");
@@ -58,8 +44,7 @@ inline bool fitsPinLine() {
 
 inline bool isValidQrPayloadLen(uint16_t len) { return len == kQrLen; }
 
-// Module bit, MSB-first row-major: byte = y*3 + x/8, bit = 7-(x%8).
-// Null/out-of-range -> 0 (fail-closed, never crashes the call site).
+// Module bit, MSB-first row-major. Null/out-of-range -> 0 (fail-closed).
 inline uint8_t moduleAt(const uint8_t* qr63, int x, int y) {
   if (qr63 == nullptr || x < 0 || x >= kModules || y < 0 || y >= kModules) {
     return 0;
@@ -70,14 +55,8 @@ inline uint8_t moduleAt(const uint8_t* qr63, int x, int y) {
 
 }  // namespace qrdisplay
 
-// ── Pairing show mode state (authoritative-PIN display, Arduino-free) ──────
-// The core sends the 6 digits + validity window (PAIRSHOW) and the head
-// renders them: the QR bitmap is re-derived LOCALLY via qr::encode6Digits
-// into the existing qrBuf_ staging path (no bitmap rides the wire), and the
-// digits print beside it. Deadline = show-time + validSecs*1000 (u32 wrap
-// natural); the render task clears on expiry. Re-arm on every fresh show.
-// Single overlay rivalry: pairing wins over demo-QR/OTA and vice versa —
-// the show paths enforce at most one live overlay.
+// Pairing show mode state. Bitmap re-derived locally via qr::encode6Digits
+// (no bitmap rides the wire). Deadline = show-time + validSecs*1000.
 namespace pairdisplay {
 constexpr uint32_t kMsPerSec = 1000;
 constexpr size_t kPinLen = 6;
@@ -98,7 +77,6 @@ inline uint32_t deadlineFor(uint32_t nowMs, uint16_t validSecs) {
   return nowMs + static_cast<uint32_t>(validSecs) * kMsPerSec;
 }
 
-// Wrap-safe expiry: true once now has reached/passed the deadline.
 inline bool isExpired(uint32_t nowMs, uint32_t deadlineMs) { return static_cast<int32_t>(nowMs - deadlineMs) >= 0; }
 
 struct State {
@@ -125,12 +103,7 @@ inline void hide(State& s) {
 
 }  // namespace pairdisplay
 
-// ── OTA progress mode geometry + state (Arduino-free, host-tested) ─────────
-// Carrier-triggered pull display: a minimal fill bar (no text), then an
-// alert face on failure. The bar is centered on the 128x64 panel (same panel
-// size as qrdisplay — referenced, never redefined): 100x10 outline + 1px
-// border, inner fill grows with pct. Any FACE command clears the mode and a
-// fail/timeout falls back to the stored face (the QR show/clear house rule).
+// OTA progress mode geometry + state: fill bar + alert face on failure.
 namespace otadisplay {
 constexpr int kBarX0 = 14;
 constexpr int kBarY0 = 27;
@@ -141,7 +114,6 @@ inline bool fitsPanel() {
   return kBarX0 >= 0 && kBarY0 >= 0 && kBarX0 + kBarW <= qrdisplay::kPanelW && kBarY0 + kBarH <= qrdisplay::kPanelH;
 }
 
-// Inner fill width for pct 0..100 (clamped): 2px border each side.
 inline int fillW(uint8_t pct) {
   if (pct > 100) {
     pct = 100;
@@ -149,10 +121,6 @@ inline int fillW(uint8_t pct) {
   return (kBarW - 4) * pct / 100;
 }
 
-// Overlay state: inactive by default; show() arms (or refreshes) the bar,
-// markFailed() flips a live bar to the alert face, hide() clears to the
-// stored face. Failed-without-show still shows (any updater failure lands on
-// the alert face, never silently).
 struct Progress {
   bool active = false;
   bool failed = false;

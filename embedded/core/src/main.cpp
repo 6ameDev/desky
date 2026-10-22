@@ -21,13 +21,12 @@
 #include "services/telemetry_task.h"
 #include "transport/link_server.h"
 #include "transport/udp_server.h"
-// NOTE (Slice 8c include order): behavior/coordinator.h after
-// transport/udp_server.h — its firmware section needs udpstatus (transport
-// top half) first for services/telemetry_manager.h.
+// behavior/coordinator.h after transport/udp_server.h — its firmware section
+// needs udpstatus first.
 #include "behavior/coordinator.h"
 
 // Bench-mode WiFi kill (desky-bench env sets -D DESKY_NO_WIFI=1): default
-// build has WiFi on. Same fallback pattern as DESKY_WIFI_STA in udp_server.h.
+// build has WiFi on.
 #ifndef DESKY_NO_WIFI
 #define DESKY_NO_WIFI 0
 #endif
@@ -81,39 +80,36 @@ void setup() {
   const bool audioOk = g_audio.begin();
   DESKY_ASSERT(audioOk);
 #if DESKY_NO_WIFI
-  // Bench mode (desky-bench env): WiFi stays off — GPIO13/14 are ADC2, which
-  // conflicts with WiFi, so the TCRT rails need it off. The coordinator then
-  // sees no UDP commands and sits in failsafe stop — safe by construction.
+  // Bench mode: WiFi stays off for TCRT bring-up. The coordinator then sees
+  // no UDP commands and sits in failsafe stop.
   LOG_I("BOOT", "wifi OFF bench mode (DESKY_NO_WIFI=1): TCRT rails live, coordinator failsafe-stopped");
 #else
   const bool udpOk = g_udp.begin();
   DESKY_ASSERT(udpOk);
-  // Slice 8c wiring (transport owns dumb pipes only): the transport-owned
-  // peer/alive binding + bond restore lands via attachPairing; the behavior
-  // pins (pairing seam + telemetry RX-observation report) are wired directly
-  // on the coordinator — never through transport.
+  // Transport owns dumb pipes only: the peer/alive binding + bond restore
+  // lands via attachPairing; the behavior pins (pairing seam + telemetry
+  // RX-observation report) are wired directly on the coordinator.
   g_udp.attachPairing(&g_pairing);
   g_coordinator.attachPairing(&g_pairing);
   g_coordinator.attachTelemetry(&g_telem);
   const bool telemOk = g_telemetry.begin(&g_coordinator, &g_tof, &g_mpu, &g_telem, &g_udp);
   DESKY_ASSERT(telemOk);
-  // Link endpoint (H2.2, B-link sockets only): never bricks driving — a bind
-  // or task failure only warns and the boot continues headless.
+  // Link endpoint (sockets only): never bricks driving — a bind or task
+  // failure only warns and the boot continues headless.
   const bool linkOk = g_link.begin();
   if (!linkOk) {
     LOG_W("LINK", "link endpoint failed, continuing headless");
   }
   g_pairing.attachLink(&g_link);
-  // Carrier OTA staging (pinned AsyncWebServer, no new deps): same never-
-  // brick rule — a staging failure only warns, the `otahead` verb then fails
-  // closed at stage time.
+  // Carrier OTA staging: same never-brick rule — a staging failure only
+  // warns, the `otahead` verb then fails closed at stage time.
   const bool otaStageOk = g_otaStage.begin();
   if (!otaStageOk) {
     LOG_W("OTA", "staging server failed, continuing without it");
   }
 #endif
   // Minimal USB door (carrier `otahead` trigger): always live, even in bench
-  // mode (the stage then fails closed — the OTA ability never began).
+  // mode (the stage then fails closed).
   g_cli.begin(&g_otaStage);
   LOG_I("BOOT", "sensors ready tof=%dmm mpu=0x%02X", g_tof.distanceMm(), g_mpu.address());
   LOG_I("BOOT", "tcrt fwd pin=%d raw=%u gnd=%u rev pin=%d raw=%u gnd=%u", CFG_TCRT_FWD_PIN, g_tcrtFwd.rawCount(),
@@ -124,38 +120,36 @@ void setup() {
   LOG_I("BOOT", "desky v2 boot | MCU=%s cores=%d flash=%dMB psram=%d", MCU_NAME, MCU_NUM_CORES, MCU_FLASH_SIZE_MB,
         MCU_HAS_PSRAM);
   LOG_I("BOOT", "reset=%s sdk=%s rev=%d", FaultManager::resetReasonStr(), ESP.getSdkVersion(), ESP.getChipRevision());
-  // Correlation marker (log-only): random boot id joins app wall-clock
-  // markers (sessionReady/firstAlive/firstTelemetry) to this boot's robot
+  // Random boot id joins app wall-clock markers to this boot's robot
   // millis() timeline. Logged once per reboot.
   LOG_I("BOOT", "boot id=%08lx", static_cast<unsigned long>(esp_random()));
   LOG_I("BOOT", "cpu=%dMHz flash_chip=%dB", ESP.getCpuFreqMHz(), ESP.getFlashChipSize());
   // Speaker self-test in every env (incl. bench): the jingle only queues
-  // here — the audio task synths it — so a silent bench still boots clean.
+  // here — the audio task synths it.
   const bool jingleOk = g_audio.bootJingle();
   DESKY_ASSERT(jingleOk);
 }
 
 void loop() {
   FaultManager::watchdogFeed();
-  // Minimal USB door (carrier `otahead` trigger): polled every loop; the
-  // stage waits silently for the link task, never blocks driving.
+  // Minimal USB door: polled every loop; the stage waits silently, never
+  // blocks driving.
   g_cli.poll();
 #if !DESKY_NO_WIFI
-  // Ability link pumps (Pre-2 PIN-show, policy side): the pairing window's
-  // 6-digit PIN + valid-seconds and the staged `otahead` URL each unicast
-  // once to the HB-pinned head via the transport's sendUnicast. No head
+  // Ability link pumps: the pairing window's PIN + valid-seconds and the
+  // staged `otahead` URL each unicast once to the HB-pinned head. No head
   // linked -> the pumps wait silently. Duplicate protection is the link
   // seq/ACK machinery.
   g_pairing.pumpPairShow(g_link);
   g_otaStage.pumpOtaLink(g_link);
-  // Telemetry consumer (services/TelemetryTask, Slice 8a): snapshot + encode
-  // + publish at CFG_TELEMETRY_HZ through the transport's dumb send (outer
-  // cadence inside poll — non-blocking, silent off-cadence).
+  // Telemetry consumer: snapshot + encode + publish at CFG_TELEMETRY_HZ
+  // through the transport's dumb send (outer cadence inside poll —
+  // non-blocking, silent off-cadence).
   g_telemetry.poll(millis());
 #endif
 #if !DESKY_NO_WIFI
-  // The loop runs hot (~5ms) for the 15 Hz telemetry cadence now; the
-  // skeleton heartbeat + watermarks stay on the old ~2 s cadence.
+  // The loop runs hot (~5ms) for the 15 Hz telemetry cadence; the heartbeat
+  // + watermarks stay on the ~2 s cadence.
   static uint32_t lastWmMs = 0;
   const uint32_t nowMs = millis();
   if (nowMs - lastWmMs >= 2000) {

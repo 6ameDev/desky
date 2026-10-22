@@ -1,19 +1,6 @@
 #pragma once
-// desky v2 lightweight logger — header-only, zero new deps.
-//
-// Good practice for firmware (vs raw Serial.printf everywhere):
-// - Compile-time level stripping: disabled levels -> ((void)0), zero flash/CPU.
-// - Pluggable sinks: Serial now, WS/RingBuffer later without touching call sites.
-// - Backend-style QoL: tags, timestamps, core/task id, throttle, once, hexdump.
-//
-// Usage:
-//   Logger::begin();                    // in setup(), after Serial.begin()
-//   LOG_I("BOOT", "MCU=%s", MCU_NAME);  // + LOG_V/D/W/E
-//   LOG_EVERY_N(100, "TOF", "dist=%d", mm);
-//   LOG_ONCE("WIFI", "connected");
-//   Logger::hexdump("I2C", buf, len);
-//
-// Rules: no heap in log path, no String, never call from ISR.
+// Lightweight header-only logger: compile-time level stripping, pluggable sinks.
+// Logger::begin() in setup() after Serial.begin(). No heap, no String, never call from ISR.
 
 #include <Arduino.h>
 #include <stdarg.h>
@@ -31,7 +18,6 @@
 #define LOG_LEVEL LOG_LEVEL_DEBUG
 #endif
 
-// ── Sink interface ───────────────────────────────────────────
 class LogSink {
  public:
   virtual ~LogSink() = default;
@@ -43,7 +29,6 @@ class SerialSink : public LogSink {
   void write(const char* line) override { Serial.println(line); }
 };
 
-// ── Logger ───────────────────────────────────────────────────
 class Logger {
  public:
   static constexpr int kMaxSinks = 4;
@@ -78,19 +63,6 @@ class Logger {
     emit(level, tag, msg);
   }
 
-  static void hexdump(const char* tag, const uint8_t* buf, size_t len) {
-    // One line per 16 bytes, throttled by caller's level macro.
-    char line[kBufSize];
-    for (size_t off = 0; off < len; off += 16) {
-      size_t n = (len - off > 16) ? 16 : (len - off);
-      int pos = snprintf(line, sizeof(line), "+%04X: ", (unsigned)off);
-      for (size_t i = 0; i < n && pos > 0 && pos < (int)sizeof(line) - 4; ++i) {
-        pos += snprintf(line + pos, sizeof(line) - pos, "%02X ", buf[off + i]);
-      }
-      emit(LOG_LEVEL_DEBUG, tag, line);
-    }
-  }
-
  private:
   static void emit(int level, const char* tag, const char* msg) {
     const char* lvl = levelChar(level);
@@ -112,8 +84,7 @@ class Logger {
 #endif
 
     char line[kBufSize];
-    // Padded boot-millis: fixed 10 cols, monotonic, script-friendly.
-    // Wall-clock join later via one TIME sync-marker (epoch + boot_ms).
+    // Fixed 10-col boot-millis: monotonic, script-friendly.
     snprintf(line, sizeof(line), "[%010lu][%s][%s][c%d:%s] %s", ms, lvl, tag, core, task, msg);
 
     lock();
@@ -152,10 +123,8 @@ class Logger {
   static void ensureMutex() {
     if (s_mutex == nullptr) {
 #if defined(portTICK_PERIOD_MS)
-      // Safe to call repeatedly; first writer wins.
       SemaphoreHandle_t m = xSemaphoreCreateMutex();
       if (m != nullptr) {
-        // Avoid clobbering if two tasks race here.
         if (s_mutex == nullptr) {
           s_mutex = m;
         } else {
@@ -218,7 +187,7 @@ inline SemaphoreHandle_t Logger::s_mutex = nullptr;
 #define LOG_E(tag, fmt, ...) ((void)0)
 #endif
 
-// ── QoL: throttle + once (respect compile-time level via inner macro) ──
+// Throttle (respects compile-time level via inner macro).
 #define _LOG_EVERY_N_CONCAT(a, b) a##b
 #define _LOG_EVERY_N_VAR(line) _LOG_EVERY_N_CONCAT(_log_every_n_, line)
 
@@ -228,16 +197,4 @@ inline SemaphoreHandle_t Logger::s_mutex = nullptr;
     if (++_LOG_EVERY_N_VAR(__LINE__) % (uint32_t)(n) == 0) { \
       LOG_D(tag, fmt, ##__VA_ARGS__);                        \
     }                                                        \
-  } while (0)
-
-#define _LOG_ONCE_CONCAT(a, b) a##b
-#define _LOG_ONCE_VAR(line) _LOG_ONCE_CONCAT(_log_once_, line)
-
-#define LOG_ONCE(tag, fmt, ...)                  \
-  do {                                           \
-    static bool _LOG_ONCE_VAR(__LINE__) = false; \
-    if (!_LOG_ONCE_VAR(__LINE__)) {              \
-      _LOG_ONCE_VAR(__LINE__) = true;            \
-      LOG_I(tag, fmt, ##__VA_ARGS__);            \
-    }                                            \
   } while (0)

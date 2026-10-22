@@ -1,16 +1,6 @@
 #pragma once
-// desky-head OTA ability — pure update grammar (Arduino-free, host-tested).
-//
-// Ability layer: ota_codec (pure serialization/validation, 100% native-testable).
-// Moved verbatim from middleware/ota_client.h (Task 5 split): the ESP image
-// magic + URL grammar, version pack/compare, magic/slot/stream gates, the
-// manifest (SHA256 hex) compare, and the IDLE -> FETCH -> VERIFY -> COMMIT
-// lifecycle. No ARDUINO, no sockets — host Unity tests pin every rule here.
-//
-// Integrity story (unchanged): plain HTTP only, manifest is the optional
-// X-Firmware-Sha256 response header over the exact image bytes, plus the
-// 0xE9 image-magic + Content-Length-vs-slot checks — a torn or tampered
-// stream never commits.
+// OTA ability codec: pure update grammar (Arduino-free, host-tested).
+// Plain HTTP only; torn or tampered streams never commit.
 
 #include <stddef.h>
 #include <stdint.h>
@@ -20,18 +10,15 @@
 
 namespace ota {
 
-// ESP32 boot image magic (first byte of a valid app image). Tested as the
-// literal 0xE9 on both sides of the seam.
+// First byte of a valid app image.
 constexpr uint8_t kImageMagic = 0xE9;
 
-// SHA256 manifest form: exactly 64 hex chars, no 0x prefix, no whitespace.
-// Compared case-insensitively (servers may emit upper or lower case).
+// Exactly 64 hex chars, compared case-insensitively.
 constexpr size_t kShaHexLen = 64;
 
-// Plain HTTP only (see ota_task.h header note). Default port when the URL omits one.
 constexpr uint16_t kDefaultHttpPort = 80;
 
-// Fixed caps (no heap anywhere in the path; overlong URLs fail, never truncate).
+// Fixed caps, no heap; overlong URLs fail, never truncate.
 constexpr size_t kHostCap = 64;   // incl NUL
 constexpr size_t kPathCap = 128;  // incl NUL
 
@@ -41,12 +28,8 @@ struct Url {
   char path[kPathCap];
 };
 
-// Parse "http://host[:port]/path". False on: null/empty input, any scheme
-// other than lowercase "http://" (rejects https/ftp/bare hosts), empty host,
-// whitespace anywhere, '@' anywhere in the authority (credentials fail
-// closed — never stripped, never logged), IPv6 literals (unsupported,
-// documented), empty/non-numeric/out-of-range port, host or path exceeding
-// the fixed caps. A missing path defaults to "/".
+// Parse "http://host[:port]/path". Fail-closed on any malformed input.
+// A missing path defaults to "/".
 inline bool parseUrl(const char* url, Url& out) {
   out.host[0] = '\0';
   out.port = kDefaultHttpPort;
@@ -129,11 +112,7 @@ inline bool parseUrl(const char* url, Url& out) {
   return true;
 }
 
-// Monotonic uint32 version. packVersion lays major/minor/patch at bits
-// 31..24 / 23..16 / 15..0 so plain numeric order == semver order for packed
-// values; raw build counters compare numerically too. compareVersion returns
-// -1 when a is older, 0 when equal, +1 when a is newer. (Phase 1 carries no
-// version source; the gate wires to the X-Firmware-Version header in Phase 2.)
+// Monotonic uint32 version; plain numeric order == semver order for packed values.
 inline uint32_t packVersion(uint8_t major, uint8_t minor, uint16_t patch) {
   return (static_cast<uint32_t>(major) << 24) | (static_cast<uint32_t>(minor) << 16) | patch;
 }
@@ -148,8 +127,7 @@ inline int compareVersion(uint32_t a, uint32_t b) {
   return 0;
 }
 
-// First byte of the stream must be the ESP image magic (0xE9). Checked on
-// the first received chunk before any further write.
+// First stream byte must be the image magic.
 inline bool hasOtaMagic(const uint8_t* buf, size_t len) {
   if (buf == nullptr || len == 0) {
     return false;
@@ -157,8 +135,7 @@ inline bool hasOtaMagic(const uint8_t* buf, size_t len) {
   return buf[0] == kImageMagic;
 }
 
-// Image must be non-empty and fit the running partition table's app slot
-// (slot bytes are a parameter so host tests pin the policy, not the board).
+// Image must be non-empty and fit the app slot.
 inline bool fitsSlot(size_t imageBytes, uint32_t slotBytes) {
   if (imageBytes == 0 || slotBytes == 0) {
     return false;
@@ -166,7 +143,7 @@ inline bool fitsSlot(size_t imageBytes, uint32_t slotBytes) {
   return imageBytes <= static_cast<size_t>(slotBytes);
 }
 
-// Stream completeness gate: a short stream is torn, never committed.
+// A short stream is torn, never committed.
 inline bool streamComplete(uint32_t received, uint32_t total) {
   if (total == 0) {
     return false;
@@ -176,7 +153,6 @@ inline bool streamComplete(uint32_t received, uint32_t total) {
 
 inline bool isHexChar(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
 
-// Exactly 64 hex chars + NUL (no prefix, no whitespace, no truncation).
 inline bool isHex64(const char* s) {
   if (s == nullptr) {
     return false;
@@ -191,8 +167,7 @@ inline bool isHex64(const char* s) {
 
 inline char lowerHex(char c) { return (c >= 'A' && c <= 'F') ? static_cast<char>(c + 32) : c; }
 
-// Manifest compare: both sides must be valid 64-hex strings; compare is
-// case-insensitive. False on any malformed input (fail closed).
+// False on any malformed input (fail closed).
 inline bool manifestMatches(const char* actualHex, const char* expectedHex) {
   if (!isHex64(actualHex) || !isHex64(expectedHex)) {
     return false;
@@ -205,8 +180,7 @@ inline bool manifestMatches(const char* actualHex, const char* expectedHex) {
   return true;
 }
 
-// 32-byte SHA256 digest -> 64 lowercase hex chars + NUL (pure, host-tested;
-// the firmware half feeds it the mbedTLS digest at VERIFY time).
+// 32-byte SHA256 digest -> 64 lowercase hex chars + NUL.
 inline void bytesToHex64(const uint8_t* digest, char* out) {
   static const char kHex[] = "0123456789abcdef";
   if (digest == nullptr || out == nullptr) {
@@ -219,10 +193,7 @@ inline void bytesToHex64(const uint8_t* digest, char* out) {
   out[64] = '\0';
 }
 
-// Update lifecycle: IDLE -> FETCH -> VERIFY -> COMMIT -> IDLE. CHUNK keeps
-// FETCH (per-write progress); any ABORT returns to IDLE (slot untouched).
-// Anything else is rejected (false, no state change) — the firmware half
-// treats a rejected event as an internal error and aborts the download.
+// IDLE -> FETCH -> VERIFY -> COMMIT -> IDLE. Anything else is rejected.
 enum class State : uint8_t { kIdle, kFetch, kVerify, kCommit };
 enum class Event : uint8_t { kStart, kChunk, kStreamEnd, kVerifyOk, kVerifyFail, kCommitOk, kCommitFail, kAbort };
 

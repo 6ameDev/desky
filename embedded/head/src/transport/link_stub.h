@@ -1,20 +1,11 @@
 #pragma once
-// desky-head link stub — TRANSPORT layer, dumb pipe (PARKED, retained for
-// switch-back). Moved via git mv from middleware/link_stub.h (Task 2 split).
-//
-// Top half (namespace linkstub) is Arduino-free line->verb mapping so host
-// Unity tests cover it; the bottom half (class LinkStub) is firmware-only
-// (#ifdef ARDUINO): UART2 @115200 on GPIO12/13 when wired, plain "AWAKE" +
-// periodic "HB" heartbeat TX. No copper routed while parked. Business
-// decisions arrive as an injected onCommand callback (StubHandlers, stored
-// never owned, bound in main.cpp): no PowerManager include, no direct
-// business calls, no EventBus publish here (the handler owns the bus + the
-// ONE command table downstream).
+// Link stub (UART2) — TRANSPORT layer, dumb pipe, PARKED.
+// Line->verb mapping up top (host-tested); UART2 TX/RX below (firmware-only).
+// Business arrives as one injected onCommand callback (stored, never owned).
 
 #include "head_context.h"
 
-// Injected business edge (stored, never owned). main.cpp binds PowerManager
-// (+ the LINK_CMD publish) here; transport never includes those headers.
+// Injected business edge (stored, never owned).
 struct StubHandlers {
   void* ctx = nullptr;
   void (*onCommand)(void* ctx, const PowerCommand& cmd) = nullptr;
@@ -22,7 +13,6 @@ struct StubHandlers {
 
 namespace linkstub {
 
-// Tail of a line after a verb: only spaces/CR/LF/NUL may follow.
 inline bool tailOk(const char* p) {
   while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') {
     ++p;
@@ -30,8 +20,7 @@ inline bool tailOk(const char* p) {
   return *p == '\0';
 }
 
-// "FACE <n>": numeric id (clamped downstream by apply/clampFace, so any
-// non-negative int parses); "CAM ON|OFF"; "OLED ON|DIM|OFF".
+// "FACE <n>" (numeric, clamped downstream); "CAM ON|OFF"; "OLED ON|DIM|OFF".
 inline bool mapLine(const char* line, PowerCommand& out) {
   if (line == nullptr) {
     return false;
@@ -111,8 +100,6 @@ inline bool mapLine(const char* line, PowerCommand& out) {
 #include "common/logger.h"
 #include "config.h"
 
-// Fallbacks keep this header compilable if config keys ever drift; in-project
-// include/config.h always wins (same pattern as core's coordinator.h).
 #ifndef CFG_LINK_BAUD
 #define CFG_LINK_BAUD 115200
 #endif
@@ -131,12 +118,9 @@ class LinkStub {
     LOG_I("LINK", "uart2 up tx=%d rx=%d baud=%d", MCU_LINK_UART_TX, MCU_LINK_UART_RX, CFG_LINK_BAUD);
   }
 
-  // Business-edge binder (stored, never owned). Call once in setup() after
-  // begin(); main.cpp owns the handler target.
+  // Stored, never owned. Call once in setup() after begin().
   void setHandlers(const StubHandlers& h) { handlers_ = h; }
 
-  // Plain AWAKE after boot (the S3-waits-for-AWAKE rule is consumed by the
-  // task-3 codec; this line is what it will hear).
   void sendAwake() { Serial2.println("AWAKE"); }
 
   void heartbeatTick() {
@@ -147,10 +131,7 @@ class LinkStub {
     }
   }
 
-  // RX stub: fixed-buffer line assembly; each newline maps into the ONE
-  // command table via the injected onCommand edge (main owns the bus +
-  // PowerManager there). Overlong/garbage lines are dropped with a WARN (the
-  // local stand-in for task 3's drop-stale-frames rule).
+  // Fixed-buffer line assembly; overlong/garbage lines drop with a WARN.
   void poll() {
     while (Serial2.available() > 0) {
       const char c = static_cast<char>(Serial2.read());
@@ -177,7 +158,7 @@ class LinkStub {
   }
 
  private:
-  StubHandlers handlers_;  // injected business edge (main binds, never owned here)
+  StubHandlers handlers_;
   uint32_t lastHb_;
   char lineBuf_[64];
   size_t lineLen_;

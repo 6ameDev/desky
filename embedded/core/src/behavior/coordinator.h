@@ -1,32 +1,31 @@
 #pragma once
-// desky v2 behavior coordinator — header-only, Phase 4 skeleton.
+// Behavior coordinator — header-only.
 //
-// Owns mode transitions (v2 §D HFSM + P1>P2>P3>P4 arbitrator) and intent
-// fan-out: the coordinator decides WHAT (sets activeBehavior, publishes one
+// Owns mode transitions (HFSM + P1>P2>P3>P4 arbitrator) and intent fan-out:
+// the coordinator decides WHAT (sets activeBehavior, publishes one
 // EVENT_BEHAVIOR_STARTED{id}), actuator subsystems own private
 // behavior→primitive maps, and completion closes the loop via
-// EVENT_BEHAVIOR_DONE{id} (v2 §D). Outputs go through L1
+// EVENT_BEHAVIOR_DONE{id}. Outputs go through L1
 // (MotionController::setVelocity/stop/brake) only — never the HAL.
 //
-// Structure: the top half (namespace coordinator) is Arduino-free pure logic
-// (stdint + system_context.h only) so host Unity tests include this header
-// directly. The bottom half (class Coordinator) is firmware-only (#ifdef
-// ARDUINO): an EventBus subscriber + Core 1 task.
+// Top half (namespace coordinator) is Arduino-free pure logic (stdint +
+// system_context.h only) so host tests include it directly. The bottom half
+// (class Coordinator) is firmware-only: an EventBus subscriber + Core 1 task.
 //
 // Event protocol (documented once, here):
-// - EVENT_UDP_COMMAND_RECEIVED payload packs a ControlPacket (udp_codec.h)
-//   into the SystemEvent uint32 big-endian:
+// - EVENT_UDP_COMMAND_RECEIVED payload packs a ControlPacket into the
+//   SystemEvent uint32 big-endian:
 //     payload = mode<<24 | throttle<<16 | steering<<8 | flags.
 // - Throttle/steering bytes are uint8 center-128:
 //     signed = (byte - 128) / 127, clamped to -1..1. Zero stick = 128.
 //   Throttle passes into L1 raw (-1..1, no scaling).
-// - EVENT_GROUND_CHANGED payload packs both ground rails (system_context.h
-//   packGround/unpackGround): bit0 = gndFwd level, bit1 = gndRev level
+// - EVENT_GROUND_CHANGED payload packs both ground rails
+//   (packGround/unpackGround): bit0 = gndFwd level, bit1 = gndRev level
 //   (1 = ground present, 0 = drop). Published on either rail's transition
 //   only. Entry (brake+EMERGENCY) fires on a fresh 1→0 on either rail.
 // - EVENT_BEHAVIOR_STARTED payload = BehaviorId. Continuous behaviors
-//   (DRIVE_FORWARD) carry no duration; timed maneuvers carry theirs in the
-//   arm call (cf. MotionController::startWiggle), so no second word is needed.
+//   carry no duration; timed maneuvers carry theirs in the arm call, so no
+//   second word is needed.
 // - EVENT_BEHAVIOR_DONE payload = BehaviorId, published by actuators only.
 //   The coordinator never publishes DONE: cancellation (preempt/stale) is
 //   itself coordinator-caused, so it needs no completion signal.
@@ -44,9 +43,9 @@
 //   Wheels never auto-restart.
 // - Failsafe: no UDP within CFG_COORDINATOR_STALE_MS preempts everything to
 //   stop (including running maneuvers).
-// - Non-drive behaviors (timed maneuvers armed by future P3 code) own the L1
-//   mailbox until DONE: a centered stick does not cancel them (holdMotion),
-//   but a nonzero stick (new intent) or the failsafe does.
+// - Non-drive behaviors (timed maneuvers) own the L1 mailbox until DONE: a
+//   centered stick does not cancel them (holdMotion), but a nonzero stick
+//   (new intent) or the failsafe does.
 
 #include <stdint.h>
 
@@ -255,15 +254,12 @@ inline ArbitrateOutput arbitrate(const ArbitrateInput& in) {
 #include "common/logger.h"
 #include "config.h"
 #include "services/event_bus.h"
-// Slice 8c: the RX-observation report pin (TelemetryManager::noteCommand).
-// Requires transport/udp_server.h first (it owns the udpstatus math this
-// header builds on): every includer satisfies this — udp_server.h and
-// services/telemetry_task.h include it before this header, and main.cpp
-// orders them (see its NOTE).
+// The RX-observation report pin (TelemetryManager::noteCommand) requires
+// transport/udp_server.h first: every includer includes it before this header
+// (udp_server.h, services/telemetry_task.h, and main.cpp order them).
 #include "services/telemetry_manager.h"
 
-// Fallbacks keep this header compilable if config keys ever drift; in-project
-// include/config.h always wins (same pattern as sensors_codec.h).
+// Fallbacks if config keys drift; in-project include/config.h always wins.
 #ifndef CFG_COORDINATOR_STACK_WORDS
 #define CFG_COORDINATOR_STACK_WORDS 4096
 #endif
@@ -330,13 +326,11 @@ class Coordinator {
     return ok == pdPASS;
   }
 
-  // Telemetry seam (Workstream B, additive only — arbitration untouched):
-  // mutex-guarded copy of coordinator-owned intent {mode, activeBehavior,
-  // cliffDetected level} for the UDP telemetry task. Returns false before
-  // begin(). isDriving is NOT here: it lives in services/TelemetryManager
-  // (telemetry-owned RX observation), fed by this loop's direct noteCommand
-  // on every verified command event (see the EVENT_UDP_COMMAND_RECEIVED
-  // drain below) — no transport passthrough since 8c.
+  // Telemetry seam: mutex-guarded copy of coordinator-owned intent {mode,
+  // activeBehavior, cliffDetected level} for the UDP telemetry task. Returns
+  // false before begin(). isDriving is NOT here: it lives in
+  // services/TelemetryManager (telemetry-owned RX observation), fed by this
+  // loop's direct noteCommand on every verified command event.
   bool snapshot(SystemState& out) {
     if (mutex_ == nullptr) {
       return false;
@@ -347,25 +341,16 @@ class Coordinator {
     return true;
   }
 
-  // Slice 8c drive dispatch (semantic owner: behavior owns intent AND the
-  // RX observation). The wire-facing half (DRIVE_V2 framing + session
-  // verify + alive funnel) lives transport-inline in UdpServer::handleDrive,
-  // which publishes ONE EVENT_UDP_COMMAND_RECEIVED per verified frame —
-  // transport never calls here. This loop drains that event below (fresh
-  // command edge for arbitration) and reports it straight to the
-  // setup-owned TelemetryManager (noteCommand): same frame bytes as the old
-  // transport passthrough, timing anchored to the drain tick (<=20ms skew,
-  // far inside the 500ms stale window). No heap, no String, no sockets;
-  // key/code/nonce material never logged.
-  //
-  // (The old template handleDriveV2(Transport&) — verify + token-gated
-  // publishDrive + noteDriveCommand back-calls — is deleted: its verify half
-  // moved to transport-inline handleDrive, its publish half is that
-  // function's dumb EventBus::publish, and its note half is the direct
-  // noteCommand in the drain below.)
+  // Drive dispatch: behavior owns intent AND the RX observation. The
+  // wire-facing half (DRIVE_V2 framing + session verify + alive funnel) lives
+  // transport-inline in UdpServer::handleDrive, which publishes ONE
+  // EVENT_UDP_COMMAND_RECEIVED per verified frame — transport never calls
+  // here. This loop drains that event below (fresh command edge for
+  // arbitration) and reports it straight to the setup-owned TelemetryManager
+  // (noteCommand): timing anchored to the drain tick. No heap, no String, no
+  // sockets; key/code/nonce material never logged.
 
-  // Pins the pairing/auth session (set once from main()/setup() via
-  // g_coordinator.attachPairing — never via transport since 8c — before the
+  // Pins the pairing/auth session (set once from main()/setup() before the
   // radio task reads; retained for the pairing-ability seam).
   void attachPairing(pairing::PairingTask* pairing) {
     DESKY_ASSERT(pairing != nullptr);
@@ -375,8 +360,7 @@ class Coordinator {
   // Pins the setup-owned telemetry manager for the direct RX-observation
   // report (noteCommand on every verified command event in the drain below).
   // Set once from main()/setup() alongside attachPairing; null-safe until
-  // then (the note is skipped — same fail-silent posture as the old
-  // transport passthrough's null telem_).
+  // then (the note is skipped).
   void attachTelemetry(telemetry::TelemetryManager* telem) {
     DESKY_ASSERT(telem != nullptr);
     telem_ = telem;
@@ -391,17 +375,15 @@ class Coordinator {
     TickType_t lastWake = xTaskGetTickCount();
     const TickType_t period = pdMS_TO_TICKS(kLoopMs);
     uint32_t ticks = 0;
-    // Never returns / never halts by design: a halted task that stays
-    // WDT-subscribed becomes a panic-reboot loop, so there is no halt path
-    // here at all (DESKY_ASSERT failures already delete-then-halt in
-    // FaultManager::fail).
+    // Never returns / never halts. (A halted WDT-subscribed task becomes a
+    // panic-reboot loop; DESKY_ASSERT failures already delete-then-halt in
+    // FaultManager::fail.)
     for (;;) {
       vTaskDelayUntil(&lastWake, period);
       const uint32_t nowMs = millis();
 
       // Drain the private queue (non-blocking): at most one decision per
-      // tick. Edges reset every tick; the ground levels persist (resume needs
-      // clear-then-recommand across ticks, never same-tick coincidence).
+      // tick. Edges reset every tick; the ground levels persist.
       bool groundEvent = false;
       bool freshCommand = false;
       bool doneReceived = false;
@@ -414,7 +396,7 @@ class Coordinator {
             bool rev = true;
             unpackGround(ev.payload, fwd, rev);
             // Entry edge: fresh 1→0 on either rail. Clear edges (0→1) only
-            // update the levels below.
+            // update the levels.
             if ((gndFwd_ && !fwd) || (gndRev_ && !rev)) {
               groundEvent = true;
               LOG_D("COORD", "ground lost fwd=%u rev=%u", fwd ? 1u : 0u, rev ? 1u : 0u);
@@ -432,10 +414,9 @@ class Coordinator {
             hasCmd_ = true;
             lastCmdMs_ = nowMs;
             freshCommand = true;
-            // Slice 8c RX observation: report the verified command straight
-            // to the setup-owned manager (drives TelemetryManager::isDriving;
-            // same bytes the old transport passthrough carried). Null-safe
-            // until attachTelemetry lands (bench boots never see commands).
+            // Report the verified command straight to the setup-owned manager
+            // (drives TelemetryManager::isDriving). Null-safe until
+            // attachTelemetry lands.
             if (telem_ != nullptr) {
               telem_->noteCommand(cmdV_, cmdOmega_, nowMs);
             }
@@ -452,7 +433,7 @@ class Coordinator {
         }
       }
 
-      // Unsigned subtraction: wrap-safe across the ~49-day millis() rollover.
+      // Unsigned subtraction: wrap-safe across millis() rollover.
       const bool stale = !hasCmd_ || (nowMs - lastCmdMs_ > kStaleMs);
 
       coordinator::ArbitrateInput in;
@@ -528,9 +509,9 @@ class Coordinator {
   bool hasCmd_;
   uint32_t lastCmdMs_;
   pairing::PairingTask* pairing_;
-  // Telemetry RX-observation report target (services/telemetry_manager.h,
-  // setup-owned; pinned by attachTelemetry()). The coordinator owns no
-  // driving flag — the manager does.
+  // Telemetry RX-observation report target (setup-owned; pinned by
+  // attachTelemetry()). The coordinator owns no driving flag — the manager
+  // does.
   telemetry::TelemetryManager* telem_ = nullptr;
 };
 

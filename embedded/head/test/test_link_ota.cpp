@@ -1,20 +1,6 @@
-// Host unit tests for the carrier OTA consumer (no hardware).
-// Run: pio test -e native-test
-//
-// Covers the head side of the kTypeOta=0x05 bump: real-producer URL bytes
-// (linkcode::encodeFrame) through the exact handleCmd seam
-// (otamanifest::copyOtaUrl — the function handleCmd calls), the shared seq
-// gate framed as duplicate-re-ACK + stale-drop OTA cases, the OLED progress
-// state machine (otadisplay::), and the HEAD_FW_VERSION pull-gate vocabulary.
-// The firmware handleCmd -> OtaUpdater::startIfNewer call itself is
-// compile-covered by the desky-head build (Arduino-only path), like the rest
-// of the socket/task code.
-//
-// The 42B OTA golden below is duplicated from the canonical core vector in
-// embedded/core/test/test_link_ota.cpp (seq=0x0042, URL
-// "http://192.168.4.1:8080/head.bin", CRC 0x97B8). Duplicated here (not
-// shared) so the head consumer stays self-contained; the core test is
-// canonical on any drift.
+// Carrier OTA consumer (no hardware): producer URL bytes through the
+// handleCmd seam, seq gate, OLED progress state, version pull-gate.
+// 42B golden: seq 0x0042, "http://192.168.4.1:8080/head.bin", CRC 0x97B8.
 
 #include <string.h>
 #include <unity.h>
@@ -34,9 +20,7 @@ const uint8_t kOtaGolden[42] = {0x4C, 0x05, 0x00, 0x42, 0x00, 0x01, 0x00, 0x20, 
                                 0x30, 0x38, 0x30, 0x2F, 0x68, 0x65, 0x61, 0x64, 0x2E, 0x62, 0x69, 0x6E, 0x97, 0xB8};
 const char kCarrierUrl[] = "http://192.168.4.1:8080/head.bin";
 
-// Pre-bump contract mirror: the frozen type set BEFORE kTypeOta existed.
-// Models the OLD head on a mixed fleet — it must reject 0x05 (stays frozen
-// on purpose even as the live set grows).
+// Pre-bump type set (old heads reject 0x05).
 bool oldIsKnownType(uint8_t type) {
   switch (type) {
     case 0x01:
@@ -56,9 +40,7 @@ bool oldIsKnownType(uint8_t type) {
 }  // namespace
 
 void test_link_ota_producer_bytes_to_updater_exact() {
-  // Real-producer path, exactly as handleCmd runs it: encode -> decode ->
-  // shared copy -> the updater receives the exact URL bytes (NUL-terminated
-  // for the start() entry; here pinned byte-identical through the seam).
+  // Real-producer path: encode -> decode -> shared copy hands the updater exact bytes.
   uint8_t produced[linkcode::kOverhead + 32] = {};
   const size_t n = linkcode::encodeFrame(linkcode::kTypeOta, 0x0042, reinterpret_cast<const uint8_t*>(kCarrierUrl), 32,
                                          0, 1, produced, sizeof(produced));
@@ -81,7 +63,7 @@ void test_link_ota_literal_contract() {
   TEST_ASSERT_EQUAL_UINT8(0x05, f.type);
   TEST_ASSERT_EQUAL_UINT16(0x0042, f.seq);
   TEST_ASSERT_EQUAL_UINT16(32, f.payloadLen);
-  // Grammar rejects at the seam (the updater entry is never reached).
+
   char url[otamanifest::kUrlMax + 1];
   const uint8_t cred[] = "http://user@h/fw.bin";
   TEST_ASSERT_FALSE(otamanifest::copyOtaUrl(cred, sizeof(cred) - 1, url));
@@ -93,7 +75,7 @@ void test_link_ota_literal_contract() {
     big[i] = 'x';
   }
   TEST_ASSERT_FALSE(otamanifest::copyOtaUrl(big, sizeof(big), url));
-  // Non-command types never pass the OTA gate.
+
   TEST_ASSERT_FALSE(wifilink::isOtaFrame(linkcode::kTypeFace, 1));
   TEST_ASSERT_FALSE(wifilink::isOtaFrame(linkcode::kTypeQrBitmap, linkcode::kQrBitmapLen));
   TEST_ASSERT_FALSE(wifilink::isOtaFrame(linkcode::kTypeOta, 0));
@@ -101,9 +83,7 @@ void test_link_ota_literal_contract() {
 }
 
 void test_link_ota_duplicate_reack_and_stale_drop_cases() {
-  // Duplicate seq on the shared cmd domain re-ACKs without re-triggering
-  // the download; stale drops. Framed here as OTA seqs (the verdicts ride
-  // the same classifyRx gate handleCmd applies to every command type).
+  // Duplicate re-ACKs without re-triggering; stale drops (shared classifyRx gate).
   using V = wifilink::RxVerdict;
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(V::kFresh), static_cast<uint8_t>(wifilink::classifyRx(false, 0, 41)));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(V::kDuplicate),
@@ -115,8 +95,7 @@ void test_link_ota_duplicate_reack_and_stale_drop_cases() {
 void test_link_ota_old_head_drops_as_unknown() {
   TEST_ASSERT_FALSE(oldIsKnownType(0x05));
   TEST_ASSERT_TRUE(oldIsKnownType(0x04));
-  // The mechanism both old and new share: the next free type (0x08) is
-  // rejected with a valid CRC — old heads reject 0x06/0x07 identically.
+  // Next free type (0x08) rejects with valid CRC.
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x06));
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x07));
   TEST_ASSERT_FALSE(linkcode::isKnownType(0x08));
@@ -147,23 +126,23 @@ void test_otadisplay_geometry_and_fill() {
 void test_otadisplay_state_transitions() {
   otadisplay::Progress p;
   TEST_ASSERT_FALSE(p.active);
-  otadisplay::show(p, 0);  // FETCH starts empty
+  otadisplay::show(p, 0);
   TEST_ASSERT_TRUE(p.active);
   TEST_ASSERT_FALSE(p.failed);
   TEST_ASSERT_EQUAL_UINT8(0, p.pct);
-  otadisplay::show(p, 30);  // progress refresh keeps active, clears no fail
+  otadisplay::show(p, 30);
   TEST_ASSERT_TRUE(p.active);
   TEST_ASSERT_EQUAL_UINT8(30, p.pct);
-  otadisplay::show(p, 250);  // clamped, never overflows the bar
+  otadisplay::show(p, 250);
   TEST_ASSERT_EQUAL_UINT8(100, p.pct);
-  otadisplay::markFailed(p);  // abort/failure -> alert face
+  otadisplay::markFailed(p);
   TEST_ASSERT_TRUE(p.active);
   TEST_ASSERT_TRUE(p.failed);
-  otadisplay::hide(p);  // success -> stored face
+  otadisplay::hide(p);
   TEST_ASSERT_FALSE(p.active);
   TEST_ASSERT_FALSE(p.failed);
   TEST_ASSERT_EQUAL_UINT8(0, p.pct);
-  otadisplay::markFailed(p);  // failed-without-show still shows (fail-closed visible)
+  otadisplay::markFailed(p);
   TEST_ASSERT_TRUE(p.active);
   TEST_ASSERT_TRUE(p.failed);
   otadisplay::hide(p);
@@ -172,10 +151,8 @@ void test_otadisplay_state_transitions() {
 
 void test_link_ota_version_vocabulary_and_gate() {
   const uint32_t running = static_cast<uint32_t>(HEAD_FW_VERSION);
-  TEST_ASSERT_EQUAL_UINT32(120000, static_cast<uint32_t>(CFG_FACE_OTA_TIMEOUT_MS));  // literal: fail/timeout rule
-  // Gate is relative to the baked macro (bump-per-release discipline): a
-  // manifest one above running pulls, equal/older stands down. Literals pin
-  // the pure helper; the macro-relative lines below track the macro itself.
+  TEST_ASSERT_EQUAL_UINT32(120000, static_cast<uint32_t>(CFG_FACE_OTA_TIMEOUT_MS));
+  // Macro-relative: one above running pulls, equal/older stands down.
   TEST_ASSERT_TRUE(otamanifest::shouldPull(2, 1));
   TEST_ASSERT_FALSE(otamanifest::shouldPull(1, 1));
   TEST_ASSERT_FALSE(otamanifest::shouldPull(0, 1));
@@ -184,12 +161,12 @@ void test_link_ota_version_vocabulary_and_gate() {
   TEST_ASSERT_EQUAL_INT(1, ota::compareVersion(2, 1));
   TEST_ASSERT_EQUAL_INT(0, ota::compareVersion(1, 1));
   TEST_ASSERT_EQUAL_INT(-1, ota::compareVersion(1, 2));
-  // Manifest sibling derivation (carrier convention: /head.bin -> /head-version).
+
   char murl[otamanifest::kUrlMax + 1];
   TEST_ASSERT_TRUE(otamanifest::manifestUrlFor(kCarrierUrl, murl));
   TEST_ASSERT_EQUAL_STRING("http://192.168.4.1:8080/head-version", murl);
   TEST_ASSERT_FALSE(otamanifest::manifestUrlFor("http://h/fw.bin", murl));
-  // Shared build/parse contract, head side (core test pins the canonical form).
+
   const char* sha = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
   char text[otamanifest::kManifestCap];
   TEST_ASSERT_TRUE(otamanifest::buildManifest(running + 1, 1234567, sha, text, sizeof(text)));

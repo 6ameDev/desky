@@ -1,7 +1,7 @@
 // Host unit tests for the QR pairing bitmap (no hardware).
 // Run: pio test -e native-test
 //
-// Covers Phase 0: fixed V1 21x21 geometry, finder patterns at the three
+// Covers: fixed 21x21 geometry, finder patterns at the three
 // corners, timing patterns, deterministic re-encode equality, and input
 // validation (null / non-digit / short NUL-padded all reject, mirroring
 // pairing::openWindow). Runner lives in test_udp_codec.cpp (single main).
@@ -119,11 +119,8 @@ void test_qr_row_bytes_msb_first() {
 }
 
 void test_qr_packed_matches_golden_rows() {
-  // Wire contract: packBitmap("123456") must equal the Phase-0 golden rows
+  // Wire contract: packBitmap("123456") must equal the golden rows
   // (qr_pair_check.py GOLDEN_123456 — independently cross-decoded SCAN-OK).
-  // Regression for the 2026-10-18 head render bug: staging the first 63
-  // UNPACKED module bytes as the 63B QRBITMAP lit only columns 7 and 15
-  // on the OLED (two dotted bars, unscannable) instead of this payload.
   static const uint8_t kGoldenRows[qr::kPackedLen] = {
       0xFE, 0x5B, 0xF8, 0x82, 0x72, 0x08, 0xBA, 0xDA, 0xE8, 0xBA, 0x52, 0xE8, 0xBA, 0x2A, 0xE8, 0x82,
       0x0A, 0x08, 0xFE, 0xAB, 0xF8, 0x00, 0xD8, 0x00, 0xEF, 0xF6, 0x20, 0xA0, 0xC2, 0x08, 0x22, 0xA8,

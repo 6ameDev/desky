@@ -1,7 +1,5 @@
 #pragma once
-// MCU capability flags — shared contract for all MCU definitions.
-// To swap MCU later: add a new <name>.h in this folder and point
-// include/mcu/active_mcu.h at it. No driver/fusion/behavior changes.
+// MCU capability flags: shared contract for all MCU definitions.
 
 #include <stdint.h>
 

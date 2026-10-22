@@ -1,26 +1,13 @@
 #pragma once
-// desky-head OV3660 camera driver (behind ISensor) — header-only HAL.
-//
-// Structure mirrors core's sensor_task.h: the top half (namespace headcam)
-// is Arduino-free pure logic (stdint only) so host Unity tests include this
-// header directly. The bottom half (class CameraDriver) is firmware-only
-// (#ifdef ARDUINO): esp_camera QVGA JPEG start, grab-and-drop stills, stats.
-//
-// Grab-and-drop: update() pulls one frame and returns it immediately (no
-// streaming — WiFi stays OFF on head). Stats kept: frames, drops,
-// last size, millifps over a 2s window.
-//
-// Power is REAL: setPowerState(false) de-inits the sensor and gates
-// update(); setPowerState(true) re-inits. The camera works while the head
-// is on the MB USB board (ribbon only), so init() failure DESKY_ASSERTs in
-// main like core drivers — unlike the OLED, which is absent on-MB by design.
+// OV3660 camera driver (behind ISensor), header-only HAL.
+// Grab-and-drop stills + stats; power-gated via setPowerState.
+// Camera works on-MB (ribbon only), unlike the OLED.
 
 #include <stdint.h>
 
 namespace headcam {
 
-// Millifps = frames*1000/elapsedMs (integer, no float in the stats path).
-// Zero elapsed yields zero (never divide by zero on the first tick).
+// Millifps = frames*1000/elapsedMs; zero elapsed yields zero.
 inline uint32_t millifps(uint32_t frames, uint32_t elapsedMs) {
   if (elapsedMs == 0) {
     return 0;
@@ -63,8 +50,7 @@ class CameraDriver : public ISensor {
     return ok;
   }
 
-  // One grab-and-drop still. The caller gates this on getTargetIntervalMs();
-  // a disabled camera returns immediately (power gate, no sensor traffic).
+  // A disabled camera returns immediately (no sensor traffic).
   void update() override {
     if (!enabled_) {
       return;
@@ -112,8 +98,7 @@ class CameraDriver : public ISensor {
   uint32_t fpsMilli() const { return fpsMilli_; }
 
  private:
-  // Board-fixed AI-Thinker bus (MCU_CAM_PIN_*), QVGA JPEG, single frame
-  // buffer (grab-and-drop needs no queue). Returns true with enabled_ set.
+  // Board-fixed AI-Thinker bus, QVGA JPEG, single frame buffer.
   bool initSensor() {
     camera_config_t cfg = {};
     cfg.ledc_channel = LEDC_CHANNEL_0;
@@ -138,13 +123,7 @@ class CameraDriver : public ISensor {
     cfg.pixel_format = PIXFORMAT_JPEG;
     cfg.frame_size = FRAMESIZE_QVGA;
     cfg.jpeg_quality = CFG_CAMERA_JPEG_QUALITY;
-    // Load-bearing: fb_count=1, forever. OTA writes flash while the camera
-    // owns PSRAM frame buffers — double-buffered frames + an OTA write pump
-    // is a crash combo (PSRAM/flash-cache contention on the classic ESP32).
-    // The OTA path additionally suspends the periodic grab via
-    // OtaUpdater::active() (see main.cpp); a second frame buffer would
-    // defeat that suspension. Never raise without re-proving OTA + snap.
-    cfg.fb_count = 1;
+    cfg.fb_count = 1;  // Load-bearing: never raise without re-proving OTA + snap.
     const esp_err_t err = esp_camera_init(&cfg);
     if (err != ESP_OK) {
       LOG_E("CAM", "esp_camera_init failed err=%d", static_cast<int>(err));

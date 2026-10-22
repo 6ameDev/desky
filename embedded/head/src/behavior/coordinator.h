@@ -1,21 +1,7 @@
 #pragma once
-// desky-head command coordinator — BEHAVIOR layer, header-only orchestration.
-//
-// ONE command table: HeadCoordinator::dispatch() is the SINGLE dispatch point
-// both doors call — the USB serial CLI (lowercase verbs, laptop terminal) and
-// the link handlers in main.cpp (UART stub + WiFi client) each parse a line or
-// frame into a PowerCommand and land here. Narrowed from
-// PowerManager::apply() (Task 6): PowerManager keeps the CAM/OLED rails +
-// boot matrix + status + QR demo forwarder; FACE/QR routing lives here,
-// next to the FaceRenderer it drives. (Task 7: the PairShow/PairDone PIN
-// handoff bypasses this table via PairingManager -> the shared
-// FaceOverlayManager.) No sockets, no business state of its
-// own — stored pointers only, main owns the targets.
-//
-// Publishers stay at the doors (main handlers own the LINK_CMD publish, the
-// CLI door answers STATUS/HELP/LINK/SNAP/OTA itself); dispatch() only routes
-// effects and mirrors the FACE_CHANGED publish apply() used to own (the
-// CAMERA_STATE publish stays on the CAM rail in PowerManager).
+// Command coordinator (BEHAVIOR layer): the single dispatch point both doors
+// call. CAM/OLED route to PowerManager; FACE/QR to the renderer; the rest is
+// answered at the doors. Stored pointers only; no sockets.
 
 #ifdef ARDUINO
 // ── Firmware: command-table owner ────────────────────────────────────────────
@@ -32,8 +18,7 @@ class HeadCoordinator {
  public:
   HeadCoordinator() : power_(nullptr), face_(nullptr) {}
 
-  // Stores the rails + renderer (never owned). Call once in setup() after
-  // PowerManager::begin(), before the link handlers attach.
+  // Stored, never owned. Call once in setup().
   void begin(PowerManager* power, FaceRenderer* face) {
     power_ = power;
     face_ = face;
@@ -66,10 +51,6 @@ class HeadCoordinator {
         break;
       }
       case CmdTarget::QR:
-        // Bench door (`qr` = show demo, `qr clear` = clear): QR/pairing show
-        // modes visible in status below. A link pairing arrives via
-        // PairingManager (the pairing_task edge), not here; `qr clear`
-        // clears either overlay.
         if (power_ == nullptr) {
           break;
         }
@@ -85,24 +66,19 @@ class HeadCoordinator {
       case CmdTarget::SNAP:
       case CmdTarget::OTA:
       case CmdTarget::INVALID:
-        // STATUS/HELP/LINK/SNAP/OTA are answered by the CLI door itself (LINK
-        // prints the WiFi status line, SNAP queues a JPEG still, OTA starts
-        // the pull updater); INVALID never reaches dispatch (doors reject at
-        // parse). Guarded, not silent.
+        // Guarded, not silent.
         LOG_W("PWR", "apply ignored (no state change)");
         break;
     }
   }
 
-  // Overlay readers for the status paths (reporting only — the pairing
-  // ability owns the PIN handoff, the renderer owns paint; both share the
-  // one FaceOverlayManager underneath).
+  // Reporting only.
   bool qrActive() const { return face_ != nullptr && face_->qrActive(); }
   bool pairActive() const { return face_ != nullptr && face_->pairActive(); }
 
  private:
-  PowerManager* power_;  // rails owner (main binds, never owned here)
-  FaceRenderer* face_;   // overlay renderer (main binds, never owned here)
+  PowerManager* power_;
+  FaceRenderer* face_;
 };
 
 #endif  // ARDUINO

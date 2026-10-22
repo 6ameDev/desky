@@ -1,11 +1,10 @@
 // Host unit tests for the carrier OTA staging ability (no hardware).
 // Run: pio test -e native-test
 //
-// Covers the Slice 5 extraction (abilities/ota triple): the codec wire
+// Covers the OTA triple (codec + manager): the codec wire
 // vocabulary (routes, caps, ?version= grammar, SHA helpers) and the manager
-// state machine (begin-chunk/finish/abort/version transitions) byte-for-byte
-// against the former middleware server. HTTP binding (ota_task.h) stays
-// firmware-only. Runner lives in test_udp_codec.cpp.
+// state machine (begin-chunk/finish/abort/version transitions). HTTP binding
+// (ota_task.h) stays firmware-only. Runner lives in test_udp_codec.cpp.
 
 #include <string.h>
 #include <unity.h>

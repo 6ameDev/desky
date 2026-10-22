@@ -1,6 +1,4 @@
-// Head host-test runner: single-program main listing every test.
-// (Mirrors core's test_udp_codec.cpp, which hosts the shared main.)
-// Run: pio test -e native-test
+// Host-test runner: single-program main listing every test.
 
 #include <unity.h>
 
@@ -62,27 +60,24 @@ void test_rejects_bad_rules();
 void test_table_full_rejects_overflow();
 void test_clear_resets_policy();
 
-// Command LITERALS (literal wire bytes -> decode -> mapCmd + CLI + shared
-// value table), defined in test_command_literals.cpp.
+// Command LITERALS, defined in test_command_literals.cpp.
 void test_cmd_literals_oled_wire_values();
 void test_cmd_literals_camctl_wire_values();
 void test_cmd_literals_face_ids_and_clamp();
 void test_cmd_literals_cli_equivalence();
 void test_cmd_literals_tampered_frames_reject();
 void test_headapply_value_table();
-// Shared codec vocabulary guards (literals -> pack/unpack -> rejects).
+
 void test_cmd_literals_shared_codec_oled();
 void test_cmd_literals_shared_codec_camctl();
 void test_cmd_literals_shared_codec_face();
 
-// Link FRAG X-WIRE mirror (same seam as core's test_link_frag_xwire.cpp),
-// defined in test_link_frag_xwire.cpp.
+// Link FRAG X-WIRE mirror, defined in test_link_frag_xwire.cpp.
 void test_link_frag_xwire_geometry();
 void test_link_frag_xwire_round_trip_all_sizes();
 void test_link_frag_xwire_rejects_disorder_without_corruption();
 
-// Carrier OTA consumer (kTypeOta bump + OLED progress + version gate),
-// defined in test_link_ota.cpp.
+// Carrier OTA consumer, defined in test_link_ota.cpp.
 void test_link_ota_producer_bytes_to_updater_exact();
 void test_link_ota_literal_contract();
 void test_link_ota_duplicate_reack_and_stale_drop_cases();
@@ -91,8 +86,7 @@ void test_otadisplay_geometry_and_fill();
 void test_otadisplay_state_transitions();
 void test_link_ota_version_vocabulary_and_gate();
 
-// Authoritative-PIN pairing display (kTypePairShow/kTypePairDone bump +
-// side-by-side PIN geometry + deadline state), defined in test_pair_show.cpp.
+// Authoritative-PIN pairing display, defined in test_pair_show.cpp.
 void test_pairshow_literal_contract();
 void test_pairshow_shared_codec_pack_unpack();
 void test_pairshow_producer_bytes_to_renderer_exact();
@@ -107,8 +101,7 @@ void test_pairing_manager_clear_when_idle_noop();
 void test_pairing_manager_show_clear_roundtrip();
 void test_pairing_manager_null_face_safe();
 
-// OTA pull client pure top half (URL parse, version, validation, state
-// machine) + CLI `ota <url>` verb, defined in test_ota_client.cpp.
+// OTA pull client + CLI `ota <url>` verb, defined in test_ota_client.cpp.
 void test_ota_parse_plain_host();
 void test_ota_parse_port_and_deep_path();
 void test_ota_parse_bare_host_defaults_path();

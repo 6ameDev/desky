@@ -1,13 +1,7 @@
 # shared/link — core<->head link frame codec (B-link)
 
 Header-only, Arduino-free frame codec: `link_codec.h` (namespace `link`).
-Pure byte math in the transport-codec style — data transformation only, no
-peripheral lifecycle — shared by firmware (future socket transport) and
-host Unity tests (`core/test/test_link_codec.cpp`).
-
-Normative wire source: `link_codec.h` itself. Phone-wire contracts
-(`core/src/transport/udp_codec.h`, `shared/protocol/README.md`) are
-unrelated to this wire.
+Normative wire source: `link_codec.h` itself.
 
 ## Frame layout
 
@@ -21,18 +15,14 @@ All multi-byte fields big-endian. Total = 10 + payload bytes.
 | 4..5   | 2    | frag    | Fragment locator `u16BE`: **idx hi, total lo**           |
 | 6..7   | 2    | len     | Payload length `u16BE` (0..1024)                         |
 | 8..    | len  | payload | Type-defined bytes                                       |
-| 8+len  | 2    | CRC16   | CRC16-CCITT-FALSE (`poly 0x1021, init 0xFFFF`) `u16BE`    |
-
-over all preceding bytes.
+| 8+len  | 2    | CRC16   | CRC16-CCITT-FALSE (`poly 0x1021, init 0xFFFF`) `u16BE` over all preceding bytes |
 
 Frag packing, exactly: `frag = (idx << 8) | total`. Unfragmented frames
 use `idx=0, total=1`. `fragTotal` is a `u8` (max 255 fragments); a payload
 needing more fragments must use larger per-frame payloads (up to 1024B).
 
-`decodeFrame` validates magic, exact length (no truncation, no trailing
-garbage), frag bounds (`total >= 1`, `idx < total`), the per-type length
-contract, then CRC. Unknown types are rejected — the contract is frozen;
-new types require a codec bump on both sides.
+`decodeFrame` validates magic, exact length, frag bounds, the per-type length
+contract, then CRC. Unknown types are rejected (frozen contract).
 
 ## Type table
 
@@ -41,7 +31,7 @@ new types require a codec bump on both sides.
 | `0x01` | FACE     | core->head  | Face id `u8` (1B; clamped downstream, not here)    |
 | `0x02` | OLED     | core->head  | Mode `u8` (1B): 0=ON 1=DIM 2=OFF                   |
 | `0x03` | CAMCTL   | core->head  | Camera `u8` (1B): 0=off 1=on                      |
-| `0x04` | QRBITMAP | — (reserved, never sent) | V1 21x21 packed rows, MSB-first (exactly 63B; see pairing contract) |
+| `0x04` | QRBITMAP | — (reserved, never sent) | V1 21x21 packed rows, MSB-first (exactly 63B; frozen, never reused) |
 | `0x05` | OTA      | core->head  | OTA pull URL bytes, no NUL (1..128B)               |
 | `0x06` | PAIRSHOW | core->head  | 6 ASCII digits + valid-seconds `u16BE` (8B)        |
 | `0x07` | PAIRDONE | core->head  | Empty (0B; the frame presence is the signal)       |
@@ -52,46 +42,14 @@ new types require a codec bump on both sides.
 
 ### Boot epoch + seq resync rule (normative)
 
-`bootId` is a per-boot random `u32` drawn by the head at startup
-(`esp_random()` in `begin()`, never reseeded) and sent in every HB. The
-core resyncs on any changed-or-first-seen epoch: accept any seq as fresh,
-pin the peer, ACK. Same-epoch frames keep the wrap-aware
-strictly-greater gate; pre-epoch 6B HBs (no `bootId`) are rejected as
-malformed.
+`bootId` is a per-boot random `u32` in every HB. The core accepts any seq on
+a changed-or-first-seen epoch, then gates strictly-greater within one epoch.
 
-Rationale: without the epoch, a head reboot (or any tx-seq reset)
-replays low seqs the core drops as stale *forever* — an unrecoverable
-flap loop every ~9s (bench-proven 2026-10-18: head re-associated,
-core logged `drop link stale HB`, zero ACKs, forever). Replaying an old
-epoch's frame only buys one idempotent HB_ACK (counters only), which is
-acceptable under the transport-only trust model (same as the AP
-passphrase). The head tx domain is monotonic within a boot and must
-NEVER be reset on re-associate — only a reboot (new epoch) restarts it.
+## Pairing-screen contract (normative)
 
-API (`link::`): `encodeFrame(type, seq, payload, len, fragIdx, fragTotal,
-outBuf, outLen)` returns encoded bytes or 0 on error; `decodeFrame(buf,
-len, out)` fills a `Frame` view into the input buffer; `isFreshSeq`
-mirrors the `udpstatus::isFreshCounter` wrap idiom for `u16` seq;
-`packHb/unpackHb`, `packHbAck/unpackHbAck`, `packAck/unpackAck` for the
-typed payloads; `Reassembler` for fragments. All bounds-checked,
-null-safe, no heap — fixed caller-owned buffers at every call site.
-
-QR coupling note: the codec takes generic bytes plus an explicit 63B
-length check and never includes `qr_pairing.h`, so it stays decoupled
-from the QR encoder. 63B = 3 packed bytes/row x 21 rows.
-
-JPEG direction note: the envelope is direction-free (the length gate
-accepts 0..1024B either way), but actual use is head->core stills over
-TCP (`wifi_link.h` `serviceStill`: one frame per `snap` trigger, chunked
-per the MTU rule). Inbound JPEG on the UDP socket is dropped on both
-ends (wrong-direction class: core `link_server.h`, head `wifi_link.h`).
-
-## Pairing-screen contract (Pre-2, normative)
-
-Supersedes the Slice 6c QR-bitmap push: the core sends the 6 digits +
-validity window and the head renders them, so no bitmap rides the wire.
-Types `0x06`/`0x07` are additive (BUMP RULE above); `0x04` is frozen and
-never reused.
+The core sends the 6 digits + validity window and the head renders them, so
+no bitmap rides the wire. Types `0x06`/`0x07` are additive; `0x04` stays
+frozen and is never reused.
 
 ### PAIRSHOW (`0x06`, core->head, exactly 8B)
 
@@ -104,52 +62,11 @@ The digit vocabulary is validated fail-closed both ways by
 `packPairShow`/`unpackPairShow` (non-digit rejects); the frame codec
 checks the 8B length only, never values.
 
-Who sends when: `PairingTask::pumpPairShow` (main loop) composes the
-payload once per open window (`validSecs = kWindowMs/1000`) and hands
-one frame to `sendUnicast`. No head linked -> the pump waits silently;
-window closed -> the send latch unlatches for the next window.
-
 ### PAIRDONE (`0x07`, core->head, empty)
 
 No payload — the frame presence is the signal. The contract is
 fixed-empty (not a 0..N range), so any stowaway byte fails the decode
 gate.
-
-Who sends when: `PairingTask::notifyPairingDone` fire-and-forget via
-`sendUnicast` on pairing completion — the pair-ok bond (`handlePairReq`),
-a signed unbond (`handleUnbond`), and `clearBond` (unpair/factory
-reset). Peerless = silent no-op.
-
-### Head behavior (normative)
-
-- Gates: `isPairShowFrame` (8B) / `isPairDoneFrame` (0B) check the
-  length contract; `unpackPairShow` re-validates the digits. Bad digits
-  are unexecutable: dropped with no ACK (same fail-closed shape as a bad
-  FACE/OLED/CAMCTL value).
-- Fresh PAIRSHOW hands the PIN + window to `showPairing` and ACKs;
-  fresh PAIRDONE calls `clearPairing("link")` and ACKs. Duplicates only
-  re-ACK, never re-render/re-clear; stale frames drop (shared seq gate,
-  same as commands).
-- Render: the QR bitmap is re-derived LOCALLY via `qr::encode6Digits`
-  into the existing 63B staging path; the digits print beside it in the
-  two-column geometry (`face_renderer.h`: QR block origin (3, 3), 58px
-  square with full quiet zone; PIN line at x=66 y=28). Deadline =
-  show-time + validSecs*1000; the render task self-clears on expiry.
-  Clear paths: PAIRDONE, any FACE command, the valid-secs deadline, CLI.
-  One live overlay at a time (pairing vs legacy-QR vs OTA wins in turn).
-- Reserved `0x04` QRBITMAP is no longer displayed: the flag-day removal
-  dropped every QRBITMAP send/stage path on both firmwares (a decoded
-  frame now falls to the wrong-direction drop). The type value and the
-  exact-63B contract stay frozen and are never reused (see pairing
-  contract above).
-
-Flag-day upgrade: both sides run the PairShow/PairDone firmware, so no
-bitmap-pushing peer exists in the fleet — the removal above is safe.
-(Historical: the bump was additive, so mixed fleets degraded to
-drop-as-unknown, never misparse. An old head dropped PAIRSHOW/PAIRDONE as
-unknown (no pairing screen; the serial LOG line still carried the code),
-while an old core + new head kept working through the reserved QRBITMAP
-display path.)
 
 ## MTU / fragmentation rule
 
@@ -173,6 +90,5 @@ shrink — the codec reports the need, the transport does the splitting:
   type bytes live at offset 1 — no phone-wire parser can accept a link
   frame and vice versa. Pinned by
   `test_link_phone_wire_headers_distinct`.
-- **ESP-NOW is NOT a transport for this codec — sockets only**, per the
-  approved B-link decision. Transports come later; this codec only frames
-  bytes.
+- **ESP-NOW is NOT a transport for this codec — sockets only.** This codec
+  only frames bytes.

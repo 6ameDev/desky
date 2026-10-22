@@ -21,19 +21,8 @@
 #include "transport/link_codec.h"
 #include "transport/link_stub.h"
 
-// desky-head (face-unit: OV3660 eyes + face OLED + link stub, PARKED).
-// Setup order (core convention): logger -> fault -> config -> banner —
-// nothing that can fail runs before logging exists.
-//
-// Hardware map (see include/mcu/esp32cam_ov3660.h):
-// - OLED SDA=GPIO14/SCL=GPIO15 (address scanned 0x3C/0x3D, never assumed;
-//   absent on every MB USB run by design — "not found" never blocks boot).
-// - Wired link PARKED (no copper; wireless TBD; stub retained for switch-back).
-// - GPIO2 + GPIO4 reserved.
-// - Star 5V power from the common rail.
-
-// Fallbacks keep main compilable if config keys ever drift; in-project
-// include/config.h always wins (same pattern as core's coordinator.h).
+// desky-head (face-unit stub, PARKED).
+// Setup order: logger -> fault -> config -> banner.
 #ifndef CFG_CLI_BAUD
 #define CFG_CLI_BAUD 115200
 #endif
@@ -50,35 +39,28 @@ CameraDriver g_cam;
 Ssd1306Display g_panel(g_i2c);
 FaceRenderer g_display(g_panel);
 PowerManager g_power;
-HeadCoordinator g_coordinator;  // ONE command table (both doors dispatch here)
-PairingManager g_pairing;       // PairShow/Done PIN handoff policy (ability layer, bound below)
+HeadCoordinator g_coordinator;
+PairingManager g_pairing;
 LinkStub g_link;
 LinkClient g_wifi;
-OtaUpdater g_ota;  // Standing rule: never ship without the OTA client (see
-                   // abilities/ota/ota_task.h) — no USB door exists in the field.
+OtaUpdater g_ota;
 CliManager g_cli;
 EventBus::Subscription g_sub;
 uint32_t g_lastCamMs = 0;
 uint32_t g_lastAliveMs = 0;
 
-// ── Link business edges (transport callbacks; main is the binder) ──────────
-// WiFi command edge: maps the validated frame via the ONE command table and
-// owns the LINK_CMD publish (transport must not publish: the wire type is
-// NOT the CmdTarget value — kTypeCamCtl=0x03 vs CmdTarget::CAM=0).
-// WiFi pairing edges (authoritative-PIN show + clear) live in the pairing
-// ability (abilities/pairing/pairing_task.h, ctx = g_pairing below).
+// Link callbacks (transport invokes, main executes).
 void onWifiCommand(void* ctx, const linkcode::Frame& f) {
   (void)ctx;
   PowerCommand cmd;
   if (!wifilink::mapCmd(f.type, f.payload, f.payloadLen, cmd)) {
-    return;  // unreachable: transport value-checks before invoking
+    return;
   }
   EventBus::publish(HEAD_EVENT_LINK_CMD, static_cast<uint32_t>(cmd.target));
-  g_coordinator.dispatch(cmd);  // FACE->showFace, OLED ON/DIM/OFF, CAM on/off
+  g_coordinator.dispatch(cmd);
 }
 
-// WiFi OTA edge: grammar + updater trigger (transport already consumed the
-// seq + ACKed before this call). True = consumed.
+// WiFi OTA edge (transport seq-gated + ACKed). True = consumed.
 bool onWifiOtaUrl(void* ctx, const uint8_t* url, uint16_t len) {
   (void)ctx;
   char buf[otamanifest::kUrlMax + 1];
@@ -86,21 +68,20 @@ bool onWifiOtaUrl(void* ctx, const uint8_t* url, uint16_t len) {
     return false;
   }
   if (g_ota.active()) {
-    // Seq consumed + ACKed above; the in-flight download keeps running.
     LOG_EVERY_N(20, "LINK", "ota in flight, ignored");
     return true;
   }
-  g_ota.startIfNewer(buf);  // own logs: versions + counters only
+  g_ota.startIfNewer(buf);
   return true;
 }
 
-// WiFi stills edge: camera power gate for the TCP stills pump.
+// Camera gate for the TCP stills pump.
 bool isCameraOn(void* ctx) {
   (void)ctx;
   return g_cam.isEnabled();
 }
 
-// UART stub edge: same ONE command table as the USB CLI door.
+// UART stub edge.
 void onStubCommand(void* ctx, const PowerCommand& cmd) {
   (void)ctx;
   EventBus::publish(HEAD_EVENT_LINK_CMD, static_cast<uint32_t>(cmd.target));
@@ -116,24 +97,20 @@ void setup() {
   FaultManager::registerAllocFailureHook();
   const bool i2cOk = g_i2c.begin();
   DESKY_ASSERT(i2cOk);
-  g_i2c.scanBus();  // On-MB this shows no OLED — expected, never a fault.
-  // Known esp32-camera quirk: esp_camera_deinit() leaves the system-wide
-  // GPIO ISR service installed, so every later esp_camera_init() logs
-  // "GPIO isr service already installed" at ERROR and succeeds anyway.
-  // Suppressed by exact phrase (all other gpio errors still print); revisit
-  // if off/on cycling ever shows resource drift in status (frames/drops
-  // across ~10 cycles).
+  g_i2c.scanBus();
+  // esp_camera_deinit() leaves the ISR service installed; later inits log
+  // "GPIO isr service already installed" at ERROR and succeed anyway.
   LogFilter::addRule("GPIO isr service already installed");
   LogFilter::begin();
   LOG_I("LOG", "filter rules=%u", LogFilter::ruleCount());
   const bool camOk = g_cam.init();
   DESKY_ASSERT(camOk);  // Camera works on-MB (ribbon only), unlike the OLED.
   const bool oledOk = g_display.init();
-  (void)oledOk;  // NEVER asserted: absent OLED is the normal on-MB state.
+  (void)oledOk;  // Absent OLED is the normal on-MB state; never assert.
   g_power.begin(&g_cam, &g_display);
-  g_coordinator.begin(&g_power, &g_display);  // ONE table behind both doors
-  g_pairing.attach(&g_display.overlays());    // PairShow/Done policy over the single overlay home (never owned here)
-  g_link.begin();                             // PARKED stub (retained for switch-back).
+  g_coordinator.begin(&g_power, &g_display);
+  g_pairing.attach(&g_display.overlays());
+  g_link.begin();
   {
     StubHandlers sh;
     sh.ctx = nullptr;
@@ -143,7 +120,7 @@ void setup() {
   g_wifi.begin();  // Live path: WiFi STA link client.
   {
     LinkHandlers wh;
-    wh.ctx = &g_pairing;  // pairing edges own it; command/OTA/stills edges ignore ctx (globals)
+    wh.ctx = &g_pairing;
     wh.onCommand = onWifiCommand;
     wh.onPairShow = pairingtask::onPairShow;
     wh.onPairDone = pairingtask::onPairDone;
@@ -152,11 +129,11 @@ void setup() {
     g_wifi.setHandlers(wh);
   }
   g_cli.begin(&g_power);
-  g_cli.attachCoordinator(&g_coordinator);  // CAM/OLED/FACE/QR fallback dispatch
-  g_cli.attachLink(&g_wifi);                // LINK status line + `snap` still trigger.
-  g_cli.attachOta(&g_ota);                  // `ota <url>` pull updater (standalone).
-  g_ota.attachFace(&g_display);             // Updater progress -> OLED bar/alert.
-  g_sub = EventBus::subscribe();            // Settles before any publish (loop only).
+  g_cli.attachCoordinator(&g_coordinator);
+  g_cli.attachLink(&g_wifi);
+  g_cli.attachOta(&g_ota);
+  g_ota.attachFace(&g_display);
+  g_sub = EventBus::subscribe();
   g_lastCamMs = millis();
   g_lastAliveMs = millis();
   LOG_I("BOOT", "desky-head alive | MCU=%s cores=%d flash=%dMB psram=%d", MCU_NAME, MCU_NUM_CORES, MCU_FLASH_SIZE_MB,
@@ -168,21 +145,20 @@ void setup() {
 
 void loop() {
   FaultManager::watchdogFeed();
-  g_cli.poll();   // USB door (human).
-  g_link.poll();  // UART door (S3 verbs into the same command table).
+  g_cli.poll();  // USB door (human).
+  g_link.poll();
   g_link.heartbeatTick();
-  g_wifi.poll();           // Live path: UDP commands/HB_ACK + TCP stills + assoc retry.
-  g_wifi.heartbeatTick();  // Live path: 1Hz HB + 3-miss link-down watch.
-  g_ota.poll();            // OTA body pump (no-op unless `ota <url>` started one).
+  g_wifi.poll();
+  g_wifi.heartbeatTick();
+  g_ota.poll();
   const uint32_t now = millis();
-  // Camera grab suspended during OTA (OtaUpdater::active()): a JPEG grab
-  // mid-flash contends PSRAM/flash cache with the Update write pump.
-  if (!g_ota.active() && now - g_lastCamMs >= CFG_CAMERA_POLL_MS) {  // Wrap-safe elapsed gate.
+  // Grab suspended during OTA: JPEG grab mid-flash contends PSRAM/flash cache.
+  if (!g_ota.active() && now - g_lastCamMs >= CFG_CAMERA_POLL_MS) {
     g_lastCamMs = now;
-    g_cam.update();  // Grab-and-drop still (no-op while camera off).
+    g_cam.update();
   }
   HeadEvent ev;
-  while (g_sub.receive(ev, 0)) {  // Non-blocking drain; logs at DEBUG.
+  while (g_sub.receive(ev, 0)) {
     LOG_D("BUS", "ev %s payload=%lu", headEventName(ev.type), static_cast<unsigned long>(ev.payload));
   }
   if (now - g_lastAliveMs >= 5000) {

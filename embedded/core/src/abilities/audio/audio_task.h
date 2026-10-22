@@ -1,24 +1,12 @@
 #pragma once
-// desky v2 audio task binder — abilities/audio (ability layer).
+// Audio task binder — abilities/audio.
 //
 // Firmware-only RTOS binding for the audio ability: owns the task-facing
-// constants (stack/priority/core, aliased from AudioManager so there is one
-// source of truth) and forwards the public API (begin/beep/playTune/
-// bootJingle/playPcm/snapshot) to the owned AudioManager. main.cpp owns an
-// AudioTask, never an AudioManager, so a future slice can migrate the loop
-// down here (pairing Slice 6b pattern) without touching call sites.
-//
-// Seam note (Slice 4): AudioManager fuses queue/synth policy with its Core 0
-// loop — mutex-interleaved member access throughout (enqueue/dequeueNext/
-// drainCheck/updateMeter share queue_/level_/pcm state with the loop under
-// one mutex), task-owned playback registers interleaved with shared state,
-// and the same object inits the HAL port it polls. No pure-motion seam
-// exists: extracting the loop would mean friendship + member migration or a
-// new accessor surface, i.e. logic changes — so the manager stays whole in
-// audio_manager.h and this binder stays thin. Pure DSP lives in
-// audio_codec.h. Zero socket dependencies anywhere in this ability — the
-// sole bus interaction is the EventBus EVENT_BEEP_DONE publish, like
-// SensorTask.
+// constants (stack/priority/core, aliased from AudioManager) and forwards the
+// public API to the owned AudioManager. main.cpp owns an AudioTask, never an
+// AudioManager. Pure DSP lives in audio_codec.h. Zero socket dependencies
+// anywhere in this ability — the sole bus interaction is the EVENT_BEEP_DONE
+// publish.
 
 #include "audio_manager.h"
 

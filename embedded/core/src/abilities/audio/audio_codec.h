@@ -1,12 +1,10 @@
 #pragma once
-// desky v2 audio codec — abilities/audio (ability layer).
+// Audio codec — abilities/audio.
 //
 // Arduino-free beep synth + mic loudness DSP (namespace audiometer), 100%
-// native-testable (stdint + math only) so host Unity tests include this
-// header directly. Moved verbatim from the top half of the former
-// services/audio_manager.h (Slice 4); zero behavior change. Siblings:
-// audio_manager.h owns the note queue + synth/meter policy (AudioManager,
-// firmware-only); audio_task.h is the thin firmware-only RTOS binder.
+// native-testable (stdint + math only) so host tests include it directly.
+// Siblings: audio_manager.h owns the note queue + synth/meter policy;
+// audio_task.h is the thin RTOS binder.
 
 // ── Arduino-free: beep synth + meter DSP ────────────────────────────────
 #include <math.h>
@@ -14,8 +12,7 @@
 
 #include "config.h"
 
-// Fallbacks keep this header compilable if config keys ever drift; in-project
-// include/config.h always wins (same pattern as sensors_task.h).
+// Fallbacks if config keys drift; in-project include/config.h always wins.
 #ifndef CFG_AUDIO_RATE_HZ
 #define CFG_AUDIO_RATE_HZ 16000
 #endif
@@ -28,9 +25,8 @@
 
 namespace audiometer {
 
-// Which mic is louder (GND-mic = left slot, 3V3-mic = right slot by
-// hardware tie). TIE covers silence + near-equal levels so noise never
-// flaps the verdict.
+// Which mic is louder (GND-mic = left slot, 3V3-mic = right slot). TIE
+// covers silence + near-equal levels so noise never flaps the verdict.
 enum Side : uint8_t { SIDE_LEFT, SIDE_RIGHT, SIDE_TIE };
 
 inline const char* sideName(Side side) { return side == SIDE_LEFT ? "L" : (side == SIDE_RIGHT ? "R" : "TIE"); }
@@ -57,10 +53,8 @@ inline uint32_t rampSamples(uint32_t rateHz) { return (rateHz * 2u) / 1000u; }
 
 // One bell-chime sample (freq 0 = rest silence): sine fundamental + a soft
 // octave partial (0.35x) under an exponential decay (tau = total/3) with a
-// short linear attack (~2ms, kills the edge click without a cos table).
-// The decay is what sells "chime" vs "buzzer": a struck bell, not a gated
-// oscillator. Partial sum is normalized by 1.35 so output never exceeds
-// peak. Needs sinf/expf (S3 FPU eats it at 16kHz; host tests link libm).
+// short linear attack (~2ms, kills the edge click). Partial sum is normalized
+// by 1.35 so output never exceeds peak. Needs sinf/expf.
 inline int16_t synthChime(uint32_t idx, uint32_t total, uint16_t freqHz, uint32_t rateHz, int16_t peak) {
   if (freqHz == 0 || total == 0 || idx >= total || rateHz == 0) {
     return 0;
@@ -81,8 +75,7 @@ inline int16_t synthChime(uint32_t idx, uint32_t total, uint16_t freqHz, uint32_
   return static_cast<int16_t>(partial * (static_cast<float>(peak) / 1.35f) * env);
 }
 
-// RMS of unpacked int24 samples (uint64 accumulator: 256 samples of
-// (2^23)^2 sum to ~2^54, far from u64 overflow; double mean for precision).
+// RMS of unpacked int24 samples (uint64 accumulator).
 inline uint32_t rmsInt24(const int32_t* samples, size_t count) {
   if (samples == nullptr || count == 0) {
     return 0;

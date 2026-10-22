@@ -1,33 +1,25 @@
 #pragma once
-// desky v2 L1 open-loop velocity servo — header-only, 100Hz FreeRTOS task.
+// L1 open-loop velocity servo — header-only, 100Hz FreeRTOS task.
 //
-// Units (judgment call): NORMALIZED inputs -1.0..1.0 for both v (forward)
-// and omega (turn; +omega == right). Physical units (m/s, rad/s) need
-// wheelbase/track calibration that does not exist yet, so the L1 API stays
-// unitless and the mapping below documents the single place where physical
-// scaling will slot in. Duty output is int -255..255 into MotorDriver,
-// which owns the MIN_PWM deadband.
+// Units: NORMALIZED inputs -1.0..1.0 for both v (forward) and omega (turn;
+// +omega == right). Physical units need wheelbase calibration that does not
+// exist yet, so the L1 API stays unitless. Duty output is int -255..255 into
+// MotorDriver, which owns the MIN_PWM deadband.
 //
-// Mailbox: latest-wins struct guarded by a FreeRTOS mutex (matches the
-// codebase's Logger/EventBus mutex style). Motion idles at stop: the task
-// boots with a zero command and applies it every tick, so a silent
-// coordinator means stopped wheels, not last-command drive.
+// Mailbox: latest-wins struct guarded by a FreeRTOS mutex. Motion idles at
+// stop: the task boots with a zero command and applies it every tick, so a
+// silent coordinator means stopped wheels.
 //
-// Loop: vTaskDelayUntil 10ms @ Core 1, stack 4096 (V1-proven), feeds the
-// task watchdog every tick (FaultManager per-task subscription, same as
-// loop()). FUTURE PID INJECTION POINT: close heading here — read fused
-// yaw in loop(), run the heading PID between mailbox snapshot and
-// mapToDuty(), add the correction to omega. No IMU yet, so this ships
-// open-loop (see v2.md §F: Core 1 Task A 100Hz motor slot).
+// Loop: vTaskDelayUntil 10ms @ Core 1, stack 4096, feeds the task watchdog
+// every tick. Open-loop (no IMU yet).
 //
-// Async maneuver (pattern proof): startWiggle() arms a timed open-loop
-// wiggle evaluated by the 100Hz task — never blocks the caller. On expiry
-// the task publishes EVENT_BEHAVIOR_DONE (payload=BEHAVIOR_HAPPY_WIGGLE)
-// exactly once and returns to mailbox control. No STARTED event is
-// published (DONE-only keeps the spike minimal; the commander already
-// knows when it armed the maneuver). Cancellation via setVelocity/stop/
-// brake produces NO DONE: cancellation is itself an event the commander
-// caused, so it needs no completion signal.
+// Async maneuver: startWiggle() arms a timed open-loop wiggle evaluated by
+// the 100Hz task — never blocks the caller. On expiry the task publishes
+// EVENT_BEHAVIOR_DONE (payload=BEHAVIOR_HAPPY_WIGGLE) exactly once and
+// returns to mailbox control. No STARTED event is published (the commander
+// already knows when it armed the maneuver). Cancellation via
+// setVelocity/stop/brake produces NO DONE: cancellation is itself
+// commander-caused, so it needs no completion signal.
 
 #include <Arduino.h>
 
@@ -48,9 +40,8 @@ class MotionController {
   static constexpr uint32_t kPeriodMs = 1000 / CFG_MOTOR_LOOP_HZ;
   static constexpr BaseType_t kCore = 1;
   static constexpr uint32_t kStackWords = 4096;
-  // Above loopTask (prio 1, V1 used 1 for its combined HW task) so 100Hz
-  // timing holds once sensor/coordinator tasks land; still far below
-  // WiFi/IPC internals. Revisit when the §F task map fills in.
+  // Above the sensor/coordinator tasks so 100Hz timing holds; still far
+  // below WiFi/IPC internals.
   static constexpr UBaseType_t kPriority = tskIDLE_PRIORITY + 5;
   static constexpr int kMaxDuty = 255;
 
@@ -111,10 +102,10 @@ class MotionController {
     }
   }
 
-  // Non-blocking timed wiggle: sinusoidal differential drive (v=0,
-  // omega=amplitude*sin(2*pi*rateHz*t)) through mapToDuty() + the driver's
-  // MIN_PWM floor. Latest-wins: re-arming supersedes without a DONE for the
-  // superseded run. Zero duration is a no-op. No heap/String; task-safe.
+  // Non-blocking timed wiggle: sinusoidal differential drive through
+  // mapToDuty() + the driver's MIN_PWM floor. Latest-wins: re-arming
+  // supersedes without a DONE for the superseded run. Zero duration is a
+  // no-op. Task-safe.
   void startWiggle(uint32_t durationMs, float rateHz = 2.0f, float amplitude = 0.6f) {
     if (mutex_ == nullptr || durationMs == 0 || rateHz <= 0.0f) {
       return;
@@ -170,7 +161,7 @@ class MotionController {
       Command cmd = cmd_;
       bool expired = false;
       if (maneuver_ == Maneuver::kWiggle) {
-        // Unsigned subtraction: wrap-safe across the ~49-day millis() rollover.
+        // Unsigned subtraction: wrap-safe across millis() rollover.
         const uint32_t elapsedMs = nowMs - wiggleStartMs_;
         if (elapsedMs >= wiggleDurationMs_) {
           // DONE-once: transition to IDLE under the mutex before publishing,
@@ -188,8 +179,7 @@ class MotionController {
         // Task context: the logging publish variant is allowed here.
         EventBus::publish(EVENT_BEHAVIOR_DONE, static_cast<uint32_t>(BEHAVIOR_HAPPY_WIGGLE));
       }
-      // FUTURE PID INJECTION POINT: fused yaw -> heading PID corrects
-      // cmd.omega here (open-loop until the IMU lands).
+      // Open-loop: no IMU yet. A future heading PID corrects cmd.omega here.
       int left = 0;
       int right = 0;
       mapToDuty(cmd.v, cmd.omega, left, right);

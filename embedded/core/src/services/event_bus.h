@@ -1,9 +1,7 @@
 #pragma once
-// desky v2 event bus — thin alias over the shared generic mechanism.
-// The fan-out implementation lives once in shared/common/event_bus.h
-// (EventBusT, never forked); this header only binds it to core's event
-// types (include/system_context.h). Call sites keep the `EventBus::`
-// spelling, behavior is bit-identical to the pre-extraction bus.
+// Event bus — thin alias over the shared generic mechanism. The fan-out
+// implementation lives once in shared/common/event_bus.h; this header only
+// binds it to core's event types (system_context.h).
 //
 // Topology: NO broker task. publish() copies the event into every
 // subscriber's private FreeRTOS queue, so one slow consumer only fills its
@@ -17,11 +15,9 @@
 //   SystemEvent ev;                                     // consumer task:
 //   while (sub.receive(ev)) { ... }
 //
-// Rules: no String/heap in the publish/receive path (queues are created
-// once in subscribe()), never call publish() (the logging variant) from
-// ISR, subscribe()/unsubscribe() are task-context only and must have
-// settled before any ISR publishing starts (the ISR path takes no mutex
-// and snapshots the slot array as-is).
+// Rules: no String/heap in the publish/receive path, never call publish()
+// (the logging variant) from ISR, subscribe()/unsubscribe() are task-context
+// only and must have settled before any ISR publishing starts.
 
 #include "common/event_bus.h"
 #include "system_context.h"

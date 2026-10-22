@@ -1,5 +1,5 @@
 #pragma once
-// Abstract sensor interface (v2 HAL). Phase 1 fills in drivers.
+// Abstract sensor interface.
 #include <stdint.h>
 
 class ISensor {

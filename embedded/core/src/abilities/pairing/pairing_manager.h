@@ -1,11 +1,9 @@
 #pragma once
-// desky v2 pairing manager — abilities/pairing.
+// Pairing manager — abilities/pairing.
 //
 // pairing::Core: window/tries/lockout/burn + bond/era lifecycle. Zero
 // sockets, zero NVS, zero RNG (firmware injects randomness at the call
-// site). Transport forwards bond transitions at the same points it flips
-// its own flags (see pairing_task.h; full handler extraction lands in
-// Slice 6b). Wire vocabulary lives in pairing_codec.h.
+// site). Wire vocabulary lives in pairing_codec.h.
 
 #include <stddef.h>
 #include <stdint.h>
@@ -51,8 +49,8 @@ class Core {
     return true;
   }
 
-  // Single-use attempt. Unsigned subtraction throughout: wrap-safe across
-  // the ~49-day millis() rollover (same idiom as coordinator.h).
+  // Single-use attempt. Unsigned subtraction: wrap-safe across millis()
+  // rollover.
   Result tryCode(const uint8_t* in, size_t len, uint32_t nowMs) {
     if (bonded_) {
       return Result::kAlreadyBonded;
@@ -83,8 +81,8 @@ class Core {
     return Result::kBadCode;
   }
 
-  // Explicit unpair / 10s-hold factory reset (Task 3 persists it). Never
-  // implicit: rotation or reboot must not call this.
+  // Explicit unpair / 10s-hold factory reset. Never implicit: rotation or
+  // reboot must not call this.
   // TODO(PHYSICAL-TRIGGER): button-vs-power-cycle decision pending — implements the 10s-hold promise; see
   // DECISION-ISSUE.
   void clearBond() {
@@ -96,21 +94,12 @@ class Core {
     bondMs_ = 0;
   }
 
-  // ── PairingExchange bond transitions (platform split 1.1) ─────────────
-  // The gate above (window/tries/lockout/burn) already lived here; the
-  // bond/era lifecycle joins it. Slice 6b moved the firmware session
-  // around it (PSK bytes, drive counter + validCount_ persist cadence, and
-  // the PAIR_OK redelivery cache) to PairingTask
-  // (abilities/pairing/pairing_task.h) — key material needs mbedTLS zeroize
-  // (firmware-only) and the cache rides udpstatus::shouldRedeliver via the
-  // transport bridge. PairingTask calls these at the same points it flips
-  // its own flags (same order: verify -> markAlive-position -> persist ->
-  // switch -> ACK).
+  // Bond transitions. PairingTask calls these at the same points it flips
+  // its own flags (same order: verify -> persist -> switch -> ACK).
 
-  // Records a fresh bond: gate closed, era reset (fresh pair starts era 0 —
-  // saveBond persists it), bond clock set. Called by tryCode on kOk AND
-  // forwarded by UdpServer after the NVS save + PAIR_OK send (idempotent —
-  // same values twice).
+  // Records a fresh bond: gate closed, era reset, bond clock set. Called by
+  // tryCode on kOk AND forwarded after the NVS save + PAIR_OK send
+  // (idempotent).
   void onPairBonded(uint32_t nowMs) {
     bonded_ = true;
     burned_ = true;
@@ -119,8 +108,8 @@ class Core {
     bondMs_ = nowMs;
   }
 
-  // Records a Tier-1 rotation (forwarded by UdpServer after the NVS
-  // saveRekey + atomic switch, BEFORE the ACK).
+  // Records a Tier-1 rotation (forwarded after the NVS saveRekey + atomic
+  // switch, BEFORE the ACK).
   void onRekeyApplied(uint16_t nextEra) { era_ = nextEra; }
 
   // Symmetric forget (UNBOND path): full gate reset + era/bond clock clear.

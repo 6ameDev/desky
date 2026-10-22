@@ -1,61 +1,40 @@
 #pragma once
-// desky v2 connection manager — header-only, platform split task 1.1.
-//
-// Arduino-free peer + liveness core (stdint/stddef only) so host Unity
-// tests include this header directly. No heap, no exceptions, no Strings,
-// no sockets: the single-peer slot + the alive window + the auth token
-// funnel live here; WiFiUDP/IPAddress stay in UdpServer (which adapts
-// IPAddress <-> u32 with ipToU32/u32ToIp below).
+// Connection manager — header-only. Arduino-free peer + liveness core
+// (stdint/stddef only) so host tests include this header directly. No heap,
+// no sockets: the single-peer slot + alive window + auth token funnel live
+// here; WiFiUDP/IPAddress stay in UdpServer (adapted via ipToU32/u32ToIp).
 //
 // Layer rule: peer identity + freshness math is transport (this header);
-// bond/era lifecycle is pairing::Core (abilities/pairing/pairing_manager.h);
-// is services/ConfigStore; telemetry cadence is services/TelemetryManager.
-// Subscription state is explicitly OUT (decided later — Phase-2 SET_RATE
-// lands in TelemetryManager, never here).
+// bond/era lifecycle is pairing; persistence is ConfigStore; telemetry
+// cadence is TelemetryManager.
 //
-// Single-peer behavior today. Table-ready, no over-engineering: the slot
-// is one (peer_, have_, lastAliveMs_); a future head/server peer table is
-// an array/map keyed by the same u32 id with per-entry lastAliveMs_ — the
-// markAlive/clear/isAlive shapes already take the id, so the call sites
-// do not change.
+// Single-peer slot today. The markAlive/clear/isAlive shapes already take
+// the peer id, so a future peer table does not change the call sites.
 //
-// Alive window ownership: udpstatus::kAliveMs (transport/udp_server.h) is
-// the single owner — this header NEVER redefines the 5s literal. The window
-// arrives as a ctor parameter and UdpServer passes udpstatus::kAliveMs; the
-// host tests pin the equality (see test_udp_server.cpp).
+// Alive window ownership: udpstatus::kAliveMs is the single owner — this
+// header never redefines the literal. The window arrives as a ctor parameter;
+// host tests pin the equality.
 //
-// Token funnel (token #1 — AuthVerifier threading):
-//   handlers obtain Verified via AuthVerifier::verify() (which folds the
-//   EXISTING call-site verdicts — bonded, eraOk, fresh from
-//   udpstatus::isFreshCounter, hmacOk from the untouched mbedTLS +
-//   pairing::ctEqual block — into one token; NO crypto is reimplemented
-//   here, the HMAC bytes stay verbatim at the call site), then Pinned via
-//   ConnectionManager::markAlive(Verified&&), then call the privileged
-//   effects sendRekeyAck(Pinned&&) / sendPairOk(PersistReceipt) (the old
-//   token-gated drive publish died in 8c with the behavior call it guarded:
-//   drive dispatch is transport-inline now, sequential verify-before-effect).
-//   Swapping the order (effect before verify) fails to compile: the effect
-//   signatures REQUIRE the moved token, and
-//   every token is move-only with deleted copies (no duplication, no
-//   replay of a proof). Verified::valid()/Pinned::valid() stay fail-closed
-//   at runtime (invalid token -> no state change, silent drop).
-// PersistReceipt default-constructs INVALID (fail-closed); only ConfigStore
-// (friend) can mark one valid via saveBond/saveRekey — forging a receipt
-// buys nothing.
+// Token funnel: handlers obtain Verified via AuthVerifier::verify (folds the
+// call-site verdicts — bonded, eraOk, fresh, hmacOk — into one token; no
+// crypto is reimplemented here), then Pinned via markAlive(Verified&&), then
+// call the privileged effects. Effect-before-verify fails to compile: the
+// effect signatures require the moved token, and every token is move-only
+// with deleted copies. Invalid token -> no state change (fail-closed).
+// PersistReceipt default-constructs INVALID; only ConfigStore (friend) can
+// mark one valid via saveBond/saveRekey.
 
 #include <stddef.h>
 #include <stdint.h>
 
 // Firmware minter of PersistReceipt (services/config_store.h). Forward
-// declaration only — this header stays dependency-free (required for the
-// friend declaration below; the definition lives firmware-side).
+// declaration only — this header stays dependency-free.
 class ConfigStore;
 
 namespace connection {
 
-// ── IPAddress <-> u32 adapter (UdpServer side) ────────────────────────────
-// Network order: a is the most significant octet (192.168.4.1 ->
-// 0xC0A80401). Pure byte math, shared by firmware + host tests.
+// IPAddress <-> u32 adapter (UdpServer side). Network order: a is the most
+// significant octet. Pure byte math, shared by firmware + host tests.
 
 inline uint32_t ipToU32(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
   return (static_cast<uint32_t>(a) << 24) | (static_cast<uint32_t>(b) << 16) | (static_cast<uint32_t>(c) << 8) |
@@ -72,9 +51,9 @@ inline void u32ToIp(uint32_t ip, uint8_t out4[4]) {
   out4[3] = static_cast<uint8_t>(ip & 0xFFu);
 }
 
-// ── Verified: proof that one RX frame passed the full gate ───────────────
-// Move-only, private ctor (friend AuthVerifier), deleted copies. Holds the
-// consumed counter + era so downstream minting cannot mix frames.
+// Verified: proof that one RX frame passed the full gate. Move-only, private
+// ctor (friend AuthVerifier). Holds the consumed counter + era so downstream
+// minting cannot mix frames.
 
 class AuthVerifier;  // Factory only (defined below).
 
@@ -106,15 +85,10 @@ class Verified {
   uint16_t era_;
 };
 
-// Precheck verdicts, computed by the caller with the EXISTING helpers
-// (udpstatus::isFreshCounter for fresh, the untouched mbedTLS HMAC +
-// pairing::ctEqual block for hmacOk, plain member reads for bonded/eraOk).
-// Per-opcode eraOk mapping (documented once, here):
-//   drive     -> true (DRIVE_V2 carries no era; session era rides along)
-//   alive/disconnect -> (wireEra == sessionEra)
-//   rekey     -> (wireEra == sessionEra + 1); the idempotent duplicate
-//                (wireEra == sessionEra) re-ACKs WITHOUT verifying.
-//   unbond    -> true (UNBOND carries no era).
+// Precheck verdicts, computed by the caller. Per-opcode eraOk mapping:
+//   drive/unbond -> true (no era on the wire); alive/disconnect ->
+//   (wireEra == sessionEra); rekey -> (wireEra == sessionEra + 1), while the
+//   idempotent duplicate (wireEra == sessionEra) re-ACKs without verifying.
 struct Checks {
   bool bonded;
   bool eraOk;
@@ -135,10 +109,8 @@ class AuthVerifier {
   AuthVerifier();  // Never instantiated: static factory only.
 };
 
-// ── Pinned: proof of liveness for one verified frame ─────────────────────
-// Move-only, private ctor (friend ConnectionManager), deleted copies.
-// Minted ONLY by ConnectionManager::markAlive(Verified&&): no Verified,
-// no Pinned; no Pinned, no drive publish / rekey ACK.
+// Pinned: proof of liveness for one verified frame. Move-only, minted ONLY
+// by markAlive(Verified&&): no Verified, no Pinned.
 
 class ConnectionManager;  // Minter only (defined below).
 
@@ -175,9 +147,8 @@ class ConnectionManager {
   // (UdpServer does); never a literal here.
   explicit ConnectionManager(uint32_t aliveWindowMs) : windowMs_(aliveWindowMs), peer_(0), have_(false), lastMs_(0) {}
 
-  // Alive funnel (mirrors UdpServer::markAlive order): consumes the
-  // Verified token, pins the peer, refreshes the stamp, mints Pinned.
-  // Invalid token -> no state change, invalid Pinned (fail-closed).
+  // Alive funnel: consumes the Verified token, pins the peer, refreshes the
+  // stamp, mints Pinned. Invalid token -> no state change.
   Pinned markAlive(Verified&& token, uint32_t peerU32, uint32_t nowMs) {
     // Token arrives moved-in (single-use by construction); an invalid
     // token changes nothing (fail-closed silent drop downstream).
@@ -190,18 +161,16 @@ class ConnectionManager {
     return Pinned(true, peerU32);
   }
 
-  // Pre-bond / post-pair pin-only (legacy quirk, preserved exactly):
-  // remembers the peer for unicast replies WITHOUT refreshing the alive
-  // stamp — pinning alone never makes the link alive.
+  // Pin-only (legacy): remembers the peer for unicast replies WITHOUT
+  // refreshing the alive stamp — pinning alone never makes the link alive.
   void pinPeer(uint32_t peerU32) {
     peer_ = peerU32;
     have_ = true;
   }
 
   // Refresh-then-clear (UNBOND/DISCONNECT goodbye): consumes the Verified
-  // token (the signed frame was verified), stamps the goodbye instant, then
-  // drops the net peer (bond kept or cleared by the caller — never here).
-  // Invalid token -> no state change (fail-closed).
+  // token, stamps the goodbye instant, then drops the net peer. Invalid
+  // token -> no state change.
   void refreshThenClear(Verified&& token, uint32_t nowMs) {
     if (!token.valid()) {
       return;
@@ -220,9 +189,8 @@ class ConnectionManager {
   uint32_t peer() const { return peer_; }
   uint32_t lastAliveMs() const { return lastMs_; }
 
-  // Wrap-safe freshness (same unsigned-subtraction idiom as
-  // udpstatus::isAliveFresh; the boundary counts as fresh). Single owner
-  // of the WINDOW stays udpstatus::kAliveMs (arrived via the ctor).
+  // Wrap-safe freshness (unsigned subtraction; the boundary counts as
+  // fresh). The WINDOW stays owned by udpstatus::kAliveMs (ctor param).
   bool isAlive(uint32_t nowMs) const { return have_ && (nowMs - lastMs_) <= windowMs_; }
 
  private:
@@ -232,11 +200,8 @@ class ConnectionManager {
   uint32_t lastMs_;
 };
 
-// ── PersistReceipt: proof that the bond hit NVS before the ACK ──────────
-// Move-only, deleted copies. Default-constructs INVALID (fail-closed —
-// forging one buys nothing); only ConfigStore (friend, via saveBond/
-// saveRekey) can mark one valid. Consumed by value (moved) by
-// sendPairOk/sendRekeyAck.
+// PersistReceipt: proof that the bond hit NVS before the ACK. Move-only.
+// Default-constructs INVALID; only ConfigStore (friend) can mark one valid.
 
 class PersistReceipt {
  public:
