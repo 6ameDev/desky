@@ -1,9 +1,9 @@
 #pragma once
-// Bond-persistence receipt vocabulary (Arduino-free, host-tested).
+// Pairing-persistence receipt vocabulary (Arduino-free, host-tested).
 //
-// Proof that the bond hit NVS before the ACK. Move-only; default-constructs
-// INVALID; only ConfigStore (friend) can mark one valid via saveBond /
-// saveRekey. Neutral home: transport/connection_manager.h (the funnel that
+// Proof that the pair hit NVS before the ACK. Move-only; default-constructs
+// INVALID; only ConfigStore (friend) can mark one valid via savePair /
+// savePairRefresh. Neutral home: transport/connection_manager.h (the funnel that
 // consumes it) and services/config_store.h (the minter) both include this
 // header, so neither layer names the other.
 

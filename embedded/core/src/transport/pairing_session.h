@@ -27,12 +27,12 @@ class IUdpTransport {
  public:
   virtual ~IUdpTransport() = default;
 
-  // Alive funnel for one verified bonded packet: pins the telemetry peer +
+  // Alive funnel for one verified paired packet: pins the telemetry peer +
   // refreshes the stamp. Consumes the Verified token; invalid token keeps
   // every byte of state.
   virtual connection::Pinned markAlive(connection::Verified&& verified, const IPAddress& rip, uint16_t rport,
                                        uint32_t nowMs, uint16_t era) = 0;
-  // PAIR_OK unicast: consumes the PairingReceipt (proves the bond hit NVS
+  // PAIR_OK unicast: consumes the PairingReceipt (proves the pair hit NVS
   // before anything left the radio). Invalid receipt stays silent.
   virtual void sendPairOk(connection::PairingReceipt receipt, const IPAddress& ip, uint16_t port, const uint8_t* ok,
                           size_t len) = 0;
@@ -50,10 +50,10 @@ class IUdpTransport {
   // owner stays in the transport top half; bridged here for the handlers).
   virtual bool isFreshCounter(uint32_t lastSeen, uint32_t got) = 0;
   virtual bool shouldRedeliver(bool valid, const uint8_t* storedCode, const uint8_t* storedNonce, const uint8_t* inCode,
-                               const uint8_t* inNonce, uint32_t bondMs, uint32_t nowMs) = 0;
+                               const uint8_t* inNonce, uint32_t pairMs, uint32_t nowMs) = 0;
 };
 
-// Pairing/auth session implemented by pairing::PairingTask: bond state,
+// Pairing/auth session implemented by pairing::PairingTask: pair state,
 // counter/era reads, the atomic verify service, and the pair-family RX
 // entry. Every read on the RX path is null-safe until attach lands.
 class IPairingSession {
@@ -62,13 +62,13 @@ class IPairingSession {
 
   // Pins the transport-owned shared state (peer slot + alive window).
   virtual void attach(connection::ConnectionManager* conn, IPAddress* peerIp, uint16_t* peerPort) = 0;
-  // Bond restore: bonded -> verifies against the stored key; unbonded ->
+  // Pair restore: paired -> verifies against the stored key; unpaired ->
   // opens a pairing window.
-  virtual void restoreFromStore() = 0;
-  virtual bool bonded() const = 0;
+  virtual void restorePair() = 0;
+  virtual bool isPaired() const = 0;
   virtual uint16_t era() const = 0;
   virtual uint32_t lastCounter() const = 0;
-  // Atomic session verify: folds bonded + eraOk + freshness + HMAC into one
+  // Atomic session verify: folds paired + eraOk + freshness + HMAC into one
   // step. On success consumes the counter and mints a valid token; on any
   // failure returns invalid with zero state change.
   virtual connection::Verified tryConsume(uint32_t ctr, bool eraOk, const uint8_t* tag, const uint8_t* msg,

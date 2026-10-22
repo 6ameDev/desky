@@ -295,13 +295,13 @@ void test_udp_classify_unbond() {
 }
 
 void test_udp_unbond_tag_msg_golden() {
-  uint8_t msg[udpstatus::kUnbondMsgLen];
+  uint8_t msg[udpstatus::kUnpairMsgLen];
   pairing::unbondTagMsg(1u, msg);
   const uint8_t expected[10] = {0x55, 0x4E, 0x42, 0x4F, 0x4E, 0x44, 0x00, 0x00, 0x00, 0x01};
   TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, msg, sizeof(expected));
 }
 
-// Tier-1 silent auto-rekey (Task: era+PSK rotation): wire constants pin the
+// Tier-1 silent auto-refresh (Task: era+PSK rotation): wire constants pin the
 // claimed headers/sizes (0x53/0x54 — never 0xAA/0xAC/0xBB/0x50/0x51/0x52/
 // 0xAD), and the demux accepts exactly the 14B REKEY_REQ shape.
 
@@ -392,9 +392,9 @@ void test_udp_alive_fresh_millis_wrap() {
   TEST_ASSERT_FALSE(udpstatus::isAliveFresh(0xFFFFFF00u, 6000u));
 }
 
-// Telemetry TX gate (broadcast fallback deleted): unicast only when bonded
-// && peer pinned && alive-fresh; else silent. Pre-bond stays silent.
-void test_udp_telemetry_gate_unicast_when_bonded_alive() {
+// Telemetry TX gate (broadcast fallback deleted): unicast only when paired
+// && peer pinned && alive-fresh; else silent. Pre-pair stays silent.
+void test_udp_telemetry_gate_unicast_when_paired_alive() {
   TEST_ASSERT_TRUE(udpstatus::shouldSendTelemetry(true, true, 1000u, 1000u));
   TEST_ASSERT_TRUE(udpstatus::shouldSendTelemetry(true, true, 1000u, 6000u));  // Boundary fresh.
 }
@@ -405,14 +405,14 @@ void test_udp_telemetry_gate_silent_when_stale() {
 }
 
 void test_udp_telemetry_gate_silent_when_no_peer() {
-  // Post-bond reboot before the first packet: no peer yet -> silent (the
+  // Post-pair reboot before the first packet: no peer yet -> silent (the
   // deleted broadcast fallback used to send here).
   TEST_ASSERT_FALSE(udpstatus::shouldSendTelemetry(true, false, 1000u, 1000u));
   TEST_ASSERT_FALSE(udpstatus::shouldSendTelemetry(true, false, 0u, 0u));
 }
 
-void test_udp_telemetry_gate_silent_pre_bond() {
-  // Pre-bond stays silent even with a pinned peer + fresh stamp.
+void test_udp_telemetry_gate_silent_pre_pair() {
+  // Pre-pair stays silent even with a pinned peer + fresh stamp.
   TEST_ASSERT_FALSE(udpstatus::shouldSendTelemetry(false, true, 1000u, 1000u));
   TEST_ASSERT_FALSE(udpstatus::shouldSendTelemetry(false, false, 1000u, 1000u));
   TEST_ASSERT_FALSE(udpstatus::shouldSendTelemetry(false, true, 1000u, 6001u));
@@ -503,7 +503,7 @@ void test_conn_refresh_then_clear() {
 }
 
 void test_conn_pin_peer_no_stamp() {
-  // Pre-bond quirk: pinning records the peer WITHOUT touching the alive
+  // Pre-pair quirk: pinning records the peer WITHOUT touching the alive
   // stamp.
   connection::ConnectionManager mgr(udpstatus::kAliveMs);
   mgr.pinPeer(0xC0A80401u);
@@ -737,7 +737,7 @@ void test_udp_pair_err_frame_golden() {
 // Additive reason 4 (internal_retry_fresh) PAIR_ERR golden:
 // 4B [0x52|0x04|0x00|0x56] (0x52^0x04^0x00 = 0x56). This is the exact wire
 // byte string UdpServer::handlePairReq sends on burn-failure after tryCode
-// kOk (saveBond/deriveKek/wrapPsk fail — code already burned single-use),
+// kOk (savePair/deriveKek/wrapPsk fail — code already burned single-use),
 // via pairing::toWireReason(pairing::Result::kInternal). Genuine
 // not_in_window still sends reason 2 via the tryCode path. TX-only: never RX.
 void test_udp_pair_err_reason4_frame_golden() {

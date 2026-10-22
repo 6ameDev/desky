@@ -21,7 +21,7 @@
 // is counters. No heap/String anywhere in the RX/TX path.
 //
 // PairShow pump: the pairing window's 6-digit code + valid-seconds stage in
-// PairingTask; the main loop calls pumpPairShow, which composes the 8B
+// PairingTask; the main loop calls publishPairShow, which composes the 8B
 // PairShow payload and hands one frame per window to sendUnicast. Completion
 // goes out as the empty PairDone frame via notifyPairingDone. No head linked
 // -> the pump waits silently; window closed -> unlatch for the next window.
@@ -203,7 +203,7 @@ class LinkServer {
   static constexpr size_t kTcpStreamCap = 16384;
   static constexpr size_t kJpegMsgCap = 16384;
   static constexpr uint32_t kJpegLogEveryN = 30;
-  // HB_ACK era/resync field: no rekey domain on the transport-only link
+  // HB_ACK era/resync field: no refresh domain on the transport-only link
   // (keyed link later) — always 0, echoed channel comes from the HB itself.
   static constexpr uint32_t kHbAckEra = 0;
 
@@ -623,7 +623,7 @@ class LinkServer {
   }
 
   // HB_ACK TX (core->head): echoes the HB's channel + the fixed era (no
-  // rekey domain on the transport-only link). The HB pinned the peer just
+  // refresh domain on the transport-only link). The HB pinned the peer just
   // before this call, so sendUnicast reaches exactly the HB sender.
   void sendHbAck(const IPAddress& ip, uint16_t port, uint8_t channel) {
     (void)ip;

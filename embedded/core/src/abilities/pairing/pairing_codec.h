@@ -69,11 +69,11 @@ inline uint8_t sanitizePersistEvery(uint16_t v) {
 constexpr uint8_t kUnbondHeader = udp::kUnbondHeader;
 constexpr size_t kUnbondSize = udp::kUnbondSize;
 constexpr size_t kUnbondTagLen = udp::kUnbondTagLen;
-constexpr size_t kUnbondMsgLen = udp::kUnbondMsgLen;
+constexpr size_t kUnpairMsgLen = udp::kUnpairMsgLen;
 
 // UNBOND tag message (10B, host-testable): "UNBOND" ASCII || counterBE4.
 // Domain-separates the unbond tag from drive tags.
-inline void unbondTagMsg(uint32_t counter, uint8_t out10[kUnbondMsgLen]) {
+inline void unbondTagMsg(uint32_t counter, uint8_t out10[kUnpairMsgLen]) {
   if (out10 == nullptr) {
     return;
   }
@@ -98,7 +98,7 @@ constexpr size_t kPairIvLen = 12;
 constexpr size_t kPairAadLen = 9;  // 0x51 || client_nonce(4) || server_nonce(4)
 constexpr size_t kPairTagLen = 16;
 constexpr uint8_t kPairOkHeader = 0x51;
-// ── Tier-1 silent auto-rekey (era + PSK rotation, fully silent) ──────────
+// ── Tier-1 silent auto-refresh (era + PSK rotation, fully silent) ──────────
 // Wire (see shared/protocol/README.md):
 //   REKEY_REQ  App -> Robot, 14B [0x53 | eraBE2 | counterBE4 | tag6 | XOR]
 //     tag = first6(HMAC-SHA256(oldPsk, "REKEY" || eraBE2 || counterBE4))
@@ -109,7 +109,7 @@ constexpr uint8_t kPairOkHeader = 0x51;
 //   PSK_next = HKDF-SHA256(salt="desky-rekey-v1", IKM=oldPsk16,
 //                           info=eraBE2(new), L=16)
 // both sides derive; only the era needs sync + confirm. Counter resets to
-// the bond baseline (0 persisted, first drive uses 1) so the session resumes
+// the pair baseline (0 persisted, first drive uses 1) so the session resumes
 // gapless. Old PSK is dropped immediately on switch; a duplicate REQ with
 // era == current era re-ACKs idempotently without re-deriving.
 constexpr uint8_t kRekeyReqHeader = udp::kRekeyReqHeader;
@@ -122,7 +122,7 @@ constexpr size_t kRekeyAckMsgLen = 10;  // "REKEYACK"(8) || eraBE2
 
 // REKEY_REQ tag message (11B, host-testable): "REKEY" ASCII || eraBE2 ||
 // counterBE4.
-inline void rekeyTagMsg(uint16_t era, uint32_t counter, uint8_t out11[kRekeyMsgLen]) {
+inline void refreshTagMsg(uint16_t era, uint32_t counter, uint8_t out11[kRekeyMsgLen]) {
   if (out11 == nullptr) {
     return;
   }
@@ -141,7 +141,7 @@ inline void rekeyTagMsg(uint16_t era, uint32_t counter, uint8_t out11[kRekeyMsgL
 
 // REKEY_ACK tag message (10B, host-testable): "REKEYACK" ASCII || eraBE2.
 // Authenticated under the NEW PSK so the ACK proves the switch.
-inline void rekeyAckTagMsg(uint16_t era, uint8_t out10[kRekeyAckMsgLen]) {
+inline void refreshAckTagMsg(uint16_t era, uint8_t out10[kRekeyAckMsgLen]) {
   if (out10 == nullptr) {
     return;
   }
@@ -161,7 +161,7 @@ inline void rekeyAckTagMsg(uint16_t era, uint8_t out10[kRekeyAckMsgLen]) {
 // Wire (see shared/protocol/README.md):
 //   ALIVE      App -> Robot, 14B [0x55 | eraBE2 | counterBE4 | tag6 | XOR]
 //     tag = first6(HMAC-SHA256(psk, "ALIVE" || eraBE2 || counterBE4))
-//     era = CURRENT bonded era.
+//     era = CURRENT paired era.
 //   DISCONNECT App -> Robot, 14B [0x56 | eraBE2 | counterBE4 | tag6 | XOR]
 //     tag = first6(HMAC-SHA256(psk, "DISCONNECT" || eraBE2 || counterBE4)).
 // Both ride the shared strictly-increasing counter: a valid frame consumes
@@ -230,7 +230,7 @@ enum class Result : uint8_t {
   kBadCode = 0,
   kLocked = 1,
   kNotInWindow = 2,
-  kAlreadyBonded = 3,
+  kAlreadyPaired = 3,
   kInternal = 4,
 };
 
