@@ -1,0 +1,57 @@
+# Desky architecture guardrails (see embedded/AGENTS.md): layer edges as Semgrep rules, all ERROR.
+# Runs via `make check-arch` in core/ + head/ (wired into `make check`). Rule changes review like code.
+# Allowlist pins the audited tree: main.cpp + pairing_task.h use esp_random (esp_system.h);
+# transport/udp_server.h publishes via services/event_bus.h (dumb-pipe event edge, no state read).
+rules:
+  - id: desky-no-middleware-dir
+    paths:
+      include: ['**/src/middleware/**']
+    pattern-regex: '^'
+    languages: [generic]
+    message: 'middleware/ is not a layer: place the file in hal/transport/services/abilities/behavior (layer rule).'
+    severity: ERROR
+  - id: desky-hal-no-upstack-includes
+    paths:
+      include: ['**/src/hal/**']
+    pattern-regex: '#include\s*"(transport|services|abilities|behavior)/[^"]+"'
+    languages: [generic]
+    message: 'hal/ must stay driver-only: no transport/services/abilities/behavior project includes (layer rule).'
+    severity: ERROR
+  - id: desky-socket-headers-only-at-edges
+    paths:
+      include: ['**/src/**']
+      exclude:
+        - '**/src/transport/**'
+        - '**/src/hal/camera_driver.h'
+        - '**/src/abilities/ota/ota_task.h'
+        - '**/src/abilities/pairing/pairing_task.h'
+        - '**/src/main.cpp'
+    pattern-regex: '#include\s*<(ESPAsync[^>]*|Async[^>]*|WiFi[^>]*|Update[^>]*|esp_camera[^>]*|esp_system[^>]*)>'
+    languages: [generic]
+    message: 'socket/vendor-sideband headers (<WiFi*>/<Async*>/<Update*>/<esp_camera*>/<esp_system*>) live only in transport/**, hal/camera_driver.h, abilities/ota/ota_task.h (+pinned esp_random edges) (layer rule).'
+    severity: ERROR
+  - id: desky-head-transport-no-upstack-includes
+    paths:
+      include: ['**/src/transport/**']
+    pattern-regex: '#include\s*"[^"]*(power_manager|face_renderer|face_task|face_manager|ota_client|ota_task|ota_manager|camera_driver)[^"]*"'
+    languages: [generic]
+    message: 'transport/ must stay a dumb pipe: no power/face/ota/camera project includes (head link rule).'
+    severity: ERROR
+  - id: desky-core-transport-allowlist
+    paths:
+      include: ['**/src/transport/**']
+    pattern-regex: '#include\s*"(abilities|behavior|services)/(?!(pairing/pairing_task\.h|pairing/pairing_codec\.h|coordinator\.h|event_bus\.h)")[^"]+"'
+    languages: [generic]
+    message: 'core transport/ may only reach abilities/pairing/{pairing_task.h,pairing_codec.h}, behavior/coordinator.h, services/event_bus.h (layer rule).'
+    severity: ERROR
+  - id: desky-no-socket-use-in-behavior-and-managers
+    paths:
+      include: ['**/src/behavior/**', '**/src/**/*_manager.h']
+    patterns:
+      - pattern-either:
+          - pattern: 'WiFi.$M(...)'
+          - pattern: 'Serial2.$M(...)'
+          - pattern: 'Update.$M(...)'
+    languages: [c, cpp]
+    message: 'behavior/ and *_manager.h must not touch socket APIs (WiFi./Serial2./Update.): keep I/O in transport/tasks (layer rule).'
+    severity: ERROR

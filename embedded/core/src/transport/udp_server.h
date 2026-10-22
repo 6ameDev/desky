@@ -202,10 +202,8 @@ inline bool packQrBitmap(bool valid, const uint8_t* modules, uint8_t* out) {
 
 }  // namespace udpstatus
 
-// Telemetry decision + encode core, shared by the firmware class below and
-// host tests.
+// Order pin for services/telemetry_manager.h (consumers include udp_server.h first).
 #define UDPSTATUS_TOP_HALF_INCLUDED
-#include "services/telemetry_manager.h"
 
 #ifdef ARDUINO
 // ── Firmware: UDP server task (WiFi + WiFiUDP, Core 0) ────────────────────

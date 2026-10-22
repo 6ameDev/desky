@@ -2,7 +2,7 @@
 -include .env
 export
 
-.PHONY: clean build build-release build-sta build-bench test test-verbose check check-pins upload-monitor upload-monitor-release upload-monitor-sta upload-sta upload-bench monitor-decode
+.PHONY: clean build build-release build-sta build-bench test test-verbose check check-pins check-arch upload-monitor upload-monitor-release upload-monitor-sta upload-sta upload-bench monitor-decode
 
 clean:
 	pio run -e desky -t clean
@@ -79,10 +79,25 @@ check-pins:
 	@! grep -E "\\.git$$" platformio.ini
 	@! grep -E "releases/download/stable" platformio.ini
 
-# Full gate: formatting + pin lint + both firmware builds (deprecation-scanned) + host tests
+# Architecture guardrails (see ../tools/arch_guardrails.yaml): layer edges as
+# Semgrep ERROR rules + tracked-source hygiene (no task breadcrumbs, format
+# glob coverage over src/**/*.h, one test runner main). Semgrep pinned in CI.
+check-arch:
+	semgrep --config ../tools/arch_guardrails.yaml --error src test
+	@! git --no-pager grep -nE "SLICE|Slice [0-9]|Task [0-9]|Task T-[0-9]|T-[0-9]+|H[0-9]\.[0-9]|M[0-9]+-M[0-9]+|flag-day|FLAG-DAY|Pre-2|PRE-2|middleware|MIDDLEWARE" -- src test
+	@for f in $$(find src -name '*.h'); do \
+	  case "$$f" in \
+	    src/services/*.h|src/hal/*.h|src/behavior/*.h|src/transport/*.h|src/abilities/*/*.h) ;; \
+	    *) echo "check-arch: $$f not covered by the format globs"; exit 1;; \
+	  esac; \
+	done
+	@test $$(grep -l "int main" test/*.cpp | wc -l) -eq 1
+
+# Full gate: formatting + pin lint + arch guardrails + both firmware builds (deprecation-scanned) + host tests
 check:
 	clang-format --dry-run --Werror src/main.cpp src/services/*.h src/hal/*.h src/behavior/*.h src/transport/*.h src/abilities/*/*.h include/*.h include/mcu/*.h ../shared/common/*.h ../shared/link/*.h test/*.cpp
 	$(MAKE) check-pins
+	$(MAKE) check-arch
 	pio run -e desky > /tmp/check-desky.log 2>&1; CODE=$$?; cat /tmp/check-desky.log; test $$CODE -eq 0
 	@! grep -i "is deprecated and will be removed" /tmp/check-desky.log
 	pio run -e desky-release > /tmp/check-release.log 2>&1; CODE=$$?; cat /tmp/check-release.log; test $$CODE -eq 0
