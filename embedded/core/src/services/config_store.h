@@ -12,7 +12,7 @@
 #include <Preferences.h>
 
 #include "common/logger.h"
-#include "persist_receipt.h"
+#include "pairing_receipt.h"
 
 class ConfigStore {
  public:
@@ -58,11 +58,11 @@ class ConfigStore {
   // (marks the receipt valid ONLY on a full persist — the store-before-send
   // proof); the plain overload delegates.
   static bool saveBond(const uint8_t* psk, uint32_t counter) {
-    connection::PersistReceipt receipt;
+    connection::PairingReceipt receipt;
     return saveBond(psk, counter, receipt);
   }
 
-  static bool saveBond(const uint8_t* psk, uint32_t counter, connection::PersistReceipt& receipt) {
+  static bool saveBond(const uint8_t* psk, uint32_t counter, connection::PairingReceipt& receipt) {
     receipt.mark(false);
     if (psk == nullptr) {
       return false;
@@ -153,11 +153,11 @@ class ConfigStore {
   // Persists a rekeyed bond atomically: next PSK + next era + baseline
   // counter 0. Same minter/delegating split as saveBond above.
   static bool saveRekey(const uint8_t* psk, uint16_t era, uint32_t counter) {
-    connection::PersistReceipt receipt;
+    connection::PairingReceipt receipt;
     return saveRekey(psk, era, counter, receipt);
   }
 
-  static bool saveRekey(const uint8_t* psk, uint16_t era, uint32_t counter, connection::PersistReceipt& receipt) {
+  static bool saveRekey(const uint8_t* psk, uint16_t era, uint32_t counter, connection::PairingReceipt& receipt) {
     receipt.mark(false);
     if (psk == nullptr) {
       return false;

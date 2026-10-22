@@ -21,13 +21,13 @@
 // call the privileged effects. Effect-before-verify fails to compile: the
 // effect signatures require the moved token, and every token is move-only
 // with deleted copies. Invalid token -> no state change (fail-closed).
-// PersistReceipt default-constructs INVALID; only ConfigStore (friend) can
+// PairingReceipt default-constructs INVALID; only ConfigStore (friend) can
 // mark one valid via saveBond/saveRekey.
 
 #include <stddef.h>
 #include <stdint.h>
 
-#include "persist_receipt.h"
+#include "pairing_receipt.h"
 
 namespace connection {
 

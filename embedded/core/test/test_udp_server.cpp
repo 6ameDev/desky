@@ -13,7 +13,7 @@
 #include <type_traits>
 #include <utility>
 
-#include "../include/persist_receipt.h"  // PersistReceipt vocabulary home (move-only pins below)
+#include "../include/pairing_receipt.h"  // PairingReceipt vocabulary home (move-only pins below)
 #include "../src/abilities/pairing/pairing_codec.h"
 #include "../src/transport/udp_server.h"
 // Platform split 1.1: udp_server.h is included before telemetry_manager.h (it
@@ -77,9 +77,9 @@ static_assert(std::is_move_constructible<connection::Verified>::value, "Verified
 static_assert(!std::is_copy_constructible<connection::Pinned>::value, "Pinned is move-only");
 static_assert(!std::is_copy_assignable<connection::Pinned>::value, "Pinned is move-only");
 static_assert(std::is_move_constructible<connection::Pinned>::value, "Pinned moves");
-static_assert(!std::is_copy_constructible<connection::PersistReceipt>::value, "PersistReceipt is move-only");
-static_assert(!std::is_copy_assignable<connection::PersistReceipt>::value, "PersistReceipt is move-only");
-static_assert(std::is_move_constructible<connection::PersistReceipt>::value, "PersistReceipt moves");
+static_assert(!std::is_copy_constructible<connection::PairingReceipt>::value, "PairingReceipt is move-only");
+static_assert(!std::is_copy_assignable<connection::PairingReceipt>::value, "PairingReceipt is move-only");
+static_assert(std::is_move_constructible<connection::PairingReceipt>::value, "PairingReceipt moves");
 
 void test_status_flags_pack_bits() {
   TEST_ASSERT_EQUAL_UINT8(0x01, udpstatus::packStatus(true, false, 0));
@@ -540,9 +540,9 @@ void test_tokens_move_transfers_validity() {
   connection::Pinned p2(std::move(p));
   TEST_ASSERT_TRUE(p2.valid());
   TEST_ASSERT_EQUAL_UINT32(5, p2.peer());
-  connection::PersistReceipt r;  // Default-constructs INVALID (fail-closed).
+  connection::PairingReceipt r;  // Default-constructs INVALID (fail-closed).
   TEST_ASSERT_FALSE(r.valid());
-  connection::PersistReceipt r2(std::move(r));
+  connection::PairingReceipt r2(std::move(r));
   TEST_ASSERT_FALSE(r2.valid());
 }
 

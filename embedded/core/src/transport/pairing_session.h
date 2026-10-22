@@ -16,7 +16,7 @@
 #ifdef ARDUINO
 #include <Arduino.h>
 
-#include "persist_receipt.h"
+#include "pairing_receipt.h"
 #include "transport/connection_manager.h"
 
 namespace transport {
@@ -32,9 +32,9 @@ class IUdpTransport {
   // every byte of state.
   virtual connection::Pinned markAlive(connection::Verified&& verified, const IPAddress& rip, uint16_t rport,
                                        uint32_t nowMs, uint16_t era) = 0;
-  // PAIR_OK unicast: consumes the PersistReceipt (proves the bond hit NVS
+  // PAIR_OK unicast: consumes the PairingReceipt (proves the bond hit NVS
   // before anything left the radio). Invalid receipt stays silent.
-  virtual void sendPairOk(connection::PersistReceipt receipt, const IPAddress& ip, uint16_t port, const uint8_t* ok,
+  virtual void sendPairOk(connection::PairingReceipt receipt, const IPAddress& ip, uint16_t port, const uint8_t* ok,
                           size_t len) = 0;
   // PAIR_OK redelivery unicast (lost-PAIR_OK race).
   virtual void sendPairRedeliver(const IPAddress& ip, uint16_t port, const uint8_t* ok, size_t len) = 0;
