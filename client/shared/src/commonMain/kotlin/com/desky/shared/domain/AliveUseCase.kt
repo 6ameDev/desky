@@ -12,13 +12,13 @@ import kotlinx.coroutines.CancellationException
  *   replies — steady telemetry is the ACK. The caller (the control
  *   ViewModel's send loop) owns the counter exactly like the drive path:
  *   allocated from the shared [DriveCounter] via its session helper, so
- *   `ALIVE` + `DRIVE_V2` + `REKEY_REQ` share one strictly increasing
+ *   `ALIVE` + `DRIVE` + `PAIR_REFRESH_REQ` share one strictly increasing
  *   sequence (a valid `ALIVE` consumes `lastCounter_` exactly like drive).
  * - [sendDisconnect] sends one `DISCONNECT` (`[0x56 | eraBE2 | counterBE4
  *   | tag6 | XOR]`); the caller repeats it 2x byte-identical (same
- *   counter — one allocation, like `UNBOND`'s 3x in [ForgetDeviceUseCase])
+ *   counter — one allocation, like `UNPAIR`'s 3x in [ForgetDeviceUseCase])
  *   on backgrounding. The robot refresh-then-clears (net peer dropped,
- *   bond KEPT).
+ *   pair KEPT).
  *
  * Silent: transport errors map to [Outcome.Failure] and the caller
  * deliberately never surfaces them (no error banner — a lost keepalive

@@ -1,7 +1,7 @@
 #pragma once
 // Pairing task binding — abilities/pairing (firmware-only crypto).
 //
-// mbedTLS glue (deriveKek/wrapPsk/ctEqual/deriveRefreshPsk) + the PairingTask
+// mbedTLS glue (deriveKek/wrapPsk/ctEqual/derivePairRefreshPsk) + the PairingTask
 // session class below (enrolment + pair destruction + refresh + LastPair/QR
 // state + pair-family RX dispatch). Never included by host tests.
 
@@ -145,16 +145,16 @@ inline bool ctEqual(const void* a, const void* b, size_t n) {
   return mbedtls_ct_memcmp(a, b, n) == 0;
 }
 
-// Tier-1 refresh key schedule: PSK_next = HKDF-SHA256(salt="desky-rekey-v1",
+// Tier-1 pair-refresh key schedule: PSK_next = HKDF-SHA256(salt="desky-pair-refresh-v1",
 // IKM=oldPsk16, info=eraBE2(new), L=16). False on null input or mbedTLS
 // error (out zeroized on failure).
-inline bool deriveRefreshPsk(const uint8_t oldPsk[kPskLen], uint16_t nextEra, uint8_t nextPskOut[kPskLen]) {
+inline bool derivePairRefreshPsk(const uint8_t oldPsk[kPskLen], uint16_t nextEra, uint8_t nextPskOut[kPskLen]) {
   DESKY_ASSERT(oldPsk != nullptr);
   DESKY_ASSERT(nextPskOut != nullptr);
   if (oldPsk == nullptr || nextPskOut == nullptr) {
     return false;
   }
-  static const char kSalt[] = "desky-rekey-v1";
+  static const char kSalt[] = "desky-pair-refresh-v1";
   uint8_t info[2];
   info[0] = static_cast<uint8_t>((nextEra >> 8) & 0xFFu);
   info[1] = static_cast<uint8_t>(nextEra & 0xFFu);
@@ -189,8 +189,8 @@ inline bool deriveRefreshPsk(const uint8_t oldPsk[kPskLen], uint16_t nextEra, ui
 //   sendPairOk(PairingReceipt, IPAddress, uint16_t, bytes, len)
 //   sendPairRedeliver(IPAddress, uint16_t, bytes, len) (lost-PAIR_OK race)
 //   sendPairErr(IPAddress, uint16_t, bytes, len)
-//   sendRekeyAck(Pinned, IPAddress, uint16_t, bytes, len)
-//   sendRekeyAckImpl(IPAddress, uint16_t, bytes, len) (idempotent duplicate path)
+//   sendPairRefreshAck(Pinned, IPAddress, uint16_t, bytes, len)
+//   sendPairRefreshAckImpl(IPAddress, uint16_t, bytes, len) (idempotent duplicate path)
 //   isFreshCounter(lastSeen, got) -> bool (udpstatus bridge)
 //   shouldRedeliver(...) -> bool (udpstatus bridge)
 // Shared socket-adjacent state (peer slot + alive stamp) stays in transport:
@@ -237,7 +237,7 @@ class PairingTask : public transport::IPairingSession {
     link_ = link;
   }
 
-  // Pair-restore: paired -> DRIVE_V2 verifies against the stored PSK;
+  // Pair-restore: paired -> DRIVE verifies against the stored PSK;
   // unpaired -> opens a pairing window (the code LOG_I line is the display).
   // ConfigStore::begin() already ran in setup(). The PAIR_OK redelivery cache
   // stays invalid across reboot (RAM-only).
@@ -253,7 +253,7 @@ class PairingTask : public transport::IPairingSession {
       for (size_t i = 0; i < sizeof(psk_); ++i) {
         psk_[i] = loadedPsk[i];
       }
-      LOG_I("UDP", "bond loaded counter=%lu era=%u", static_cast<unsigned long>(storedCtr),
+      LOG_I("UDP", "pair loaded counter=%lu era=%u", static_cast<unsigned long>(storedCtr),
             static_cast<unsigned>(era_));
     } else {
       paired_ = false;
@@ -337,7 +337,7 @@ class PairingTask : public transport::IPairingSession {
   bool isPaired() const override { return paired_; }
 
   // Session-era read for the ALIVE/DISCONNECT handlers and the drive
-  // publish pin (DRIVE_V2 carries no era).
+  // publish pin (DRIVE carries no era).
   uint16_t era() const override { return era_; }
 
   // Last-consumed-counter read for the logging-only freshness pre-checks in
@@ -461,10 +461,10 @@ class PairingTask : public transport::IPairingSession {
       case pairing::kPairReqHeader:
         handlePairReq(buf, rip, rport, nowMs, t);
         break;
-      case pairing::kUnbondHeader:
+      case pairing::kUnpairHeader:
         handleUnpair(buf, rip, rport, nowMs, t);
         break;
-      case pairing::kRekeyReqHeader:
+      case pairing::kPairRefreshReqHeader:
         handlePairRefresh(buf, rip, rport, nowMs, t);
         break;
       default:
@@ -473,7 +473,7 @@ class PairingTask : public transport::IPairingSession {
   }
 
   // PAIR_REQ layout [0x50|code6|clientNonce4|XOR] (len + header + XOR checked
-  // by the caller). Paired -> PAIR_ERR already_bonded. Else tryCode; kOk
+  // by the caller). Paired -> PAIR_ERR already_paired. Else tryCode; kOk
   // mints a fresh PSK with store-before-send ordering (savePair FIRST, then
   // KEK->wrap->PAIR_OK unicast). Crypto/store failures after kOk answer
   // PAIR_ERR internal_retry_fresh (reason 4): the code is already burned, so
@@ -487,7 +487,7 @@ class PairingTask : public transport::IPairingSession {
     }
     // Lost-PAIR_OK race: while paired, an identical retry (same code +
     // client nonce) inside the redelivery window re-unicasts the cached
-    // PAIR_OK. Checked BEFORE the already_bonded reply below.
+    // PAIR_OK. Checked BEFORE the already-paired reply below.
     if (paired_ && t.shouldRedeliver(lastPair_.valid, lastPair_.code6, lastPair_.cliNonce4, buf + 1, buf + 7,
                                      lastPair_.pairMs, nowMs)) {
       t.sendPairRedeliver(rip, rport, lastPair_.ok39, sizeof(lastPair_.ok39));
@@ -500,8 +500,8 @@ class PairingTask : public transport::IPairingSession {
       err[2] = 0;
       err[3] = static_cast<uint8_t>(err[0] ^ err[1] ^ err[2]);
       t.sendPairErr(rip, rport, err, sizeof(err));
-      dropFirst(firstPairDrop_, "pair req while bonded (first of boot)");
-      LOG_EVERY_N(10, "UDP", "pair req while bonded");
+      dropFirst(firstPairDrop_, "pair req while paired (first of boot)");
+      LOG_EVERY_N(10, "UDP", "pair req while paired");
       return;
     }
     const pairing::Result r = pairCore_.tryCode(buf + 1, pairing::kCodeLen, nowMs);
@@ -540,7 +540,7 @@ class PairingTask : public transport::IPairingSession {
     bool sent = false;
     uint8_t out[pairing::kPairOkSize] = {};  // Function scope: cached into lastPair_ on send.
     // Pair baseline is counter 0 (never valid on the wire): the first
-    // DRIVE_V2 uses counter 1. The receipt overload mints the
+    // DRIVE uses counter 1. The receipt overload mints the
     // store-before-send proof consumed by sendPairOk (invalid until the NVS
     // save lands).
     connection::PairingReceipt receipt;
@@ -625,7 +625,7 @@ class PairingTask : public transport::IPairingSession {
     mbedtls_platform_zeroize(serverNonce, sizeof(serverNonce));
   }
 
-  // UNBOND layout [0xAD|ctrBE4|tag6|XOR] (len + header + XOR checked by the
+  // UNPAIR layout [0xAD|ctrBE4|tag6|XOR] (len + header + XOR checked by the
   // caller). Symmetric forget: a signed fire-and-forget from the paired
   // owner. Fail = silent drop. Pass clears the NVS pair + Core + key material
   // + redelivery cache and opens a fresh pairing window. No reply packet.
@@ -638,20 +638,20 @@ class PairingTask : public transport::IPairingSession {
       return;
     }
     if (!paired_) {
-      dropFirst(firstUnpairDrop_, "drop unbond unbonded (first of boot)");
-      LOG_EVERY_N(20, "UDP", "drop unbond unbonded");
+      dropFirst(firstUnpairDrop_, "drop unpair unpaired (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop unpair unpaired");
       return;
     }
     const uint32_t ctr = (static_cast<uint32_t>(buf[1]) << 24) | (static_cast<uint32_t>(buf[2]) << 16) |
                          (static_cast<uint32_t>(buf[3]) << 8) | static_cast<uint32_t>(buf[4]);
     if (!t.isFreshCounter(lastCounter_, ctr)) {
-      dropFirst(firstUnpairDrop_, "drop unbond replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
-      LOG_EVERY_N(20, "UDP", "drop unbond replay ctr=%lu", static_cast<unsigned long>(ctr));
+      dropFirst(firstUnpairDrop_, "drop unpair replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
+      LOG_EVERY_N(20, "UDP", "drop unpair replay ctr=%lu", static_cast<unsigned long>(ctr));
       return;
     }
-    // tag = first6(HMAC-SHA256(psk, "UNBOND"||counterBE4)).
+    // tag = first6(HMAC-SHA256(psk, "UNPAIR"||counterBE4)).
     uint8_t msg[pairing::kUnpairMsgLen];
-    pairing::unbondTagMsg(ctr, msg);
+    pairing::unpairTagMsg(ctr, msg);
     uint8_t mac[32];
     const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
     int rc = -1;
@@ -661,18 +661,18 @@ class PairingTask : public transport::IPairingSession {
     mbedtls_platform_zeroize(msg, sizeof(msg));
     bool ok = (rc == 0);
     if (ok) {
-      ok = pairing::ctEqual(mac, buf + 5, pairing::kUnbondTagLen);
+      ok = pairing::ctEqual(mac, buf + 5, pairing::kUnpairTagLen);
     }
     mbedtls_platform_zeroize(mac, sizeof(mac));
     if (!ok) {
-      dropFirst(firstUnpairDrop_, "drop unbond auth (first of boot)");
-      LOG_EVERY_N(20, "UDP", "drop unbond auth");
+      dropFirst(firstUnpairDrop_, "drop unpair auth (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop unpair auth");
       return;
     }
     // Fold the passed prechecks into Verified (per-cause drops+logs above
     // stay verbatim), consumed by the refresh-then-clear below.
     const connection::Checks unpairChecks{paired_, true, t.isFreshCounter(lastCounter_, ctr), ok};
-    connection::Verified unbondVerified = connection::AuthVerifier::verify(unpairChecks, ctr, era_);
+    connection::Verified unpairVerified = connection::AuthVerifier::verify(unpairChecks, ctr, era_);
     ConfigStore::clearPair();
     pairCore_.onUnpaired();  // PairingExchange forward (superset of clearPair: +era/pairMs reset).
     mbedtls_platform_zeroize(psk_, sizeof(psk_));
@@ -681,7 +681,7 @@ class PairingTask : public transport::IPairingSession {
     era_ = 0;
     // Refresh-then-clear: the signed goodbye still proves the owner was alive
     // at nowMs; the net peer is gone.
-    conn_->refreshThenClear(std::move(unbondVerified), nowMs);
+    conn_->refreshThenClear(std::move(unpairVerified), nowMs);
     lastPair_.valid = false;
     mbedtls_platform_zeroize(lastPair_.code6, sizeof(lastPair_.code6));
     mbedtls_platform_zeroize(lastPair_.cliNonce4, sizeof(lastPair_.cliNonce4));
@@ -693,17 +693,17 @@ class PairingTask : public transport::IPairingSession {
     if (link_ != nullptr) {
       notifyPairingDone(*link_);  // Fire-and-forget; peerless = silent no-op.
     }
-    LOG_I("UDP", "unbond ok");
+    LOG_I("UDP", "unpair ok");
     if (!openPairingWindow()) {
-      LOG_W("UDP", "pair window open failed (post-unbond)");
+      LOG_W("UDP", "pair window open failed (post-unpair)");
     }
   }
 
-  // REKEY_REQ layout [0x53|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR
+  // PAIR_REFRESH_REQ layout [0x53|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR
   // checked by the caller). Silent Tier-1 rotation: the app derives PSK_next
   // under the old psk and asks to move to era+1; the robot verifies (paired
   // -> era is exactly next -> counter fresh -> HMAC under the old psk),
-  // persists BEFORE the ACK, then switches atomically and replies REKEY_ACK.
+  // persists BEFORE the ACK, then switches atomically and replies PAIR_REFRESH_ACK.
   // Next drive uses counter 1 under the new PSK. A failed NVS save answers
   // nothing (the app retries). Old PSK is dropped immediately on switch (no
   // reorder window). Duplicate REQ with era == current era re-ACKs
@@ -716,8 +716,8 @@ class PairingTask : public transport::IPairingSession {
       return;
     }
     if (!paired_) {
-      dropFirst(firstRefreshDrop_, "drop rekey unbonded (first of boot)");
-      LOG_EVERY_N(20, "UDP", "drop rekey unbonded");
+      dropFirst(firstPairRefreshDrop_, "drop pair-refresh unpaired (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop pair-refresh unpaired");
       return;
     }
     const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(buf[1]) << 8) | static_cast<uint16_t>(buf[2]));
@@ -725,29 +725,31 @@ class PairingTask : public transport::IPairingSession {
       // Idempotent duplicate: re-ACK WITHOUT re-deriving or re-verifying
       // (the lost-ACK retry reuses the same era; the ACK carries no secret).
       // Explicitly bypasses the Pinned gate below — documented, by design.
-      uint8_t ack[pairing::kRekeyAckSize];
+      uint8_t ack[pairing::kPairRefreshAckSize];
       if (composePairRefreshAck(era_, ack)) {
-        t.sendRekeyAckImpl(rip, rport, ack, sizeof(ack));
+        t.sendPairRefreshAckImpl(rip, rport, ack, sizeof(ack));
       }
-      LOG_EVERY_N(20, "UDP", "rekey redeliver era=%u", static_cast<unsigned>(era_));
+      LOG_EVERY_N(20, "UDP", "pair-refresh redeliver era=%u", static_cast<unsigned>(era_));
       return;
     }
     if (era != static_cast<uint16_t>(era_ + 1)) {
-      dropFirst(firstRefreshDrop_, "drop rekey era=%u have=%u (first of boot)", static_cast<unsigned>(era),
+      dropFirst(firstPairRefreshDrop_, "drop pair-refresh era=%u have=%u (first of boot)", static_cast<unsigned>(era),
                 static_cast<unsigned>(era_));
-      LOG_EVERY_N(20, "UDP", "drop rekey era=%u have=%u", static_cast<unsigned>(era), static_cast<unsigned>(era_));
+      LOG_EVERY_N(20, "UDP", "drop pair-refresh era=%u have=%u", static_cast<unsigned>(era),
+                  static_cast<unsigned>(era_));
       return;
     }
     const uint32_t ctr = (static_cast<uint32_t>(buf[3]) << 24) | (static_cast<uint32_t>(buf[4]) << 16) |
                          (static_cast<uint32_t>(buf[5]) << 8) | static_cast<uint32_t>(buf[6]);
     if (!t.isFreshCounter(lastCounter_, ctr)) {
-      dropFirst(firstRefreshDrop_, "drop rekey replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
-      LOG_EVERY_N(20, "UDP", "drop rekey replay ctr=%lu", static_cast<unsigned long>(ctr));
+      dropFirst(firstPairRefreshDrop_, "drop pair-refresh replay ctr=%lu (first of boot)",
+                static_cast<unsigned long>(ctr));
+      LOG_EVERY_N(20, "UDP", "drop pair-refresh replay ctr=%lu", static_cast<unsigned long>(ctr));
       return;
     }
-    // tag = first6(HMAC-SHA256(oldPsk, "REKEY"||eraBE2||counterBE4)).
-    uint8_t msg[pairing::kRekeyMsgLen];
-    pairing::refreshTagMsg(era, ctr, msg);
+    // tag = first6(HMAC-SHA256(oldPsk, "PAIRREFRESH"||eraBE2||counterBE4)).
+    uint8_t msg[pairing::kPairRefreshMsgLen];
+    pairing::pairRefreshTagMsg(era, ctr, msg);
     uint8_t mac[32];
     const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
     int rc = -1;
@@ -757,29 +759,29 @@ class PairingTask : public transport::IPairingSession {
     mbedtls_platform_zeroize(msg, sizeof(msg));
     bool ok = (rc == 0);
     if (ok) {
-      ok = pairing::ctEqual(mac, buf + 7, pairing::kRekeyTagLen);
+      ok = pairing::ctEqual(mac, buf + 7, pairing::kPairRefreshTagLen);
     }
     mbedtls_platform_zeroize(mac, sizeof(mac));
     if (!ok) {
-      dropFirst(firstRefreshDrop_, "drop rekey auth (first of boot)");
-      LOG_EVERY_N(20, "UDP", "drop rekey auth");
+      dropFirst(firstPairRefreshDrop_, "drop pair-refresh auth (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop pair-refresh auth");
       return;
     }
     // Fold the passed prechecks into Verified (per-cause drops+logs above
     // stay verbatim).
-    const connection::Checks refreshChecks{paired_, era == static_cast<uint16_t>(era_ + 1),
-                                           t.isFreshCounter(lastCounter_, ctr), ok};
-    connection::Verified refreshVerified = connection::AuthVerifier::verify(refreshChecks, ctr, era);
+    const connection::Checks pairRefreshChecks{paired_, era == static_cast<uint16_t>(era_ + 1),
+                                               t.isFreshCounter(lastCounter_, ctr), ok};
+    connection::Verified pairRefreshVerified = connection::AuthVerifier::verify(pairRefreshChecks, ctr, era);
     uint8_t nextPsk[pairing::kPskLen];
-    if (!pairing::deriveRefreshPsk(psk_, era, nextPsk)) {
-      dropFirst(firstRefreshDrop_, "drop rekey derive (first of boot)");
-      LOG_EVERY_N(20, "UDP", "drop rekey derive");
+    if (!pairing::derivePairRefreshPsk(psk_, era, nextPsk)) {
+      dropFirst(firstPairRefreshDrop_, "drop pair-refresh derive (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop pair-refresh derive");
       return;
     }
     if (!ConfigStore::savePairRefresh(nextPsk, era, 0)) {
       mbedtls_platform_zeroize(nextPsk, sizeof(nextPsk));
-      dropFirst(firstRefreshDrop_, "drop rekey persist (first of boot)");
-      LOG_EVERY_N(20, "UDP", "drop rekey persist");
+      dropFirst(firstPairRefreshDrop_, "drop pair-refresh persist (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop pair-refresh persist");
       return;
     }
     for (size_t i = 0; i < sizeof(psk_); ++i) {
@@ -791,24 +793,24 @@ class PairingTask : public transport::IPairingSession {
     lastCounter_ = 0;
     validCount_ = 0;
     // Alive funnel BEFORE the ACK below.
-    connection::Pinned refreshPinned = t.markAlive(std::move(refreshVerified), rip, rport, nowMs, era_);
-    uint8_t ack[pairing::kRekeyAckSize];
+    connection::Pinned pairRefreshPinned = t.markAlive(std::move(pairRefreshVerified), rip, rport, nowMs, era_);
+    uint8_t ack[pairing::kPairRefreshAckSize];
     if (composePairRefreshAck(era_, ack)) {
-      t.sendRekeyAck(std::move(refreshPinned), rip, rport, ack, sizeof(ack));
+      t.sendPairRefreshAck(std::move(pairRefreshPinned), rip, rport, ack, sizeof(ack));
     }
-    LOG_I("UDP", "rekey ok era=%u", static_cast<unsigned>(era_));
+    LOG_I("UDP", "pair-refresh ok era=%u", static_cast<unsigned>(era_));
   }
 
  private:
-  // REKEY_ACK 10B composer: [0x54|eraBE2|tag6|XOR] with tag =
-  // first6(HMAC-SHA256(newPsk, "REKEYACK"||eraBE2)). `psk_` IS the new key at
+  // PAIR_REFRESH_ACK 10B composer: [0x54|eraBE2|tag6|XOR] with tag =
+  // first6(HMAC-SHA256(newPsk, "PAIRREFRESHACK"||eraBE2)). `psk_` IS the new key at
   // both call sites. False on HMAC failure (no send). Key material never
   // logged.
-  bool composePairRefreshAck(uint16_t era, uint8_t out[pairing::kRekeyAckSize]) {
-    uint8_t msg[pairing::kRekeyAckMsgLen];
-    pairing::refreshAckTagMsg(era, msg);
+  bool composePairRefreshAck(uint16_t era, uint8_t out[pairing::kPairRefreshAckSize]) {
+    uint8_t msg[pairing::kPairRefreshAckMsgLen];
+    pairing::pairRefreshAckTagMsg(era, msg);
     uint8_t mac[32];
-    out[0] = pairing::kRekeyAckHeader;
+    out[0] = pairing::kPairRefreshAckHeader;
     out[1] = static_cast<uint8_t>((era >> 8) & 0xFFu);
     out[2] = static_cast<uint8_t>(era & 0xFFu);
     const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
@@ -821,15 +823,15 @@ class PairingTask : public transport::IPairingSession {
       mbedtls_platform_zeroize(mac, sizeof(mac));
       return false;
     }
-    for (size_t i = 0; i < pairing::kRekeyTagLen; ++i) {
+    for (size_t i = 0; i < pairing::kPairRefreshTagLen; ++i) {
       out[3 + i] = mac[i];
     }
     mbedtls_platform_zeroize(mac, sizeof(mac));
     uint8_t xorSum = 0;
-    for (size_t i = 0; i + 1 < pairing::kRekeyAckSize; ++i) {
+    for (size_t i = 0; i + 1 < pairing::kPairRefreshAckSize; ++i) {
       xorSum ^= out[i];
     }
-    out[pairing::kRekeyAckSize - 1] = xorSum;
+    out[pairing::kPairRefreshAckSize - 1] = xorSum;
     return true;
   }
 
@@ -854,7 +856,7 @@ class PairingTask : public transport::IPairingSession {
   uint8_t psk_[16];
   uint32_t lastCounter_;
   bool paired_;
-  // Tier-1 refresh era (u16, NVS; fresh pair resets to 0). DRIVE_V2 carries no
+  // Tier-1 pair-refresh era (u16, NVS; fresh pair resets to 0). DRIVE carries no
   // era — post-switch old-key frames drop via HMAC.
   uint16_t era_;
   uint32_t validCount_;
@@ -871,7 +873,7 @@ class PairingTask : public transport::IPairingSession {
   bool pairShowSent_ = false;
   // Last PAIR_OK redelivery cache (RAM-only, never persisted): an identical
   // PAIR_REQ inside kRedeliveryMs re-unicasts the cached bytes. Invalidated
-  // on reboot, clearPair, and signed UNBOND; secrets zeroized alongside psk_.
+  // on reboot, clearPair, and signed UNPAIR; secrets zeroized alongside psk_.
   struct LastPair {
     bool valid = false;
     uint8_t code6[6] = {};
@@ -888,7 +890,7 @@ class PairingTask : public transport::IPairingSession {
   // Reset only by reboot.
   bool firstPairDrop_ = true;
   bool firstUnpairDrop_ = true;
-  bool firstRefreshDrop_ = true;
+  bool firstPairRefreshDrop_ = true;
 };
 
 }  // namespace pairing

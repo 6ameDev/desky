@@ -41,11 +41,11 @@ data class PairedDeviceEntity(
      */
     val persistEvery: Int = 128,
     /**
-     * Tier-1 rekey epoch (u16 on the wire as `eraBE2`, v5 column, default 0
+     * Tier-1 pair-refresh epoch (u16 on the wire as `eraBE2`, v5 column, default 0
      * = fresh-pair era). Stored as [Int] — SQLite INTEGER is 64-bit and Room
      * has no `UShort` column type; the domain mapping narrows to `UShort`
      * (every stored value fits: producers mask to 0..65535). Incremented by
-     * each silent era+PSK rotation (which resets [lastCounter] to the bond
+     * each silent era+PSK rotation (which resets [lastCounter] to the pair
      * baseline); the drive session reads it back on restart so the era
      * survives app kills.
      */

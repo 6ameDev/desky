@@ -1,6 +1,6 @@
 package com.desky.shared.di
 
-import com.desky.shared.data.createBondSecretStore
+import com.desky.shared.data.createPairSecretStore
 import com.desky.shared.data.createDeskyDatabase
 import com.desky.shared.presentation.PairingViewModel
 import com.desky.shared.presentation.RobotControlViewModel
@@ -58,7 +58,7 @@ fun initKoinForIos(): Koin = guarded {
     iosKoin?.let { return@guarded it }
     val koin = startKoin {
         modules(
-            dataModule(createDeskyDatabase(), createBondSecretStore()),
+            dataModule(createDeskyDatabase(), createPairSecretStore()),
             domainModule,
             presentationModule,
         )

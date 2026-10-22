@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 /**
  * Platform [UdpSocketBinder] for Android, constructed in `DeskyApp` from the
  * application context and threaded through `dataModule(...)` like
- * `createDeskyDatabase` / `createBondSecretStore`.
+ * `createDeskyDatabase` / `createPairSecretStore`.
  */
 fun createWifiSocketBinder(context: Context): UdpSocketBinder = WifiSocketBinder(context)
 

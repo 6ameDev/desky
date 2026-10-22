@@ -112,7 +112,7 @@ class Core {
   // switch, BEFORE the ACK).
   void onPairRefreshApplied(uint16_t nextEra) { era_ = nextEra; }
 
-  // Symmetric forget (UNBOND path): full gate reset + era/pair clock clear.
+  // Symmetric forget (UNPAIR path): full gate reset + era/pair clock clear.
   void onUnpaired() { clearPair(); }
 
   bool isPaired() const { return paired_; }

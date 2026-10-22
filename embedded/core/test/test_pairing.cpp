@@ -108,45 +108,48 @@ void test_pair_wrap_layout_consts() {
   TEST_ASSERT_EQUAL(38, static_cast<int>(pairing::kPairOkLegacySize));
 }
 
-// Tier-1 silent auto-refresh: wire constants + tag-message goldens. The HKDF
-// key schedule (deriveRefreshPsk) is ARDUINO-only (mbedTLS) and exercised on
-// hardware; the cross-side vectors live app-side (PairingCryptoTest rekey
-// goldens: nextPsk=df7441d0... + REQ/ACK tags) — these host tests pin the
-// message layouts both sides must agree on.
-void test_rekey_wire_consts() {
-  TEST_ASSERT_EQUAL_UINT8(0x53, pairing::kRekeyReqHeader);
-  TEST_ASSERT_EQUAL(14, static_cast<int>(pairing::kRekeyReqSize));
-  TEST_ASSERT_EQUAL_UINT8(0x54, pairing::kRekeyAckHeader);
-  TEST_ASSERT_EQUAL(10, static_cast<int>(pairing::kRekeyAckSize));
-  TEST_ASSERT_EQUAL(6, static_cast<int>(pairing::kRekeyTagLen));
-  TEST_ASSERT_EQUAL(11, static_cast<int>(pairing::kRekeyMsgLen));
-  TEST_ASSERT_EQUAL(10, static_cast<int>(pairing::kRekeyAckMsgLen));
+// Tier-1 silent auto-pair-refresh: wire constants + tag-message goldens. The
+// key schedule (derivePairRefreshPsk) is ARDUINO-only (mbedTLS) and exercised on
+// hardware; the cross-side vectors live app-side (PairingCryptoTest
+// pair-refresh goldens: nextPsk=2ecca11e... + REQ/ACK tags) — these host
+// tests pin the message layouts both sides must agree on.
+void test_pair_refresh_wire_consts() {
+  TEST_ASSERT_EQUAL_UINT8(0x53, pairing::kPairRefreshReqHeader);
+  TEST_ASSERT_EQUAL(14, static_cast<int>(pairing::kPairRefreshReqSize));
+  TEST_ASSERT_EQUAL_UINT8(0x54, pairing::kPairRefreshAckHeader);
+  TEST_ASSERT_EQUAL(10, static_cast<int>(pairing::kPairRefreshAckSize));
+  TEST_ASSERT_EQUAL(6, static_cast<int>(pairing::kPairRefreshTagLen));
+  TEST_ASSERT_EQUAL(17, static_cast<int>(pairing::kPairRefreshMsgLen));
+  TEST_ASSERT_EQUAL(16, static_cast<int>(pairing::kPairRefreshAckMsgLen));
 }
 
-void test_rekey_tag_msg_golden() {
-  uint8_t msg[pairing::kRekeyMsgLen];
-  pairing::refreshTagMsg(1u, 100u, msg);
-  // "REKEY" || eraBE2(0001) || counterBE4(00000064).
-  const uint8_t expected[11] = {0x52, 0x45, 0x4B, 0x45, 0x59, 0x00, 0x01, 0x00, 0x00, 0x00, 0x64};
+void test_pair_refresh_tag_msg_golden() {
+  uint8_t msg[pairing::kPairRefreshMsgLen];
+  pairing::pairRefreshTagMsg(1u, 100u, msg);
+  // "PAIRREFRESH" || eraBE2(0001) || counterBE4(00000064).
+  const uint8_t expected[17] = {0x50, 0x41, 0x49, 0x52, 0x52, 0x45, 0x46, 0x52, 0x45,
+                                0x53, 0x48, 0x00, 0x01, 0x00, 0x00, 0x00, 0x64};
   TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, msg, sizeof(expected));
   // Era/counter lay out big-endian.
-  pairing::refreshTagMsg(0x0102u, 0x01020304u, msg);
-  const uint8_t be[11] = {0x52, 0x45, 0x4B, 0x45, 0x59, 0x01, 0x02, 0x01, 0x02, 0x03, 0x04};
+  pairing::pairRefreshTagMsg(0x0102u, 0x01020304u, msg);
+  const uint8_t be[17] = {0x50, 0x41, 0x49, 0x52, 0x52, 0x45, 0x46, 0x52, 0x45,
+                          0x53, 0x48, 0x01, 0x02, 0x01, 0x02, 0x03, 0x04};
   TEST_ASSERT_EQUAL_UINT8_ARRAY(be, msg, sizeof(be));
   // Null-safe (no crash on null out).
-  pairing::refreshTagMsg(1u, 1u, nullptr);
+  pairing::pairRefreshTagMsg(1u, 1u, nullptr);
 }
 
-void test_rekey_ack_tag_msg_golden() {
-  uint8_t msg[pairing::kRekeyAckMsgLen];
-  pairing::refreshAckTagMsg(1u, msg);
-  // "REKEYACK" || eraBE2(0001).
-  const uint8_t expected[10] = {0x52, 0x45, 0x4B, 0x45, 0x59, 0x41, 0x43, 0x4B, 0x00, 0x01};
+void test_pair_refresh_ack_tag_msg_golden() {
+  uint8_t msg[pairing::kPairRefreshAckMsgLen];
+  pairing::pairRefreshAckTagMsg(1u, msg);
+  // "PAIRREFRESHACK" || eraBE2(0001).
+  const uint8_t expected[16] = {0x50, 0x41, 0x49, 0x52, 0x52, 0x45, 0x46, 0x52,
+                                0x45, 0x53, 0x48, 0x41, 0x43, 0x4B, 0x00, 0x01};
   TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, msg, sizeof(expected));
-  pairing::refreshAckTagMsg(0x0102u, msg);
-  TEST_ASSERT_EQUAL_UINT8(0x01, msg[8]);
-  TEST_ASSERT_EQUAL_UINT8(0x02, msg[9]);
-  pairing::refreshAckTagMsg(1u, nullptr);
+  pairing::pairRefreshAckTagMsg(0x0102u, msg);
+  TEST_ASSERT_EQUAL_UINT8(0x01, msg[14]);
+  TEST_ASSERT_EQUAL_UINT8(0x02, msg[15]);
+  pairing::pairRefreshAckTagMsg(1u, nullptr);
 }
 
 // ALIVE + DISCONNECT (robot alive rule): domain constants pin the claimed

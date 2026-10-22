@@ -75,9 +75,9 @@ fun PairingContent(
             )
             Button(
                 onClick = onPair,
-                // Bonded gate (mirrors PairingViewModel.onPair): while a
+                // Paired gate (mirrors PairingViewModel.onPair): while a
                 // device is paired only Forget is offered, never a re-pair
-                // over the live bond.
+                // over the live pair.
                 enabled = !state.isPairing && state.pairedDevice == null,
                 modifier = Modifier.fillMaxWidth(),
             ) {

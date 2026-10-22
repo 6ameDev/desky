@@ -13,7 +13,7 @@ const val ESTOP_FLAG = 0x01
 
 /**
  * Send a signed zeroed MANUAL command with [ESTOP_FLAG] set (pairing/auth
- * Task 9: e-stop rides the same authenticated `DRIVE_V2` path as every
+ * Task 9: e-stop rides the same authenticated `DRIVE` path as every
  * other drive frame, via [SendSignedControlUseCase]).
  *
  * The caller owns the counter exactly like the drive loop (strictly

@@ -1,6 +1,6 @@
 package com.desky.shared.domain
 
-import com.desky.shared.presentation.FakeBondSecretStore
+import com.desky.shared.presentation.FakePairSecretStore
 
 import dev.mokkery.answering.calls
 import dev.mokkery.answering.returns
@@ -92,7 +92,7 @@ class PairDeviceWithCodeUseCaseTest {
     private fun useCase(
         deviceRepo: DeviceRepository,
         udp: FakePairingUdp,
-        vault: FakeBondSecretStore = FakeBondSecretStore(),
+        vault: FakePairSecretStore = FakePairSecretStore(),
         attemptTimeoutsMs: List<Long> = DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS,
     ) = PairDeviceWithCodeUseCase(deviceRepo, udp, vault, attemptTimeoutsMs)
 
@@ -141,7 +141,7 @@ class PairDeviceWithCodeUseCaseTest {
         val deviceRepo = repo()
         everySuspend { deviceRepo.save(any()) } returns Unit
         val udp = FakePairingUdp()
-        val vault = FakeBondSecretStore()
+        val vault = FakePairSecretStore()
         val deferred = startPairing(udp, useCase(deviceRepo, udp, vault))
 
         val clientNonce = clientNonceOf(udp)
@@ -171,7 +171,7 @@ class PairDeviceWithCodeUseCaseTest {
             val deviceRepo = repo()
             everySuspend { deviceRepo.save(any()) } returns Unit
             val udp = FakePairingUdp()
-            val vault = FakeBondSecretStore()
+            val vault = FakePairSecretStore()
             val deferred = startPairing(udp, useCase(deviceRepo, udp, vault))
 
             val clientNonce = clientNonceOf(udp)
@@ -190,7 +190,7 @@ class PairDeviceWithCodeUseCaseTest {
         val deviceRepo = repo()
         everySuspend { deviceRepo.save(any()) } returns Unit
         val udp = FakePairingUdp()
-        val vault = FakeBondSecretStore()
+        val vault = FakePairSecretStore()
         val deferred = startPairing(udp, useCase(deviceRepo, udp, vault))
 
         // v1 robot: 38B frame, no interval byte.
@@ -210,7 +210,7 @@ class PairDeviceWithCodeUseCaseTest {
         val deviceRepo = repo()
         everySuspend { deviceRepo.save(any()) } returns Unit
         val udp = FakePairingUdp()
-        val vault = FakeBondSecretStore()
+        val vault = FakePairSecretStore()
         val deferred = startPairing(udp, useCase(deviceRepo, udp, vault))
 
         val clientNonce = clientNonceOf(udp)
@@ -232,7 +232,7 @@ class PairDeviceWithCodeUseCaseTest {
             Triple(0, 0, "incorrect code"),
             Triple(1, 30, "locked"),
             Triple(2, 0, "expired"),
-            Triple(3, 0, "already bonded"),
+            Triple(3, 0, "already paired"),
             Triple(4, 0, "robot error, try a fresh code"),
         )
         for ((reason, retryS, fragment) in cases) {
@@ -291,7 +291,7 @@ class PairDeviceWithCodeUseCaseTest {
             0 -> "Pairing failed: incorrect code"
             1 -> "Pairing failed: robot locked, retry in ${retryS}s"
             2 -> "Pairing failed: code expired"
-            3 -> "Pairing failed: robot already bonded"
+            3 -> "Pairing failed: robot already paired"
             else -> "Pairing failed: robot rejected pairing (reason=$reason)"
         }
         val frame = pairErr(4, 0)
@@ -324,7 +324,7 @@ class PairDeviceWithCodeUseCaseTest {
     @Test
     fun invalidSchedulesRejected() = runTest {
         val udp = FakePairingUdp()
-        val vault = FakeBondSecretStore()
+        val vault = FakePairSecretStore()
         assertFailsWith<IllegalArgumentException> {
             PairDeviceWithCodeUseCase(repo(), udp, vault, emptyList())
         }
@@ -402,7 +402,7 @@ class PairDeviceWithCodeUseCaseTest {
         val deviceRepo = repo()
         everySuspend { deviceRepo.save(any()) } returns Unit
         val udp = FakePairingUdp()
-        val vault = FakeBondSecretStore()
+        val vault = FakePairSecretStore()
         val progress = mutableListOf<Int>()
         val deferred = startPairing(udp, useCase(deviceRepo, udp, vault)) { a, _ -> progress += a }
         assertEquals(1, udp.sent.size, "exactly one PAIR_REQ before any reply")

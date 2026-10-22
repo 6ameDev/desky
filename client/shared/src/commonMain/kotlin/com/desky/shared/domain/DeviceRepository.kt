@@ -22,10 +22,10 @@ interface DeviceRepository {
     suspend fun updateCounter(deviceId: String, counter: UInt)
 
     /**
-     * Persist a Tier-1 rekey rotation for [deviceId]: the new [era] + the
-     * bond-baseline [counter] (0 — the first post-rekey drive uses 1).
-     * Called once per confirmed `REKEY_ACK`; keeps the row (the vault PSK
+     * Persist a Tier-1 pair-refresh rotation for [deviceId]: the new [era] + the
+     * pair-baseline [counter] (0 — the first post-pair-refresh drive uses 1).
+     * Called once per confirmed `PAIR_REFRESH_ACK`; keeps the row (the vault PSK
      * update is a separate call).
      */
-    suspend fun updateRekey(deviceId: String, counter: UInt, era: UShort)
+    suspend fun updatePairRefresh(deviceId: String, counter: UInt, era: UShort)
 }
