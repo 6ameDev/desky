@@ -45,6 +45,19 @@ LinkStub g_link;
 LinkClient g_wifi;
 OtaUpdater g_ota;
 CliManager g_cli;
+// Binder fan-out: the CLI parses + triggers through this sink; the client
+// objects stay owned here in main.cpp.
+struct HeadCliSink : ICliSink {
+  void onStatusExtra() override {
+    g_coordinator.status();
+    g_wifi.logStatus();
+  }
+  void onLinkStatus() override { g_wifi.logStatus(); }
+  void onSnap() override { g_wifi.requestStill(); }
+  void onOta(const char* args) override { g_ota.start(args); }
+  void onCoord(const PowerCommand& cmd) override { g_coordinator.dispatch(cmd); }
+};
+HeadCliSink g_cliSink;
 EventBus::Subscription g_sub;
 uint32_t g_lastCamMs = 0;
 uint32_t g_lastAliveMs = 0;
@@ -129,9 +142,7 @@ void setup() {
     g_wifi.setHandlers(wh);
   }
   g_cli.begin(&g_power);
-  g_cli.attachCoordinator(&g_coordinator);
-  g_cli.attachLink(&g_wifi);
-  g_cli.attachOta(&g_ota);
+  g_cli.attachSink(&g_cliSink);
   g_ota.attachFace(&g_display);
   g_sub = EventBus::subscribe();
   g_lastCamMs = millis();
@@ -163,8 +174,9 @@ void loop() {
   }
   if (now - g_lastAliveMs >= 5000) {
     g_lastAliveMs = now;
-    LOG_I("HEAD", "alive cam=%s oled=%s face=%s qr=%s", camStateName(g_power.camState()),
-          oledStateName(g_power.oledState()), faceName(g_power.faceId()), g_coordinator.qrActive() ? "on" : "off");
+    LOG_I("HEAD", "alive cam=%s oled=%s face=%s qr=%s pair=%s", camStateName(g_power.camState()),
+          oledStateName(g_power.oledState()), faceName(g_power.faceId()), g_coordinator.qrActive() ? "on" : "off",
+          g_coordinator.pairActive() ? "on" : "off");
     Diagnostics::logWatermarks("HEAD");
   }
 }

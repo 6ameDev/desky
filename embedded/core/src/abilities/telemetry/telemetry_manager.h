@@ -1,53 +1,35 @@
 #pragma once
-// Telemetry manager — header-only.
+// Telemetry manager — abilities/telemetry.
 //
-// Owns the telemetry TX decision (cadence + edge) + the snapshot encode.
-// Arduino-free (stdint/stddef/string + udp_codec only) so host tests include
-// it directly. No heap, no sockets: bytes leave through a UdpServer-provided
+// Owns the telemetry TX decision (cadence + edge). Arduino-free
+// (stdint/stddef/string + telemetry codec only) so host tests include it
+// directly. No heap, no sockets: bytes leave through a UdpServer-provided
 // send callback.
 //
 // Include order: transport/udp_server.h top half (udpstatus — the single
-// owner of packStatus/degToDecideg) BEFORE this header.
+// owner of packStatus/degToDecideg) BEFORE this header (arrives via
+// abilities/telemetry/telemetry_codec.h).
 //
 // Split: UdpServer keeps the dumb pipes (gate + silence logging +
-// WiFiUDP unicast); this header owns the aggregate Snapshot, encodeSnapshot,
-// cadence + edge + encode state, and the RX-observation triple (noteCommand /
-// isDriving: the driving bit is services-owned telemetry state, never
-// coordinator state). The snapshot fill + outer TX cadence live in
-// services/TelemetryTask, driven from the main loop.
+// WiFiUDP unicast); this header owns the cadence + edge + encode state and
+// the RX-observation triple (noteCommand / isDriving: the driving bit is
+// telemetry-ability-owned state, never coordinator state). The snapshot
+// fill + outer TX cadence live in abilities/telemetry/telemetry_task.h,
+// driven from the main loop.
 // Subscription placeholder: today the rate is the bonded-default; a future
 // SET_RATE lands here (setRateMs + per-peer state).
 
 #ifndef UDPSTATUS_TOP_HALF_INCLUDED
-#error "include transport/udp_server.h before services/telemetry_manager.h (udpstatus owns pack/gate)"
+#error "include transport/udp_server.h before abilities/telemetry/telemetry_manager.h (udpstatus owns pack/gate)"
 #endif
 
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
-#include "transport/udp_codec.h"
+#include "abilities/telemetry/telemetry_codec.h"
 
 namespace telemetry {
-
-// Aggregate snapshot IN (filled by the telemetry task): mode/cliff/driving
-// + pitch/roll/dist. Plain struct, no behavior.
-struct Snapshot {
-  uint8_t mode = 0;
-  bool cliff = false;
-  bool driving = false;
-  float pitchDeg = 0.0f;
-  float rollDeg = 0.0f;
-  uint16_t distMm = 0;
-};
-
-// The UdpServer::sendTelemetry pack lines, verbatim (moved, not changed).
-inline void encodeSnapshot(const Snapshot& s, udp::TelemetryPacket& pkt) {
-  pkt.pitch = udpstatus::degToDecideg(s.pitchDeg);
-  pkt.roll = udpstatus::degToDecideg(s.rollDeg);
-  pkt.distanceMm = s.distMm;
-  pkt.statusFlags = udpstatus::packStatus(s.cliff, s.driving, s.mode);
-}
 
 class TelemetryManager {
  public:
@@ -112,11 +94,11 @@ class TelemetryManager {
   uint32_t lastTxMs() const { return lastTxMs_; }
   bool hasSent() const { return haveSent_; }
 
-  // RX observation: the driving bit is a server-local observation (last
-  // commanded stick nonzero AND fresh), NOT coordinator state. The
-  // coordinator loop reports every verified drive command here directly; the
-  // encode path reads isDriving(nowMs). Wrap-safe; the boundary counts as
-  // fresh.
+  // RX observation: the driving bit is telemetry-ability-owned server-local
+  // observation (last commanded stick nonzero AND fresh), NOT coordinator
+  // state. The coordinator loop reports every verified drive command here
+  // directly; the encode path reads isDriving(nowMs). Wrap-safe; the
+  // boundary counts as fresh.
   void noteCommand(float v, float omega, uint32_t nowMs) {
     lastV_ = v;
     lastOmega_ = omega;

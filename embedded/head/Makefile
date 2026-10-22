@@ -20,6 +20,8 @@ check-pins:
 # glob coverage over src/**/*.h, one test runner main). Semgrep pinned in CI.
 check-arch:
 	semgrep --config ../tools/arch_guardrails.yaml --error src test
+	@echo "Phase 2 ideal-layer rules (arch_ideal.yaml), enforced as errors since P2.3."
+	semgrep --config ../tools/arch_ideal.yaml --error src test
 	@! git --no-pager grep -nE "SLICE|Slice [0-9]|Task [0-9]|Task T-[0-9]|T-[0-9]+|H[0-9]\.[0-9]|M[0-9]+-M[0-9]+|flag-day|FLAG-DAY|Pre-2|PRE-2|middleware|MIDDLEWARE" -- src test
 	@for f in $$(find src -name '*.h'); do \
 	  case "$$f" in \

@@ -5,6 +5,7 @@
 #include "abilities/ota/ota_task.h"
 #include "abilities/pairing/pairing_task.h"
 #include "abilities/sensors/sensors_task.h"
+#include "abilities/telemetry/telemetry_task.h"
 #include "behavior/motion_controller.h"
 #include "common/diagnostics.h"
 #include "common/fault_manager.h"
@@ -18,7 +19,6 @@
 #include "services/cli_manager.h"
 #include "services/config_store.h"
 #include "services/event_bus.h"
-#include "services/telemetry_task.h"
 #include "transport/link_server.h"
 #include "transport/udp_server.h"
 // behavior/coordinator.h after transport/udp_server.h — its firmware section
@@ -44,6 +44,13 @@ TelemetryTask g_telemetry;
 LinkServer g_link;
 OtaStaging g_otaStage;  // Carrier head-image staging (POST /head.bin + GETs).
 CoreCli g_cli;          // Minimal USB door: `otahead <url> [version]` only.
+// Binder adapter: the CLI parses + triggers through this sink; the ability
+// object stays owned here in main.cpp.
+struct CoreCliOta : ICliOtaSink {
+  bool stageOtaUrl(const char* url) override { return g_otaStage.stageOtaUrl(url); }
+  size_t stagedOtaLen() const override { return g_otaStage.stagedOtaLen(); }
+};
+CoreCliOta g_cliOta;
 I2CManager g_i2c;
 Mpu6500Driver g_mpu(g_i2c);
 Vl53l0xDriver g_tof(g_i2c);
@@ -84,11 +91,14 @@ void setup() {
   // no UDP commands and sits in failsafe stop.
   LOG_I("BOOT", "wifi OFF bench mode (DESKY_NO_WIFI=1): TCRT rails live, coordinator failsafe-stopped");
 #else
+  // Transport owns dumb pipes only: the verified-drive fan-out is a
+  // setup-registered hook (no bus include in transport), the peer/alive
+  // binding + bond restore lands via attachPairing; the behavior pins
+  // (pairing seam + telemetry RX-observation report) are wired directly on
+  // the coordinator.
+  g_udp.setCommandPublisher([](uint32_t payload) { EventBus::publish(EVENT_UDP_COMMAND_RECEIVED, payload); });
   const bool udpOk = g_udp.begin();
   DESKY_ASSERT(udpOk);
-  // Transport owns dumb pipes only: the peer/alive binding + bond restore
-  // lands via attachPairing; the behavior pins (pairing seam + telemetry
-  // RX-observation report) are wired directly on the coordinator.
   g_udp.attachPairing(&g_pairing);
   g_coordinator.attachPairing(&g_pairing);
   g_coordinator.attachTelemetry(&g_telem);
@@ -110,7 +120,7 @@ void setup() {
 #endif
   // Minimal USB door (carrier `otahead` trigger): always live, even in bench
   // mode (the stage then fails closed).
-  g_cli.begin(&g_otaStage);
+  g_cli.begin(&g_cliOta);
   LOG_I("BOOT", "sensors ready tof=%dmm mpu=0x%02X", g_tof.distanceMm(), g_mpu.address());
   LOG_I("BOOT", "tcrt fwd pin=%d raw=%u gnd=%u rev pin=%d raw=%u gnd=%u", CFG_TCRT_FWD_PIN, g_tcrtFwd.rawCount(),
         g_tcrtFwd.groundPresent() ? 1u : 0u, CFG_TCRT_REV_PIN, g_tcrtRev.rawCount(),

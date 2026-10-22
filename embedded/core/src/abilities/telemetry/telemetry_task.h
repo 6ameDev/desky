@@ -1,19 +1,19 @@
 #pragma once
-// Telemetry task — services (system infrastructure).
+// Telemetry task — abilities/telemetry (RTOS/main-loop glue).
 //
 // Firmware-only consumer binder: owns the telemetry snapshot fill + TX pacing.
 // Transport (UdpServer) keeps the dumb pipes: peer/alive state, the gate
 // verdict + silence logging, and the sendTelemetry(bytes) unicast.
-// Policy/consumption lives here with the services-owned TelemetryManager;
-// behavior owns drive intent (Coordinator::snapshot). Same 15 Hz cadence
-// with same payloads.
+// Policy/consumption lives here with the telemetry-ability-owned
+// TelemetryManager; behavior owns drive intent (Coordinator::snapshot).
+// Same 15 Hz cadence with same payloads.
 //
 // Driven from the main loop (poll, non-blocking): the outer cadence gate
 // replicates the old transport loop tick exactly (the cadence clock advances
 // on every due tick even when the gate is silent).
 
 // udp_server.h first: its top half owns udpstatus (which
-// telemetry_manager.h requires) and its bottom half is the UdpServer type.
+// telemetry_codec.h requires) and its bottom half is the UdpServer type.
 #include "transport/udp_server.h"
 
 #ifdef ARDUINO
@@ -22,6 +22,7 @@
 #include <Arduino.h>
 
 #include "abilities/sensors/sensors_codec.h"
+#include "abilities/telemetry/telemetry_manager.h"
 #include "behavior/coordinator.h"
 #include "common/fault_manager.h"
 #include "hal/mpu6500_driver.h"
@@ -92,7 +93,7 @@ class TelemetryTask {
       rollDeg = fused.roll;
     }
 
-    // Driving = services-owned RX observation (last commanded stick nonzero
+    // Driving = telemetry-ability-owned RX observation (last commanded stick nonzero
     // AND fresh). The cliff bit mirrors the coordinator level, which the
     // sensor task keeps live.
     const bool driving = telem_->isDriving(nowMs);

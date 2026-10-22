@@ -38,6 +38,7 @@ extern "C" {
 #include "services/config_store.h"
 #include "transport/connection_manager.h"
 #include "transport/link_server.h"
+#include "transport/pairing_session.h"
 
 namespace pairing {
 
@@ -180,18 +181,18 @@ inline bool deriveRekeyPsk(const uint8_t oldPsk[kPskLen], uint16_t nextEra, uint
 // fire-and-forget). pairing::Core stays window/tries/lockout policy only;
 // this class is the firmware session layer around it.
 //
-// Transport back-call contract (duck-typed `Transport& t`, always UdpServer):
-// the ability never touches sockets — byte composition lives here, the
-// gate-check + unicast stays in transport:
-//   t.markAlive(Verified&&, IPAddress, uint16_t, uint32_t, uint16_t era)
+// Transport back-call contract (transport::IUdpTransport, implemented by
+// UdpServer): the ability never touches sockets — byte composition lives
+// here, the gate-check + unicast stays in transport:
+//   markAlive(Verified&&, IPAddress, uint16_t, uint32_t, uint16_t era)
 //     -> connection::Pinned (pins the telemetry peer + refreshes the stamp)
-//   t.sendPairOk(PersistReceipt, IPAddress, uint16_t, ok39)
-//   t.sendPairRedeliver(IPAddress, uint16_t, ok39) (lost-PAIR_OK race)
-//   t.sendPairErr(IPAddress, uint16_t, err4)
-//   t.sendRekeyAck(Pinned, IPAddress, uint16_t, ack10)
-//   t.sendRekeyAckImpl(IPAddress, uint16_t, ack10) (idempotent duplicate path)
-//   t.isFreshCounter(lastSeen, got) -> bool (udpstatus bridge)
-//   t.shouldRedeliver(...) -> bool (udpstatus bridge)
+//   sendPairOk(PersistReceipt, IPAddress, uint16_t, bytes, len)
+//   sendPairRedeliver(IPAddress, uint16_t, bytes, len) (lost-PAIR_OK race)
+//   sendPairErr(IPAddress, uint16_t, bytes, len)
+//   sendRekeyAck(Pinned, IPAddress, uint16_t, bytes, len)
+//   sendRekeyAckImpl(IPAddress, uint16_t, bytes, len) (idempotent duplicate path)
+//   isFreshCounter(lastSeen, got) -> bool (udpstatus bridge)
+//   shouldRedeliver(...) -> bool (udpstatus bridge)
 // Shared socket-adjacent state (peer slot + alive stamp) stays in transport:
 // attach() pins the ConnectionManager + IPAddress peer pointers (set once
 // from UdpServer::attachPairing before the task reads the radio).
@@ -199,7 +200,7 @@ inline bool deriveRekeyPsk(const uint8_t oldPsk[kPskLen], uint16_t nextEra, uint
 // notify site): the ability never touches sockets — notifyPairingDone
 // fire-and-forgets the empty PairDone frame via LinkServer::sendUnicast
 // (peerless = silent no-op).
-class PairingTask {
+class PairingTask : public transport::IPairingSession {
  public:
   PairingTask()
       : conn_(nullptr),
@@ -218,7 +219,7 @@ class PairingTask {
 
   // Pins transport-owned shared state. Call once from UdpServer::attachPairing
   // before restoreFromStore (handlers dereference these on every packet).
-  void attach(connection::ConnectionManager* conn, IPAddress* peerIp, uint16_t* peerPort) {
+  void attach(connection::ConnectionManager* conn, IPAddress* peerIp, uint16_t* peerPort) override {
     DESKY_ASSERT(conn != nullptr);
     DESKY_ASSERT(peerIp != nullptr);
     DESKY_ASSERT(peerPort != nullptr);
@@ -240,7 +241,7 @@ class PairingTask {
   // unbonded -> opens a pairing window (the code LOG_I line is the display).
   // ConfigStore::begin() already ran in setup(). The PAIR_OK redelivery cache
   // stays invalid across reboot (RAM-only).
-  void restoreFromStore() {
+  void restoreFromStore() override {
     lastPair_.valid = false;
     uint8_t loadedPsk[16] = {};
     uint32_t storedCtr = 0;
@@ -333,16 +334,16 @@ class PairingTask {
 
   // Bonded-state read for the transport-retained paths: the session flag
   // lives here.
-  bool bonded() const { return bonded_; }
+  bool bonded() const override { return bonded_; }
 
   // Session-era read for the ALIVE/DISCONNECT handlers and the drive
   // publish pin (DRIVE_V2 carries no era).
-  uint16_t era() const { return era_; }
+  uint16_t era() const override { return era_; }
 
   // Last-consumed-counter read for the logging-only freshness pre-checks in
   // the opcode handlers. The authoritative freshness gate is inside tryConsume
   // (same thread, no interleaving between pre-check and commit).
-  uint32_t lastCounter() const { return lastCounter_; }
+  uint32_t lastCounter() const override { return lastCounter_; }
 
   // Atomic session-auth service: separates proving a frame belongs to the
   // session from acting on it. Folds bonded_ + eraOk + counter freshness +
@@ -360,7 +361,8 @@ class PairingTask {
   // Freshness is the wrap-aware strictly-greater idiom. All session tags are
   // first6, so the compare length is the literal 6. HMAC timing feeds the
   // shared maxVerifyUs_ funnel (throttled line, drive at 50Hz dominates).
-  connection::Verified tryConsume(uint32_t ctr, bool eraOk, const uint8_t* tag, const uint8_t* msg, size_t msgLen) {
+  connection::Verified tryConsume(uint32_t ctr, bool eraOk, const uint8_t* tag, const uint8_t* msg,
+                                  size_t msgLen) override {
     bool fresh = false;
     bool hmacOk = false;
     if (bonded_ && eraOk && tag != nullptr && msg != nullptr && msgLen != 0) {
@@ -401,6 +403,27 @@ class PairingTask {
     return verified;
   }
 
+  // ALIVE verify: tag = first6(HMAC-SHA256(psk, "ALIVE"||eraBE2||counterBE4)).
+  // Folds the same bonded/era/fresh/HMAC checks through tryConsume.
+  connection::Verified tryConsumeAlive(uint16_t wireEra, uint32_t ctr, const uint8_t* tag) override {
+    uint8_t msg[pairing::kAliveMsgLen];
+    pairing::aliveTagMsg(wireEra, ctr, msg);
+    connection::Verified verified = tryConsume(ctr, wireEra == era_, tag, msg, sizeof(msg));
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    return verified;
+  }
+
+  // DISCONNECT verify: tag = first6(HMAC-SHA256(psk, "DISCONNECT"||eraBE2||
+  // counterBE4)). Folds the same bonded/era/fresh/HMAC checks through
+  // tryConsume.
+  connection::Verified tryConsumeDisconnect(uint16_t wireEra, uint32_t ctr, const uint8_t* tag) override {
+    uint8_t msg[pairing::kDisconnectMsgLen];
+    pairing::disconnectTagMsg(wireEra, ctr, msg);
+    connection::Verified verified = tryConsume(ctr, wireEra == era_, tag, msg, sizeof(msg));
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    return verified;
+  }
+
   // Explicit unpair / 10s-hold factory reset hook: clears the NVS bond +
   // in-memory Core + key material. Also invalidates the PAIR_OK redelivery
   // cache (+zeroizes its secrets).
@@ -432,9 +455,8 @@ class PairingTask {
   // this (and ONLY this) for the pair family after its framing demux. The
   // header -> handler map lives here. Default is unreachable and fail-closed
   // silent.
-  template <typename Transport>
   void handlePairFrame(uint8_t header, const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
-                       Transport& t) {
+                       transport::IUdpTransport& t) override {
     switch (header) {
       case pairing::kPairReqHeader:
         handlePairReq(buf, rip, rport, nowMs, t);
@@ -457,8 +479,8 @@ class PairingTask {
   // PAIR_ERR internal_retry_fresh (reason 4): the code is already burned, so
   // must pair again with a fresh display code. Genuine not_in_window still
   // sends reason 2. Every reply is unicast to the requester.
-  template <typename Transport>
-  void handlePairReq(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs, Transport& t) {
+  void handlePairReq(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
+                     transport::IUdpTransport& t) {
     DESKY_ASSERT(buf != nullptr);
     if (buf == nullptr) {
       return;
@@ -468,7 +490,7 @@ class PairingTask {
     // PAIR_OK. Checked BEFORE the already_bonded reply below.
     if (bonded_ && t.shouldRedeliver(lastPair_.valid, lastPair_.code6, lastPair_.cliNonce4, buf + 1, buf + 7,
                                      lastPair_.bondMs, nowMs)) {
-      t.sendPairRedeliver(rip, rport, lastPair_.ok39);
+      t.sendPairRedeliver(rip, rport, lastPair_.ok39, sizeof(lastPair_.ok39));
       return;
     }
     if (bonded_) {
@@ -477,7 +499,7 @@ class PairingTask {
       err[1] = pairing::toWireReason(pairing::Result::kAlreadyBonded);
       err[2] = 0;
       err[3] = static_cast<uint8_t>(err[0] ^ err[1] ^ err[2]);
-      t.sendPairErr(rip, rport, err);
+      t.sendPairErr(rip, rport, err, sizeof(err));
       dropFirst(firstPairDrop_, "pair req while bonded (first of boot)");
       LOG_EVERY_N(10, "UDP", "pair req while bonded");
       return;
@@ -490,7 +512,7 @@ class PairingTask {
       err[1] = pairing::toWireReason(r);
       err[2] = retryS;
       err[3] = static_cast<uint8_t>(err[0] ^ err[1] ^ err[2]);
-      t.sendPairErr(rip, rport, err);
+      t.sendPairErr(rip, rport, err, sizeof(err));
       dropFirst(firstPairDrop_, "pair err reason=%u (first of boot)", static_cast<unsigned>(pairing::toWireReason(r)));
       LOG_EVERY_N(10, "UDP", "pair err reason=%u", static_cast<unsigned>(pairing::toWireReason(r)));
       return;
@@ -545,7 +567,7 @@ class PairingTask {
           outXor ^= out[i];
         }
         out[sizeof(out) - 1] = outXor;
-        t.sendPairOk(std::move(receipt), rip, rport, out);
+        t.sendPairOk(std::move(receipt), rip, rport, out, sizeof(out));
         sent = true;
       }
       mbedtls_platform_zeroize(kek, sizeof(kek));
@@ -595,7 +617,7 @@ class PairingTask {
       err[1] = pairing::toWireReason(pairing::Result::kInternal);
       err[2] = 0;
       err[3] = static_cast<uint8_t>(err[0] ^ err[1] ^ err[2]);
-      t.sendPairErr(rip, rport, err);
+      t.sendPairErr(rip, rport, err, sizeof(err));
       dropFirst(firstPairDrop_, "pair err internal (first of boot)");
       LOG_EVERY_N(10, "UDP", "pair err internal");
     }
@@ -607,8 +629,8 @@ class PairingTask {
   // caller). Symmetric forget: a signed fire-and-forget from the bonded
   // owner. Fail = silent drop. Pass clears the NVS bond + Core + key material
   // + redelivery cache and opens a fresh pairing window. No reply packet.
-  template <typename Transport>
-  void handleUnbond(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs, Transport& t) {
+  void handleUnbond(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
+                    transport::IUdpTransport& t) {
     (void)rip;
     (void)rport;
     DESKY_ASSERT(buf != nullptr);
@@ -687,8 +709,8 @@ class PairingTask {
   // reorder window). Duplicate REQ with era == current era re-ACKs
   // idempotently without re-deriving or re-verifying (the ACK carries no
   // secret). Any other era is a silent drop. No reply on failure.
-  template <typename Transport>
-  void handleRekey(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs, Transport& t) {
+  void handleRekey(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
+                   transport::IUdpTransport& t) {
     DESKY_ASSERT(buf != nullptr);
     if (buf == nullptr) {
       return;
@@ -705,7 +727,7 @@ class PairingTask {
       // Explicitly bypasses the Pinned gate below — documented, by design.
       uint8_t ack[pairing::kRekeyAckSize];
       if (composeRekeyAck(era_, ack)) {
-        t.sendRekeyAckImpl(rip, rport, ack);
+        t.sendRekeyAckImpl(rip, rport, ack, sizeof(ack));
       }
       LOG_EVERY_N(20, "UDP", "rekey redeliver era=%u", static_cast<unsigned>(era_));
       return;
@@ -772,7 +794,7 @@ class PairingTask {
     connection::Pinned rekeyPinned = t.markAlive(std::move(rekeyVerified), rip, rport, nowMs, era_);
     uint8_t ack[pairing::kRekeyAckSize];
     if (composeRekeyAck(era_, ack)) {
-      t.sendRekeyAck(std::move(rekeyPinned), rip, rport, ack);
+      t.sendRekeyAck(std::move(rekeyPinned), rip, rport, ack, sizeof(ack));
     }
     LOG_I("UDP", "rekey ok era=%u", static_cast<unsigned>(era_));
   }

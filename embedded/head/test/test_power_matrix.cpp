@@ -2,7 +2,23 @@
 
 #include <unity.h>
 
+#include "../src/services/display_port.h"
 #include "../src/services/power_manager.h"
+
+namespace {
+// Minimal IDisplayPort fake: pins the rail contract PowerManager drives.
+struct FakeDisplay : IDisplayPort {
+  bool init() override { return true; }
+  void setPowerState(bool enable) override { powered = enable; }
+  bool isEnabled() const override { return powered; }
+  bool present() const override { return true; }
+  void setDim(bool dim) override { dimmed = dim; }
+  void repaint() override { ++repaints; }
+  bool powered = false;
+  bool dimmed = false;
+  int repaints = 0;
+};
+}  // namespace
 
 void test_boot_validation_lean0_all_on() {
   CameraState cam = CAM_OFF;
@@ -40,4 +56,18 @@ void test_power_state_names() {
   TEST_ASSERT_EQUAL_STRING("on", oledStateName(OLED_ON));
   TEST_ASSERT_EQUAL_STRING("dim", oledStateName(OLED_DIM));
   TEST_ASSERT_EQUAL_STRING("off", oledStateName(OLED_OFF));
+}
+
+void test_display_port_rail_contract() {
+  FakeDisplay fake;
+  IDisplayPort* port = &fake;
+  port->setPowerState(true);
+  port->setDim(true);
+  port->repaint();
+  TEST_ASSERT_TRUE(port->present());
+  TEST_ASSERT_TRUE(fake.powered);
+  TEST_ASSERT_TRUE(fake.dimmed);
+  TEST_ASSERT_EQUAL_INT(1, fake.repaints);
+  port->setPowerState(false);
+  TEST_ASSERT_FALSE(port->isEnabled());
 }

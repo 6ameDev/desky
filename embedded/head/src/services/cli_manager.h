@@ -161,17 +161,27 @@ inline bool parseLine(const char* line, PowerCommand& out) {
 
 }  // namespace headcmd
 
+// CLI fan-out sink (binder-implemented): main.cpp owns the coordinator, link,
+// and OTA objects and implements this sink; the CLI only parses + triggers.
+// Keeps services free of transport/abilities/behavior bindings with identical
+// verbs, logs, and dispatch outcomes.
+struct ICliSink {
+  virtual ~ICliSink() = default;
+  virtual void onStatusExtra() = 0;  // coordinator + link status lines
+  virtual void onLinkStatus() = 0;   // link door status line
+  virtual void onSnap() = 0;         // link still trigger
+  virtual void onOta(const char* args) = 0;
+  virtual void onCoord(const PowerCommand& cmd) = 0;  // CAM/FACE/OLED/QR dispatch
+};
+
 #ifdef ARDUINO
 // ── Firmware: USB serial line door ─────────────────────────────────────────
 
 #include <Arduino.h>
 
-#include "abilities/ota/ota_task.h"
-#include "behavior/coordinator.h"
 #include "common/logger.h"
 #include "config.h"
 #include "services/power_manager.h"
-#include "transport/link_client.h"
 
 #ifndef CFG_CLI_LINE_LEN
 #define CFG_CLI_LINE_LEN 64
@@ -179,21 +189,15 @@ inline bool parseLine(const char* line, PowerCommand& out) {
 
 class CliManager {
  public:
-  CliManager() : power_(nullptr), coord_(nullptr), link_(nullptr), ota_(nullptr), lineLen_(0) {}
+  CliManager() : power_(nullptr), sink_(nullptr), lineLen_(0) {}
 
   void begin(PowerManager* power) {
     power_ = power;
     printHelp();
   }
 
-  // Stored, never owned.
-  void attachCoordinator(HeadCoordinator* coord) { coord_ = coord; }
-
-  // Stored, never owned.
-  void attachLink(LinkClient* link) { link_ = link; }
-
-  // Stored, never owned.
-  void attachOta(OtaUpdater* ota) { ota_ = ota; }
+  // Stored, never owned. Main.cpp implements the fan-out.
+  void attachSink(ICliSink* sink) { sink_ = sink; }
 
   // Each newline parses and dispatches.
   void poll() {
@@ -226,33 +230,33 @@ class CliManager {
     }
     if (cmd.target == CmdTarget::STATUS) {
       power_->status();
-      if (link_ != nullptr) {
-        link_->logStatus();
+      if (sink_ != nullptr) {
+        sink_->onStatusExtra();
       }
     } else if (cmd.target == CmdTarget::HELP) {
       printHelp();
     } else if (cmd.target == CmdTarget::LINK) {
-      if (link_ != nullptr) {
-        link_->logStatus();
+      if (sink_ != nullptr) {
+        sink_->onLinkStatus();
       } else {
         LOG_W("CLI", "link not attached");
       }
     } else if (cmd.target == CmdTarget::SNAP) {
-      if (link_ != nullptr) {
-        link_->requestStill();
+      if (sink_ != nullptr) {
+        sink_->onSnap();
       } else {
         LOG_W("CLI", "link not attached");
       }
     } else if (cmd.target == CmdTarget::OTA) {
-      if (ota_ != nullptr && line != nullptr) {
+      if (sink_ != nullptr && line != nullptr) {
         const char* verb = headcmd::skipSpaces(line);
-        ota_->start(headcmd::skipSpaces(verb + 3));
+        sink_->onOta(headcmd::skipSpaces(verb + 3));
       } else {
         LOG_W("CLI", "ota not attached");
       }
     } else {
-      if (coord_ != nullptr) {
-        coord_->dispatch(cmd);
+      if (sink_ != nullptr) {
+        sink_->onCoord(cmd);
       }
     }
   }
@@ -264,9 +268,7 @@ class CliManager {
   }
 
   PowerManager* power_;
-  HeadCoordinator* coord_;
-  LinkClient* link_;
-  OtaUpdater* ota_;
+  ICliSink* sink_;
   char lineBuf_[CFG_CLI_LINE_LEN];
   size_t lineLen_;
 };

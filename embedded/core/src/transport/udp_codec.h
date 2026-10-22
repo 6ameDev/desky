@@ -26,7 +26,8 @@
 // Reserved: claimed headers are never reused or renumbered, sizes never
 // change, reserved bytes never repurposed — new messages claim a fresh
 // header. Deliberate stdint-only duplication: this table is mirrored (not
-// included) in udp_server.h / pairing_codec.h / Codec.kt / README.
+// included) in Codec.kt / README; pairing_codec.h and the udpstatus top half
+// of udp_server.h alias these constants.
 
 namespace udp {
 
@@ -51,6 +52,33 @@ constexpr uint8_t kControlHeader = 0xAA;
 constexpr uint8_t kTelemetryHeader = 0xBB;
 constexpr size_t kControlSize = 6;
 constexpr size_t kTelemetrySize = 9;
+
+// Phone-wire pairing vocabulary, single home (frozen spec:
+// shared/protocol/README.md §"Pairing + authenticated drive v1"):
+//   PAIR_REQ   App->Robot 12B [0x50|code6|cliNonce4|XOR]
+//   PAIR_OK v1.1 Robot->App 39B [0x51|srvNonce4|ct17|tag16|XOR]
+//   UNBOND     App->Robot 12B [0xAD|ctrBE4|tag6|XOR]
+//   REKEY_REQ  App->Robot 14B [0x53|eraBE2|ctrBE4|tag6|XOR]
+//   REKEY_ACK  Robot->App 10B [0x54|eraBE2|tag6|XOR]
+//   ALIVE      App->Robot 14B [0x55|eraBE2|ctrBE4|tag6|XOR]
+//   DISCONNECT App->Robot 14B [0x56|eraBE2|ctrBE4|tag6|XOR]
+// pairing_codec.h and the udpstatus top half of udp_server.h alias these;
+// never re-literalize them elsewhere.
+constexpr uint8_t kPairReqHeader = 0x50;
+constexpr size_t kPairReqSize = 12;
+constexpr size_t kPairOkSize = 39;
+constexpr uint8_t kUnbondHeader = 0xAD;
+constexpr size_t kUnbondSize = 12;
+constexpr size_t kUnbondTagLen = 6;
+constexpr size_t kUnbondMsgLen = 10;  // "UNBOND" (6 ASCII) || counterBE4
+constexpr uint8_t kRekeyReqHeader = 0x53;
+constexpr size_t kRekeyReqSize = 14;
+constexpr uint8_t kRekeyAckHeader = 0x54;
+constexpr size_t kRekeyAckSize = 10;
+constexpr uint8_t kAliveHeader = 0x55;
+constexpr size_t kAliveSize = 14;
+constexpr uint8_t kDisconnectHeader = 0x56;
+constexpr size_t kDisconnectSize = 14;
 
 inline uint8_t checksum(const uint8_t* data, size_t len) {
   uint8_t sum = 0;
@@ -114,6 +142,58 @@ inline bool decodeTelemetry(const uint8_t* in, size_t len, TelemetryPacket& pkt)
   pkt.distanceMm = static_cast<uint16_t>((static_cast<uint16_t>(in[5]) << 8) | in[6]);
   pkt.statusFlags = in[7];
   return true;
+}
+
+// Command event payload vocabulary: EVENT_UDP_COMMAND_RECEIVED packs a
+// ControlPacket into the SystemEvent uint32 big-endian:
+//   payload = mode<<24 | throttle<<16 | steering<<8 | flags.
+// Throttle/steering bytes are uint8 center-128:
+//   signed = (byte - 128) / 127, clamped to -1..1. Zero stick = 128.
+// Single home for the byte math shared by the transport publisher and the
+// behavior drain.
+
+// UDP stick byte (center-128) -> unit (-1..1). Exact: 128 maps to 0.0f,
+// 255 to +1.0, 0 clamps to -1.0.
+inline float byteToUnit(uint8_t raw) {
+  float f = (static_cast<float>(static_cast<int>(raw) - 128)) / 127.0f;
+  if (f > 1.0f) {
+    return 1.0f;
+  }
+  if (f < -1.0f) {
+    return -1.0f;
+  }
+  return f;
+}
+
+// Unit (-1..1) -> stick byte, inverse of byteToUnit (for tests/synthetic).
+inline uint8_t unitToByte(float v) {
+  if (v > 1.0f) {
+    v = 1.0f;
+  }
+  if (v < -1.0f) {
+    v = -1.0f;
+  }
+  int b = static_cast<int>(v * 127.0f + 128.0f + (v >= 0.0f ? 0.5f : -0.5f));
+  if (b > 255) {
+    return 255;
+  }
+  if (b < 0) {
+    return 0;
+  }
+  return static_cast<uint8_t>(b);
+}
+
+// Big-endian pack: payload = mode<<24|throttle<<16|steering<<8|flags.
+inline uint32_t packCommand(uint8_t mode, uint8_t throttle, uint8_t steering, uint8_t flags) {
+  return (static_cast<uint32_t>(mode) << 24) | (static_cast<uint32_t>(throttle) << 16) |
+         (static_cast<uint32_t>(steering) << 8) | static_cast<uint32_t>(flags);
+}
+
+inline void unpackCommand(uint32_t payload, uint8_t& mode, float& v, float& omega, uint8_t& flags) {
+  mode = static_cast<uint8_t>((payload >> 24) & 0xFF);
+  v = byteToUnit(static_cast<uint8_t>((payload >> 16) & 0xFF));
+  omega = byteToUnit(static_cast<uint8_t>((payload >> 8) & 0xFF));
+  flags = static_cast<uint8_t>(payload & 0xFF);
 }
 
 }  // namespace udp

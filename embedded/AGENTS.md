@@ -20,8 +20,8 @@ Every file in `core` and `head` must live strictly within one of these five laye
 - **Escalation Trigger:** If a task violates layer boundaries, **halt execution**, raise a warning, and propose the correct placement or a documented compromise.
 
 ## Architecture Guardrails (Self-Correcting Loop)
-- Layer edges are enforced by `embedded/tools/arch_guardrails.yaml` (runs in `make check`). Any change adding a layer edge must either satisfy the ruleset or adapt it in the same change with a one-line justification. Rule changes review like code.
-- Known compromises live in the ruleset allowlist with the slice that will remove them. Every milestone reruns audit mode and reviews warnings for promotion to errors.
+- Layer edges are enforced by `embedded/tools/arch_guardrails.yaml` (Phase 1, holds the fort) and `embedded/tools/arch_ideal.yaml` (Phase 2, ideal direction), both run in `make check`. Any change adding a layer edge must either satisfy the rulesets or adapt them in the same change with a one-line justification. Rule changes review like code.
+- Any future compromise needs an allowlist entry naming the slice that will remove it. Every milestone reruns audit mode and reviews warnings for promotion to errors.
 
 ## Coding Conventions & Code Hygiene
 - **No History Lessons:** Never comment on what code *used* to do or what spikes were tried.

@@ -1,0 +1,24 @@
+# Desky Phase 2 ideal layer direction (ERROR — enforced since P2.3, backlog empty).
+# Downward dependencies only; transport owns no upstack types; services own no face policy.
+rules:
+  - id: desky-ideal-services-no-upstack
+    paths:
+      include: ['**/src/services/**']
+    pattern-regex: '#include\s*"(transport|abilities|behavior)/[^"]+"'
+    languages: [generic]
+    message: 'ideal: services/ must not reach upstack into transport/abilities/behavior (plumb, do not bind).'
+    severity: ERROR
+  - id: desky-ideal-transport-no-upstack-types
+    paths:
+      include: ['**/src/transport/**']
+    pattern-regex: '#include\s*"(abilities|behavior|services)/[^"]+"'
+    languages: [generic]
+    message: 'ideal: transport/ must be a dumb pipe with no abilities/behavior/services types at all.'
+    severity: ERROR
+  - id: desky-ideal-services-no-face-policy
+    paths:
+      include: ['**/src/services/**']
+    pattern-regex: '(showQrDemo|clearQr|showPairing|clearPairing|pairActive)'
+    languages: [generic]
+    message: 'ideal: face overlay policy lives in abilities/face, not services/ (reporting reads warn too).'
+    severity: ERROR

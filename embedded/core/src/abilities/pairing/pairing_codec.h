@@ -1,10 +1,11 @@
 #pragma once
 // Pairing wire codec — abilities/pairing (6-digit pairing).
 //
-// Single owner of the pairing wire vocabulary: PAIR_REQ (0x50), PAIR_OK/ERR
-// (0x51/0x52), UNBOND (0xAD), REKEY (0x53/0x54), ALIVE/DISCONNECT (0x55/0x56),
-// the persist-interval byte, and tag-message builders. The QR bitmap encoder
-// lives in shared/link/qr_codec.h (included below). Frozen spec:
+// Tag-message builders, the persist-interval byte, PAIR_OK/ERR framing
+// (0x51/0x52), and pairing-session policy constants. Phone-wire
+// headers/sizes live once in transport/udp_codec.h (frozen table) and are
+// aliased here, so every pairing:: spelling keeps working. The QR bitmap
+// encoder lives in shared/link/qr_codec.h (included below). Frozen spec:
 // shared/protocol/README.md. Arduino-free (stdint/stddef only) so host tests
 // include it directly.
 
@@ -12,6 +13,7 @@
 #include <stdint.h>
 
 #include "link/qr_codec.h"
+#include "transport/udp_codec.h"
 
 // Fallbacks if config keys drift; in-project include/config.h always wins.
 #ifndef CFG_PAIR_CODE_LEN
@@ -34,9 +36,9 @@ constexpr uint32_t kMaxTries = CFG_PAIR_MAX_TRIES;
 constexpr uint32_t kLockoutMs = CFG_PAIR_LOCKOUT_MS;
 
 // PAIR_REQ (enrolment): App -> Robot, 12B [0x50 | code6 | clientNonce4 | XOR].
-// Single owner of the 0x50 vocabulary (transport mirrors via alias).
-constexpr uint8_t kPairReqHeader = 0x50;
-constexpr size_t kPairReqSize = 12;
+// Phone-wire home is udp:: (frozen table in transport/udp_codec.h).
+constexpr uint8_t kPairReqHeader = udp::kPairReqHeader;
+constexpr size_t kPairReqSize = udp::kPairReqSize;
 
 // PAIR_OK persist-interval byte: the GCM plaintext grows psk16 ->
 // psk16||persist_u8 (17B), so PAIR_OK grows 38B -> 39B. The byte rides inside
@@ -49,7 +51,7 @@ constexpr uint16_t kPairPersistMin = 8;
 constexpr uint16_t kPairPersistMax = 1024;  // App-domain max; wire holds the u8 subset (see below).
 constexpr size_t kPairWrapPlainLen = 17;    // psk16 || persist_u8
 constexpr size_t kPairCtLen = 17;
-constexpr size_t kPairOkSize = 39;
+constexpr size_t kPairOkSize = udp::kPairOkSize;
 constexpr size_t kPairOkLegacySize = 38;  // v1 robots without the interval byte
 
 // Minimal guard for the negotiated persist cadence: 8..255 passes, anything
@@ -63,11 +65,11 @@ inline uint8_t sanitizePersistEvery(uint16_t v) {
 
 // UNBOND (symmetric forget): App -> Robot, 12B [0xAD | counterBE4 | tag6 | XOR],
 //   tag = first6(HMAC-SHA256(psk, "UNBOND" || counterBE4)).
-// Single owner of the 0xAD vocabulary (transport mirrors via alias).
-constexpr uint8_t kUnbondHeader = 0xAD;
-constexpr size_t kUnbondSize = 12;
-constexpr size_t kUnbondTagLen = 6;
-constexpr size_t kUnbondMsgLen = 10;  // "UNBOND" (6 ASCII) || counterBE4
+// Phone-wire home is udp:: (frozen table in transport/udp_codec.h).
+constexpr uint8_t kUnbondHeader = udp::kUnbondHeader;
+constexpr size_t kUnbondSize = udp::kUnbondSize;
+constexpr size_t kUnbondTagLen = udp::kUnbondTagLen;
+constexpr size_t kUnbondMsgLen = udp::kUnbondMsgLen;
 
 // UNBOND tag message (10B, host-testable): "UNBOND" ASCII || counterBE4.
 // Domain-separates the unbond tag from drive tags.
@@ -110,10 +112,10 @@ constexpr uint8_t kPairOkHeader = 0x51;
 // the bond baseline (0 persisted, first drive uses 1) so the session resumes
 // gapless. Old PSK is dropped immediately on switch; a duplicate REQ with
 // era == current era re-ACKs idempotently without re-deriving.
-constexpr uint8_t kRekeyReqHeader = 0x53;
-constexpr size_t kRekeyReqSize = 14;
-constexpr uint8_t kRekeyAckHeader = 0x54;
-constexpr size_t kRekeyAckSize = 10;
+constexpr uint8_t kRekeyReqHeader = udp::kRekeyReqHeader;
+constexpr size_t kRekeyReqSize = udp::kRekeyReqSize;
+constexpr uint8_t kRekeyAckHeader = udp::kRekeyAckHeader;
+constexpr size_t kRekeyAckSize = udp::kRekeyAckSize;
 constexpr size_t kRekeyTagLen = 6;
 constexpr size_t kRekeyMsgLen = 11;     // "REKEY"(5) || eraBE2 || counterBE4
 constexpr size_t kRekeyAckMsgLen = 10;  // "REKEYACK"(8) || eraBE2
@@ -165,12 +167,12 @@ inline void rekeyAckTagMsg(uint16_t era, uint8_t out10[kRekeyAckMsgLen]) {
 // Both ride the shared strictly-increasing counter: a valid frame consumes
 // lastCounter_ exactly like drive. Era must equal the stored era; old-key
 // frames die via HMAC with no layout change.
-// Headers 0x55/0x56 are claimed here — never reuse 0xAA/0xAC/0xBB/0x50/
-// 0x51/0x52/0x53/0x54/0xAD.
-constexpr uint8_t kAliveHeader = 0x55;
-constexpr size_t kAliveSize = 14;
-constexpr uint8_t kDisconnectHeader = 0x56;
-constexpr size_t kDisconnectSize = 14;
+// Headers 0x55/0x56 are claimed in transport/udp_codec.h (frozen table) —
+// never reuse 0xAA/0xAC/0xBB/0x50/0x51/0x52/0x53/0x54/0xAD.
+constexpr uint8_t kAliveHeader = udp::kAliveHeader;
+constexpr size_t kAliveSize = udp::kAliveSize;
+constexpr uint8_t kDisconnectHeader = udp::kDisconnectHeader;
+constexpr size_t kDisconnectSize = udp::kDisconnectSize;
 constexpr size_t kAliveTagLen = 6;
 constexpr size_t kAliveMsgLen = 11;  // "ALIVE"(5) || eraBE2 || counterBE4
 constexpr size_t kDisconnectTagLen = 6;

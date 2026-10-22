@@ -51,13 +51,13 @@ class HeadCoordinator {
         break;
       }
       case CmdTarget::QR:
-        if (power_ == nullptr) {
+        if (face_ == nullptr) {
           break;
         }
         if (cmd.arg != 0) {
-          power_->showQrDemo();
+          face_->showQrDemo();
         } else {
-          power_->clearQr();
+          face_->clearQr("cli");
         }
         break;
       case CmdTarget::STATUS:
@@ -75,6 +75,8 @@ class HeadCoordinator {
   // Reporting only.
   bool qrActive() const { return face_ != nullptr && face_->qrActive(); }
   bool pairActive() const { return face_ != nullptr && face_->pairActive(); }
+
+  void status() const { LOG_I("PWR", "qr=%s pair=%s", qrActive() ? "on" : "off", pairActive() ? "on" : "off"); }
 
  private:
   PowerManager* power_;
