@@ -186,7 +186,7 @@ inline bool deriveRekeyPsk(const uint8_t oldPsk[kPskLen], uint16_t nextEra, uint
 // here, the gate-check + unicast stays in transport:
 //   markAlive(Verified&&, IPAddress, uint16_t, uint32_t, uint16_t era)
 //     -> connection::Pinned (pins the telemetry peer + refreshes the stamp)
-//   sendPairOk(PersistReceipt, IPAddress, uint16_t, bytes, len)
+//   sendPairOk(PairingReceipt, IPAddress, uint16_t, bytes, len)
 //   sendPairRedeliver(IPAddress, uint16_t, bytes, len) (lost-PAIR_OK race)
 //   sendPairErr(IPAddress, uint16_t, bytes, len)
 //   sendRekeyAck(Pinned, IPAddress, uint16_t, bytes, len)
@@ -543,7 +543,7 @@ class PairingTask : public transport::IPairingSession {
     // DRIVE_V2 uses counter 1. The receipt overload mints the
     // store-before-send proof consumed by sendPairOk (invalid until the NVS
     // save lands).
-    connection::PersistReceipt receipt;
+    connection::PairingReceipt receipt;
     if (ConfigStore::saveBond(newPsk, 0, receipt)) {
       uint8_t kek[pairing::kKekLen];
       uint8_t ct[pairing::kPairCtLen];

@@ -7,27 +7,27 @@
 // consumes it) and services/config_store.h (the minter) both include this
 // header, so neither layer names the other.
 
-// Firmware minter of PersistReceipt (services/config_store.h). Forward
+// Firmware minter of PairingReceipt (services/config_store.h). Forward
 // declaration only — this header stays dependency-free.
 class ConfigStore;
 
 namespace connection {
 
-// PersistReceipt: proof that the bond hit NVS before the ACK. Move-only.
+// PairingReceipt: proof that the bond hit NVS before the ACK. Move-only.
 // Default-constructs INVALID; only ConfigStore (friend) can mark one valid.
-class PersistReceipt {
+class PairingReceipt {
  public:
-  PersistReceipt() : valid_(false) {}
-  PersistReceipt(PersistReceipt&& other) : valid_(other.valid_) { other.valid_ = false; }
-  PersistReceipt& operator=(PersistReceipt&& other) {
+  PairingReceipt() : valid_(false) {}
+  PairingReceipt(PairingReceipt&& other) : valid_(other.valid_) { other.valid_ = false; }
+  PairingReceipt& operator=(PairingReceipt&& other) {
     if (this != &other) {
       valid_ = other.valid_;
       other.valid_ = false;
     }
     return *this;
   }
-  PersistReceipt(const PersistReceipt&) = delete;
-  PersistReceipt& operator=(const PersistReceipt&) = delete;
+  PairingReceipt(const PairingReceipt&) = delete;
+  PairingReceipt& operator=(const PairingReceipt&) = delete;
 
   bool valid() const { return valid_; }
 

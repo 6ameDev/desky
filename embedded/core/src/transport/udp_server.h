@@ -444,10 +444,10 @@ class UdpServer : public transport::IUdpTransport {
     }
   }
 
-  // PAIR_OK 39B unicast: consumes the PersistReceipt by value — proves the
+  // PAIR_OK 39B unicast: consumes the PairingReceipt by value — proves the
   // bond persisted BEFORE anything left the radio. Invalid receipt -> silent
   // no-op.
-  void sendPairOk(connection::PersistReceipt receipt, const IPAddress& ip, uint16_t port, const uint8_t* ok,
+  void sendPairOk(connection::PairingReceipt receipt, const IPAddress& ip, uint16_t port, const uint8_t* ok,
                   size_t len) override {
     if (!receipt.valid()) {
       return;
