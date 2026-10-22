@@ -166,7 +166,7 @@ class ConnectionManager {
     have_ = true;
   }
 
-  // Refresh-then-clear (UNBOND/DISCONNECT goodbye): consumes the Verified
+  // Refresh-then-clear (UNPAIR/DISCONNECT goodbye): consumes the Verified
   // token, stamps the goodbye instant, then drops the net peer. Invalid
   // token -> no state change.
   void refreshThenClear(Verified&& token, uint32_t nowMs) {

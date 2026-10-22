@@ -3,7 +3,7 @@ package com.desky.shared.data
 import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKeys
-import com.desky.shared.domain.BondSecretStore
+import com.desky.shared.domain.PairSecretStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -11,7 +11,7 @@ import kotlinx.coroutines.withContext
 private const val PSK_VALUE_KEY = "psk_hex"
 
 /**
- * Android [BondSecretStore]: one `EncryptedSharedPreferences` file per
+ * Android [PairSecretStore]: one `EncryptedSharedPreferences` file per
  * device (`bond_<sanitized deviceId>`), `MasterKeys` AES256_GCM key with key
  * encryption AES256_SIV + value encryption AES256_GCM
  * (`androidx.security:security-crypto:1.0.0` API).
@@ -19,9 +19,9 @@ private const val PSK_VALUE_KEY = "psk_hex"
  * Missing entries read back null (never throw); [clear] removes the value
  * (no-op when absent). Key material is never logged.
  */
-class EncryptedBondSecretStore(
+class EncryptedPairSecretStore(
     context: Context,
-) : BondSecretStore {
+) : PairSecretStore {
     private val appContext = context.applicationContext
 
     // HOLD: MasterKeys.getOrCreate (security-crypto 1.0.0) is deprecated, but
@@ -40,7 +40,7 @@ class EncryptedBondSecretStore(
 
     // commit() (blocking, already on Dispatchers.IO) instead of apply()
     // (async): a crash/power loss between apply()'s in-memory write and its
-    // async flush must not lose the freshly-paired bond PSK.
+    // async flush must not lose the freshly-paired pair PSK.
     override suspend fun savePsk(deviceId: String, pskHex: String) {
         withContext(Dispatchers.IO) {
             prefsFor(deviceId).edit().putString(PSK_VALUE_KEY, pskHex).commit()
@@ -68,5 +68,5 @@ class EncryptedBondSecretStore(
  * Android factory: the caller (see `DeskyApp`) supplies the Context, matching
  * the existing `createDeskyDatabase(context)` DI pattern.
  */
-fun createBondSecretStore(context: Context): BondSecretStore =
-    EncryptedBondSecretStore(context)
+fun createPairSecretStore(context: Context): PairSecretStore =
+    EncryptedPairSecretStore(context)

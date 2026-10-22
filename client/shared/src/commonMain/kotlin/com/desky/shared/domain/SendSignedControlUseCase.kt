@@ -3,7 +3,7 @@ package com.desky.shared.domain
 import kotlinx.coroutines.CancellationException
 
 /**
- * Encode [cmd] as an authenticated `DRIVE_V2` frame and send it to the
+ * Encode [cmd] as an authenticated `DRIVE` frame and send it to the
  * paired robot's address (pairing/auth Task 9).
  *
  * The caller owns the counter: strictly increasing per device, 1 for the

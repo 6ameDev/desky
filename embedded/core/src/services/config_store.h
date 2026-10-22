@@ -18,15 +18,15 @@ class ConfigStore {
  public:
   static constexpr const char* kNamespace = "desky";
   static constexpr const char* kVersionKey = "cfg_version";
-  // v1 -> v2: pair added. Per the discipline above a version bump
-  // clears the namespace.
-  static constexpr uint8_t kConfigVersion = 2;
+  // v2 -> v3: pair keys renamed (paired/pera). Per the discipline above a
+  // version bump clears the namespace.
+  static constexpr uint8_t kConfigVersion = 3;
   static constexpr const char* kPskKey = "psk";
   static constexpr const char* kCounterKey = "bctr";
-  static constexpr const char* kPairedKey = "bonded";
-  // Tier-1 refresh era (u16, additive key — no version bump: pairs written
-  // before the refresh feature read back era 0).
-  static constexpr const char* kEraKey = "bera";
+  static constexpr const char* kPairedKey = "paired";
+  // Tier-1 pair-refresh era (u16, additive key — no version bump: pairs
+  // written before the refresh feature read back era 0).
+  static constexpr const char* kEraKey = "pera";
   static constexpr size_t kPskLen = 16;
 
   // Opens NVS, enforces schema version, seeds defaults. Call once in setup().
@@ -69,7 +69,7 @@ class ConfigStore {
     }
     Preferences prefs;
     if (!prefs.begin(kNamespace, false)) {
-      LOG_E("CONFIG", "nvs open failed (saveBond)");
+      LOG_E("CONFIG", "nvs open failed (savePair)");
       return false;
     }
     const size_t written = prefs.putBytes(kPskKey, psk, kPskLen);
@@ -84,7 +84,7 @@ class ConfigStore {
     }
     // All writes must succeed — a half-persisted pair is worse than none.
     if (counterWritten == 0 || pairedWritten == 0 || eraWritten == 0) {
-      LOG_E("CONFIG", "bond counter/flag write failed (%u/%u)", (unsigned)counterWritten, (unsigned)pairedWritten);
+      LOG_E("CONFIG", "pair counter/flag write failed (%u/%u)", (unsigned)counterWritten, (unsigned)pairedWritten);
       return false;
     }
     receipt.mark(true);  // Store-before-ACK proof minted ONLY on full persist.
@@ -116,7 +116,7 @@ class ConfigStore {
     paired = false;
     Preferences prefs;
     if (!prefs.begin(kNamespace, true)) {
-      LOG_E("CONFIG", "nvs open failed (loadBond)");
+      LOG_E("CONFIG", "nvs open failed (loadPair)");
       return false;
     }
     const uint8_t stored = prefs.isKey(kVersionKey) ? prefs.getUChar(kVersionKey, 0) : 0;
@@ -138,8 +138,8 @@ class ConfigStore {
     return paired;
   }
 
-  // Tier-1 refresh era accessors (additive: a pair written before the refresh
-  // feature reads back 0).
+  // Tier-1 pair-refresh era accessors (additive: a pair written before the
+  // refresh feature reads back 0).
   static uint16_t loadEra() {
     Preferences prefs;
     if (!prefs.begin(kNamespace, true)) {
@@ -164,7 +164,7 @@ class ConfigStore {
     }
     Preferences prefs;
     if (!prefs.begin(kNamespace, false)) {
-      LOG_E("CONFIG", "nvs open failed (saveRekey)");
+      LOG_E("CONFIG", "nvs open failed (savePairRefresh)");
       return false;
     }
     const size_t written = prefs.putBytes(kPskKey, psk, kPskLen);
@@ -173,11 +173,11 @@ class ConfigStore {
     const size_t pairedWritten = prefs.putUChar(kPairedKey, 1);
     prefs.end();
     if (written != kPskLen) {
-      LOG_E("CONFIG", "rekey psk write short (%u)", (unsigned)written);
+      LOG_E("CONFIG", "pair-refresh psk write short (%u)", (unsigned)written);
       return false;
     }
     if (eraWritten == 0 || counterWritten == 0 || pairedWritten == 0) {
-      LOG_E("CONFIG", "rekey era/counter/flag write failed");
+      LOG_E("CONFIG", "pair-refresh era/counter/flag write failed");
       return false;
     }
     receipt.mark(true);  // Store-before-ACK proof minted ONLY on full persist.
@@ -191,7 +191,7 @@ class ConfigStore {
   static bool clearPair() {
     Preferences prefs;
     if (!prefs.begin(kNamespace, false)) {
-      LOG_E("CONFIG", "nvs open failed (clearBond)");
+      LOG_E("CONFIG", "nvs open failed (clearPair)");
       return false;
     }
     prefs.remove(kPskKey);
@@ -199,7 +199,7 @@ class ConfigStore {
     prefs.remove(kPairedKey);
     prefs.remove(kEraKey);
     prefs.end();
-    LOG_I("CONFIG", "bond cleared");
+    LOG_I("CONFIG", "pair cleared");
     return true;
   }
 

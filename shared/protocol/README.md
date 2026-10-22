@@ -56,7 +56,7 @@ Decode rejects wrong header, wrong length, or bad checksum.
 - Robot AP `desky` + common pass = transport only (zero security).
   App uses fixed `192.168.4.1:3333`; no IP input.
 - Robot failsafes to stop ~500ms after the last control datagram.
-- Telemetry Robot -> App is unicast-only while bonded and alive (`kAliveMs` 5s), silent otherwise — subnet broadcast deleted, pre-bond silent.
+- Telemetry Robot -> App is unicast-only while paired and alive (`kAliveMs` 5s), silent otherwise — subnet broadcast deleted, pre-pair silent.
 
 ## Pairing + authenticated drive v1 (frozen by review 2026-10-15)
 
@@ -72,10 +72,10 @@ Frozen wire table (M9 three-way mirror gate — normative source is
 | `0x51` | 38   | PAIR_OK v1 | Robot->App |
 | `0x51` | 39   | PAIR_OK v1.1 | Robot->App |
 | `0x52` | 4    | PAIR_ERR   | Robot->App |
-| `0xAC` | 16   | DRIVE_V2   | App->Robot |
-| `0xAD` | 12   | UNBOND     | App->Robot |
-| `0x53` | 14   | REKEY_REQ  | App->Robot |
-| `0x54` | 10   | REKEY_ACK  | Robot->App |
+| `0xAC` | 16   | DRIVE          | App->Robot |
+| `0xAD` | 12   | UNPAIR         | App->Robot |
+| `0x53` | 14   | PAIR_REFRESH_REQ  | App->Robot |
+| `0x54` | 10   | PAIR_REFRESH_ACK  | Robot->App |
 | `0x55` | 14   | ALIVE      | App->Robot |
 | `0x56` | 14   | DISCONNECT | App->Robot |
 
@@ -86,8 +86,8 @@ header (Phase-2 `SET_RATE` must pick other values).
 
 Two tiers, decoupled: Tier 1 ephemeral pairing code proves physical
 presence; Tier 2 persistent PSK proves ownership on every drive packet.
-Rotation of Tier 1 never evicts an existing bond. Single owner: a new
-bond evicts the old; re-pair only via 10s button hold (clears bond). <!-- TODO(PHYSICAL-TRIGGER): button-vs-power-cycle decision pending — implements the 10s-hold promise; see DECISION-ISSUE. -->
+Rotation of Tier 1 never evicts an existing pair. Single owner: a new
+pair evicts the old; re-pair only via 10s button hold (clears pair). <!-- TODO(PHYSICAL-TRIGGER): button-vs-power-cycle decision pending — implements the 10s-hold promise; see DECISION-ISSUE. -->
 
 ### Pairing QR display contract (normative for firmware + app)
 
@@ -101,7 +101,7 @@ neither side may extend unilaterally:
 - QR encoding: numeric mode, ECC LOW, Version 1 minimum (21×21). The 6-digit
   payload always fits V1; the encoder may emit a larger version only if the
   payload contract above ever grows (it hasn't).
-- Wire/bond semantics unchanged: scanning is a code-entry shortcut — the
+- Wire/pair semantics unchanged: scanning is a code-entry shortcut — the
   decoded digits feed the identical `PAIR_REQ` path (validation, single-use
   burn, 5-min window, 5-try lockout all apply as specified below).
 - Firmware (`middleware/qr_pairing.h` + `UdpServer::qrBitmap()`) owns the
@@ -110,7 +110,7 @@ neither side may extend unilaterally:
 
 Constants: code = 6 ASCII digits (`esp_random`, CSPRNG); single-use,
 5-min window, 5 bad tries -> 30s lockout; PSK = 16 bytes (`esp_random`);
-counter = 32-bit BE, first drive packet uses 1 (0 is reserved as the bond
+counter = 32-bit BE, first drive packet uses 1 (0 is reserved as the pair
 baseline and never valid on the wire), strictly increasing, persisted
 periodically;
 `KEK = HKDF-SHA256(salt=client_nonce||server_nonce, IKM=code ASCII,
@@ -132,42 +132,42 @@ info="desky-pair-v1", L=16)`.
   defaults to 128 and stays compatible.
 - `PAIR_ERR` Robot -> App, 4 bytes:
   `[0x52 | reason 1B | retry_s 1B | XOR]`
-  reason: 0=bad_code, 1=locked, 2=not_in_window, 3=already_bonded.
+  reason: 0=bad_code, 1=locked, 2=not_in_window, 3=already_paired.
   reason 4=internal_retry_fresh ("robot error, use fresh code").
   M11 additive addendum (additive-only, never renumber): reasons 0-3 are
   frozen — 2 keeps its old not_in_window meaning (genuine window expiry
-  via tryCode); burn-failure after tryCode kOk (saveBond/deriveKek/wrapPsk
+  via tryCode); burn-failure after tryCode kOk (savePair/deriveKek/wrapPsk
   fail, code already burned single-use) sends 4, not 2. Old peers decode
   any reason byte but map only 0-3, so 4 falls to their generic
   "rejected (reason=4)" path — safe to roll out.
-- `DRIVE_V2` App -> Robot, 16 bytes @30-50Hz:
+- `DRIVE` App -> Robot, 16 bytes @30-50Hz:
   `[0xAC | mode | thr | str | flags | counter 4B BE | tag 6B | XOR]`
   with `tag = first6(HMAC-SHA256(psk, counter||mode||thr||str||flags))`.
-- `UNBOND` App -> Robot, 12 bytes (fire-and-forget, no reply):
+- `UNPAIR` App -> Robot, 12 bytes (fire-and-forget, no reply):
   `[0xAD | counterBE 4B | tag 6B | XOR]`
-  with `tag = first6(HMAC-SHA256(psk, "UNBOND"||counterBE4))` — the 10B
-  message is the ASCII prefix `UNBOND` + the 4B big-endian counter, domain-
-  separating the unbond tag from drive tags. Verify order mirrors drive:
-  len -> header -> XOR -> bonded? -> counter fresh (`isFreshCounter`) ->
+  with `tag = first6(HMAC-SHA256(psk, "UNPAIR"||counterBE4))` — the 10B
+  message is the ASCII prefix `UNPAIR` + the 4B big-endian counter, domain-
+  separating the unpair tag from drive tags. Verify order mirrors drive:
+  len -> header -> XOR -> paired? -> counter fresh (`isFreshCounter`) ->
   HMAC constant-time. Fail = silent drop. Pass = symmetric forget: the
-  robot clears the NVS bond + in-memory key + PAIR_OK redelivery cache and
+  robot clears the NVS pair + in-memory key + PAIR_OK redelivery cache and
   opens a fresh pairing window, so a new phone can pair immediately.
-- `REKEY_REQ` App -> Robot, 14 bytes (Tier-1 silent auto-rekey):
+- `PAIR_REFRESH_REQ` App -> Robot, 14 bytes (Tier-1 silent auto-pair-refresh):
   `[0x53 | eraBE2 | counterBE4 | tag 6B | XOR]`
-  with `tag = first6(HMAC-SHA256(oldPsk, "REKEY"||eraBE2||counterBE4))` —
-  the 11B message is the 5 ASCII bytes of `"REKEY"` + the 2B big-endian
+  with `tag = first6(HMAC-SHA256(oldPsk, "PAIRREFRESH"||eraBE2||counterBE4))` —
+  the 17B message is the 11 ASCII bytes of `"PAIRREFRESH"` + the 2B big-endian
   requested era (stored era + 1, u16 wrap mod 65536) + the 4B big-endian
   counter (fresh per `isFreshCounter`, allocated from the shared holder).
-- `REKEY_ACK` Robot -> App, 10 bytes:
+- `PAIR_REFRESH_ACK` Robot -> App, 10 bytes:
   `[0x54 | eraBE2 | tag 6B | XOR]`
-  with `tag = first6(HMAC-SHA256(newPsk, "REKEYACK"||eraBE2))` — the 10B
-  message is the 8 ASCII bytes of `"REKEYACK"` + the new era, authenticated
+  with `tag = first6(HMAC-SHA256(newPsk, "PAIRREFRESHACK"||eraBE2))` — the 16B
+  message is the 14 ASCII bytes of `"PAIRREFRESHACK"` + the new era, authenticated
   under the NEW key so the ACK proves the switch.
-- `ALIVE` App -> Robot, 14 bytes (keepalive under the bonded PSK):
+- `ALIVE` App -> Robot, 14 bytes (keepalive under the paired PSK):
   `[0x55 | eraBE2 | counterBE4 | tag 6B | XOR]`
   with `tag = first6(HMAC-SHA256(psk, "ALIVE"||eraBE2||counterBE4))` —
   the 11B message is the 5 ASCII bytes of `"ALIVE"` + the 2B big-endian
-  CURRENT era (stored era; a rekey moves it) + the 4B big-endian counter
+  CURRENT era (stored era; a pair-refresh moves it) + the 4B big-endian counter
   (fresh per `isFreshCounter`, allocated from the shared holder — a valid
   ALIVE consumes `lastCounter_` exactly like drive, so a replayed ALIVE
   can never refresh twice).
@@ -177,21 +177,21 @@ info="desky-pair-v1", L=16)`.
   with `tag = first6(HMAC-SHA256(psk, "DISCONNECT"||eraBE2||counterBE4))`
   — the 16B message is the 10 ASCII bytes of `"DISCONNECT"` + eraBE2 +
   counterBE4. Verify order mirrors ALIVE. Pass runs refresh-then-clear
-  like UNBOND (alive timestamp refreshed, net peer dropped) but the bond
+  like UNPAIR (alive timestamp refreshed, net peer dropped) but the pair
   is KEPT: the next launch rejoins instantly. Never drives.
   Headers `0x55`/`0x56` are claimed here — never reuse
   `0xAA`/`0xAC`/`0xBB`/`0x50`/`0x51`/`0x52`/`0x53`/`0x54`/`0xAD`.
 
 Robot alive rule (firmware `UdpServer::markAlive` funnel): every VALID
-bonded packet — ALIVE, DRIVE_V2, REKEY_REQ — pins the telemetry unicast
+paired packet — ALIVE, DRIVE, PAIR_REFRESH_REQ — pins the telemetry unicast
 peer AND refreshes the alive timestamp BEFORE any opcode-specific effect
 (event publish, counter persist, ACK). No opcode holds a privilege: a 1Hz
 ALIVE keeps the robot alive exactly like 50Hz drive, and ALIVE never
 touches the drive effect (`lastV_`/`lastOmega_`/`lastRxMs_` stay
-drive-only). Fresh while within `kAliveMs` (5s). DISCONNECT/UNBOND run
-refresh-then-clear (net gone: `havePeer_ = false`); UNBOND additionally
-clears the NVS bond + key + redelivery cache and opens a fresh pairing
-window. Pre-bond ALIVE/DISCONNECT drop like pre-bond drive; old-key
+drive-only). Fresh while within `kAliveMs` (5s). DISCONNECT/UNPAIR run
+refresh-then-clear (net gone: `havePeer_ = false`); UNPAIR additionally
+clears the NVS pair + key + redelivery cache and opens a fresh pairing
+window. Pre-pair ALIVE/DISCONNECT drop like pre-pair drive; old-key
 frames die via HMAC with no layout change. App-side ALIVE send is a
 separate task — the firmware handler ships first so the wire is stable.
 
@@ -201,21 +201,21 @@ funnel core is `embedded/core/src/middleware/connection_manager.h`
 `IPAddress`<->u32 and keeps the WiFiUDP fd + gate logging + send);
 telemetry cadence/encode is `embedded/core/src/services/telemetry_manager.h`
 (aggregate `Snapshot` in, bytes out via a `UdpServer`-provided send fn);
-bond/era lifecycle is `middleware/pairing.h` `Core` (`UdpServer` keeps the
+pair/era lifecycle is `middleware/pairing.h` `Core` (`UdpServer` keeps the
 PSK/counter/NVS + redelivery cache).
 
-Tier-1 silent auto-rekey (era + PSK rotation, fully silent, no user
+Tier-1 silent auto-pair-refresh (era + PSK rotation, fully silent, no user
 action): before the app counter hits `EXHAUSTION_GATE` (`0xFFFFFF00`) both
 sides rotate to a new era + PSK under the old PSK, reset the counter to the
-bond baseline (0 persisted, first post-rekey drive uses 1 — same as a fresh
-pair), and resume gapless. Mirrors TLS `KeyUpdate` / IPsec rekey / LoRaWAN
+pair baseline (0 persisted, first post-pair-refresh drive uses 1 — same as a fresh
+pair), and resume gapless. Mirrors TLS `KeyUpdate` / IPsec pair-refresh / LoRaWAN
 rejoin. Key schedule (no key transport — both sides derive):
-`PSK_next = HKDF-SHA256(salt="desky-rekey-v1", IKM=oldPsk16,
-info=eraBE2(new), L=16)`. The era lives in NVS (`bera`, u16, additive key
-— pre-rekey bonds read back 0; fresh pair resets to 0) + the Room v5 column
+`PSK_next = HKDF-SHA256(salt="desky-pair-refresh-v1", IKM=oldPsk16,
+info=eraBE2(new), L=16)`. The era lives in NVS (`pera`, u16, additive key
+— pre-pair-refresh pairs read back 0; fresh pair resets to 0) + the Room v5 column
 + the `DriveCounter` holder; drive frames carry no era (post-switch old-key
 frames drop via HMAC — no drive layout change). Verify order mirrors
-drive/unbond: len -> header -> XOR -> bonded? -> era is exactly stored+1
+drive/unpair: len -> header -> XOR -> paired? -> era is exactly stored+1
 (a duplicate with era == stored re-ACKs idempotently WITHOUT re-verifying
 — the lost-ACK retry reuses the same era + counter bytes; the ACK leaks no
 secret: era + HMAC tag under the new key) -> counter fresh -> HMAC
@@ -225,16 +225,16 @@ app retries 3x byte-identical, then falls back to the Tier-2 repair copy
 counter 0) BEFORE the ACK, switch atomically, reply ACK. The old PSK is
 dropped immediately on switch (no reorder window): stale in-flight drive
 frames under the old key drop via HMAC. Proactive margin: the app fires the
-exchange when `lastSent >= GATE - 1000` (`REKEY_MARGIN`, ~20 s at full
+exchange when `lastSent >= GATE - 1000` (`PAIR_REFRESH_MARGIN`, ~20 s at full
 50 Hz drive) so rotation completes before the fail-closed gate. Headers
 `0x53`/`0x54` are claimed here — never reuse
 `0xAA`/`0xAC`/`0xBB`/`0x50`/`0x51`/`0x52`/`0xAD` (a Phase-2 `SET_RATE`
 must pick other values).
 
-Verify order (Core 0, pre-publish): len -> header -> XOR -> bonded? ->
+Verify order (Core 0, pre-publish): len -> header -> XOR -> paired? ->
 counter > lastSeen -> HMAC constant-time (`mbedtls_ct_memcmp`). Fail =
-silent drop (500ms failsafe stops safely). Pre-bond: legacy `0xAA`
-frames pin the telemetry peer only, never drive. Post-bond: legacy
+silent drop (500ms failsafe stops safely). Pre-pair: legacy `0xAA`
+frames pin the telemetry peer only, never drive. Post-pair: legacy
 drive datagrams are dropped.
 
 Libraries only, no custom crypto: firmware `mbedtls_md_hmac` +
@@ -245,7 +245,7 @@ client `dev.whyoleg.cryptography:0.6.0` (JCA/CryptoKit backends).
 
 - Two tiers, decoupled: the pairing code proves presence (single-use,
   time-boxed), the PSK proves ownership (persistent). Rotation never
-  evicts; single owner; re-pair only via bond wipe.
+  evicts; single owner; re-pair only via pair wipe.
 - Counter, not timestamps, for freshness: the S3 has no trustworthy clock
   (no RTC, no NTP on the AP), and timestamps without a seen-cache don't
   stop in-window replay anyway. One `uint32`, strictly greater, wrap-aware;
@@ -278,15 +278,15 @@ flags=`0x00`); KEK=`0544036bb09f5c5a7a41759d414e2f46`,
 ct=`f47f282e8b8020ec2acf8bf1eaf2ee2590` (17B),
 gcm_tag=`e211690852a899b6d4062fbf1058876c`,
 drive_tag=`3ec8b625c9c1`.
-Rekey test vector (same psk as above, nextEra=`1`, counter=`100`):
-rekey_msg=`52454b4559000100000064` (`"REKEY"||eraBE2(0001)||ctrBE4(00000064)`),
-rekey_tag=`fdfe277d1623`,
-next_psk=`df7441d0d71778b2dd10493962d45a5b`
-(`HKDF-SHA256(salt="desky-rekey-v1", IKM=oldPsk, info=0001, L=16)`),
-ack_msg=`52454b455941434b0001` (`"REKEYACK"||eraBE2(0001)`),
-ack_tag=`ed5f52335855`,
-`REKEY_REQ`=`53000100000064fdfe277d16235a` (14B),
-`REKEY_ACK`=`540001ed5f523358558b` (10B).
+Pair-refresh test vector (same psk as above, nextEra=`1`, counter=`100`):
+pair_refresh_msg=`5041495252454652455348000100000064` (`"PAIRREFRESH"||eraBE2(0001)||ctrBE4(00000064)`),
+pair_refresh_tag=`ecac8eb7c93c`,
+next_psk=`2ecca11e7638cb50bd4c9dd96ff9da1b`
+(`HKDF-SHA256(salt="desky-pair-refresh-v1", IKM=oldPsk, info=0001, L=16)`),
+ack_msg=`504149525245465245534841434b0001` (`"PAIRREFRESHACK"||eraBE2(0001)`),
+ack_tag=`62c29ea4d181`,
+`PAIR_REFRESH_REQ`=`53000100000064ecac8eb7c93cba` (14B),
+`PAIR_REFRESH_ACK`=`54000162c29ea4d1819f` (10B).
 Alive/disconnect test vector (same psk as above, era=`1`, counter=`100`):
 alive_msg=`414c495645000100000064`
 (`"ALIVE"||eraBE2(0001)||ctrBE4(00000064)`),

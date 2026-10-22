@@ -112,7 +112,7 @@ graph LR
 ```
 
 Load-bearing wire details (see `README.md` protocol notes + code KDoc):
-drive frames are signed `DRIVE_V2` (counter + HMAC, PSK cached in memory,
+drive frames are signed `DRIVE` (counter + HMAC, PSK cached in memory,
 counter persisted every 128 sends); E-STOP latches `ESTOP_FLAG` (signed
 centered frame — firmware authenticates it like any drive frame); unpair
 pauses the send loop and drops the cached key (loop re-reads live pairing

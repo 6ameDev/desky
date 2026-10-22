@@ -1,31 +1,38 @@
-# Deferred Cleanup Ledger (Step 2)
+# Cleanup Ledger — Step 2 APPLIED (pairing-renaming branch)
 
-Step 1 renamed code identifiers only; the items below change what is
-sent, stored, or asserted, so they move together in one grouped pass.
+Step 1 renamed code identifiers only. Step 2 (this branch) changed what is
+sent, stored, and asserted, in one lockstep pass across firmware + client +
+bench scripts + goldens + protocol README.
 
-Rule: change once across ALL actors at the same time — firmware NVS,
-both firmwares' wire codecs, the future mobile client, bench scripts,
-and test goldens. Never rename one side alone.
+Rule (kept): change once across ALL actors at the same time. Never rename
+one side alone.
 
-## Frozen items
+## Applied
 
-1. NVS key strings: namespace "desky", "cfg_version", "psk", "bctr",
-   "bonded" (kPairedKey), "bera". WHO: shipped-device flash; a rename
-   orphans every existing pair and forces re-pair.
-2. Wire opcodes REKEY_REQ / REKEY_ACK / UNBOND (0x53/0x54/0xAD) and the
-   PAIR family (0x50/0x51/0x52). WHO: robot RX demux, mobile client,
-   bench dissectors, test goldens, shared/protocol/README.md.
-3. Constants kRekey* / kUnbond* (headers, sizes, tag/message lengths).
-   WHO: same actors as (2); they pin the frozen frame shapes in code.
-4. Log-line bond vocabulary ("bond loaded", "unbond ok", "rekey ok",
-   drop strings, NVS failure strings). WHO: bench log scrapers and
-   field-telemetry accounting keyed on these literals.
-5. Type/dir names PairingTask, pairing::Core, pairing/ dir, namespace
-   pairing, PAIRSHOW/PAIRDONE link types. WHO: cross-firmware docs and
-   the head-link contract; rename only with a matching doc update.
+1. NVS: "bonded"->"paired", "bera"->"pera", kConfigVersion 2->3 (auto-clear
+   on mismatch). psk/bctr/cfg_version/namespace unchanged. Recovery: repair;
+   worst case erase flash + reflash + repair.
+2. Opcodes: REKEY_REQ->PAIR_REFRESH_REQ, REKEY_ACK->PAIR_REFRESH_ACK,
+   UNBOND->UNPAIR, DRIVE_V2->DRIVE. Values 0x53/0x54/0xAD/0xAC frozen.
+3. Tag literals: "REKEY"->"PAIRREFRESH" (msg 11->17B), "REKEYACK"->
+   "PAIRREFRESHACK" (msg 10->16B), "UNBOND"->"UNPAIR" (msg stays 10B).
+   Frame sizes unchanged (14B/10B/12B/16B).
+4. HKDF salt: "desky-rekey-v1"->"desky-pair-refresh-v1". KDF vectors
+   regenerated on both sides (next_psk=2ecca11e...).
+5. Keychain service: "com.desky.bond"->"com.desky.pair" (app data clear /
+   reinstall to recover). Room column `era` unchanged, no migration.
+6. Logs: bond/rekey/unbond vocabulary -> pair/pair-refresh/unpair;
+   bench scripts moved in the same pass (scripts/ is gitignored local
+   tooling — working-tree only, no commit).
+7. Client Bond* types -> Pair* (PairSecretStore, GetPairPskUseCase,
+   KeychainPairSecretStore, EncryptedPairSecretStore,
+   InMemoryPairSecretStore + tests).
 
-## Grouped-pass checklist
+## Deliberately unchanged
 
-Pick the pass, then update firmware + client + bench + goldens +
-protocol README in the same change and re-run both gates
-(`embedded/core`, `embedded/head`) plus the client suite.
+- ALIVE / DISCONNECT tags + literals (out of scope, owner-confirmed).
+- PAIR family opcodes/values, PAIR_OK/PAIR_ERR paths, telemetry 0xBB.
+- Type/dir names PairingTask, pairing::Core, pairing/ dir, namespace
+  pairing, PAIRSHOW/PAIRDONE link types (architecture vocabulary).
+- Head firmware: zero references, zero changes (audited).
+- NVS "psk", "bctr", "cfg_version", namespace "desky".

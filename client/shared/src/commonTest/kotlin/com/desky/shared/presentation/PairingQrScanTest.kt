@@ -5,7 +5,7 @@ import com.desky.shared.domain.DEFAULT_UDP_PORT
 import com.desky.shared.domain.ForgetDeviceUseCase
 import com.desky.shared.domain.DeviceRepository
 import com.desky.shared.domain.DriveCounter
-import com.desky.shared.domain.GetBondPskUseCase
+import com.desky.shared.domain.GetPairPskUseCase
 import com.desky.shared.domain.PairDeviceWithCodeUseCase
 import com.desky.shared.domain.PAIR_OK_HEADER
 import com.desky.shared.domain.ROBOT_HOST
@@ -48,10 +48,10 @@ class PairingQrScanTest {
     private fun vm(
         repo: DeviceRepository,
         udp: FakeUdpSocketManager = FakeUdpSocketManager(),
-        vault: FakeBondSecretStore = FakeBondSecretStore(),
+        vault: FakePairSecretStore = FakePairSecretStore(),
     ) = PairingViewModel(
         PairDeviceWithCodeUseCase(repo, udp, vault, DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS),
-        ForgetDeviceUseCase(repo, vault, udp, GetBondPskUseCase(vault, repo), DriveCounter(repo)),
+        ForgetDeviceUseCase(repo, vault, udp, GetPairPskUseCase(vault, repo), DriveCounter(repo)),
         repo,
     )
 

@@ -1,7 +1,7 @@
 package com.desky.client
 
 import android.app.Application
-import com.desky.shared.data.createBondSecretStore
+import com.desky.shared.data.createPairSecretStore
 import com.desky.shared.data.createDeskyDatabase
 import com.desky.shared.data.createWifiSocketBinder
 import com.desky.shared.di.dataModule
@@ -25,7 +25,7 @@ class DeskyApp : Application() {
             modules(
                 dataModule(
                     createDeskyDatabase(this@DeskyApp),
-                    createBondSecretStore(this@DeskyApp),
+                    createPairSecretStore(this@DeskyApp),
                     createWifiSocketBinder(this@DeskyApp),
                 ),
                 domainModule,

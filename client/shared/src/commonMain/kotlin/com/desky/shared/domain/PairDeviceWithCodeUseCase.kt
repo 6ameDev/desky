@@ -18,11 +18,11 @@ val DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS: List<Long> = listOf(1000, 2000, 4000, 4000
  * `PAIR_ERR` (4B/`0x52`) on the shared [UdpSocketManager.incoming] flow
  * within the per-send budget, re-sending `PAIR_REQ` on silence only ->
  * on `PAIR_OK` derive `KEK = HKDF-SHA256(client||server, code,
- * "desky-pair-v1", 16)` and unwrap the bond PSK with AES-128-GCM
+ * "desky-pair-v1", 16)` and unwrap the pair PSK with AES-128-GCM
  * (`nonce12 = server||client||00^4`, `AAD = 0x51||client||server`) ->
- * persist the bond.
+ * persist the pair.
  *
- * The unwrapped PSK is stored in the platform vault ([BondSecretStore]);
+ * The unwrapped PSK is stored in the platform vault ([PairSecretStore]);
  * the Room row carries no key material (Task 9: no `pskHex` column) and
  * `lastCounter = 0` so the drive session's first wire packet uses counter 1.
  * The v1.1 trailing interval byte (when a 39B frame arrives) becomes
@@ -30,7 +30,7 @@ val DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS: List<Long> = listOf(1000, 2000, 4000, 4000
  * defaults to 128) and is Room-persisted with the row, so the drive
  * session keeps the negotiated cadence across restarts.
  * The returned [PairedDevice] matches the persisted row; session code reads
- * the key via [GetBondPskUseCase].
+ * the key via [GetPairPskUseCase].
  *
  * Retry policy: at most [attemptTimeoutsMs.size] `PAIR_REQ` datagrams leave
  * the app per [invoke] (default 5; total 15s, well inside the firmware 60s
@@ -49,7 +49,7 @@ val DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS: List<Long> = listOf(1000, 2000, 4000, 4000
 class PairDeviceWithCodeUseCase(
     private val deviceRepo: DeviceRepository,
     private val udp: UdpSocketManager,
-    private val secretStore: BondSecretStore,
+    private val secretStore: PairSecretStore,
     private val attemptTimeoutsMs: List<Long> = DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS,
 ) {
     init {
@@ -155,7 +155,7 @@ class PairDeviceWithCodeUseCase(
             ip = ROBOT_HOST,
             port = DEFAULT_UDP_PORT,
             authToken = "psk-v1",
-            // Fresh bond: the counter restarts so the first drive packet is 1.
+            // Fresh pair: the counter restarts so the first drive packet is 1.
             lastCounter = 0u,
             alias = ROBOT_HOST,
             persistEvery = persistEvery,
@@ -181,7 +181,7 @@ class PairDeviceWithCodeUseCase(
         // Reason 2 is genuine window expiry (tryCode != kOk); the single-use
         // code is spent, so pair again with the fresh display code.
         2 -> "Pairing failed: code expired"
-        3 -> "Pairing failed: robot already bonded"
+        3 -> "Pairing failed: robot already paired"
         // M11 additive reason 4 (internal_retry_fresh): NVS/crypto failure
         // after tryCode kOk (code already burned) — distinct from expired.
         4 -> "Pairing failed: robot error, try a fresh code"

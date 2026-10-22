@@ -34,41 +34,41 @@ static_assert(sizeof(udp::ControlPacket) == 4, "ControlPacket is 4 payload bytes
 static_assert(sizeof(udp::TelemetryPacket) == 8, "TelemetryPacket is 8B padded (wire 9B = hdr + 7 fields + XOR)");
 static_assert(udpstatus::kPairReqHeader == 0x50, "PAIR_REQ header is 0x50");
 static_assert(udpstatus::kPairReqSize == 12, "PAIR_REQ is 12B");
-static_assert(udpstatus::kDriveV2Header == 0xAC, "DRIVE_V2 header is 0xAC");
-static_assert(udpstatus::kUnbondHeader == 0xAD, "UNBOND header is 0xAD");
-static_assert(udpstatus::kUnbondSize == 12, "UNBOND is 12B");
-static_assert(udpstatus::kRekeyReqHeader == 0x53, "REKEY_REQ header is 0x53");
-static_assert(udpstatus::kRekeyReqSize == 14, "REKEY_REQ is 14B");
-static_assert(udpstatus::kRekeyAckHeader == 0x54, "REKEY_ACK header is 0x54");
+static_assert(udpstatus::kDriveHeader == 0xAC, "DRIVE header is 0xAC");
+static_assert(udpstatus::kUnpairHeader == 0xAD, "UNPAIR header is 0xAD");
+static_assert(udpstatus::kUnpairSize == 12, "UNPAIR is 12B");
+static_assert(udpstatus::kPairRefreshReqHeader == 0x53, "PAIR_REFRESH_REQ header is 0x53");
+static_assert(udpstatus::kPairRefreshReqSize == 14, "PAIR_REFRESH_REQ is 14B");
+static_assert(udpstatus::kPairRefreshAckHeader == 0x54, "PAIR_REFRESH_ACK header is 0x54");
 static_assert(pairing::kPairOkSize == 39, "PAIR_OK is 39B (v1.1)");
 static_assert(pairing::kPairOkLegacySize == 38, "v1 PAIR_OK was 38B");
-static_assert(udpstatus::kRekeyAckSize == 10, "REKEY_ACK is 10B");
+static_assert(udpstatus::kPairRefreshAckSize == 10, "PAIR_REFRESH_ACK is 10B");
 // NOTE: PAIR_OK header (0x51) lives in pairing_codec.h and PAIR_ERR (0x52/4) is a firmware-only
 // literal in sendPairErr — neither has a host-visible constexpr, so both are pinned
 // as literals in test_udp_mirror_freeze / test_udp_pair_*_frame_golden below
 // (literals reviewed against the udp_codec.h freeze table + Codec.kt + README).
-static_assert(pairing::kRekeyAckSize == 10, "REKEY_ACK is 10B (pairing owner)");
-static_assert(udpstatus::kRekeyAckSize == pairing::kRekeyAckSize, "rekey ACK size single truth");
+static_assert(pairing::kPairRefreshAckSize == 10, "PAIR_REFRESH_ACK is 10B (pairing owner)");
+static_assert(udpstatus::kPairRefreshAckSize == pairing::kPairRefreshAckSize, "pair-refresh ACK size single truth");
 static_assert(udpstatus::kAliveSize == 14, "ALIVE is 14B");
 static_assert(udpstatus::kDisconnectSize == 14, "DISCONNECT is 14B");
 static_assert(pairing::kAliveSize == 14, "ALIVE is 14B (pairing owner)");
 static_assert(pairing::kDisconnectSize == 14, "DISCONNECT is 14B (pairing owner)");
-static_assert(udpstatus::kDriveV2Size == 16, "DRIVE_V2 is 16B");
+static_assert(udpstatus::kDriveSize == 16, "DRIVE is 16B");
 static_assert(udp::kTelemetrySize == 9, "telemetry is 9B");
-static_assert(udpstatus::kDriveV2Header != udpstatus::kPairReqHeader, "claimed headers distinct");
-static_assert(udpstatus::kDriveV2Header != udpstatus::kUnbondHeader, "claimed headers distinct");
-static_assert(udpstatus::kDriveV2Header != udpstatus::kRekeyReqHeader, "claimed headers distinct");
-static_assert(udpstatus::kDriveV2Header != udpstatus::kAliveHeader, "claimed headers distinct");
-static_assert(udpstatus::kDriveV2Header != udpstatus::kDisconnectHeader, "claimed headers distinct");
-static_assert(udpstatus::kPairReqHeader != udpstatus::kUnbondHeader, "claimed headers distinct");
-static_assert(udpstatus::kPairReqHeader != udpstatus::kRekeyReqHeader, "claimed headers distinct");
+static_assert(udpstatus::kDriveHeader != udpstatus::kPairReqHeader, "claimed headers distinct");
+static_assert(udpstatus::kDriveHeader != udpstatus::kUnpairHeader, "claimed headers distinct");
+static_assert(udpstatus::kDriveHeader != udpstatus::kPairRefreshReqHeader, "claimed headers distinct");
+static_assert(udpstatus::kDriveHeader != udpstatus::kAliveHeader, "claimed headers distinct");
+static_assert(udpstatus::kDriveHeader != udpstatus::kDisconnectHeader, "claimed headers distinct");
+static_assert(udpstatus::kPairReqHeader != udpstatus::kUnpairHeader, "claimed headers distinct");
+static_assert(udpstatus::kPairReqHeader != udpstatus::kPairRefreshReqHeader, "claimed headers distinct");
 static_assert(udpstatus::kPairReqHeader != udpstatus::kAliveHeader, "claimed headers distinct");
 static_assert(udpstatus::kPairReqHeader != udpstatus::kDisconnectHeader, "claimed headers distinct");
-static_assert(udpstatus::kUnbondHeader != udpstatus::kRekeyReqHeader, "claimed headers distinct");
-static_assert(udpstatus::kUnbondHeader != udpstatus::kAliveHeader, "claimed headers distinct");
-static_assert(udpstatus::kUnbondHeader != udpstatus::kDisconnectHeader, "claimed headers distinct");
-static_assert(udpstatus::kRekeyReqHeader != udpstatus::kAliveHeader, "claimed headers distinct");
-static_assert(udpstatus::kRekeyReqHeader != udpstatus::kDisconnectHeader, "claimed headers distinct");
+static_assert(udpstatus::kUnpairHeader != udpstatus::kPairRefreshReqHeader, "claimed headers distinct");
+static_assert(udpstatus::kUnpairHeader != udpstatus::kAliveHeader, "claimed headers distinct");
+static_assert(udpstatus::kUnpairHeader != udpstatus::kDisconnectHeader, "claimed headers distinct");
+static_assert(udpstatus::kPairRefreshReqHeader != udpstatus::kAliveHeader, "claimed headers distinct");
+static_assert(udpstatus::kPairRefreshReqHeader != udpstatus::kDisconnectHeader, "claimed headers distinct");
 static_assert(udpstatus::kAliveHeader != udpstatus::kDisconnectHeader, "claimed headers distinct");
 // Token discipline (platform split 1.1, token #1): move-only, never copied.
 static_assert(!std::is_copy_constructible<connection::Verified>::value, "Verified is move-only");
@@ -155,8 +155,8 @@ void test_deg_to_decideg_edges_and_clamp() {
 // sockets) is #ifdef ARDUINO and exercised on hardware.
 
 void test_udp_wire_constants() {
-  TEST_ASSERT_EQUAL_UINT8(0xAC, udpstatus::kDriveV2Header);
-  TEST_ASSERT_TRUE(udpstatus::kDriveV2Size == 16);
+  TEST_ASSERT_EQUAL_UINT8(0xAC, udpstatus::kDriveHeader);
+  TEST_ASSERT_TRUE(udpstatus::kDriveSize == 16);
   TEST_ASSERT_EQUAL_UINT8(0x50, udpstatus::kPairReqHeader);
   TEST_ASSERT_TRUE(udpstatus::kPairReqSize == 12);
   // Cross-check: the RX demux hard-codes the legacy 6B/0xAA shape instead
@@ -205,7 +205,7 @@ int rxKindInt(udpstatus::RxKind k) { return static_cast<int>(k); }
 
 void test_udp_classify_table() {
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kLegacy), rxKindInt(udpstatus::classifyRx(6, 0xAA)));
-  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDriveV2), rxKindInt(udpstatus::classifyRx(16, 0xAC)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrive), rxKindInt(udpstatus::classifyRx(16, 0xAC)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kPairReq), rxKindInt(udpstatus::classifyRx(12, 0x50)));
 }
 
@@ -279,41 +279,41 @@ void test_udp_redeliver_millis_wrap_true() {
   TEST_ASSERT_TRUE(udpstatus::shouldRedeliver(true, code, nonce, code, nonce, 0xFFFFFF00u, 100u));
 }
 
-// Signed UNBOND: wire constants, demux, and the tag-message golden.
+// Signed UNPAIR: wire constants, demux, and the tag-message golden.
 
-void test_udp_unbond_wire_constants() {
-  TEST_ASSERT_EQUAL_UINT8(0xAD, udpstatus::kUnbondHeader);
-  TEST_ASSERT_TRUE(udpstatus::kUnbondSize == 12);
+void test_udp_unpair_wire_constants() {
+  TEST_ASSERT_EQUAL_UINT8(0xAD, udpstatus::kUnpairHeader);
+  TEST_ASSERT_TRUE(udpstatus::kUnpairSize == 12);
 }
 
-void test_udp_classify_unbond() {
-  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kUnbond), rxKindInt(udpstatus::classifyRx(12, 0xAD)));
+void test_udp_classify_unpair() {
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kUnpair), rxKindInt(udpstatus::classifyRx(12, 0xAD)));
   // Neighbouring sizes/headers still drop.
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(11, 0xAD)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(13, 0xAD)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(12, 0xAC)));
 }
 
-void test_udp_unbond_tag_msg_golden() {
+void test_udp_unpair_tag_msg_golden() {
   uint8_t msg[udpstatus::kUnpairMsgLen];
-  pairing::unbondTagMsg(1u, msg);
-  const uint8_t expected[10] = {0x55, 0x4E, 0x42, 0x4F, 0x4E, 0x44, 0x00, 0x00, 0x00, 0x01};
+  pairing::unpairTagMsg(1u, msg);
+  const uint8_t expected[10] = {0x55, 0x4E, 0x50, 0x41, 0x49, 0x52, 0x00, 0x00, 0x00, 0x01};
   TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, msg, sizeof(expected));
 }
 
-// Tier-1 silent auto-refresh (Task: era+PSK rotation): wire constants pin the
+// Tier-1 silent auto-pair-refresh (Task: era+PSK rotation): wire constants pin
 // claimed headers/sizes (0x53/0x54 — never 0xAA/0xAC/0xBB/0x50/0x51/0x52/
-// 0xAD), and the demux accepts exactly the 14B REKEY_REQ shape.
+// 0xAD), and the demux accepts exactly the 14B PAIR_REFRESH_REQ shape.
 
-void test_udp_rekey_wire_constants() {
-  TEST_ASSERT_EQUAL_UINT8(0x53, udpstatus::kRekeyReqHeader);
-  TEST_ASSERT_TRUE(udpstatus::kRekeyReqSize == 14);
-  TEST_ASSERT_EQUAL_UINT8(0x54, udpstatus::kRekeyAckHeader);
-  TEST_ASSERT_TRUE(udpstatus::kRekeyAckSize == 10);
+void test_udp_pair_refresh_wire_constants() {
+  TEST_ASSERT_EQUAL_UINT8(0x53, udpstatus::kPairRefreshReqHeader);
+  TEST_ASSERT_TRUE(udpstatus::kPairRefreshReqSize == 14);
+  TEST_ASSERT_EQUAL_UINT8(0x54, udpstatus::kPairRefreshAckHeader);
+  TEST_ASSERT_TRUE(udpstatus::kPairRefreshAckSize == 10);
 }
 
-void test_udp_classify_rekey() {
-  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kRekeyReq), rxKindInt(udpstatus::classifyRx(14, 0x53)));
+void test_udp_classify_pair_refresh() {
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kPairRefreshReq), rxKindInt(udpstatus::classifyRx(14, 0x53)));
   // Neighbouring sizes/headers still drop (incl. the ACK header, which the
   // robot only ever transmits, and every previously claimed header).
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(13, 0x53)));
@@ -342,7 +342,7 @@ void test_udp_classify_alive_disconnect() {
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDisconnect), rxKindInt(udpstatus::classifyRx(14, 0x56)));
   // Neighbouring sizes/headers still drop (incl. the ACK header, which the
   // robot only ever transmits at 10B, and every other claimed header at 14B
-  // — except 0x53, which IS the valid 14B REKEY_REQ shape).
+  // — except 0x53, which IS the valid 14B PAIR_REFRESH_REQ shape).
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(13, 0x55)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(15, 0x55)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(13, 0x56)));
@@ -360,10 +360,10 @@ void test_udp_claimed_headers_distinct() {
   // Never-reuse rule: every claimed RX header is distinct from the legacy
   // control header, the telemetry header, and each other.
   const uint8_t headers[] = {0xAA,
-                             udpstatus::kDriveV2Header,
+                             udpstatus::kDriveHeader,
                              udpstatus::kPairReqHeader,
-                             udpstatus::kUnbondHeader,
-                             udpstatus::kRekeyReqHeader,
+                             udpstatus::kUnpairHeader,
+                             udpstatus::kPairRefreshReqHeader,
                              udpstatus::kAliveHeader,
                              udpstatus::kDisconnectHeader};
   for (size_t i = 0; i < sizeof(headers); ++i) {
@@ -428,10 +428,10 @@ void test_udp_telemetry_gate_wrap() {
 void test_udp_frozen_sizes() {
   TEST_ASSERT_EQUAL(39, static_cast<int>(pairing::kPairOkSize));
   TEST_ASSERT_EQUAL(38, static_cast<int>(pairing::kPairOkLegacySize));
-  TEST_ASSERT_EQUAL(10, static_cast<int>(udpstatus::kRekeyAckSize));
+  TEST_ASSERT_EQUAL(10, static_cast<int>(udpstatus::kPairRefreshAckSize));
   TEST_ASSERT_EQUAL(14, static_cast<int>(udpstatus::kAliveSize));
   TEST_ASSERT_EQUAL(14, static_cast<int>(udpstatus::kDisconnectSize));
-  TEST_ASSERT_EQUAL(16, static_cast<int>(udpstatus::kDriveV2Size));
+  TEST_ASSERT_EQUAL(16, static_cast<int>(udpstatus::kDriveSize));
   TEST_ASSERT_EQUAL(9, static_cast<int>(udp::kTelemetrySize));
 }
 
@@ -663,20 +663,20 @@ void test_udp_mirror_freeze() {
   TEST_ASSERT_EQUAL(12, static_cast<int>(udpstatus::kPairReqSize));
   TEST_ASSERT_EQUAL(39, static_cast<int>(pairing::kPairOkSize));
   TEST_ASSERT_EQUAL(38, static_cast<int>(pairing::kPairOkLegacySize));
-  TEST_ASSERT_EQUAL_UINT8(0xAC, udpstatus::kDriveV2Header);
-  TEST_ASSERT_EQUAL(16, static_cast<int>(udpstatus::kDriveV2Size));
-  TEST_ASSERT_EQUAL_UINT8(0xAD, udpstatus::kUnbondHeader);
-  TEST_ASSERT_EQUAL(12, static_cast<int>(udpstatus::kUnbondSize));
-  TEST_ASSERT_EQUAL_UINT8(0x53, udpstatus::kRekeyReqHeader);
-  TEST_ASSERT_EQUAL(14, static_cast<int>(udpstatus::kRekeyReqSize));
-  TEST_ASSERT_EQUAL_UINT8(0x54, udpstatus::kRekeyAckHeader);
-  TEST_ASSERT_EQUAL(10, static_cast<int>(udpstatus::kRekeyAckSize));
+  TEST_ASSERT_EQUAL_UINT8(0xAC, udpstatus::kDriveHeader);
+  TEST_ASSERT_EQUAL(16, static_cast<int>(udpstatus::kDriveSize));
+  TEST_ASSERT_EQUAL_UINT8(0xAD, udpstatus::kUnpairHeader);
+  TEST_ASSERT_EQUAL(12, static_cast<int>(udpstatus::kUnpairSize));
+  TEST_ASSERT_EQUAL_UINT8(0x53, udpstatus::kPairRefreshReqHeader);
+  TEST_ASSERT_EQUAL(14, static_cast<int>(udpstatus::kPairRefreshReqSize));
+  TEST_ASSERT_EQUAL_UINT8(0x54, udpstatus::kPairRefreshAckHeader);
+  TEST_ASSERT_EQUAL(10, static_cast<int>(udpstatus::kPairRefreshAckSize));
   TEST_ASSERT_EQUAL_UINT8(0x55, udpstatus::kAliveHeader);
   TEST_ASSERT_EQUAL(14, static_cast<int>(udpstatus::kAliveSize));
   TEST_ASSERT_EQUAL_UINT8(0x56, udpstatus::kDisconnectHeader);
   TEST_ASSERT_EQUAL(14, static_cast<int>(udpstatus::kDisconnectSize));
   // TX-only sizes never collide with an RX shape (PAIR_OK 38/39, PAIR_ERR 4,
-  // REKEY_ACK 10): the RX demux must drop them on any length.
+  // PAIR_REFRESH_ACK 10): the RX demux must drop them on any length.
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(38, 0x51)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(39, 0x51)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(4, 0x52)));
@@ -756,13 +756,13 @@ void test_udp_pair_err_reason4_frame_golden() {
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(4, 0xFF)));
 }
 
-// DRIVE_V2 16B: mode 0x00, thr/str 0x80, flags 0x00, counter 1, frozen
+// DRIVE 16B: mode 0x00, thr/str 0x80, flags 0x00, counter 1, frozen
 // drive_tag 3ec8b625c9c1 (README shared vector, psk 0011..eeff).
-void test_udp_drive_v2_frame_golden() {
+void test_udp_drive_frame_golden() {
   const uint8_t frame[16] = {0xAC, 0x00, 0x80, 0x80, 0x00, 0x00, 0x00, 0x00,
                              0x01, 0x3E, 0xC8, 0xB6, 0x25, 0xC9, 0xC1, 0xC0};
   TEST_ASSERT_TRUE(mirrorXorOk(frame, sizeof(frame)));
-  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDriveV2), rxKindInt(udpstatus::classifyRx(sizeof(frame), frame[0])));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrive), rxKindInt(udpstatus::classifyRx(sizeof(frame), frame[0])));
   // Decode: sticks/mode/flags at legacy positions, counter BE bytes 5..8.
   TEST_ASSERT_EQUAL_UINT8(0x00, frame[1]);
   TEST_ASSERT_EQUAL_UINT8(0x80, frame[2]);
@@ -783,12 +783,12 @@ void test_udp_drive_v2_frame_golden() {
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(16, 0x50)));
 }
 
-// UNBOND 12B [0xAD|ctrBE4|tag6|XOR]: counter 1 under psk 0011..eeff,
-// tag first6(HMAC-SHA256(psk, "UNBOND"||ctrBE4)) = 76125e465c6f.
-void test_udp_unbond_frame_golden() {
-  const uint8_t frame[12] = {0xAD, 0x00, 0x00, 0x00, 0x01, 0x76, 0x12, 0x5E, 0x46, 0x5C, 0x6F, 0xE3};
+// UNPAIR 12B [0xAD|ctrBE4|tag6|XOR]: counter 1 under psk 0011..eeff,
+// tag first6(HMAC-SHA256(psk, "UNPAIR"||ctrBE4)) = 0850b6e7d000.
+void test_udp_unpair_frame_golden() {
+  const uint8_t frame[12] = {0xAD, 0x00, 0x00, 0x00, 0x01, 0x08, 0x50, 0xB6, 0xE7, 0xD0, 0x00, 0x75};
   TEST_ASSERT_TRUE(mirrorXorOk(frame, sizeof(frame)));
-  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kUnbond), rxKindInt(udpstatus::classifyRx(sizeof(frame), frame[0])));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kUnpair), rxKindInt(udpstatus::classifyRx(sizeof(frame), frame[0])));
   const uint32_t ctr = (static_cast<uint32_t>(frame[1]) << 24) | (static_cast<uint32_t>(frame[2]) << 16) |
                        (static_cast<uint32_t>(frame[3]) << 8) | static_cast<uint32_t>(frame[4]);
   TEST_ASSERT_EQUAL_UINT32(1, ctr);
@@ -803,15 +803,16 @@ void test_udp_unbond_frame_golden() {
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(12, 0xFF)));
 }
 
-// REKEY_REQ 14B + REKEY_ACK 10B (README §rekey vectors: era 1, counter 100,
+// PAIR_REFRESH_REQ 14B + PAIR_REFRESH_ACK 10B (README §pair-refresh vectors: era 1, counter 100,
 // psk 0011..eeff). The ACK is TX-only: the RX demux must drop it.
-void test_udp_rekey_frame_goldens() {
-  const uint8_t req[14] = {0x53, 0x00, 0x01, 0x00, 0x00, 0x00, 0x64, 0xFD, 0xFE, 0x27, 0x7D, 0x16, 0x23, 0x5A};
+void test_udp_pair_refresh_frame_goldens() {
+  const uint8_t req[14] = {0x53, 0x00, 0x01, 0x00, 0x00, 0x00, 0x64, 0xEC, 0xAC, 0x8E, 0xB7, 0xC9, 0x3C, 0xBA};
   TEST_ASSERT_TRUE(mirrorXorOk(req, sizeof(req)));
-  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kRekeyReq), rxKindInt(udpstatus::classifyRx(sizeof(req), req[0])));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kPairRefreshReq),
+                    rxKindInt(udpstatus::classifyRx(sizeof(req), req[0])));
   const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(req[1]) << 8) | static_cast<uint16_t>(req[2]));
   TEST_ASSERT_EQUAL_UINT16(1, era);
-  const uint8_t ack[10] = {0x54, 0x00, 0x01, 0xED, 0x5F, 0x52, 0x33, 0x58, 0x55, 0x8B};
+  const uint8_t ack[10] = {0x54, 0x00, 0x01, 0x62, 0xC2, 0x9E, 0xA4, 0xD1, 0x81, 0x9F};
   TEST_ASSERT_TRUE(mirrorXorOk(ack, sizeof(ack)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(sizeof(ack), ack[0])));
   // Reject: truncated REQ, bad CRC on either frame, unknown ID at 14B/10B.

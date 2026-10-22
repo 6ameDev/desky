@@ -6,15 +6,15 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 /**
- * Round-trip against the REAL JVM backend ([createBondSecretStore]):
+ * Round-trip against the REAL JVM backend ([createPairSecretStore]):
  * save -> load -> clear -> missing reads null (and clearing an absent
  * entry is a no-op). Entries are isolated per device id.
  */
-class JvmBondSecretStoreTest {
+class JvmPairSecretStoreTest {
 
     @Test
     fun roundTrip() = runTest {
-        val store = createBondSecretStore()
+        val store = createPairSecretStore()
 
         assertNull(store.loadPsk("d1"))
         store.savePsk("d1", "00112233445566778899aabbccddeeff")

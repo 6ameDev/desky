@@ -57,7 +57,7 @@ class SendSignedControlUseCaseTest {
         verifySuspend {
             udp.send(
                 matches { actual: ByteArray ->
-                    actual.size == DRIVE_V2_SIZE &&
+                    actual.size == DRIVE_SIZE &&
                         actual[5] == 0.toByte() && actual[6] == 0.toByte() &&
                         actual[7] == 0.toByte() && actual[8] == 1.toByte()
                 },
@@ -142,8 +142,8 @@ class EmergencyStopUseCaseTest {
         // inputs (counter=3 differs from the counter=1 golden vector, so
         // only the layout is pinned here — CodecTest pins the tag bytes).
         val sent = expected
-        assertTrue(sent.size == DRIVE_V2_SIZE)
-        assertTrue((sent[0].toInt() and 0xFF) == DRIVE_V2_HEADER)
+        assertTrue(sent.size == DRIVE_SIZE)
+        assertTrue((sent[0].toInt() and 0xFF) == DRIVE_HEADER)
         assertTrue((sent[4].toInt() and 0xFF) == ESTOP_FLAG)
     }
 

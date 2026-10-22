@@ -163,22 +163,22 @@ fun unwrapPairPlaintext(plain: ByteArray): Pair<ByteArray, Int> {
 }
 
 /**
- * Tier-1 silent auto-rekey key schedule (see `shared/protocol/README.md`
- * §"Tier-1 silent auto-rekey"): `PSK_next = HKDF-SHA256(
- * salt = "desky-rekey-v1", IKM = oldPsk16, info = eraBE2(new), L = 16)`.
+ * Tier-1 silent auto-pair-refresh key schedule (see `shared/protocol/README.md`
+ * §"Tier-1 silent auto-pair-refresh"): `PSK_next = HKDF-SHA256(
+ * salt = "desky-pair-refresh-v1", IKM = oldPsk16, info = eraBE2(new), L = 16)`.
  *
  * No key transport — both sides derive deterministically under the old PSK;
- * only the era needs sync + confirm (`REKEY_REQ`/`REKEY_ACK`). Mirrors TLS
- * `KeyUpdate` / IPsec rekey: the epoch (`era`, u16 wrap mod 65536) is the
- * key id, the counter resets to the bond baseline (0 persisted, first drive
+ * only the era needs sync + confirm (`PAIR_REFRESH_REQ`/`PAIR_REFRESH_ACK`). Mirrors TLS
+ * `KeyUpdate` / IPsec pair-refresh: the epoch (`era`, u16 wrap mod 65536) is the
+ * key id, the counter resets to the pair baseline (0 persisted, first drive
  * uses 1) so the session resumes gapless before [DriveCounter.EXHAUSTION_GATE].
  *
- * @param oldPsk 16-byte current bond PSK.
+ * @param oldPsk 16-byte current pair PSK.
  * @param nextEra requested new era (current era + 1, u16 wrap).
  * @return 16-byte next PSK.
  */
-suspend fun rekeyPsk(oldPsk: ByteArray, nextEra: UShort): ByteArray {
-    require(oldPsk.size == 16) { "rekeyPsk: oldPsk must be 16 bytes" }
+suspend fun pairRefreshPsk(oldPsk: ByteArray, nextEra: UShort): ByteArray {
+    require(oldPsk.size == 16) { "pairRefreshPsk: oldPsk must be 16 bytes" }
     val hkdf = CryptographyProvider.Default.get(HKDF)
     val eraBE = byteArrayOf(
         ((nextEra.toInt() shr 8) and 0xFF).toByte(),
@@ -187,30 +187,30 @@ suspend fun rekeyPsk(oldPsk: ByteArray, nextEra: UShort): ByteArray {
     return hkdf.secretDerivation(
         digest = SHA256,
         outputSize = (16 * 8).bits,
-        salt = REKEY_SALT,
+        salt = PAIR_REFRESH_SALT,
         info = eraBE,
     ).deriveSecretToByteArray(oldPsk)
 }
 
-/** HKDF salt for [rekeyPsk] (`"desky-rekey-v1"`, 14 bytes). */
-val REKEY_SALT: ByteArray = "desky-rekey-v1".encodeToByteArray()
+/** HKDF salt for [pairRefreshPsk] (`"desky-pair-refresh-v1"`, 21 bytes). */
+val PAIR_REFRESH_SALT: ByteArray = "desky-pair-refresh-v1".encodeToByteArray()
 
 /**
- * `REKEY_REQ` auth tag: `first6(HMAC-SHA256(oldPsk,
- * "REKEY" || eraBE2 || counterBE4))`. The 11-byte message is the 5 ASCII
- * bytes of `"REKEY"` followed by the 2-byte big-endian new era and the
- * 4-byte big-endian counter — must match firmware `pairing::rekeyTagMsg`.
+ * `PAIR_REFRESH_REQ` auth tag: `first6(HMAC-SHA256(oldPsk,
+ * "PAIRREFRESH" || eraBE2 || counterBE4))`. The 17-byte message is the 11 ASCII
+ * bytes of `"PAIRREFRESH"` followed by the 2-byte big-endian new era and the
+ * 4-byte big-endian counter — must match firmware `pairing::pairRefreshTagMsg`.
  *
- * @param oldPsk 16-byte current bond PSK (the request authenticates under
+ * @param oldPsk 16-byte current pair PSK (the request authenticates under
  *   the OLD key; the ACK authenticates under the new one).
  * @param nextEra requested new era (current era + 1).
  * @param counter fresh drive counter (allocated from [DriveCounter], so the
  *   robot's `isFreshCounter` accepts it).
  * @return 6-byte tag.
  */
-suspend fun rekeyTag(oldPsk: ByteArray, nextEra: UShort, counter: UInt): ByteArray {
-    require(oldPsk.size == 16) { "rekeyTag: oldPsk must be 16 bytes" }
-    val msg = "REKEY".encodeToByteArray() + byteArrayOf(
+suspend fun pairRefreshTag(oldPsk: ByteArray, nextEra: UShort, counter: UInt): ByteArray {
+    require(oldPsk.size == 16) { "pairRefreshTag: oldPsk must be 16 bytes" }
+    val msg = "PAIRREFRESH".encodeToByteArray() + byteArrayOf(
         ((nextEra.toInt() shr 8) and 0xFF).toByte(),
         (nextEra.toInt() and 0xFF).toByte(),
         (counter shr 24).toByte(),
@@ -222,19 +222,19 @@ suspend fun rekeyTag(oldPsk: ByteArray, nextEra: UShort, counter: UInt): ByteArr
 }
 
 /**
- * `REKEY_ACK` auth tag: `first6(HMAC-SHA256(newPsk,
- * "REKEYACK" || eraBE2))`. The 10-byte message is the 8 ASCII bytes of
- * `"REKEYACK"` followed by the 2-byte big-endian new era — must match
- * firmware `pairing::rekeyAckTagMsg`. Authenticating under the NEW key
+ * `PAIR_REFRESH_ACK` auth tag: `first6(HMAC-SHA256(newPsk,
+ * "PAIRREFRESHACK" || eraBE2))`. The 16-byte message is the 14 ASCII bytes of
+ * `"PAIRREFRESHACK"` followed by the 2-byte big-endian new era — must match
+ * firmware `pairing::pairRefreshAckTagMsg`. Authenticating under the NEW key
  * proves the robot switched.
  *
- * @param newPsk 16-byte derived next PSK (from [rekeyPsk]).
+ * @param newPsk 16-byte derived next PSK (from [pairRefreshPsk]).
  * @param nextEra confirmed new era.
  * @return 6-byte tag.
  */
-suspend fun rekeyAckTag(newPsk: ByteArray, nextEra: UShort): ByteArray {
-    require(newPsk.size == 16) { "rekeyAckTag: newPsk must be 16 bytes" }
-    val msg = "REKEYACK".encodeToByteArray() + byteArrayOf(
+suspend fun pairRefreshAckTag(newPsk: ByteArray, nextEra: UShort): ByteArray {
+    require(newPsk.size == 16) { "pairRefreshAckTag: newPsk must be 16 bytes" }
+    val msg = "PAIRREFRESHACK".encodeToByteArray() + byteArrayOf(
         ((nextEra.toInt() shr 8) and 0xFF).toByte(),
         (nextEra.toInt() and 0xFF).toByte(),
     )
@@ -242,17 +242,17 @@ suspend fun rekeyAckTag(newPsk: ByteArray, nextEra: UShort): ByteArray {
 }
 
 /**
- * `UNBOND` auth tag: `first6(HMAC-SHA256(psk16, "UNBOND" || counterBE4))`.
- * The 10-byte message is the 6 ASCII bytes of `"UNBOND"` followed by the
- * 4-byte big-endian counter — must match the firmware `UNBOND` frame exactly.
+ * `UNPAIR` auth tag: `first6(HMAC-SHA256(psk16, "UNPAIR" || counterBE4))`.
+ * The 10-byte message is the 6 ASCII bytes of `"UNPAIR"` followed by the
+ * 4-byte big-endian counter — must match the firmware `UNPAIR` frame exactly.
  *
- * @param psk 16-byte bond PSK.
+ * @param psk 16-byte pair PSK.
  * @param counter next drive counter (`lastCounter + 1` at forget time).
  * @return 6-byte tag.
  */
-suspend fun unbondTag(psk: ByteArray, counter: UInt): ByteArray {
-    require(psk.size == 16) { "unbondTag: psk must be 16 bytes" }
-    val msg = "UNBOND".encodeToByteArray() + byteArrayOf(
+suspend fun unpairTag(psk: ByteArray, counter: UInt): ByteArray {
+    require(psk.size == 16) { "unpairTag: psk must be 16 bytes" }
+    val msg = "UNPAIR".encodeToByteArray() + byteArrayOf(
         (counter shr 24).toByte(),
         (counter shr 16).toByte(),
         (counter shr 8).toByte(),
@@ -266,12 +266,12 @@ suspend fun unbondTag(psk: ByteArray, counter: UInt): ByteArray {
  * counterBE4))`. The 11-byte message is the 5 ASCII bytes of `"ALIVE"`
  * followed by the 2-byte big-endian CURRENT era and the 4-byte big-endian
  * counter — must match firmware `pairing::aliveTagMsg`. The era here is
- * the stored era (a rekey moves it); the counter is allocated from the
+ * the stored era (a pair-refresh moves it); the counter is allocated from the
  * shared [DriveCounter], so a valid `ALIVE` consumes `lastCounter_` exactly
  * like drive.
  *
- * @param psk 16-byte bond PSK.
- * @param era current bonded era.
+ * @param psk 16-byte pair PSK.
+ * @param era current paired era.
  * @param counter next drive counter (strictly increasing, never 0).
  * @return 6-byte tag.
  */
@@ -293,11 +293,11 @@ suspend fun aliveTag(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
  * eraBE2 || counterBE4))`. The 16-byte message is the 10 ASCII bytes of
  * `"DISCONNECT"` followed by the 2-byte big-endian CURRENT era and the
  * 4-byte big-endian counter — must match firmware
- * `pairing::disconnectTagMsg`. Graceful goodbye: the bond is KEPT (unlike
- * `UNBOND`), so the next launch rejoins instantly.
+ * `pairing::disconnectTagMsg`. Graceful goodbye: the pair is KEPT (unlike
+ * `UNPAIR`), so the next launch rejoins instantly.
  *
- * @param psk 16-byte bond PSK.
- * @param era current bonded era.
+ * @param psk 16-byte pair PSK.
+ * @param era current paired era.
  * @param counter next drive counter (strictly increasing, never 0).
  * @return 6-byte tag.
  */
@@ -352,10 +352,10 @@ fun hexToBytes(hex: String): ByteArray {
     }
 }
 /**
- * `DRIVE_V2` auth tag: `first6(HMAC-SHA256(psk16,
+ * `DRIVE` auth tag: `first6(HMAC-SHA256(psk16,
  * counterBE4 || mode || thr || str || flags))`.
  *
- * @param psk 16-byte bond PSK.
+ * @param psk 16-byte pair PSK.
  * @param counter 32-bit BE drive counter (1 for the first wire packet; 0 never valid).
  * @param mode mode byte.
  * @param thr center-128 throttle byte.

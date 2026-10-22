@@ -57,18 +57,18 @@ data class Telemetry(
 
 /**
  * A robot the app is paired with. [authToken] is a version marker (`"psk-v1"`)
- * since pairing/auth v1 — the bond secret itself lives only in the platform
- * vault ([BondSecretStore]) since Task 8, never in Room. [lastCounter] is the
+ * since pairing/auth v1 — the pair secret itself lives only in the platform
+ * vault ([PairSecretStore]) since Task 8, never in Room. [lastCounter] is the
  * last drive counter persisted to Room (Task 9: saved every 128 sends,
  * mirroring firmware A1); the drive session resumes from it, so the first
  * wire packet after a fresh pair uses counter 1. [persistEvery] is the
  * counter-persist cadence negotiated once at pair (v1.1 `PAIR_OK` interval
  * byte, sanitized 8..1024 else 128; a v1 robot sends no byte and the app
  * defaults to 128) — Room-persisted (v4 column) so the drive session keeps
- * the negotiated cadence across restarts. [era] is the Tier-1 rekey epoch
- * (u16, fresh pair = 0, Room-persisted v5 column + firmware NVS "bera"):
+ * the negotiated cadence across restarts. [era] is the Tier-1 pair-refresh epoch
+ * (u16, fresh pair = 0, Room-persisted v5 column + firmware NVS "pera"):
  * every silent era+PSK rotation increments it and resets [lastCounter] to
- * the bond baseline (0 persisted, first post-rekey drive uses 1). Never
+ * the pair baseline (0 persisted, first post-pair-refresh drive uses 1). Never
  * shown in UI state — domain/session fields only.
  */
 data class PairedDevice(

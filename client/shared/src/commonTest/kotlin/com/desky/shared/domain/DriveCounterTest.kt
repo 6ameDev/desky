@@ -208,9 +208,9 @@ class DriveCounterTest {
     }
 
     /**
-     * Tier-1 rekey era: adopted once on a fresh era (Room row's era), never
-     * rewound mid-session; [DriveCounter.completeRekey] rotates to the next
-     * era with the counter back at the bond baseline (next wire packet is
+     * Tier-1 pair-refresh era: adopted once on a fresh era (Room row's era), never
+     * rewound mid-session; [DriveCounter.completePairRefresh] rotates to the next
+     * era with the counter back at the pair baseline (next wire packet is
      * 1); [DriveCounter.reset] clears back to 0.
      */
     @Test
@@ -225,9 +225,9 @@ class DriveCounterTest {
         assertEquals(52u, holder.next())
         assertEquals(7u, holder.currentEra())
 
-        holder.completeRekey(8u)
+        holder.completePairRefresh(8u)
         assertEquals(8u, holder.currentEra())
-        assertEquals(0u, holder.current(), "baseline persisted; first post-rekey drive is 1")
+        assertEquals(0u, holder.current(), "baseline persisted; first post-pair-refresh drive is 1")
         assertEquals(1u, holder.next())
         assertEquals(1u, holder.current())
     }
@@ -244,16 +244,16 @@ class DriveCounterTest {
     }
 
     @Test
-    fun completeRekeyClearsExhaustionLatch() = runTest {
+    fun completePairRefreshClearsExhaustionLatch() = runTest {
         val holder = DriveCounter(FakeDeviceRepository())
         holder.ensure("desky-1", DriveCounter.EXHAUSTION_GATE - 2u)
         assertEquals(DriveCounter.EXHAUSTION_GATE - 1u, holder.next())
         assertNull(holder.next(), "gate value is never allocated")
         assertTrue(holder.isExhausted())
 
-        holder.completeRekey(1u)
+        holder.completePairRefresh(1u)
         assertFalse(holder.isExhausted(), "rotation clears the fail-closed latch")
-        assertEquals(1u, holder.next(), "post-rekey drive resumes at counter 1")
+        assertEquals(1u, holder.next(), "post-pair-refresh drive resumes at counter 1")
     }
 
     @Test
@@ -270,26 +270,26 @@ class DriveCounterTest {
     }
 
     /**
-     * Proactive trigger: [DriveCounter.needsRekey] is false far from the
-     * gate and true once `lastSent` reaches `GATE - REKEY_MARGIN` — the
+     * Proactive trigger: [DriveCounter.needsPairRefresh] is false far from the
+     * gate and true once `lastSent` reaches `GATE - PAIR_REFRESH_MARGIN` — the
      * silent rotation window (no user action; Tier-2 repair copy owns the
      * gate itself).
      */
     @Test
-    fun needsRekeyFiresAtMargin() = runTest {
+    fun needsPairRefreshFiresAtMargin() = runTest {
         val holder = DriveCounter(FakeDeviceRepository())
-        assertFalse(holder.needsRekey(), "no era yet: no trigger")
+        assertFalse(holder.needsPairRefresh(), "no era yet: no trigger")
 
         holder.ensure("desky-1", 0u)
-        assertFalse(holder.needsRekey(), "fresh bond: no trigger")
+        assertFalse(holder.needsPairRefresh(), "fresh pair: no trigger")
 
         val near = DriveCounter(FakeDeviceRepository())
-        near.ensure("desky-1", DriveCounter.EXHAUSTION_GATE - DriveCounter.REKEY_MARGIN - 2u)
-        assertFalse(near.needsRekey(), "one frame short of the margin: no trigger")
+        near.ensure("desky-1", DriveCounter.EXHAUSTION_GATE - DriveCounter.PAIR_REFRESH_MARGIN - 2u)
+        assertFalse(near.needsPairRefresh(), "one frame short of the margin: no trigger")
         near.next()
-        assertFalse(near.needsRekey(), "margin edge not yet reached")
+        assertFalse(near.needsPairRefresh(), "margin edge not yet reached")
         near.next()
-        assertTrue(near.needsRekey(), "at GATE - MARGIN: rotate now")
+        assertTrue(near.needsPairRefresh(), "at GATE - MARGIN: rotate now")
     }
 
     /**

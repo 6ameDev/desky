@@ -6,7 +6,7 @@ import com.desky.shared.domain.DEFAULT_UDP_PORT
 import com.desky.shared.domain.DeviceRepository
 import com.desky.shared.domain.DriveCounter
 import com.desky.shared.domain.ForgetDeviceUseCase
-import com.desky.shared.domain.GetBondPskUseCase
+import com.desky.shared.domain.GetPairPskUseCase
 import com.desky.shared.domain.PairDeviceWithCodeUseCase
 import com.desky.shared.domain.PAIR_ERR_HEADER
 import com.desky.shared.domain.PAIR_OK_HEADER
@@ -65,11 +65,11 @@ class PairingViewModelTest {
     private fun vm(
         repo: DeviceRepository,
         udp: FakeUdpSocketManager = FakeUdpSocketManager(),
-        vault: FakeBondSecretStore = FakeBondSecretStore(),
+        vault: FakePairSecretStore = FakePairSecretStore(),
         attemptTimeoutsMs: List<Long> = DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS,
     ) = PairingViewModel(
         PairDeviceWithCodeUseCase(repo, udp, vault, attemptTimeoutsMs),
-        ForgetDeviceUseCase(repo, vault, udp, GetBondPskUseCase(vault, repo), DriveCounter(repo)),
+        ForgetDeviceUseCase(repo, vault, udp, GetPairPskUseCase(vault, repo), DriveCounter(repo)),
         repo,
     )
 
@@ -94,7 +94,7 @@ class PairingViewModelTest {
     fun pairSuccessStoresDevice() = runVmTest { main ->
         val repo = FakeDeviceRepository()
         val udp = FakeUdpSocketManager()
-        val vault = FakeBondSecretStore()
+        val vault = FakePairSecretStore()
         val viewModel = vm(repo, udp, vault)
         main.runCurrent()
 
@@ -114,7 +114,7 @@ class PairingViewModelTest {
         assertEquals("192.168.4.1", device.ip)
         assertEquals("psk-v1", device.authToken)
         // Room row carries no key material and resets the drive counter;
-        // the vault holds the bond PSK.
+        // the vault holds the pair PSK.
         assertEquals(0u, device.lastCounter)
         assertEquals("00112233445566778899aabbccddeeff", vault.loadPsk(device.id))
         assertEquals(1, repo.saveCalls)
@@ -180,7 +180,7 @@ class PairingViewModelTest {
 
     @Test
     fun pairBlockedWhilePairedKeepsForgetEnabled() = runVmTest { main ->
-        // Bonded gate: Pair is disabled while a device is paired (only
+        // Paired gate: Pair is disabled while a device is paired (only
         // Forget + auto-retry offered) — no PAIR_REQ leaves the radio.
         val repo = FakeDeviceRepository(testDevice())
         val udp = FakeUdpSocketManager()
@@ -194,7 +194,7 @@ class PairingViewModelTest {
 
         val state = viewModel.state.value
         assertFalse(state.isPairing, "blocked pair never enters the pairing state")
-        assertTrue(udp.sent.isEmpty(), "no PAIR_REQ over a live bond")
+        assertTrue(udp.sent.isEmpty(), "no PAIR_REQ over a live pair")
         assertNull(state.error)
         assertNotNull(state.pairedDevice)
 

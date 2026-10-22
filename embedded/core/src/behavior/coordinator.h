@@ -301,7 +301,7 @@ class Coordinator {
   }
 
   // Drive dispatch: behavior owns intent AND the RX observation. The
-  // wire-facing half (DRIVE_V2 framing + session verify + alive funnel) lives
+  // wire-facing half (DRIVE framing + session verify + alive funnel) lives
   // transport-inline in UdpServer::handleDrive, which publishes ONE
   // EVENT_UDP_COMMAND_RECEIVED per verified frame — transport never calls
   // here. This loop drains that event below (fresh command edge for

@@ -9,11 +9,11 @@ import com.desky.shared.domain.ESTOP_FLAG
 import com.desky.shared.domain.AliveUseCase
 import com.desky.shared.domain.EmergencyStopUseCase
 import com.desky.shared.domain.ForgetDeviceUseCase
-import com.desky.shared.domain.GetBondPskUseCase
+import com.desky.shared.domain.GetPairPskUseCase
 import com.desky.shared.domain.ObserveTelemetryUseCase
 import com.desky.shared.domain.Outcome
 import com.desky.shared.domain.PairedDevice
-import com.desky.shared.domain.RekeyUseCase
+import com.desky.shared.domain.PairRefreshUseCase
 import com.desky.shared.domain.RobotMode
 import com.desky.shared.domain.SendSignedControlUseCase
 import com.desky.shared.domain.Telemetry
@@ -109,7 +109,7 @@ data class RobotControlUiState(
 
 /**
  * Drives the robot-control screen (pairing/auth Task 9: every frame is an
- * authenticated `DRIVE_V2` datagram).
+ * authenticated `DRIVE` datagram).
  *
  * On init the VM waits for the first non-null pairing, then starts two
  * child coroutines:
@@ -129,8 +129,8 @@ data class RobotControlUiState(
  *   [RobotControlUiState.eStopped] is latched the loop sends centered
  *   sticks with [ESTOP_FLAG] at full rate.
  *
- * Drive session: after the first pairing the loop loads the bond PSK via
- * [GetBondPskUseCase] ONCE and caches it in memory, seeding the shared
+ * Drive session: after the first pairing the loop loads the pair PSK via
+ * [GetPairPskUseCase] ONCE and caches it in memory, seeding the shared
  * [DriveCounter] from the Room row (`lastCounter`), so the first wire
  * packet uses counter 1 after a fresh pair. Each send allocates the next
  * counter from the holder (which persists to Room every 128th allocation).
@@ -155,7 +155,7 @@ data class RobotControlUiState(
  * allocates from the same shared [DriveCounter], so the monotonic sequence
  * is preserved and telemetry keeps flowing unicast inside the robot's 5 s
  * alive window. `ALIVE` results never touch [_state] (telemetry is the
- * ACK). [onBackground] sends `DISCONNECT` 2x fire-and-forget (bond kept)
+ * ACK). [onBackground] sends `DISCONNECT` 2x fire-and-forget (pair kept)
  * before pausing; [onForeground] forces the `ALIVE` clock due so the next
  * tick knocks immediately.
  *
@@ -185,18 +185,18 @@ class RobotControlViewModel(
     private val observeTelemetryUC: ObserveTelemetryUseCase,
     private val emergencyUC: EmergencyStopUseCase,
     private val deviceRepo: DeviceRepository,
-    private val getBondPskUC: GetBondPskUseCase,
+    private val getPairPskUC: GetPairPskUseCase,
     private val udp: UdpSocketManager,
     private val driveCounter: DriveCounter,
     private val tickMs: Long = 20,
     /**
-     * Tier-1 silent auto-rekey trigger (stub this pass — see [maybeRekey]):
-     * null in tests/legacy call sites (rekey checking inert); production
-     * DI passes the shared [RekeyUseCase]. Follow-up tunes the background
+     * Tier-1 silent auto-pair-refresh trigger (stub this pass — see [maybePairRefresh]):
+     * null in tests/legacy call sites (pair-refresh checking inert); production
+     * DI passes the shared [PairRefreshUseCase]. Follow-up tunes the background
      * launch + session-cache refresh so the rotation fires proactively at
-     * [DriveCounter.needsRekey] with zero send-loop stall.
+     * [DriveCounter.needsPairRefresh] with zero send-loop stall.
      */
-    private val rekeyUC: RekeyUseCase? = null,
+    private val pairRefreshUC: PairRefreshUseCase? = null,
     /**
      * Robot alive rule keepalive (see [ALIVE_INTERVAL_MS]): null in
      * tests/legacy call sites (`ALIVE`/`DISCONNECT` inert — drive counters
@@ -226,7 +226,7 @@ class RobotControlViewModel(
      * session-exhausted paths the VM fires forget-once per device (latched
      * like [pskMissingFor], so per-tick clears never happen) — the repo
      * emits null and the global [SessionGateViewModel] fence navigates to
-     * Pairing. `UNBOND` best-effort inside is already null-safe (missing PSK
+     * Pairing. `UNPAIR` best-effort inside is already null-safe (missing PSK
      * or exhausted counter skips the send). Disconnected (link-down) never
      * forgets — only Unpaired/missing/exhausted converge.
      */
@@ -316,12 +316,12 @@ class RobotControlViewModel(
     private val sessionMutex = Mutex()
     private var sessionPsk: ByteArray? = null
     /**
-     * Tier-1 rekey in-flight guard for [maybeRekey]: while true a rotation
+     * Tier-1 pair-refresh in-flight guard for [maybePairRefresh]: while true a rotation
      * attempt is outstanding (or recently finished) — the per-tick check
      * skips re-firing. Runs on `viewModelScope` (Main), so a plain var
      * suffices — see [ticksSinceTelemetry].
      */
-    private var rekeyInFlight = false
+    private var pairRefreshInFlight = false
     /**
      * Device id whose vault lookup already came back empty. The loop idles
      * for it (no per-tick vault reads — the vault is read at most once per
@@ -437,7 +437,7 @@ class RobotControlViewModel(
                             forgetFiredFor = null
                             driveCounter.reset()
                         }
-                        rekeyInFlight = false
+                        pairRefreshInFlight = false
                         ticksSinceTelemetry = 0
                         ticksSinceActivity = 0
                         ticksSinceIdleSend = 0
@@ -542,14 +542,14 @@ class RobotControlViewModel(
                     // Allocate (psk, counter) under the session mutex, then
                     // send OUTSIDE the lock: udp.send has unbounded latency
                     // and must never stall the e-stop path behind a loop tick.
-                    // Tier-1 rekey probe first (stub: no-op unless the era is
-                    // within REKEY_MARGIN of the gate — see maybeRekey).
-                    maybeRekey(dev)
+                    // Tier-1 pair-refresh probe first (stub: no-op unless the era is
+                    // within PAIR_REFRESH_MARGIN of the gate — see maybePairRefresh).
+                    maybePairRefresh(dev)
                     val prepared = sessionMutex.withLock { sessionCounterLocked(dev) }
                     val result = if (prepared == null) {
                         // Exhaustion (fail-closed counter gate) vs. missing
                         // PSK: distinct copy — the former needs an explicit
-                        // re-pair, and no UNBOND counter is consumed after it
+                        // re-pair, and no UNPAIR counter is consumed after it
                         // (ForgetDeviceUseCase skips the send on null).
                         if (driveCounter.isExhausted()) sessionExpired(dev) else missingPsk(dev)
                     } else {
@@ -594,7 +594,7 @@ class RobotControlViewModel(
             // reading the vault every tick (at most one vault read per
             // session, keyless or not).
             if (pskMissingFor == dev.id) return null
-            val hex = getBondPskUC()
+            val hex = getPairPskUC()
             if (hex == null) {
                 pskMissingFor = dev.id
                 return null
@@ -603,7 +603,7 @@ class RobotControlViewModel(
             // inside hexToBytes — without this the send-loop coroutine dies on
             // the first tick (ALIVE, drive, e-stop all share this choke).
             // Wrong-length valid hex (e.g. "abcd" -> 2 bytes) is rejected too:
-            // encodeSigned requires the 16-byte bond PSK. All undecodable
+            // encodeSigned requires the 16-byte pair PSK. All undecodable
             // entries reuse the existing missing-PSK path (latched, one vault
             // read per session; drive surfaces the re-pair copy, ALIVE and
             // e-stop stay silent).
@@ -623,7 +623,7 @@ class RobotControlViewModel(
             sessionPsk = psk
         }
         // Seed from Room on a fresh era only; a live era is a no-op, so the
-        // watermark (and the negotiated persist cadence + rekey era) can
+        // watermark (and the negotiated persist cadence + pair-refresh era) can
         // never be rewound mid-session.
         driveCounter.ensure(dev.id, dev.lastCounter, dev.persistEvery, dev.era)
         val next = driveCounter.next() ?: return null
@@ -635,36 +635,36 @@ class RobotControlViewModel(
     }
 
     /**
-     * Tier-1 silent auto-rekey trigger STUB (this pass): called once per
+     * Tier-1 silent auto-pair-refresh trigger STUB (this pass): called once per
      * send-loop tick before counter allocation. When the shared
-     * [DriveCounter] reports [DriveCounter.needsRekey] (counter within
-     * [DriveCounter.REKEY_MARGIN] of the fail-closed gate) the rotation
+     * [DriveCounter] reports [DriveCounter.needsPairRefresh] (counter within
+     * [DriveCounter.PAIR_REFRESH_MARGIN] of the fail-closed gate) the rotation
      * should fire silently in the background — no UI except a debug log —
-     * and on success refresh [sessionPsk] from the vault (the [RekeyUseCase]
+     * and on success refresh [sessionPsk] from the vault (the [PairRefreshUseCase]
      * already persisted vault + Room + holder; this VM's in-memory session
      * cache is the only stale copy) so the next drive uses the new key
      * gaplessly.
      *
-     * STUB SCOPE: this pass only probes [needsRekey] (one mutex read — zero
-     * behavior change when false or when [rekeyUC] is null, so all 107
+     * STUB SCOPE: this pass only probes [needsPairRefresh] (one mutex read — zero
+     * behavior change when false or when [pairRefreshUC] is null, so all 107
      * existing tests stay green) and records the trigger; it does NOT
      * launch the exchange yet. FOLLOW-UP (auto-trigger tuning): background-
-     * launch `rekeyUC()` from `viewModelScope` guarded by [rekeyInFlight]
+     * launch `pairRefreshUC()` from `viewModelScope` guarded by [pairRefreshInFlight]
      * (never inline — the 3x 1 s ACK wait must not stall the 20 ms send
      * loop or the robot's 500 ms failsafe trips), refresh [sessionPsk]
-     * under [sessionMutex] on success, clear [rekeyInFlight] + back off on
-     * failure (Tier-2 repair copy owns the gate — never surface rekey
+     * under [sessionMutex] on success, clear [pairRefreshInFlight] + back off on
+     * failure (Tier-2 repair copy owns the gate — never surface pair-refresh
      * failure to the screen).
      */
-    private suspend fun maybeRekey(dev: PairedDevice) {
-        val rekey = rekeyUC ?: return
-        if (rekeyInFlight) return
-        if (!driveCounter.needsRekey()) return
-        // Trigger point reached (counter within REKEY_MARGIN of the gate):
+    private suspend fun maybePairRefresh(dev: PairedDevice) {
+        val pairRefresh = pairRefreshUC ?: return
+        if (pairRefreshInFlight) return
+        if (!driveCounter.needsPairRefresh()) return
+        // Trigger point reached (counter within PAIR_REFRESH_MARGIN of the gate):
         // park here until the follow-up wires the background launch above.
         // Intentionally silent — no state/error change (a debug log lands
         // with the launch patch, where a log backend exists).
-        rekeyInFlight = true
+        pairRefreshInFlight = true
     }
 
     private fun missingPsk(dev: PairedDevice): Outcome.Failure {
@@ -686,8 +686,8 @@ class RobotControlViewModel(
      * Tier-2 exhaustion surface: the shared [DriveCounter] hit
      * [EXHAUSTION_GATE][DriveCounter.EXHAUSTION_GATE] and refuses to allocate
      * (fail-closed — no counter is consumed, so the loop and
-     * [ForgetDeviceUseCase]'s `UNBOND` both skip their sends). Distinct copy
-     * from [missingPsk]: the bond exists, the session just aged out after
+     * [ForgetDeviceUseCase]'s `UNPAIR` both skip their sends). Distinct copy
+     * from [missingPsk]: the pair exists, the session just aged out after
      * long use — an explicit re-pair starts a fresh era.
      */
     private fun sessionExpired(dev: PairedDevice): Outcome.Failure {
@@ -836,7 +836,7 @@ class RobotControlViewModel(
      * Best-effort `DISCONNECT` goodbye (robot alive rule): when [aliveUC]
      * is present and a session is loaded, one shared counter is allocated
      * and the resulting frame goes out 2x byte-identical (same counter —
-     * one allocation, like `UNBOND`'s 3x in [ForgetDeviceUseCase]) at the
+     * one allocation, like `UNPAIR`'s 3x in [ForgetDeviceUseCase]) at the
      * stored device endpoint — the firmware never replies. Every send error
      * is swallowed (a missing PSK or an exhausted counter skips the send);
      * cancellation is never swallowed.

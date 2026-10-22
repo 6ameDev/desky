@@ -43,23 +43,23 @@ class WireConstantsTest {
     }
 
     @Test
-    fun driveV2() {
-        assertEquals(0xAC, DRIVE_V2_HEADER) // udpstatus::kDriveV2Header
-        assertEquals(16, DRIVE_V2_SIZE) // udpstatus::kDriveV2Size
+    fun drive() {
+        assertEquals(0xAC, DRIVE_HEADER) // udpstatus::kDriveHeader
+        assertEquals(16, DRIVE_SIZE) // udpstatus::kDriveSize
     }
 
     @Test
-    fun unbond() {
-        assertEquals(0xAD, UNBOND_HEADER) // udpstatus::kUnbondHeader
-        assertEquals(12, UNBOND_SIZE) // udpstatus::kUnbondSize
+    fun unpair() {
+        assertEquals(0xAD, UNPAIR_HEADER) // udpstatus::kUnpairHeader
+        assertEquals(12, UNPAIR_SIZE) // udpstatus::kUnpairSize
     }
 
     @Test
-    fun rekey() {
-        assertEquals(0x53, REKEY_REQ_HEADER) // udpstatus::kRekeyReqHeader
-        assertEquals(14, REKEY_REQ_SIZE) // udpstatus::kRekeyReqSize
-        assertEquals(0x54, REKEY_ACK_HEADER) // udpstatus::kRekeyAckHeader
-        assertEquals(10, REKEY_ACK_SIZE) // udpstatus::kRekeyAckSize
+    fun pairRefresh() {
+        assertEquals(0x53, PAIR_REFRESH_REQ_HEADER) // udpstatus::kPairRefreshReqHeader
+        assertEquals(14, PAIR_REFRESH_REQ_SIZE) // udpstatus::kPairRefreshReqSize
+        assertEquals(0x54, PAIR_REFRESH_ACK_HEADER) // udpstatus::kPairRefreshAckHeader
+        assertEquals(10, PAIR_REFRESH_ACK_SIZE) // udpstatus::kPairRefreshAckSize
     }
 
     @Test
@@ -72,7 +72,7 @@ class WireConstantsTest {
 
     @Test
     fun claimedHeadersDistinct() {
-        val headers = listOf(CONTROL_HEADER, TELEMETRY_HEADER, PAIR_REQ_HEADER, PAIR_OK_HEADER, PAIR_ERR_HEADER, DRIVE_V2_HEADER, UNBOND_HEADER, REKEY_REQ_HEADER, REKEY_ACK_HEADER, ALIVE_HEADER, DISCONNECT_HEADER)
+        val headers = listOf(CONTROL_HEADER, TELEMETRY_HEADER, PAIR_REQ_HEADER, PAIR_OK_HEADER, PAIR_ERR_HEADER, DRIVE_HEADER, UNPAIR_HEADER, PAIR_REFRESH_REQ_HEADER, PAIR_REFRESH_ACK_HEADER, ALIVE_HEADER, DISCONNECT_HEADER)
         assertEquals(headers.size, headers.toSet().size) // never reuse/renumber
         assertTrue(headers.none { it == 0x00 }) // 0x00 stays unclaimed
     }

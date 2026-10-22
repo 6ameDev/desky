@@ -1,7 +1,7 @@
 package com.desky.shared.domain
 
 import app.cash.turbine.test
-import com.desky.shared.presentation.FakeBondSecretStore
+import com.desky.shared.presentation.FakePairSecretStore
 import com.desky.shared.presentation.FakeDeviceRepository
 import com.desky.shared.presentation.FakeUdpSocketManager
 import dev.mokkery.answering.calls
@@ -90,25 +90,25 @@ class ForgetDeviceUseCaseTest {
 
     private fun useCase(
         repo: FakeDeviceRepository,
-        vault: FakeBondSecretStore,
+        vault: FakePairSecretStore,
         udp: FakeUdpSocketManager,
         holder: DriveCounter = DriveCounter(repo),
-    ) = ForgetDeviceUseCase(repo, vault, udp, GetBondPskUseCase(vault, repo), holder)
+    ) = ForgetDeviceUseCase(repo, vault, udp, GetPairPskUseCase(vault, repo), holder)
 
     @Test
     fun clearSucceeds() = runTest {
         val deviceRepo = mock<DeviceRepository>()
         every { deviceRepo.observePaired() } returns flowOf(device)
         everySuspend { deviceRepo.clear() } returns Unit
-        val vault = FakeBondSecretStore().apply { seed(device.id, "aa") }
+        val vault = FakePairSecretStore().apply { seed(device.id, "aa") }
         val udp = FakeUdpSocketManager()
 
-        val result = ForgetDeviceUseCase(deviceRepo, vault, udp, GetBondPskUseCase(vault, deviceRepo), DriveCounter(deviceRepo))()
+        val result = ForgetDeviceUseCase(deviceRepo, vault, udp, GetPairPskUseCase(vault, deviceRepo), DriveCounter(deviceRepo))()
 
         assertIs<Outcome.Success<Unit>>(result)
         verifySuspend { deviceRepo.clear() }
         assertNull(vault.loadPsk(device.id))
-        // "aa" is not a 16-byte PSK: the unbond encode throws, the send is
+        // "aa" is not a 16-byte PSK: the unpair encode throws, the send is
         // skipped, and the local forget still proceeds.
         assertTrue(udp.sent.isEmpty())
     }
@@ -118,10 +118,10 @@ class ForgetDeviceUseCaseTest {
         val deviceRepo = mock<DeviceRepository>()
         every { deviceRepo.observePaired() } returns flowOf(device)
         everySuspend { deviceRepo.clear() } calls { throw IllegalStateException("db locked") }
-        val vault = FakeBondSecretStore()
+        val vault = FakePairSecretStore()
         val udp = FakeUdpSocketManager()
 
-        val result = ForgetDeviceUseCase(deviceRepo, vault, udp, GetBondPskUseCase(vault, deviceRepo), DriveCounter(deviceRepo))()
+        val result = ForgetDeviceUseCase(deviceRepo, vault, udp, GetPairPskUseCase(vault, deviceRepo), DriveCounter(deviceRepo))()
 
         val failure = assertIs<Outcome.Failure>(result)
         assertTrue(failure.reason.isNotBlank())
@@ -129,11 +129,11 @@ class ForgetDeviceUseCaseTest {
     }
 
     @Test
-    fun forgetSendsSignedUnbondThenClears() = runTest {
+    fun forgetSendsSignedUnpairThenClears() = runTest {
         val pskHex = "00112233445566778899aabbccddeeff"
-        val bonded = device.copy(lastCounter = 5u)
-        val repo = FakeDeviceRepository(bonded)
-        val vault = FakeBondSecretStore().apply { seed(bonded.id, pskHex) }
+        val paired = device.copy(lastCounter = 5u)
+        val repo = FakeDeviceRepository(paired)
+        val vault = FakePairSecretStore().apply { seed(paired.id, pskHex) }
         val udp = FakeUdpSocketManager()
 
         val result = useCase(repo, vault, udp)()
@@ -141,47 +141,47 @@ class ForgetDeviceUseCaseTest {
         assertIs<Outcome.Success<Unit>>(result)
         // Fire-and-forget x3 at the stored endpoint, counter = lastCounter+1.
         assertEquals(3, udp.sent.size)
-        val expected = encodeUnbond(hex(pskHex), 6u)
+        val expected = encodeUnpair(hex(pskHex), 6u)
         for (sent in udp.sent) {
             assertContentEquals(expected, sent.bytes)
-            assertEquals(bonded.ip, sent.host)
-            assertEquals(bonded.port, sent.port)
+            assertEquals(paired.ip, sent.host)
+            assertEquals(paired.port, sent.port)
         }
         assertEquals(1, repo.clearCalls)
-        assertNull(vault.loadPsk(bonded.id))
+        assertNull(vault.loadPsk(paired.id))
         assertEquals(1, vault.clearCalls)
     }
 
     @Test
     fun forgetUsesLiveCounterNotWatermark() = runTest {
         val pskHex = "00112233445566778899aabbccddeeff"
-        val bonded = device.copy(lastCounter = 5u)
-        val repo = FakeDeviceRepository(bonded)
-        val vault = FakeBondSecretStore().apply { seed(bonded.id, pskHex) }
+        val paired = device.copy(lastCounter = 5u)
+        val repo = FakeDeviceRepository(paired)
+        val vault = FakePairSecretStore().apply { seed(paired.id, pskHex) }
         val udp = FakeUdpSocketManager()
         // Ten drive sends since the last persist: live is 15, watermark 5.
         val holder = DriveCounter(repo)
-        holder.ensure(bonded.id, bonded.lastCounter)
+        holder.ensure(paired.id, paired.lastCounter)
         repeat(10) { holder.next() }
 
         val result = useCase(repo, vault, udp, holder)()
 
         assertIs<Outcome.Success<Unit>>(result)
         assertEquals(3, udp.sent.size)
-        val expected = encodeUnbond(hex(pskHex), 16u)
+        val expected = encodeUnpair(hex(pskHex), 16u)
         for (sent in udp.sent) {
             assertContentEquals(expected, sent.bytes)
         }
-        assertTrue(repo.counterSaves.isNotEmpty(), "Layer A: flush persists the live watermark before UNBOND")
-        assertEquals(listOf(bonded.id to 15u), repo.counterSaves)
+        assertTrue(repo.counterSaves.isNotEmpty(), "Layer A: flush persists the live watermark before UNPAIR")
+        assertEquals(listOf(paired.id to 15u), repo.counterSaves)
     }
 
     @Test
     fun forgetWithExhaustedCounterSendsNothing() = runTest {
-        val bonded = device.copy(lastCounter = UInt.MAX_VALUE)
-        val repo = FakeDeviceRepository(bonded)
-        val vault = FakeBondSecretStore().apply {
-            seed(bonded.id, "00112233445566778899aabbccddeeff")
+        val paired = device.copy(lastCounter = UInt.MAX_VALUE)
+        val repo = FakeDeviceRepository(paired)
+        val vault = FakePairSecretStore().apply {
+            seed(paired.id, "00112233445566778899aabbccddeeff")
         }
         val udp = FakeUdpSocketManager()
 
@@ -191,13 +191,13 @@ class ForgetDeviceUseCaseTest {
         assertIs<Outcome.Success<Unit>>(result)
         assertTrue(udp.sent.isEmpty())
         assertEquals(1, repo.clearCalls)
-        assertNull(vault.loadPsk(bonded.id))
+        assertNull(vault.loadPsk(paired.id))
     }
 
     @Test
     fun forgetWithMissingPskSendsNothing() = runTest {
         val repo = FakeDeviceRepository(device)
-        val vault = FakeBondSecretStore()
+        val vault = FakePairSecretStore()
         val udp = FakeUdpSocketManager()
 
         val result = useCase(repo, vault, udp)()
@@ -211,7 +211,7 @@ class ForgetDeviceUseCaseTest {
     @Test
     fun forgetProceedsDespiteSendThrow() = runTest {
         val repo = FakeDeviceRepository(device)
-        val vault = FakeBondSecretStore().apply {
+        val vault = FakePairSecretStore().apply {
             seed(device.id, "00112233445566778899aabbccddeeff")
         }
         val udp = FakeUdpSocketManager().apply {
@@ -229,7 +229,7 @@ class ForgetDeviceUseCaseTest {
     @Test
     fun forgetWhenUnpairedSendsNothing() = runTest {
         val repo = FakeDeviceRepository(null)
-        val vault = FakeBondSecretStore()
+        val vault = FakePairSecretStore()
         val udp = FakeUdpSocketManager()
 
         val result = useCase(repo, vault, udp)()

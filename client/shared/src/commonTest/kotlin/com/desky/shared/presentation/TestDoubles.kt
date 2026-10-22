@@ -1,7 +1,7 @@
 package com.desky.shared.presentation
 
 import com.desky.shared.domain.DEFAULT_UDP_PORT
-import com.desky.shared.domain.BondSecretStore
+import com.desky.shared.domain.PairSecretStore
 import com.desky.shared.domain.DeviceRepository
 import com.desky.shared.domain.PairedDevice
 import com.desky.shared.domain.RobotConfig
@@ -61,11 +61,11 @@ class FakeDeviceRepository(initial: PairedDevice? = null) : DeviceRepository {
         if (current?.id == deviceId) flow.value = current.copy(lastCounter = counter)
     }
 
-    /** Every (deviceId, counter, era) persisted via [updateRekey], in order. */
-    val rekeySaves = mutableListOf<Triple<String, UInt, UShort>>()
+    /** Every (deviceId, counter, era) persisted via [updatePairRefresh], in order. */
+    val pairRefreshSaves = mutableListOf<Triple<String, UInt, UShort>>()
 
-    override suspend fun updateRekey(deviceId: String, counter: UInt, era: UShort) {
-        rekeySaves += Triple(deviceId, counter, era)
+    override suspend fun updatePairRefresh(deviceId: String, counter: UInt, era: UShort) {
+        pairRefreshSaves += Triple(deviceId, counter, era)
         val current = flow.value
         if (current?.id == deviceId) flow.value = current.copy(lastCounter = counter, era = era)
     }
@@ -75,8 +75,8 @@ class FakeDeviceRepository(initial: PairedDevice? = null) : DeviceRepository {
     }
 }
 
-/** Hand-written fake vault: in-memory map mirroring [BondSecretStore] semantics. */
-class FakeBondSecretStore : BondSecretStore {
+/** Hand-written fake vault: in-memory map mirroring [PairSecretStore] semantics. */
+class FakePairSecretStore : PairSecretStore {
     private val vault = mutableMapOf<String, String>()
     var saveCalls = 0
     var loadCalls = 0
