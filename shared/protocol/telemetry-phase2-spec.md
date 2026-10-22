@@ -8,7 +8,7 @@ Normative v1 wire today: `embedded/core/src/middleware/udp_codec.h` + `shared/pr
 ## 0. Baseline (what exists today)
 
 - Robot -> App telemetry: 9-byte `0xBB` (`pitchBE i16 | rollBE i16 | distBE u16 | statusFlags | XOR`), `CFG_TELEMETRY_HZ 15` (`config.h:110`), `kTelemetryMs = 1000/15 ≈ 66ms` (`udp_server.h:273`), unicast-to-last-peer (`udp_server.h:803-848`).
-- App -> Robot drive: 16-byte `DRIVE_V2 0xAC` @50Hz (`tickMs=20`, `RobotControlViewModel.kt:105`), `HMAC-SHA256(psk, counter||mode||thr||str||flags)[0:6]`, counter from `DriveCounter` (persist every 128), wrap-aware `isFreshCounter`, ~333µs verify.
+- App -> Robot drive: 16-byte `DRIVE 0xAC` @50Hz (`tickMs=20`, `RobotControlViewModel.kt:105`), `HMAC-SHA256(psk, counter||mode||thr||str||flags)[0:6]`, counter from `DriveCounter` (persist every 128), wrap-aware `isFreshCounter`, ~333µs verify.
 - Failsafes: robot stops ~500ms after last good drive (`CFG_COORDINATOR_STALE_MS 500`); app demotes `Connected -> Disconnected` after 2s silence (`TELEMETRY_TIMEOUT_MS 2000`).
 - Problem with pure app-side filtering: robot still spends TX CPU + Wi-Fi airtime + phone radio wake + decode for packets the UI throws away.
 
@@ -64,9 +64,9 @@ Non-goals: changing `0xBB` payload shape in v1; touching drive path timing; encr
 
 ## 3. Proposed Phase-2 wire (to refine)
 
-Frozen: `0xBB` payload bytes, `DRIVE_V2` layout, XOR + HMAC construction. Rate changes cadence only.
+Frozen: `0xBB` payload bytes, `DRIVE` layout, XOR + HMAC construction. Rate changes cadence only.
 
-- `SET_RATE_REQ` (new header/len, never `0xAA/0xAC/0xBB`): `[hdr | rate_hz u8 | counterBE u32 | tag6=HMAC(psk,"RATE"||counter||rate) | XOR]`. Verify order mirrors DRIVE_V2 (len -> header -> XOR -> bonded -> fresh-counter -> HMAC-ctEqual). Fail = silent drop.
+- `SET_RATE_REQ` (new header/len, never `0xAA/0xAC/0xBB`): `[hdr | rate_hz u8 | counterBE u32 | tag6=HMAC(psk,"RATE"||counter||rate) | XOR]`. Verify order mirrors DRIVE (len -> header -> XOR -> paired -> fresh-counter -> HMAC-ctEqual). Fail = silent drop.
 - Allowlist e.g. `{1,5,10,15}`Hz; unknown clamps + NAKs nearest. Robot boots to NVS rate, factory default 15Hz. `kTelemetryMs = 1000/negotiatedRate`.
 - `RATE_ACK(rate, status)` with app retry 3x backoff; robot re-apply idempotent.
 - Urgent edges ride same socket as immediate out-of-cadence frames + repeat while latched: cliff assert/clear immediate, mode-change x3 burst 100ms apart, e-stop state immediate; suggest cliff `1Hz` repeat while asserted. Steady never delayed by edges; edges never blocked by low rate.
@@ -129,7 +129,7 @@ Frozen: `0xBB` payload bytes, `DRIVE_V2` layout, XOR + HMAC construction. Rate c
 
 Status note: this appendix records what is already shipped on `feat/pairing-auth`
 vs what remains spec-only, so a later Phase-2 change does not re-litigate it.
-Layer-A flush, Tier-2 fail-closed, Tier-1 rekey frames + key schedule, and the
+Layer-A flush, Tier-2 fail-closed, Tier-1 pair-refresh frames + key schedule, and the
 persist-interval byte are implemented; Layer-B resync is spec-only; the Tier-1
 background trigger is an inert stub. Normative wire for all shipped items stays
 in `shared/protocol/README.md` — this section is rationale + ranking only.
@@ -173,17 +173,17 @@ crash. Layer-B closes that gap. Three options, ranked:
   Tradeoffs: exact (no guessing, no headroom math); but costs new headers
   (must avoid `0xAA/0xAC/0xBB/0x50/0x51/0x52/0x53/0x54/0xAD`), new verify
   order, new retry/backoff + lost-ACK idempotency — a second reliable exchange
-  next to `SET_RATE` / `REKEY` for a seconds-long cosmetic lag. Backward
+  next to `SET_RATE` / `PAIR_REFRESH` for a seconds-long cosmetic lag. Backward
   compat: old robot drops the request (unknown header) → app falls back to B0
   (today's self-heal); old app never sends it. Open: ack auth (under PSK like
-  `REKEY_ACK`?), rate-limiting the request so it cannot become a peer-oracle.
+  `PAIR_REFRESH_ACK`?), rate-limiting the request so it cannot become a peer-oracle.
 
 Ranking: **B1 > B2 > B3.** B1 keeps the UDP-stateless shape of §5 (advisory,
 no ACKs, robot stays authoritative); B2 is the zero-wire fallback if B1's
 byte cannot be placed; B3 only if field data shows crash-replay lag is a real
 complaint — do not pay handshake complexity for a self-healing cosmetic.
 
-### 13.2 Counter exhaustion: Tier-2 fail-closed + Tier-1 silent auto-rekey (shipped)
+### 13.2 Counter exhaustion: Tier-2 fail-closed + Tier-1 silent auto-pair-refresh (shipped)
 
 - **Tier-2 (no bond / legacy path): fail-closed at `0xFFFFFF00` + explicit
   re-pair (shipped).** When the counter reaches `EXHAUSTION_GATE`
@@ -192,30 +192,30 @@ complaint — do not pay handshake complexity for a self-healing cosmetic.
   re-pair"). No wrap, no silent reuse, no auto-recovery — the user re-pairs.
   Rationale: without a shared key there is nothing to rotate *under*, so
   fail-closed is the only safe shape.
-- **Tier-1 (bonded): silent auto-rekey era rotation (shipped frames +
+- **Tier-1 (paired): silent auto-pair-refresh era rotation (shipped frames +
   schedule; trigger stub inert).** Before the gate, both sides rotate to a new
   era + PSK under the old PSK, reset the counter to the bond baseline (0
-  persisted, first post-rekey drive uses 1 — same as a fresh pair), and resume
-  gapless. Wire (claimed headers, never reuse): `REKEY_REQ 0x53 [eraBE2 |
+  persisted, first post-pair-refresh drive uses 1 — same as a fresh pair), and resume
+  gapless. Wire (claimed headers, never reuse): `PAIR_REFRESH_REQ 0x53 [eraBE2 |
   counterBE4 | tag6]` with
-  `tag = first6(HMAC-SHA256(oldPsk, "REKEY"||eraBE2||counterBE4))`;
-  `REKEY_ACK 0x54 [eraBE2 | tag6]` with
-  `tag = first6(HMAC-SHA256(newPsk, "REKEYACK"||eraBE2))` so the ACK proves
+  `tag = first6(HMAC-SHA256(oldPsk, "PAIRREFRESH"||eraBE2||counterBE4))`;
+  `PAIR_REFRESH_ACK 0x54 [eraBE2 | tag6]` with
+  `tag = first6(HMAC-SHA256(newPsk, "PAIRREFRESHACK"||eraBE2))` so the ACK proves
   the switch. Key schedule (no key transport — both sides derive):
-  `PSK_next = HKDF-SHA256(salt="desky-rekey-v1", IKM=oldPsk16,
-  info=eraBE2(new), L=16)`. Verify mirrors drive/unbond (len → header → XOR →
-  bonded? → era == stored+1, duplicate era == stored re-ACKs idempotently
+  `PSK_next = HKDF-SHA256(salt="desky-pair-refresh-v1", IKM=oldPsk16,
+  info=eraBE2(new), L=16)`. Verify mirrors drive/unpair (len → header → XOR →
+  paired? → era == stored+1, duplicate era == stored re-ACKs idempotently
   without re-verifying → counter fresh → HMAC constant-time under OLD key);
   fail = silent drop with 3x byte-identical app retry, then Tier-2 repair
   copy. Pass = persist (`era+1`/`psk_next`/counter 0) BEFORE the ACK, switch
   atomically, old PSK dropped immediately (no reorder window — stale in-flight
   old-key drives drop via HMAC). Proactive margin: app fires at
-  `lastSent >= GATE - 1000` (`REKEY_MARGIN`, ~20 s at 50 Hz) so rotation
+  `lastSent >= GATE - 1000` (`PAIR_REFRESH_MARGIN`, ~20 s at 50 Hz) so rotation
   completes before the gate.
 - **Follow-up (not in this branch): background-launch the trigger.** The
   `maybeRekey` check at send time is intentionally inert (returns false) so
   the shipped path cannot half-fire. The follow-up wires it to a background
-  launcher with: a `rekeyInFlight` guard (one exchange at a time), a vault/DB
+  launcher with: a `pairRefreshInFlight` guard (one exchange at a time), a vault/DB
   refresh after persist (so the new era + PSK survive process death), and
   bounded retry with backoff (3x byte-identical, then Tier-2 copy — no tight
   loop at 50 Hz). Until then exhaustion is exercised by tests only, and field
@@ -238,6 +238,6 @@ two sides. Shared test vector pins `persist_every=128 (0x80)` with
 `ct=f47f282e8b8020ec2acf8bf1eaf2ee2590`.
 
 Open questions for owner: accept B1-first ranking (or prefer B2's zero-wire
-shape)? Hint byte placement + cap for B1? `REKEY_MARGIN` 1000 the right
-proactive distance? Background rekey backoff shape (fixed vs exponential)?
+shape)? Hint byte placement + cap for B1? `PAIR_REFRESH_MARGIN` 1000 the right
+proactive distance? Background pair-refresh backoff shape (fixed vs exponential)?
 Persist-interval ever per-bond renegotiable, or once-at-pair forever?

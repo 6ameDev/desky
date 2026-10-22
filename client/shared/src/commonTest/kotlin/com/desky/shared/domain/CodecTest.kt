@@ -297,8 +297,8 @@ class SignedControlPacketTest {
 
     @Test
     fun constants() {
-        assertEquals(0xAC, DRIVE_V2_HEADER)
-        assertEquals(16, DRIVE_V2_SIZE)
+        assertEquals(0xAC, DRIVE_HEADER)
+        assertEquals(16, DRIVE_SIZE)
     }
 
     /**
@@ -312,7 +312,7 @@ class SignedControlPacketTest {
         val cmd = ControlCommand(RobotMode.MANUAL, 0f, 0f, 0)
         val pkt = encodeSigned(cmd, 1u, psk)
 
-        assertEquals(DRIVE_V2_SIZE, pkt.size)
+        assertEquals(DRIVE_SIZE, pkt.size)
         assertEquals(0xAC, pkt[0].unsigned())
         assertEquals(0x00, pkt[1].unsigned())
         // Sticks identical to the legacy positions: 0 -> byte 128.

@@ -1,12 +1,12 @@
 package com.desky.shared.domain
 
 /**
- * Platform secure vault for bond PSKs (pairing/auth Task 8, vault-only
+ * Platform secure vault for pair PSKs (pairing/auth Task 8, vault-only
  * since Task 9).
  *
- * The vault is the ONLY at-rest home of the 16-byte bond secret (lowercase
+ * The vault is the ONLY at-rest home of the 16-byte pair secret (lowercase
  * hex): Room's `paired_device` table carries the drive counter alone and
- * never key material. [GetBondPskUseCase] is the single session-load entry
+ * never key material. [GetPairPskUseCase] is the single session-load entry
  * point.
  *
  * Semantics: [loadPsk] returns null when nothing is stored (never throws
@@ -14,7 +14,7 @@ package com.desky.shared.domain
  * is a no-op when absent. Implementations MUST NEVER log key material.
  *
  * The vault is at-rest storage only: Task 9's send loop calls
- * [GetBondPskUseCase] once at startup and caches the key in memory — it
+ * [GetPairPskUseCase] once at startup and caches the key in memory — it
  * must never read the vault per tick.
  *
  * Factory note (deliberate deviation from a no-arg `expect`): Android needs
@@ -22,15 +22,15 @@ package com.desky.shared.domain
  * process-global holder for it — the existing DI pattern threads
  * Context-built dependencies in as `dataModule` parameters (see
  * `createDeskyDatabase(context)` in `DeskyApp`). So each platform exposes
- * its own `createBondSecretStore` factory instead of an expect/actual pair:
- * - androidMain: `createBondSecretStore(context: Context)` (EncryptedSharedPreferences)
- * - iosMain: `createBondSecretStore()` (Keychain Services)
- * - jvmMain: `createBondSecretStore()` (in-memory; non-production)
+ * its own `createPairSecretStore` factory instead of an expect/actual pair:
+ * - androidMain: `createPairSecretStore(context: Context)` (EncryptedSharedPreferences)
+ * - iosMain: `createPairSecretStore()` (Keychain Services)
+ * - jvmMain: `createPairSecretStore()` (in-memory; non-production)
  * and `dataModule(db, bondSecretStore)` registers the built instance as a
- * `BondSecretStore` singleton. Common code depends only on this interface.
+ * `PairSecretStore` singleton. Common code depends only on this interface.
  */
-interface BondSecretStore {
-    /** Persist (overwriting) the bond PSK hex for [deviceId]. */
+interface PairSecretStore {
+    /** Persist (overwriting) the pair PSK hex for [deviceId]. */
     suspend fun savePsk(deviceId: String, pskHex: String)
 
     /** Stored PSK hex for [deviceId], or null when absent. Never throws for missing. */

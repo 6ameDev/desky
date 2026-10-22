@@ -202,7 +202,7 @@ class RoomRepositoriesTest {
     }
 
     @Test
-    fun updateRekeyPersistsEraAndBaselineKeepingRow() = runTest {
+    fun updatePairRefreshPersistsEraAndBaselineKeepingRow() = runTest {
         val repo = RoomDeviceRepository(db.pairedDeviceDao())
         repo.save(
             PairedDevice(
@@ -216,7 +216,7 @@ class RoomRepositoriesTest {
             ),
         )
 
-        repo.updateRekey("desky-192.168.4.1", 0u, 1u)
+        repo.updatePairRefresh("desky-192.168.4.1", 0u, 1u)
 
         repo.observePaired().test {
             val device = assertNotNull(awaitItem())

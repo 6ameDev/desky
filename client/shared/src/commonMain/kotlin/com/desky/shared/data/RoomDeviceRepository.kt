@@ -35,7 +35,7 @@ class RoomDeviceRepository(
         dao.updateCounter(deviceId, counter.toLong())
     }
 
-    override suspend fun updateRekey(deviceId: String, counter: UInt, era: UShort) {
-        dao.updateRekey(deviceId, counter.toLong(), era.toInt())
+    override suspend fun updatePairRefresh(deviceId: String, counter: UInt, era: UShort) {
+        dao.updatePairRefresh(deviceId, counter.toLong(), era.toInt())
     }
 }

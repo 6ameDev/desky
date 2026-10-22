@@ -63,26 +63,26 @@ inline uint8_t sanitizePersistEvery(uint16_t v) {
   return static_cast<uint8_t>(v);
 }
 
-// UNBOND (symmetric forget): App -> Robot, 12B [0xAD | counterBE4 | tag6 | XOR],
-//   tag = first6(HMAC-SHA256(psk, "UNBOND" || counterBE4)).
+// UNPAIR (symmetric forget): App -> Robot, 12B [0xAD | counterBE4 | tag6 | XOR],
+//   tag = first6(HMAC-SHA256(psk, "UNPAIR" || counterBE4)).
 // Phone-wire home is udp:: (frozen table in transport/udp_codec.h).
-constexpr uint8_t kUnbondHeader = udp::kUnbondHeader;
-constexpr size_t kUnbondSize = udp::kUnbondSize;
-constexpr size_t kUnbondTagLen = udp::kUnbondTagLen;
+constexpr uint8_t kUnpairHeader = udp::kUnpairHeader;
+constexpr size_t kUnpairSize = udp::kUnpairSize;
+constexpr size_t kUnpairTagLen = udp::kUnpairTagLen;
 constexpr size_t kUnpairMsgLen = udp::kUnpairMsgLen;
 
-// UNBOND tag message (10B, host-testable): "UNBOND" ASCII || counterBE4.
-// Domain-separates the unbond tag from drive tags.
-inline void unbondTagMsg(uint32_t counter, uint8_t out10[kUnpairMsgLen]) {
+// UNPAIR tag message (10B, host-testable): "UNPAIR" ASCII || counterBE4.
+// Domain-separates the unpair tag from drive tags.
+inline void unpairTagMsg(uint32_t counter, uint8_t out10[kUnpairMsgLen]) {
   if (out10 == nullptr) {
     return;
   }
   out10[0] = 'U';
   out10[1] = 'N';
-  out10[2] = 'B';
-  out10[3] = 'O';
-  out10[4] = 'N';
-  out10[5] = 'D';
+  out10[2] = 'P';
+  out10[3] = 'A';
+  out10[4] = 'I';
+  out10[5] = 'R';
   out10[6] = static_cast<uint8_t>((counter >> 24) & 0xFFu);
   out10[7] = static_cast<uint8_t>((counter >> 16) & 0xFFu);
   out10[8] = static_cast<uint8_t>((counter >> 8) & 0xFFu);
@@ -98,63 +98,75 @@ constexpr size_t kPairIvLen = 12;
 constexpr size_t kPairAadLen = 9;  // 0x51 || client_nonce(4) || server_nonce(4)
 constexpr size_t kPairTagLen = 16;
 constexpr uint8_t kPairOkHeader = 0x51;
-// ── Tier-1 silent auto-refresh (era + PSK rotation, fully silent) ──────────
+// ── Tier-1 silent auto-pair-refresh (era + PSK rotation, fully silent) ───
 // Wire (see shared/protocol/README.md):
-//   REKEY_REQ  App -> Robot, 14B [0x53 | eraBE2 | counterBE4 | tag6 | XOR]
-//     tag = first6(HMAC-SHA256(oldPsk, "REKEY" || eraBE2 || counterBE4))
+//   PAIR_REFRESH_REQ  App -> Robot, 14B [0x53 | eraBE2 | counterBE4 | tag6 | XOR]
+//     tag = first6(HMAC-SHA256(oldPsk, "PAIRREFRESH" || eraBE2 || counterBE4))
 //     era = requested new era (stored era + 1, u16 wrap mod 65536).
-//   REKEY_ACK Robot -> App, 10B [0x54 | eraBE2 | tag6 | XOR]
-//     tag = first6(HMAC-SHA256(newPsk, "REKEYACK" || eraBE2)).
+//   PAIR_REFRESH_ACK Robot -> App, 10B [0x54 | eraBE2 | tag6 | XOR]
+//     tag = first6(HMAC-SHA256(newPsk, "PAIRREFRESHACK" || eraBE2)).
 // Key schedule (no key transport):
-//   PSK_next = HKDF-SHA256(salt="desky-rekey-v1", IKM=oldPsk16,
+//   PSK_next = HKDF-SHA256(salt="desky-pair-refresh-v1", IKM=oldPsk16,
 //                           info=eraBE2(new), L=16)
 // both sides derive; only the era needs sync + confirm. Counter resets to
 // the pair baseline (0 persisted, first drive uses 1) so the session resumes
 // gapless. Old PSK is dropped immediately on switch; a duplicate REQ with
 // era == current era re-ACKs idempotently without re-deriving.
-constexpr uint8_t kRekeyReqHeader = udp::kRekeyReqHeader;
-constexpr size_t kRekeyReqSize = udp::kRekeyReqSize;
-constexpr uint8_t kRekeyAckHeader = udp::kRekeyAckHeader;
-constexpr size_t kRekeyAckSize = udp::kRekeyAckSize;
-constexpr size_t kRekeyTagLen = 6;
-constexpr size_t kRekeyMsgLen = 11;     // "REKEY"(5) || eraBE2 || counterBE4
-constexpr size_t kRekeyAckMsgLen = 10;  // "REKEYACK"(8) || eraBE2
+constexpr uint8_t kPairRefreshReqHeader = udp::kPairRefreshReqHeader;
+constexpr size_t kPairRefreshReqSize = udp::kPairRefreshReqSize;
+constexpr uint8_t kPairRefreshAckHeader = udp::kPairRefreshAckHeader;
+constexpr size_t kPairRefreshAckSize = udp::kPairRefreshAckSize;
+constexpr size_t kPairRefreshTagLen = 6;
+constexpr size_t kPairRefreshMsgLen = 17;     // "PAIRREFRESH"(11) || eraBE2 || counterBE4
+constexpr size_t kPairRefreshAckMsgLen = 16;  // "PAIRREFRESHACK"(14) || eraBE2
 
-// REKEY_REQ tag message (11B, host-testable): "REKEY" ASCII || eraBE2 ||
-// counterBE4.
-inline void refreshTagMsg(uint16_t era, uint32_t counter, uint8_t out11[kRekeyMsgLen]) {
-  if (out11 == nullptr) {
+// PAIR_REFRESH_REQ tag message (17B, host-testable): "PAIRREFRESH" ASCII ||
+// eraBE2 || counterBE4.
+inline void pairRefreshTagMsg(uint16_t era, uint32_t counter, uint8_t out17[kPairRefreshMsgLen]) {
+  if (out17 == nullptr) {
     return;
   }
-  out11[0] = 'R';
-  out11[1] = 'E';
-  out11[2] = 'K';
-  out11[3] = 'E';
-  out11[4] = 'Y';
-  out11[5] = static_cast<uint8_t>((era >> 8) & 0xFFu);
-  out11[6] = static_cast<uint8_t>(era & 0xFFu);
-  out11[7] = static_cast<uint8_t>((counter >> 24) & 0xFFu);
-  out11[8] = static_cast<uint8_t>((counter >> 16) & 0xFFu);
-  out11[9] = static_cast<uint8_t>((counter >> 8) & 0xFFu);
-  out11[10] = static_cast<uint8_t>(counter & 0xFFu);
+  out17[0] = 'P';
+  out17[1] = 'A';
+  out17[2] = 'I';
+  out17[3] = 'R';
+  out17[4] = 'R';
+  out17[5] = 'E';
+  out17[6] = 'F';
+  out17[7] = 'R';
+  out17[8] = 'E';
+  out17[9] = 'S';
+  out17[10] = 'H';
+  out17[11] = static_cast<uint8_t>((era >> 8) & 0xFFu);
+  out17[12] = static_cast<uint8_t>(era & 0xFFu);
+  out17[13] = static_cast<uint8_t>((counter >> 24) & 0xFFu);
+  out17[14] = static_cast<uint8_t>((counter >> 16) & 0xFFu);
+  out17[15] = static_cast<uint8_t>((counter >> 8) & 0xFFu);
+  out17[16] = static_cast<uint8_t>(counter & 0xFFu);
 }
 
-// REKEY_ACK tag message (10B, host-testable): "REKEYACK" ASCII || eraBE2.
-// Authenticated under the NEW PSK so the ACK proves the switch.
-inline void refreshAckTagMsg(uint16_t era, uint8_t out10[kRekeyAckMsgLen]) {
-  if (out10 == nullptr) {
+// PAIR_REFRESH_ACK tag message (16B, host-testable): "PAIRREFRESHACK" ASCII
+// || eraBE2. Authenticated under the NEW PSK so the ACK proves the switch.
+inline void pairRefreshAckTagMsg(uint16_t era, uint8_t out16[kPairRefreshAckMsgLen]) {
+  if (out16 == nullptr) {
     return;
   }
-  out10[0] = 'R';
-  out10[1] = 'E';
-  out10[2] = 'K';
-  out10[3] = 'E';
-  out10[4] = 'Y';
-  out10[5] = 'A';
-  out10[6] = 'C';
-  out10[7] = 'K';
-  out10[8] = static_cast<uint8_t>((era >> 8) & 0xFFu);
-  out10[9] = static_cast<uint8_t>(era & 0xFFu);
+  out16[0] = 'P';
+  out16[1] = 'A';
+  out16[2] = 'I';
+  out16[3] = 'R';
+  out16[4] = 'R';
+  out16[5] = 'E';
+  out16[6] = 'F';
+  out16[7] = 'R';
+  out16[8] = 'E';
+  out16[9] = 'S';
+  out16[10] = 'H';
+  out16[11] = 'A';
+  out16[12] = 'C';
+  out16[13] = 'K';
+  out16[14] = static_cast<uint8_t>((era >> 8) & 0xFFu);
+  out16[15] = static_cast<uint8_t>(era & 0xFFu);
 }
 
 // ── ALIVE + DISCONNECT (robot alive rule) ───────────────

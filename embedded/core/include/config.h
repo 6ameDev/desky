@@ -111,7 +111,7 @@
 #define CFG_PAIR_LOCKOUT_MS 30000
 // PAIR_OK redelivery window: while paired, an identical PAIR_REQ
 // (same code + client nonce) within this window after the pair re-unicasts
-// the cached PAIR_OK instead of answering already_bonded (covers the lost-
+// the cached PAIR_OK instead of answering already_paired (covers the lost-
 // reply / client-retry race; RAM-only, never persisted).
 #define CFG_PAIR_REDELIVERY_MS 60000
 

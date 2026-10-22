@@ -3,7 +3,7 @@ package com.desky.shared.presentation
 import app.cash.turbine.test
 import com.desky.shared.domain.DriveCounter
 import com.desky.shared.domain.ForgetDeviceUseCase
-import com.desky.shared.domain.GetBondPskUseCase
+import com.desky.shared.domain.GetPairPskUseCase
 import com.desky.shared.domain.ObserveDeviceConfigUseCase
 import com.desky.shared.domain.RobotConfig
 import com.desky.shared.domain.SaveDeviceConfigUseCase
@@ -27,12 +27,12 @@ class SettingsViewModelTest {
         )
 
     private fun forgetUseCase(forgetRepo: FakeDeviceRepository): ForgetDeviceUseCase {
-        val vault = FakeBondSecretStore()
+        val vault = FakePairSecretStore()
         return ForgetDeviceUseCase(
             forgetRepo,
             vault,
             FakeUdpSocketManager(),
-            GetBondPskUseCase(vault, forgetRepo),
+            GetPairPskUseCase(vault, forgetRepo),
             DriveCounter(forgetRepo),
         )
     }

@@ -40,12 +40,12 @@ class IUdpTransport {
   virtual void sendPairRedeliver(const IPAddress& ip, uint16_t port, const uint8_t* ok, size_t len) = 0;
   // PAIR_ERR unicast (composed by the ability; failure replies ride no gate).
   virtual void sendPairErr(const IPAddress& ip, uint16_t port, const uint8_t* err, size_t len) = 0;
-  // REKEY_ACK unicast, composed by the ability. The token-gated send is the
-  // only path the verified switch takes; the Impl path re-ACKs the idempotent
-  // duplicate (the ACK carries no secret, so it bypasses the gate).
-  virtual void sendRekeyAck(connection::Pinned pinned, const IPAddress& ip, uint16_t port, const uint8_t* ack,
-                            size_t len) = 0;
-  virtual void sendRekeyAckImpl(const IPAddress& ip, uint16_t port, const uint8_t* ack, size_t len) = 0;
+  // PAIR_REFRESH_ACK unicast, composed by the ability. The token-gated send is
+  // the only path the verified switch takes; the Impl path re-ACKs the
+  // idempotent duplicate (the ACK carries no secret, so it bypasses the gate).
+  virtual void sendPairRefreshAck(connection::Pinned pinned, const IPAddress& ip, uint16_t port, const uint8_t* ack,
+                                  size_t len) = 0;
+  virtual void sendPairRefreshAckImpl(const IPAddress& ip, uint16_t port, const uint8_t* ack, size_t len) = 0;
   // Wrap-aware counter freshness + PAIR_OK redelivery predicates (single
   // owner stays in the transport top half; bridged here for the handlers).
   virtual bool isFreshCounter(uint32_t lastSeen, uint32_t got) = 0;

@@ -31,13 +31,13 @@ private const val DRIVE_TAG_HEX = "3ec8b625c9c1"
 private const val CT17_HEX = "f47f282e8b8020ec2acf8bf1eaf2ee2590"
 private const val GCM_TAG_V11_HEX = "e211690852a899b6d4062fbf1058876c"
 
-// Tier-1 rekey goldens (python hashlib reference: HKDF-SHA256 extract+expand
-// per RFC 5869, HMAC-SHA256 tags; must match firmware deriveRekeyPsk +
-// rekeyTagMsg/rekeyAckTagMsg layouts byte-for-byte).
+// Tier-1 pair-refresh goldens (python hashlib reference: HKDF-SHA256 extract+expand
+// per RFC 5869, HMAC-SHA256 tags; must match firmware derivePairRefreshPsk +
+// pairRefreshTagMsg/pairRefreshAckTagMsg layouts byte-for-byte).
 // Fixed inputs: oldPsk=PSK, nextEra=1, counter=100.
-private const val REKEY_NEXT_PSK_HEX = "df7441d0d71778b2dd10493962d45a5b"
-private const val REKEY_TAG_HEX = "fdfe277d1623"
-private const val REKEY_ACK_TAG_HEX = "ed5f52335855"
+private const val PAIR_REFRESH_NEXT_PSK_HEX = "2ecca11e7638cb50bd4c9dd96ff9da1b"
+private const val PAIR_REFRESH_TAG_HEX = "ecac8eb7c93c"
+private const val PAIR_REFRESH_ACK_TAG_HEX = "62c29ea4d181"
 
 class PairingCryptoTest {
 
@@ -185,50 +185,50 @@ class PairingCryptoTest {
     }
 
     /**
-     * Tier-1 rekey key schedule: `PSK_next = HKDF-SHA256(
-     * salt="desky-rekey-v1", IKM=oldPsk, info=eraBE2(1), L=16)`.
+     * Tier-1 pair-refresh key schedule: `PSK_next = HKDF-SHA256(
+     * salt="desky-pair-refresh-v1", IKM=oldPsk, info=eraBE2(1), L=16)`.
      * Golden pinned against the python RFC-5869 reference AND the firmware
-     * `deriveRekeyPsk` contract (same salt/info/length).
+     * `derivePairRefreshPsk` contract (same salt/info/length).
      */
     @Test
-    fun rekeyDerivesNextPsk() = runTest {
-        val next = rekeyPsk(oldPsk = PSK, nextEra = 1u)
-        assertContentEquals(hex(REKEY_NEXT_PSK_HEX), next)
+    fun pairRefreshDerivesNextPsk() = runTest {
+        val next = pairRefreshPsk(oldPsk = PSK, nextEra = 1u)
+        assertContentEquals(hex(PAIR_REFRESH_NEXT_PSK_HEX), next)
     }
 
     @Test
-    fun rekeyChainAdvancesEra() = runTest {
+    fun pairRefreshChainAdvancesEra() = runTest {
         // Era 2 chains under the era-1 key (never reuses the old PSK).
-        val era1 = rekeyPsk(oldPsk = PSK, nextEra = 1u)
-        val era2 = rekeyPsk(oldPsk = era1, nextEra = 2u)
+        val era1 = pairRefreshPsk(oldPsk = PSK, nextEra = 1u)
+        val era2 = pairRefreshPsk(oldPsk = era1, nextEra = 2u)
         kotlin.test.assertEquals(16, era2.size)
         kotlin.test.assertFalse(era2.contentEquals(PSK), "rotation must change the key")
         kotlin.test.assertFalse(era2.contentEquals(era1), "each era must differ")
     }
 
     @Test
-    fun rekeyTagMatches() = runTest {
-        // msg = "REKEY" || eraBE2(0001) || counterBE4(00000064).
-        val tag = rekeyTag(oldPsk = PSK, nextEra = 1u, counter = 100u)
-        assertContentEquals(hex(REKEY_TAG_HEX), tag)
+    fun pairRefreshTagMatches() = runTest {
+        // msg = "PAIRREFRESH" || eraBE2(0001) || counterBE4(00000064).
+        val tag = pairRefreshTag(oldPsk = PSK, nextEra = 1u, counter = 100u)
+        assertContentEquals(hex(PAIR_REFRESH_TAG_HEX), tag)
     }
 
     @Test
-    fun rekeyAckTagMatches() = runTest {
-        // msg = "REKEYACK" || eraBE2(0001), under the NEW key (proves switch).
-        val tag = rekeyAckTag(newPsk = hex(REKEY_NEXT_PSK_HEX), nextEra = 1u)
-        assertContentEquals(hex(REKEY_ACK_TAG_HEX), tag)
+    fun pairRefreshAckTagMatches() = runTest {
+        // msg = "PAIRREFRESHACK" || eraBE2(0001), under the NEW key (proves switch).
+        val tag = pairRefreshAckTag(newPsk = hex(PAIR_REFRESH_NEXT_PSK_HEX), nextEra = 1u)
+        assertContentEquals(hex(PAIR_REFRESH_ACK_TAG_HEX), tag)
     }
 
     @Test
-    fun rekeyTagsDifferByEraAndCounter() = runTest {
-        val base = rekeyTag(oldPsk = PSK, nextEra = 1u, counter = 100u)
+    fun pairRefreshTagsDifferByEraAndCounter() = runTest {
+        val base = pairRefreshTag(oldPsk = PSK, nextEra = 1u, counter = 100u)
         kotlin.test.assertFalse(
-            rekeyTag(oldPsk = PSK, nextEra = 2u, counter = 100u).contentEquals(base),
+            pairRefreshTag(oldPsk = PSK, nextEra = 2u, counter = 100u).contentEquals(base),
             "era is domain-separated",
         )
         kotlin.test.assertFalse(
-            rekeyTag(oldPsk = PSK, nextEra = 1u, counter = 101u).contentEquals(base),
+            pairRefreshTag(oldPsk = PSK, nextEra = 1u, counter = 101u).contentEquals(base),
             "counter is domain-separated",
         )
     }
@@ -275,19 +275,19 @@ class PairingCryptoTest {
             unwrapPairPlaintext(ByteArray(15))
         }
         assertFailsWith<IllegalArgumentException> {
-            rekeyPsk(oldPsk = ByteArray(8), nextEra = 1u)
+            pairRefreshPsk(oldPsk = ByteArray(8), nextEra = 1u)
         }
         assertFailsWith<IllegalArgumentException> {
-            rekeyTag(oldPsk = ByteArray(8), nextEra = 1u, counter = 1u)
+            pairRefreshTag(oldPsk = ByteArray(8), nextEra = 1u, counter = 1u)
         }
         assertFailsWith<IllegalArgumentException> {
-            rekeyAckTag(newPsk = ByteArray(8), nextEra = 1u)
+            pairRefreshAckTag(newPsk = ByteArray(8), nextEra = 1u)
         }
         assertFailsWith<IllegalArgumentException> {
             driveTag(psk = ByteArray(8), counter = 1u, mode = 0, thr = 0, str = 0, flags = 0)
         }
         assertFailsWith<IllegalArgumentException> {
-            unbondTag(psk = ByteArray(8), counter = 1u)
+            unpairTag(psk = ByteArray(8), counter = 1u)
         }
     }
 }

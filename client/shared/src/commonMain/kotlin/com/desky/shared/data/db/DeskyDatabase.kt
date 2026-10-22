@@ -13,7 +13,7 @@ import androidx.room3.RoomDatabaseConstructor
  * (Task 9: the vault owns the PSK now; Room only resumes the drive
  * counter). v3 -> v4 adds `persistEvery` (default 128 — the v1.1 pair-
  * negotiated counter-persist cadence, so the drive session keeps it
- * across restarts). v4 -> v5 adds `era` (default 0 — the Tier-1 rekey
+ * across restarts). v4 -> v5 adds `era` (default 0 — the Tier-1 pair-refresh
  * epoch, so the drive session keeps the rotation generation across
  * restarts). Dev-stage wipe-freely: destructive migration via
  * `fallbackToDestructiveMigration()` on every platform builder — NO

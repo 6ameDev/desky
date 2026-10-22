@@ -35,48 +35,48 @@ const val PAIR_NONCE_SIZE = 4
 
 /**
  * Authenticated drive header/size (frozen spec: `shared/protocol/README.md`
- * §"Pairing + authenticated drive v1": `DRIVE_V2` 16 bytes
+ * §"Pairing + authenticated drive v1": `DRIVE` 16 bytes
  * `[0xAC | mode | thr | str | flags | counterBE4 | tag6 | XOR]`).
  */
-const val DRIVE_V2_HEADER = 0xAC
-const val DRIVE_V2_SIZE = 16
+const val DRIVE_HEADER = 0xAC
+const val DRIVE_SIZE = 16
 
 /**
- * Signed unbond header/size: `UNBOND`, 12 bytes
+ * Signed unpair header/size: `UNPAIR`, 12 bytes
  * `[0xAD | counterBE4 | tag6 | XOR]`, where
- * `tag = first6(HMAC-SHA256(psk16, "UNBOND ASCII" || counterBE4))` — the
- * 10-byte message is the 6 ASCII bytes of `"UNBOND"` followed by the 4-byte
- * big-endian counter. Must match the firmware `UNBOND` frame exactly. The
+ * `tag = first6(HMAC-SHA256(psk16, "UNPAIR ASCII" || counterBE4))` — the
+ * 10-byte message is the 6 ASCII bytes of `"UNPAIR"` followed by the 4-byte
+ * big-endian counter. Must match the firmware `UNPAIR` frame exactly. The
  * robot never replies; the app always proceeds to the local forget.
  */
-const val UNBOND_HEADER = 0xAD
-const val UNBOND_SIZE = 12
+const val UNPAIR_HEADER = 0xAD
+const val UNPAIR_SIZE = 12
 
 /**
- * Tier-1 silent auto-rekey headers/sizes (see `shared/protocol/README.md`
- * §"Tier-1 silent auto-rekey"): `REKEY_REQ` 14 bytes
+ * Tier-1 silent auto-pair-refresh headers/sizes (see `shared/protocol/README.md`
+ * §"Tier-1 silent auto-pair-refresh"): `PAIR_REFRESH_REQ` 14 bytes
  * `[0x53 | eraBE2 | counterBE4 | tag6 | XOR]` (App -> Robot,
- * `tag = first6(HMAC-SHA256(oldPsk, "REKEY" || eraBE2 || counterBE4))`)
- * and `REKEY_ACK` 10 bytes `[0x54 | eraBE2 | tag6 | XOR]` (Robot -> App,
- * `tag = first6(HMAC-SHA256(newPsk, "REKEYACK" || eraBE2))`).
+ * `tag = first6(HMAC-SHA256(oldPsk, "PAIRREFRESH" || eraBE2 || counterBE4))`)
+ * and `PAIR_REFRESH_ACK` 10 bytes `[0x54 | eraBE2 | tag6 | XOR]` (Robot -> App,
+ * `tag = first6(HMAC-SHA256(newPsk, "PAIRREFRESHACK" || eraBE2))`).
  * Headers `0x53`/`0x54` are claimed here — never `0xAA`/`0xAC`/`0xBB`/
  * `0x50`/`0x51`/`0x52`/`0xAD` (Phase-2 `SET_RATE` must pick other values).
  */
-const val REKEY_REQ_HEADER = 0x53
-const val REKEY_REQ_SIZE = 14
-const val REKEY_ACK_HEADER = 0x54
-const val REKEY_ACK_SIZE = 10
+const val PAIR_REFRESH_REQ_HEADER = 0x53
+const val PAIR_REFRESH_REQ_SIZE = 14
+const val PAIR_REFRESH_ACK_HEADER = 0x54
+const val PAIR_REFRESH_ACK_SIZE = 10
 
 /**
  * Robot alive rule headers/sizes (see `shared/protocol/README.md`
  * §"ALIVE + DISCONNECT + robot alive rule"): `ALIVE` 14 bytes
  * `[0x55 | eraBE2 | counterBE4 | tag6 | XOR]` (App -> Robot keepalive,
  * `tag = first6(HMAC-SHA256(psk, "ALIVE" || eraBE2 || counterBE4))`,
- * era = CURRENT bonded era) and `DISCONNECT` 14 bytes
+ * era = CURRENT paired era) and `DISCONNECT` 14 bytes
  * `[0x56 | eraBE2 | counterBE4 | tag6 | XOR]` (graceful goodbye,
  * `tag = first6(HMAC-SHA256(psk, "DISCONNECT" || eraBE2 || counterBE4))`,
- * bond KEPT). Both ride the shared strictly-increasing counter (same
- * holder as `DRIVE_V2` + `REKEY_REQ`).
+ * pair KEPT). Both ride the shared strictly-increasing counter (same
+ * holder as `DRIVE` + `PAIR_REFRESH_REQ`).
  * Headers `0x55`/`0x56` are claimed here — never `0xAA`/`0xAC`/`0xBB`/
  * `0x50`/`0x51`/`0x52`/`0x53`/`0x54`/`0xAD` (Phase-2 `SET_RATE` must pick
  * other values).
@@ -169,7 +169,7 @@ private fun getI16BE(bytes: ByteArray, at: Int): Short {
  * `[0xAA | mode | throttle | steering | flags | XOR]`.
  * Pure byte math mirroring `udp::encodeControl` / `udp::decodeControl`.
  *
- * Legacy post-bond: the firmware drops `0xAA` drive datagrams once bonded,
+ * Legacy post-pair: the firmware drops `0xAA` drive datagrams once paired,
  * so NOTHING in the app sends through [encode] anymore — bench/test frame
  * builder, not for drive path (telemetry-garbage fixtures, hello shape).
  * All drive traffic goes through [encodeSigned].
@@ -205,7 +205,7 @@ object ControlPacketCodec {
 }
 
 /**
- * Authenticated drive frame: `DRIVE_V2`, 16 bytes
+ * Authenticated drive frame: `DRIVE`, 16 bytes
  * `[0xAC | mode | thr | str | flags | counter 4B BE | tag 6B | XOR]`
  * (frozen spec: `shared/protocol/README.md` §"Pairing + authenticated
  * drive v1").
@@ -222,12 +222,12 @@ object ControlPacketCodec {
  *
  * Suspend: the tag needs the platform HMAC backend ([driveTag]).
  *
- * @param psk 16-byte bond PSK.
+ * @param psk 16-byte pair PSK.
  */
 suspend fun encodeSigned(cmd: ControlCommand, counter: UInt, psk: ByteArray): ByteArray {
     require(psk.size == 16) { "encodeSigned: psk must be 16 bytes" }
-    val out = ByteArray(DRIVE_V2_SIZE)
-    out[0] = DRIVE_V2_HEADER.toByte()
+    val out = ByteArray(DRIVE_SIZE)
+    out[0] = DRIVE_HEADER.toByte()
     val mode = cmd.mode.toBits().toByte()
     val thr = unitToByte(cmd.throttle)
     val str = unitToByte(cmd.steering)
@@ -241,7 +241,7 @@ suspend fun encodeSigned(cmd: ControlCommand, counter: UInt, psk: ByteArray): By
     out[7] = (counter shr 8).toByte()
     out[8] = counter.toByte()
     driveTag(psk, counter, mode, thr, str, flags).copyInto(out, destinationOffset = 9)
-    out[DRIVE_V2_SIZE - 1] = xorChecksum(out, DRIVE_V2_SIZE - 1)
+    out[DRIVE_SIZE - 1] = xorChecksum(out, DRIVE_SIZE - 1)
     return out
 }
 
@@ -256,7 +256,7 @@ suspend fun encodeSigned(cmd: ControlCommand, counter: UInt, psk: ByteArray): By
  *   (v1.1 ct covers `psk16 || persist_u8`).
  * - `PAIR_ERR` Robot -> App, 4 bytes:
  *   `[0x52 | reason 1B | retry_s 1B | XOR]`
- *   (reason: 0=bad_code, 1=locked, 2=not_in_window, 3=already_bonded).
+ *   (reason: 0=bad_code, 1=locked, 2=not_in_window, 3=already_paired).
  *   M11 additive reason 4=internal_retry_fresh ("robot error, use fresh
  *   code"): reasons 0-3 frozen, never renumber; 2 keeps not_in_window.
  *
@@ -306,76 +306,76 @@ object PairingPacketCodec {
 }
 
 /**
- * Signed unbond frame: App -> Robot, 12 bytes
+ * Signed unpair frame: App -> Robot, 12 bytes
  * `[0xAD | counter 4B BE | tag 6B | XOR]`.
  *
- * Tells a bonded robot to drop the bond. Fire-and-forget: the firmware
+ * Tells a paired robot to drop the pair. Fire-and-forget: the firmware
  * never replies, so the app sends it (up to 3x, see [ForgetDeviceUseCase])
  * and always proceeds to the local forget regardless of send outcome.
  *
  * Top-level (not an `object` member) per the SKIE constraint documented in
  * `client/ARCHITECTURE.md` (same reason as [encodeSigned] above).
  *
- * Suspend: the tag needs the platform HMAC backend ([unbondTag]).
+ * Suspend: the tag needs the platform HMAC backend ([unpairTag]).
  *
- * @param psk 16-byte bond PSK.
+ * @param psk 16-byte pair PSK.
  * @param counter next drive counter (`lastCounter + 1`; strictly increasing
  *   like every other signed frame).
  */
-suspend fun encodeUnbond(psk: ByteArray, counter: UInt): ByteArray {
-    require(psk.size == 16) { "encodeUnbond: psk must be 16 bytes" }
-    val out = ByteArray(UNBOND_SIZE)
-    out[0] = UNBOND_HEADER.toByte()
+suspend fun encodeUnpair(psk: ByteArray, counter: UInt): ByteArray {
+    require(psk.size == 16) { "encodeUnpair: psk must be 16 bytes" }
+    val out = ByteArray(UNPAIR_SIZE)
+    out[0] = UNPAIR_HEADER.toByte()
     out[1] = (counter shr 24).toByte()
     out[2] = (counter shr 16).toByte()
     out[3] = (counter shr 8).toByte()
     out[4] = counter.toByte()
-    unbondTag(psk, counter).copyInto(out, destinationOffset = 5)
-    out[UNBOND_SIZE - 1] = xorChecksum(out, UNBOND_SIZE - 1)
+    unpairTag(psk, counter).copyInto(out, destinationOffset = 5)
+    out[UNPAIR_SIZE - 1] = xorChecksum(out, UNPAIR_SIZE - 1)
     return out
 }
 
 /**
- * Tier-1 silent auto-rekey frames (see `shared/protocol/README.md`
- * §"Tier-1 silent auto-rekey").
+ * Tier-1 silent auto-pair-refresh frames (see `shared/protocol/README.md`
+ * §"Tier-1 silent auto-pair-refresh").
  *
- * - `REKEY_REQ` App -> Robot, 14 bytes:
+ * - `PAIR_REFRESH_REQ` App -> Robot, 14 bytes:
  *   `[0x53 | eraBE2 | counterBE4 | tag6 | XOR]`
- *   (`tag = rekeyTag(oldPsk, nextEra, counter)`).
- * - `REKEY_ACK` Robot -> App, 10 bytes:
+ *   (`tag = pairRefreshTag(oldPsk, nextEra, counter)`).
+ * - `PAIR_REFRESH_ACK` Robot -> App, 10 bytes:
  *   `[0x54 | eraBE2 | tag6 | XOR]`
- *   (`tag = rekeyAckTag(newPsk, nextEra)`).
+ *   (`tag = pairRefreshAckTag(newPsk, nextEra)`).
  *
- * Pure byte math mirroring firmware `pairing::rekeyTagMsg` /
- * `rekeyAckTagMsg` + `UdpServer::handleRekey`/`sendRekeyAck`.
+ * Pure byte math mirroring firmware `pairing::pairRefreshTagMsg` /
+ * `pairRefreshAckTagMsg` + `UdpServer::handlePairRefresh`/`sendPairRefreshAck`.
  *
  * Top-level (not an `object` member) per the SKIE constraint documented in
- * `client/ARCHITECTURE.md` (same reason as [encodeSigned]/[encodeUnbond]).
+ * `client/ARCHITECTURE.md` (same reason as [encodeSigned]/[encodeUnpair]).
  */
-suspend fun encodeRekeyReq(oldPsk: ByteArray, nextEra: UShort, counter: UInt): ByteArray {
-    require(oldPsk.size == 16) { "encodeRekeyReq: oldPsk must be 16 bytes" }
-    val out = ByteArray(REKEY_REQ_SIZE)
-    out[0] = REKEY_REQ_HEADER.toByte()
+suspend fun encodePairRefreshReq(oldPsk: ByteArray, nextEra: UShort, counter: UInt): ByteArray {
+    require(oldPsk.size == 16) { "encodePairRefreshReq: oldPsk must be 16 bytes" }
+    val out = ByteArray(PAIR_REFRESH_REQ_SIZE)
+    out[0] = PAIR_REFRESH_REQ_HEADER.toByte()
     out[1] = ((nextEra.toInt() shr 8) and 0xFF).toByte()
     out[2] = (nextEra.toInt() and 0xFF).toByte()
     out[3] = (counter shr 24).toByte()
     out[4] = (counter shr 16).toByte()
     out[5] = (counter shr 8).toByte()
     out[6] = counter.toByte()
-    rekeyTag(oldPsk, nextEra, counter).copyInto(out, destinationOffset = 7)
-    out[REKEY_REQ_SIZE - 1] = xorChecksum(out, REKEY_REQ_SIZE - 1)
+    pairRefreshTag(oldPsk, nextEra, counter).copyInto(out, destinationOffset = 7)
+    out[PAIR_REFRESH_REQ_SIZE - 1] = xorChecksum(out, PAIR_REFRESH_REQ_SIZE - 1)
     return out
 }
 
 /**
- * Decode a `REKEY_ACK` frame: null on wrong header, wrong length, or bad
+ * Decode a `PAIR_REFRESH_ACK` frame: null on wrong header, wrong length, or bad
  * checksum. On success the `Pair` is `(era, tag6)` — verify the tag with
- * [rekeyAckTag] under the derived [rekeyPsk] before trusting the era.
+ * [pairRefreshAckTag] under the derived [pairRefreshPsk] before trusting the era.
  */
-fun decodeRekeyAck(bytes: ByteArray): Pair<UShort, ByteArray>? {
-    if (bytes.size != REKEY_ACK_SIZE) return null
-    if ((bytes[0].toInt() and 0xFF) != REKEY_ACK_HEADER) return null
-    if (xorChecksum(bytes, REKEY_ACK_SIZE - 1) != bytes[REKEY_ACK_SIZE - 1]) return null
+fun decodePairRefreshAck(bytes: ByteArray): Pair<UShort, ByteArray>? {
+    if (bytes.size != PAIR_REFRESH_ACK_SIZE) return null
+    if ((bytes[0].toInt() and 0xFF) != PAIR_REFRESH_ACK_HEADER) return null
+    if (xorChecksum(bytes, PAIR_REFRESH_ACK_SIZE - 1) != bytes[PAIR_REFRESH_ACK_SIZE - 1]) return null
     val era = (((bytes[1].toInt() and 0xFF) shl 8) or (bytes[2].toInt() and 0xFF)).toUShort()
     val tag = bytes.copyOfRange(3, 3 + 6)
     return era to tag
@@ -387,18 +387,18 @@ fun decodeRekeyAck(bytes: ByteArray): Pair<UShort, ByteArray>? {
  * (`tag = aliveTag(psk, era, counter)`).
  *
  * Fire-and-forget: the robot never replies — steady telemetry is the ACK
- * (see `shared/protocol/README.md` §"Robot alive rule": every valid bonded
+ * (see `shared/protocol/README.md` §"Robot alive rule": every valid paired
  * packet refreshes the 5 s alive window, so a 2 Hz `ALIVE` keeps telemetry
  * flowing exactly like 50 Hz drive, without touching the drive effect).
  * No decode side exists by design.
  *
  * Top-level (not an `object` member) per the SKIE constraint documented in
- * `client/ARCHITECTURE.md` (same reason as [encodeSigned]/[encodeUnbond]).
+ * `client/ARCHITECTURE.md` (same reason as [encodeSigned]/[encodeUnpair]).
  *
  * Suspend: the tag needs the platform HMAC backend ([aliveTag]).
  *
- * @param psk 16-byte bond PSK.
- * @param era CURRENT bonded era (stored era; a rekey moves it).
+ * @param psk 16-byte pair PSK.
+ * @param era CURRENT paired era (stored era; a pair-refresh moves it).
  * @param counter next drive counter from the shared [DriveCounter]
  *   (strictly increasing like every other signed frame).
  */
@@ -423,18 +423,18 @@ suspend fun encodeAlive(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
  * (`tag = disconnectTag(psk, era, counter)`).
  *
  * Fire-and-forget like [encodeAlive] (no reply ever comes back): the robot
- * runs refresh-then-clear (net peer dropped, bond KEPT — the next launch
+ * runs refresh-then-clear (net peer dropped, pair KEPT — the next launch
  * rejoins instantly). The app sends it 2x on backgrounding (same
- * byte-identical repeat shape as `UNBOND`'s 3x in [ForgetDeviceUseCase]).
+ * byte-identical repeat shape as `UNPAIR`'s 3x in [ForgetDeviceUseCase]).
  * No decode side exists by design.
  *
  * Top-level (not an `object` member) per the SKIE constraint documented in
- * `client/ARCHITECTURE.md` (same reason as [encodeSigned]/[encodeUnbond]).
+ * `client/ARCHITECTURE.md` (same reason as [encodeSigned]/[encodeUnpair]).
  *
  * Suspend: the tag needs the platform HMAC backend ([disconnectTag]).
  *
- * @param psk 16-byte bond PSK.
- * @param era CURRENT bonded era.
+ * @param psk 16-byte pair PSK.
+ * @param era CURRENT paired era.
  * @param counter next drive counter from the shared [DriveCounter].
  */
 suspend fun encodeDisconnect(psk: ByteArray, era: UShort, counter: UInt): ByteArray {

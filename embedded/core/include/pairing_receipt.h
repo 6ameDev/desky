@@ -13,7 +13,7 @@ class ConfigStore;
 
 namespace connection {
 
-// PairingReceipt: proof that the bond hit NVS before the ACK. Move-only.
+// PairingReceipt: proof that the pair hit NVS before the ACK. Move-only.
 // Default-constructs INVALID; only ConfigStore (friend) can mark one valid.
 class PairingReceipt {
  public:

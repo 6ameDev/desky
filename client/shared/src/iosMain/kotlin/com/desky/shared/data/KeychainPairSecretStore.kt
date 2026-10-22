@@ -1,6 +1,6 @@
 package com.desky.shared.data
 
-import com.desky.shared.domain.BondSecretStore
+import com.desky.shared.domain.PairSecretStore
 import kotlinx.cinterop.COpaquePointerVar
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.UByteVar
@@ -41,12 +41,12 @@ import platform.Security.kSecReturnData
 import platform.Security.kSecValueData
 import platform.posix.memcpy
 
-/** Keychain service grouping all desky bond entries. */
-private const val BOND_SERVICE = "com.desky.bond"
+/** Keychain service grouping all desky pair entries. */
+private const val PAIR_SERVICE = "com.desky.pair"
 
 /**
- * iOS [BondSecretStore]: Keychain Services generic-password entries, one per
- * device (`service = "com.desky.bond"`, `account = deviceId`), readable only
+ * iOS [PairSecretStore]: Keychain Services generic-password entries, one per
+ * device (`service = "com.desky.pair"`, `account = deviceId`), readable only
  * while the device is unlocked (`kSecAttrAccessibleWhenUnlocked`).
  *
  * [loadPsk] returns null when the entry is missing (or unreadable) and never
@@ -61,11 +61,11 @@ private const val BOND_SERVICE = "com.desky.bond"
  * everything first (missing entries still never throw).
  */
 @OptIn(ExperimentalForeignApi::class)
-class KeychainBondSecretStore : BondSecretStore {
+class KeychainPairSecretStore : PairSecretStore {
 
     override suspend fun savePsk(deviceId: String, pskHex: String) {
         memScoped {
-            val service = cfString(BOND_SERVICE)
+            val service = cfString(PAIR_SERVICE)
             val account = cfString(deviceId)
             val data = cfData(pskHex.encodeToByteArray())
             try {
@@ -105,7 +105,7 @@ class KeychainBondSecretStore : BondSecretStore {
 
     override suspend fun loadPsk(deviceId: String): String? {
         memScoped {
-            val service = cfString(BOND_SERVICE)
+            val service = cfString(PAIR_SERVICE)
             val account = cfString(deviceId)
             try {
                 val query = baseQuery(service, account)
@@ -145,7 +145,7 @@ class KeychainBondSecretStore : BondSecretStore {
 
     override suspend fun clear(deviceId: String) {
         memScoped {
-            val service = cfString(BOND_SERVICE)
+            val service = cfString(PAIR_SERVICE)
             val account = cfString(deviceId)
             try {
                 val query = baseQuery(service, account)
@@ -193,4 +193,4 @@ class KeychainBondSecretStore : BondSecretStore {
 }
 
 /** iOS factory: Keychain needs no caller-supplied dependencies. */
-fun createBondSecretStore(): BondSecretStore = KeychainBondSecretStore()
+fun createPairSecretStore(): PairSecretStore = KeychainPairSecretStore()

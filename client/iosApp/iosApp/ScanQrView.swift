@@ -6,10 +6,10 @@ import shared
 /// QR pairing shortcut sheet (Android `ScanQrScreen` mirror): live camera +
 /// Vision QR detection. Every decode feeds the shared
 /// `PairingViewModel.onQrScanned` (the VM owns parsing via the shared
-/// `QrCodeParser` plus the `isPairing`/bonded guards, so a valid scan
+/// `QrCodeParser` plus the `isPairing`/paired guards, so a valid scan
 /// auto-pairs on the identical path as manual entry): a valid scan stops the
 /// session and dismisses (the pairing screen's existing `pairedDevice`
-/// observer navigates on bond); an invalid one surfaces the shared error
+/// observer navigates on pair); an invalid one surfaces the shared error
 /// string inline while the session keeps running for a re-aim.
 struct ScanQrView: View {
     @ObservedObject var state: PairingViewState

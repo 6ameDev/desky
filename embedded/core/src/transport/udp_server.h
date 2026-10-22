@@ -85,55 +85,55 @@ inline int16_t degToDecideg(float deg) {
 
 // ── Pairing + authenticated drive v1 (frozen spec:
 // shared/protocol/README.md §"Pairing + authenticated drive v1") ─────────
-// Wire constants: DRIVE_V2 App->Robot 16B, PAIR_REQ App->Robot 12B. Legacy
+// Wire constants: DRIVE App->Robot 16B, PAIR_REQ App->Robot 12B. Legacy
 // literals below equal udp::kControlHeader/kControlSize (0xAA/6) but stay
 // literal; pairing constants alias udp:: (single home in udp_codec.h).
-constexpr uint8_t kDriveV2Header = 0xAC;
-constexpr size_t kDriveV2Size = 16;
+constexpr uint8_t kDriveHeader = 0xAC;
+constexpr size_t kDriveSize = 16;
 // Pairing demux spellings alias the frozen phone-wire table in
 // transport/udp_codec.h (same layer, no abilities header needed).
 constexpr uint8_t kPairReqHeader = udp::kPairReqHeader;
 constexpr size_t kPairReqSize = udp::kPairReqSize;
-constexpr uint8_t kUnbondHeader = udp::kUnbondHeader;
-constexpr size_t kUnbondSize = udp::kUnbondSize;
-constexpr size_t kUnbondTagLen = udp::kUnbondTagLen;
+constexpr uint8_t kUnpairHeader = udp::kUnpairHeader;
+constexpr size_t kUnpairSize = udp::kUnpairSize;
+constexpr size_t kUnpairTagLen = udp::kUnpairTagLen;
 constexpr size_t kUnpairMsgLen = udp::kUnpairMsgLen;
-// Tier-1 silent auto-rekey: REKEY_REQ 14B, REKEY_ACK 10B (TX only).
+// Tier-1 silent auto-pair-refresh: PAIR_REFRESH_REQ 14B, PAIR_REFRESH_ACK 10B (TX only).
 // Headers 0x53/0x54 are claimed in transport/udp_codec.h — never reuse 0xAA/
 // 0xAC/0xBB/0x50/0x51/0x52/0xAD (Phase-2 SET_RATE must pick other values).
-constexpr uint8_t kRekeyReqHeader = udp::kRekeyReqHeader;
-constexpr size_t kRekeyReqSize = udp::kRekeyReqSize;
-constexpr uint8_t kRekeyAckHeader = udp::kRekeyAckHeader;
-constexpr size_t kRekeyAckSize = udp::kRekeyAckSize;
+constexpr uint8_t kPairRefreshReqHeader = udp::kPairRefreshReqHeader;
+constexpr size_t kPairRefreshReqSize = udp::kPairRefreshReqSize;
+constexpr uint8_t kPairRefreshAckHeader = udp::kPairRefreshAckHeader;
+constexpr size_t kPairRefreshAckSize = udp::kPairRefreshAckSize;
 // ALIVE + DISCONNECT: ALIVE 14B, DISCONNECT 14B.
 constexpr uint8_t kAliveHeader = udp::kAliveHeader;
 constexpr size_t kAliveSize = udp::kAliveSize;
 constexpr uint8_t kDisconnectHeader = udp::kDisconnectHeader;
 constexpr size_t kDisconnectSize = udp::kDisconnectSize;
 // Robot alive freshness window: a paired peer counts as alive while its last
-// valid packet is within kAliveMs. DISCONNECT/UNBOND clear the net peer
+// valid packet is within kAliveMs. DISCONNECT/UNPAIR clear the net peer
 // immediately, so the window only matters for silent loss.
 constexpr uint32_t kAliveMs = 5000;
 constexpr uint32_t kRedeliveryMs = CFG_PAIR_REDELIVERY_MS;
 
 // RX demux: classifyRx maps (len, header) -> kind; anything else is kDrop.
-enum class RxKind : uint8_t { kLegacy, kDriveV2, kPairReq, kUnbond, kRekeyReq, kAlive, kDisconnect, kDrop };
+enum class RxKind : uint8_t { kLegacy, kDrive, kPairReq, kUnpair, kPairRefreshReq, kAlive, kDisconnect, kDrop };
 
 inline RxKind classifyRx(size_t len, uint8_t header) {
   if (len == 6 && header == 0xAA) {
     return RxKind::kLegacy;
   }
-  if (len == kDriveV2Size && header == kDriveV2Header) {
-    return RxKind::kDriveV2;
+  if (len == kDriveSize && header == kDriveHeader) {
+    return RxKind::kDrive;
   }
   if (len == kPairReqSize && header == kPairReqHeader) {
     return RxKind::kPairReq;
   }
-  if (len == kUnbondSize && header == kUnbondHeader) {
-    return RxKind::kUnbond;
+  if (len == kUnpairSize && header == kUnpairHeader) {
+    return RxKind::kUnpair;
   }
-  if (len == kRekeyReqSize && header == kRekeyReqHeader) {
-    return RxKind::kRekeyReq;
+  if (len == kPairRefreshReqSize && header == kPairRefreshReqHeader) {
+    return RxKind::kPairRefreshReq;
   }
   if (len == kAliveSize && header == kAliveHeader) {
     return RxKind::kAlive;
@@ -144,7 +144,7 @@ inline RxKind classifyRx(size_t len, uint8_t header) {
   return RxKind::kDrop;
 }
 
-// Wrap-aware strictly-greater for the DRIVE_V2 32-bit BE counter (starts at
+// Wrap-aware strictly-greater for the DRIVE 32-bit BE counter (starts at
 // 1; initial lastSeen=0). Unsigned subtraction: wrap-safe across the 2^32
 // rollover. A diff of exactly half the range is rejected as ambiguous.
 inline bool isFreshCounter(uint32_t lastSeen, uint32_t got) {
@@ -343,9 +343,9 @@ class UdpServer : public transport::IUdpTransport {
   // byte composition lives in the ability, gate-check + unicast stays here.
 
   // Alive funnel for every VALID paired packet: pins the telemetry unicast
-  // peer AND refreshes the alive timestamp. Called for ALIVE, DRIVE_V2, and
-  // REKEY_REQ after verify passes and BEFORE any opcode-specific effect.
-  // DISCONNECT/UNBOND never call this: they refresh-then-clear instead.
+  // peer AND refreshes the alive timestamp. Called for ALIVE, DRIVE, and
+  // PAIR_REFRESH_REQ after verify passes and BEFORE any opcode-specific effect.
+  // DISCONNECT/UNPAIR never call this: they refresh-then-clear instead.
   // Consumes the Verified token (proves the HMAC ran) and returns the Pinned
   // token. Invalid token -> no state change.
   connection::Pinned markAlive(connection::Verified&& verified, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
@@ -416,22 +416,22 @@ class UdpServer : public transport::IUdpTransport {
     }
   }
 
-  // REKEY_ACK 10B unicast, composed by PairingTask (psk_ lives there) and
-  // passed in as bytes. The token-gated sendRekeyAck is the only path the
+  // PAIR_REFRESH_ACK 10B unicast, composed by PairingTask (psk_ lives there) and
+  // passed in as bytes. The token-gated sendPairRefreshAck is the only path the
   // verified switch takes (consumes Pinned by value). The idempotent
   // duplicate path calls the Impl directly (the ACK leaks no secret).
-  void sendRekeyAck(connection::Pinned pinned, const IPAddress& ip, uint16_t port, const uint8_t* ack,
-                    size_t len) override {
+  void sendPairRefreshAck(connection::Pinned pinned, const IPAddress& ip, uint16_t port, const uint8_t* ack,
+                          size_t len) override {
     if (!pinned.valid()) {
       return;
     }
-    sendRekeyAckImpl(ip, port, ack, len);
+    sendPairRefreshAckImpl(ip, port, ack, len);
   }
 
-  void sendRekeyAckImpl(const IPAddress& ip, uint16_t port, const uint8_t* ack, size_t len) override {
+  void sendPairRefreshAckImpl(const IPAddress& ip, uint16_t port, const uint8_t* ack, size_t len) override {
     if (!udpsend::udpSendChecked(udp_, ip, port, ack, len)) {
       ++txFail_;
-      LOG_W("UDP", "udp send fail what=%s len=%u", "rekey_ack", static_cast<unsigned>(len));
+      LOG_W("UDP", "udp send fail what=%s len=%u", "pair_refresh_ack", static_cast<unsigned>(len));
     }
   }
 
@@ -502,12 +502,12 @@ class UdpServer : public transport::IUdpTransport {
       }
 
       // RX: drain every pending datagram; demux by (len, header) + XOR first,
-      // then per-kind handling. Each valid DRIVE_V2 publishes ONE event.
+      // then per-kind handling. Each valid DRIVE publishes ONE event.
       int pending = 0;
       while ((pending = udp_.parsePacket()) > 0) {
         const IPAddress rip = udp_.remoteIP();
         const uint16_t rport = udp_.remotePort();
-        uint8_t buf[20];  // 16B DRIVE_V2 + slack so oversize is detectable.
+        uint8_t buf[20];  // 16B DRIVE + slack so oversize is detectable.
         const int got = udp_.read(buf, sizeof(buf));
         if (got <= 0) {
           dropFirst(firstMalformedDrop_, "drop datagram pending=%d got=%d (first of boot)", pending, got);
@@ -535,12 +535,12 @@ class UdpServer : public transport::IUdpTransport {
           case udpstatus::RxKind::kLegacy:
             handleLegacy(rip, rport);
             break;
-          case udpstatus::RxKind::kDriveV2:
+          case udpstatus::RxKind::kDrive:
             handleDrive(buf, rip, rport, nowMs);
             break;
           case udpstatus::RxKind::kPairReq:
-          case udpstatus::RxKind::kUnbond:
-          case udpstatus::RxKind::kRekeyReq:
+          case udpstatus::RxKind::kUnpair:
+          case udpstatus::RxKind::kPairRefreshReq:
             // Pair-family dispatch owned by the pairing ability. Null-safe
             // for the begin/attachPairing setup micro-window.
             if (pairing_ != nullptr) {
@@ -581,7 +581,7 @@ class UdpServer : public transport::IUdpTransport {
     }
   }
 
-  // DRIVE_V2 layout [0xAC|mode|thr|str|flags|ctrBE 4B|tag6|XOR] (len +
+  // DRIVE layout [0xAC|mode|thr|str|flags|ctrBE 4B|tag6|XOR] (len +
   // header + XOR checked by the caller). Verify order: paired? -> counter
   // fresh -> atomic tryConsume. Pass runs the markAlive funnel, then
   // publishes ONE EVENT_UDP_COMMAND_RECEIVED. Fail = silent drop. Pre-pair
@@ -594,8 +594,8 @@ class UdpServer : public transport::IUdpTransport {
       return;
     }
     if (!pairing_->isPaired()) {
-      dropFirst(firstDriveDrop_, "drop drive unbonded (first of boot)");
-      LOG_EVERY_N(20, "UDP", "drop drive unbonded");
+      dropFirst(firstDriveDrop_, "drop drive unpaired (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop drive unpaired");
       return;
     }
     // Layout: mode=1 thr=2 str=3 flags=4 ctr=5..8 tag=9..14 xor=15.
@@ -647,8 +647,8 @@ class UdpServer : public transport::IUdpTransport {
       return;
     }
     if (!pairing_->isPaired()) {
-      dropFirst(firstAliveDrop_, "drop alive unbonded (first of boot)");
-      LOG_EVERY_N(20, "UDP", "drop alive unbonded");
+      dropFirst(firstAliveDrop_, "drop alive unpaired (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop alive unpaired");
       return;
     }
     const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(buf[1]) << 8) | static_cast<uint16_t>(buf[2]));
@@ -692,8 +692,8 @@ class UdpServer : public transport::IUdpTransport {
       return;
     }
     if (!pairing_->isPaired()) {
-      dropFirst(firstDisconnectDrop_, "drop disconnect unbonded (first of boot)");
-      LOG_EVERY_N(20, "UDP", "drop disconnect unbonded");
+      dropFirst(firstDisconnectDrop_, "drop disconnect unpaired (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop disconnect unpaired");
       return;
     }
     const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(buf[1]) << 8) | static_cast<uint16_t>(buf[2]));
@@ -734,8 +734,8 @@ class UdpServer : public transport::IUdpTransport {
       return;  // begin/attachPairing setup micro-window: fail-closed drop.
     }
     if (pairing_->isPaired()) {
-      dropFirst(firstLegacyDrop_, "drop legacy post-bond (first of boot)");
-      LOG_EVERY_N(20, "UDP", "drop legacy post-bond");
+      dropFirst(firstLegacyDrop_, "drop legacy post-pair (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop legacy post-pair");
       return;
     }
     peerIp_ = rip;
@@ -749,7 +749,7 @@ class UdpServer : public transport::IUdpTransport {
   uint16_t peerPort_;
   // Peer slot + alive window (connection::ConnectionManager, host-pinned).
   // Refreshed by the markAlive funnel on every valid paired packet;
-  // DISCONNECT/UNBOND refresh then drop the net peer. peerIp_/peerPort_ stay
+  // DISCONNECT/UNPAIR refresh then drop the net peer. peerIp_/peerPort_ stay
   // here: WiFiUDP::beginPacket needs an IPAddress; the u32 in conn_ is the
   // portable identity.
   connection::ConnectionManager conn_;

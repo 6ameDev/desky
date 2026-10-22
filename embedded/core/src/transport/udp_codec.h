@@ -17,10 +17,10 @@
 //   0x51 / 38  PAIR_OK v1  Robot->App  [hdr|srvNonce4|ct16|tag16|XOR]
 //   0x51 / 39  PAIR_OK v1.1 Robot->App [hdr|srvNonce4|ct17|tag16|XOR]
 //   0x52 /  4  PAIR_ERR    Robot->App  [hdr|reason|retry_s|XOR]
-//   0xAC / 16  DRIVE_V2    App->Robot  [hdr|mode|thr|str|flags|ctrBE4|tag6|XOR]
-//   0xAD / 12  UNBOND      App->Robot  [hdr|ctrBE4|tag6|XOR]
-//   0x53 / 14  REKEY_REQ   App->Robot  [hdr|eraBE2|ctrBE4|tag6|XOR]
-//   0x54 / 10  REKEY_ACK   Robot->App  [hdr|eraBE2|tag6|XOR]
+//   0xAC / 16  DRIVE       App->Robot  [hdr|mode|thr|str|flags|ctrBE4|tag6|XOR]
+//   0xAD / 12  UNPAIR      App->Robot  [hdr|ctrBE4|tag6|XOR]
+//   0x53 / 14  PAIR_REFRESH_REQ App->Robot [hdr|eraBE2|ctrBE4|tag6|XOR]
+//   0x54 / 10  PAIR_REFRESH_ACK Robot->App [hdr|eraBE2|tag6|XOR]
 //   0x55 / 14  ALIVE       App->Robot  [hdr|eraBE2|ctrBE4|tag6|XOR]
 //   0x56 / 14  DISCONNECT  App->Robot  [hdr|eraBE2|ctrBE4|tag6|XOR]
 // Reserved: claimed headers are never reused or renumbered, sizes never
@@ -57,9 +57,9 @@ constexpr size_t kTelemetrySize = 9;
 // shared/protocol/README.md §"Pairing + authenticated drive v1"):
 //   PAIR_REQ   App->Robot 12B [0x50|code6|cliNonce4|XOR]
 //   PAIR_OK v1.1 Robot->App 39B [0x51|srvNonce4|ct17|tag16|XOR]
-//   UNBOND     App->Robot 12B [0xAD|ctrBE4|tag6|XOR]
-//   REKEY_REQ  App->Robot 14B [0x53|eraBE2|ctrBE4|tag6|XOR]
-//   REKEY_ACK  Robot->App 10B [0x54|eraBE2|tag6|XOR]
+//   UNPAIR     App->Robot 12B [0xAD|ctrBE4|tag6|XOR]
+//   PAIR_REFRESH_REQ  App->Robot 14B [0x53|eraBE2|ctrBE4|tag6|XOR]
+//   PAIR_REFRESH_ACK  Robot->App 10B [0x54|eraBE2|tag6|XOR]
 //   ALIVE      App->Robot 14B [0x55|eraBE2|ctrBE4|tag6|XOR]
 //   DISCONNECT App->Robot 14B [0x56|eraBE2|ctrBE4|tag6|XOR]
 // pairing_codec.h and the udpstatus top half of udp_server.h alias these;
@@ -67,14 +67,14 @@ constexpr size_t kTelemetrySize = 9;
 constexpr uint8_t kPairReqHeader = 0x50;
 constexpr size_t kPairReqSize = 12;
 constexpr size_t kPairOkSize = 39;
-constexpr uint8_t kUnbondHeader = 0xAD;
-constexpr size_t kUnbondSize = 12;
-constexpr size_t kUnbondTagLen = 6;
-constexpr size_t kUnpairMsgLen = 10;  // "UNBOND" (6 ASCII) || counterBE4
-constexpr uint8_t kRekeyReqHeader = 0x53;
-constexpr size_t kRekeyReqSize = 14;
-constexpr uint8_t kRekeyAckHeader = 0x54;
-constexpr size_t kRekeyAckSize = 10;
+constexpr uint8_t kUnpairHeader = 0xAD;
+constexpr size_t kUnpairSize = 12;
+constexpr size_t kUnpairTagLen = 6;
+constexpr size_t kUnpairMsgLen = 10;  // "UNPAIR" (6 ASCII) || counterBE4
+constexpr uint8_t kPairRefreshReqHeader = 0x53;
+constexpr size_t kPairRefreshReqSize = 14;
+constexpr uint8_t kPairRefreshAckHeader = 0x54;
+constexpr size_t kPairRefreshAckSize = 10;
 constexpr uint8_t kAliveHeader = 0x55;
 constexpr size_t kAliveSize = 14;
 constexpr uint8_t kDisconnectHeader = 0x56;

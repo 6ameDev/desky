@@ -8,7 +8,7 @@ import kotlinx.coroutines.sync.withLock
  *
  * Every counter-bearing send app-wide allocates here — the drive-loop tick,
  * the immediate e-stop frame (both via `RobotControlViewModel`), and the
- * signed `UNBOND` (via [ForgetDeviceUseCase]) — so [next] always exceeds the
+ * signed `UNPAIR` (via [ForgetDeviceUseCase]) — so [next] always exceeds the
  * robot's `lastCounter`. The robot lags or equals the app, never leads: each
  * allocation is `lastSent + 1` from the live in-memory era, never from the
  * Room watermark (which leads the live sequence by up to one [persistEvery]
@@ -31,8 +31,8 @@ class DriveCounter(
     private var sincePersist: Int = 0
     private var exhausted: Boolean = false
     private var persistEvery: Int = COUNTER_PERSIST_EVERY
-    // Tier-1 rekey era (u16, Room v5 column + NVS "bera", fresh pair = 0).
-    // Adopted once per era via [ensure]; rotated silently via [completeRekey].
+    // Tier-1 pair-refresh era (u16, Room v5 column + NVS "pera", fresh pair = 0).
+    // Adopted once per era via [ensure]; rotated silently via [completePairRefresh].
     private var era: UShort = 0u
 
     /**
@@ -137,16 +137,16 @@ class DriveCounter(
     }
 
     /**
-     * Tier-1 silent auto-rekey rotation: adopt [newEra] (current era + 1, u16
-     * wrap) after a confirmed `REKEY_ACK`. Resets the counter to the bond
+     * Tier-1 silent auto-pair-refresh rotation: adopt [newEra] (current era + 1, u16
+     * wrap) after a confirmed `PAIR_REFRESH_ACK`. Resets the counter to the pair
      * baseline (`lastSent = 0`, so the next wire packet uses counter 1 —
      * same as a fresh pair), clears the persist count and the [isExhausted]
      * latch, and adopts the new era — all without changing the device id
      * (unlike [ensure]'s fresh-era path). No-op when there is no era yet.
-     * Room/vault persistence is the caller's ([RekeyUseCase]) — this only
+     * Room/vault persistence is the caller's ([PairRefreshUseCase]) — this only
      * moves the in-memory sequence.
      */
-    suspend fun completeRekey(newEra: UShort) {
+    suspend fun completePairRefresh(newEra: UShort) {
         mutex.withLock {
             if (deviceId == null) return
             era = newEra
@@ -157,21 +157,21 @@ class DriveCounter(
     }
 
     /**
-     * Proactive rekey trigger: true when the live era has allocated at or
-     * beyond `EXHAUSTION_GATE - REKEY_MARGIN` — the VM's silent background
+     * Proactive pair-refresh trigger: true when the live era has allocated at or
+     * beyond `EXHAUSTION_GATE - PAIR_REFRESH_MARGIN` — the VM's silent background
      * rotation should fire now (gapless: ~1000 frames of margin at any
      * rate), instead of waiting for the fail-closed [isExhausted] latch
      * (which needs an explicit re-pair). False with no era. See
-     * [RekeyUseCase] + `RobotControlViewModel.maybeRekey` (trigger stub).
+     * [PairRefreshUseCase] + `RobotControlViewModel.maybePairRefresh` (trigger stub).
      */
-    suspend fun needsRekey(): Boolean {
+    suspend fun needsPairRefresh(): Boolean {
         mutex.withLock {
             if (deviceId == null) return false
-            return lastSent >= EXHAUSTION_GATE - REKEY_MARGIN
+            return lastSent >= EXHAUSTION_GATE - PAIR_REFRESH_MARGIN
         }
     }
 
-    /** Current rekey era, or null when there is no era. */
+    /** Current pair-refresh era, or null when there is no era. */
     suspend fun currentEra(): UShort? {
         mutex.withLock {
             if (deviceId == null) return null
@@ -229,13 +229,13 @@ class DriveCounter(
         const val EXHAUSTION_GATE: UInt = 0xFFFFFF00u
 
         /**
-         * Tier-1 proactive rekey margin: [needsRekey] fires when `lastSent`
-         * reaches `EXHAUSTION_GATE - REKEY_MARGIN`, so the silent era+PSK
+         * Tier-1 proactive pair-refresh margin: [needsPairRefresh] fires when `lastSent`
+         * reaches `EXHAUSTION_GATE - PAIR_REFRESH_MARGIN`, so the silent era+PSK
          * rotation completes gaplessly before the fail-closed gate. 1000
          * frames is ~20 s at full 50 Hz drive (minutes-to-hours at idle
-         * heartbeat) — ample for the 3x 1 s `REKEY_REQ`/`ACK` exchange plus
+         * heartbeat) — ample for the 3x 1 s `PAIR_REFRESH_REQ`/`ACK` exchange plus
          * retries, with zero user action.
          */
-        const val REKEY_MARGIN: UInt = 1000u
+        const val PAIR_REFRESH_MARGIN: UInt = 1000u
     }
 }

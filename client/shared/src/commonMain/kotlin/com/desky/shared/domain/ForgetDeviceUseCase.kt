@@ -4,12 +4,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 
 /**
- * Drop the current pairing: tell the robot (best-effort signed `UNBOND`),
+ * Drop the current pairing: tell the robot (best-effort signed `UNPAIR`),
  * then clear the Room row AND the vault entry.
  *
  * Symmetric forget: when a paired device with a vault PSK exists, the app
- * sends `UNBOND` (`[0xAD | counterBE4 | tag6 | XOR]`,
- * `tag = first6(HMAC-SHA256(psk16, "UNBOND" || counterBE4))`,
+ * sends `UNPAIR` (`[0xAD | counterBE4 | tag6 | XOR]`,
+ * `tag = first6(HMAC-SHA256(psk16, "UNPAIR" || counterBE4))`,
  * `counter` allocated from the shared [DriveCounter] — the live in-memory
  * sequence, never Room's stale persisted watermark) up to 3x
  * fire-and-forget at the stored device endpoint — the firmware never
@@ -20,23 +20,23 @@ import kotlinx.coroutines.flow.first
  * locally exactly as before.
  *
  * The Room row is deleted first: if it throws, the vault entry is left
- * untouched (still referenced by the surviving row — no bond loss, retry is
+ * untouched (still referenced by the surviving row — no pair loss, retry is
  * safe). If the vault clear throws afterwards, the failure surfaces but the
  * row is already gone, so at worst a stale vault entry lingers until the
  * next pairing overwrites it.
  */
 class ForgetDeviceUseCase(
     private val deviceRepo: DeviceRepository,
-    private val secretStore: BondSecretStore,
+    private val secretStore: PairSecretStore,
     private val udp: UdpSocketManager,
-    private val getBondPsk: GetBondPskUseCase,
+    private val getPairPsk: GetPairPskUseCase,
     private val driveCounter: DriveCounter,
 ) {
     suspend operator fun invoke(): Outcome<Unit> {
         return try {
             val current = deviceRepo.observePaired().first()
             if (current != null) {
-                sendUnbondBestEffort(current)
+                sendUnpairBestEffort(current)
             }
             deviceRepo.clear()
             if (current != null) secretStore.clear(current.id)
@@ -49,7 +49,7 @@ class ForgetDeviceUseCase(
     }
 
     /**
-     * Best-effort signed `UNBOND`: null PSK (or an undecodable vault entry),
+     * Best-effort signed `UNPAIR`: null PSK (or an undecodable vault entry),
      * or a null counter allocation, skips the send; every transmit error is
      * swallowed so the local forget in [invoke] always runs. Cancellation
      * is never swallowed.
@@ -57,12 +57,12 @@ class ForgetDeviceUseCase(
      * The counter comes from the shared [DriveCounter] (live sequence),
      * never `device.lastCounter` (the stale Room watermark): after any
      * unpersisted drive frames the watermark lags the robot, and the robot
-     * drops the `UNBOND` as a replay. A best-effort [DriveCounter.flush]
+     * drops the `UNPAIR` as a replay. A best-effort [DriveCounter.flush]
      * runs first so the watermark is fresh even when all sends fail (flush
      * errors swallowed — graceful degradation preserved).
      */
-    private suspend fun sendUnbondBestEffort(device: PairedDevice) {
-        val pskHex = getBondPsk() ?: return
+    private suspend fun sendUnpairBestEffort(device: PairedDevice) {
+        val pskHex = getPairPsk() ?: return
         try {
             driveCounter.ensure(device.id, device.lastCounter, device.persistEvery)
             try {
@@ -73,14 +73,14 @@ class ForgetDeviceUseCase(
                 // Swallowed: forget proceeds regardless.
             }
             val counter = driveCounter.next() ?: return
-            val unbond = encodeUnbond(hexToBytes(pskHex), counter)
-            repeat(MAX_UNBOND_SENDS) {
+            val unpair = encodeUnpair(hexToBytes(pskHex), counter)
+            repeat(MAX_UNPAIR_SENDS) {
                 try {
-                    udp.send(unbond, device.ip, device.port)
+                    udp.send(unpair, device.ip, device.port)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    // UDP loss / dead socket: the robot keeps a stale bond
+                    // UDP loss / dead socket: the robot keeps a stale pair
                     // until its own expiry, but the app must forget locally.
                 }
             }
@@ -92,7 +92,7 @@ class ForgetDeviceUseCase(
     }
 
     companion object {
-        /** Fire-and-forget `UNBOND` transmissions (no reply ever comes back). */
-        const val MAX_UNBOND_SENDS = 3
+        /** Fire-and-forget `UNPAIR` transmissions (no reply ever comes back). */
+        const val MAX_UNPAIR_SENDS = 3
     }
 }

@@ -6,18 +6,18 @@ import com.desky.shared.domain.ALIVE_HEADER
 import com.desky.shared.domain.AliveUseCase
 import com.desky.shared.domain.DEFAULT_UDP_PORT
 import com.desky.shared.domain.DISCONNECT_HEADER
-import com.desky.shared.domain.DRIVE_V2_HEADER
-import com.desky.shared.domain.DRIVE_V2_SIZE
+import com.desky.shared.domain.DRIVE_HEADER
+import com.desky.shared.domain.DRIVE_SIZE
 import com.desky.shared.domain.DriveCounter
 import com.desky.shared.domain.ESTOP_FLAG
 import com.desky.shared.domain.EmergencyStopUseCase
 import com.desky.shared.domain.ForgetDeviceUseCase
-import com.desky.shared.domain.GetBondPskUseCase
-import com.desky.shared.domain.UNBOND_HEADER
+import com.desky.shared.domain.GetPairPskUseCase
+import com.desky.shared.domain.UNPAIR_HEADER
 import com.desky.shared.domain.encodeAlive
 import com.desky.shared.domain.encodeDisconnect
 import com.desky.shared.domain.encodeSigned
-import com.desky.shared.domain.encodeUnbond
+import com.desky.shared.domain.encodeUnpair
 import com.desky.shared.domain.ObserveTelemetryUseCase
 import com.desky.shared.domain.Outcome
 import com.desky.shared.domain.RobotMode
@@ -45,7 +45,7 @@ class RobotControlViewModelTest {
     private fun setup(
         repo: FakeDeviceRepository = FakeDeviceRepository(testDevice()),
         udp: FakeUdpSocketManager = FakeUdpSocketManager(),
-        vault: FakeBondSecretStore = FakeBondSecretStore().apply { seed(testDevice().id, PSK_HEX) },
+        vault: FakePairSecretStore = FakePairSecretStore().apply { seed(testDevice().id, PSK_HEX) },
         tickMs: Long = 20,
         holder: DriveCounter = DriveCounter(repo),
         useAlive: Boolean = false,
@@ -53,7 +53,7 @@ class RobotControlViewModelTest {
         wireForget: Boolean = false,
     ): Quad {
         val sendSigned = SendSignedControlUseCase(udp)
-        val getPsk = GetBondPskUseCase(vault, repo)
+        val getPsk = GetPairPskUseCase(vault, repo)
         val forgetUC = if (wireForget) ForgetDeviceUseCase(repo, vault, udp, getPsk, holder) else null
         val viewModel = RobotControlViewModel(
             sendSigned,
@@ -93,7 +93,7 @@ class RobotControlViewModelTest {
         val vm: RobotControlViewModel,
         val repo: FakeDeviceRepository,
         val udp: FakeUdpSocketManager,
-        val vault: FakeBondSecretStore,
+        val vault: FakePairSecretStore,
         val holder: DriveCounter,
         val binder: FakeUdpSocketBinder = FakeUdpSocketBinder(),
     )
@@ -139,10 +139,10 @@ class RobotControlViewModelTest {
 
         // Sends at t=20,40,60,80,100 on top of the t=0 frame.
         assertEquals(6, udp.sent.size)
-        // Every frame is a 16B DRIVE_V2 datagram with counters 1..6.
+        // Every frame is a 16B DRIVE datagram with counters 1..6.
         udp.sent.forEachIndexed { i, frame ->
-            assertEquals(DRIVE_V2_SIZE, frame.bytes.size, "frame $i")
-            assertEquals(DRIVE_V2_HEADER, frame.bytes[0].toInt() and 0xFF, "frame $i")
+            assertEquals(DRIVE_SIZE, frame.bytes.size, "frame $i")
+            assertEquals(DRIVE_HEADER, frame.bytes[0].toInt() and 0xFF, "frame $i")
         }
         val last = udp.sent.last()
         assertTrue(
@@ -282,10 +282,10 @@ class RobotControlViewModelTest {
 
     @Test
     fun missingPskErrorsWithZeroSends() = runVmTest { main ->
-        // Paired, but the vault is empty: keyless bond, never legacy frames.
+        // Paired, but the vault is empty: keyless pair, never legacy frames.
         // Forget wired: the broken row converges via repo clear -> gate fires.
         val (viewModel, repo, udp, vault) = setup(
-            vault = FakeBondSecretStore(),
+            vault = FakePairSecretStore(),
             wireForget = true,
         )
         main.runCurrent()
@@ -296,9 +296,9 @@ class RobotControlViewModelTest {
         val state = viewModel.state.value
         assertEquals(Connectivity.Unpaired, state.connectivity)
         assertEquals("Please re-pair to drive", state.error)
-        // 2 vault reads: the session load (latched miss) + forget's UNBOND
+        // 2 vault reads: the session load (latched miss) + forget's UNPAIR
         // probe (also a miss, send skipped) — both one-shot.
-        assertEquals(2, vault.loadCalls, "session miss + forget UNBOND probe, then latched")
+        assertEquals(2, vault.loadCalls, "session miss + forget UNPAIR probe, then latched")
         assertNull(repo.observePaired().first(), "broken row converged: repo cleared")
         assertEquals(1, repo.clearCalls, "forget fired once")
 
@@ -312,7 +312,7 @@ class RobotControlViewModelTest {
     /**
      * Tier-2 exhaustion surface: a session whose Room watermark sits at
      * gate-1 (PSK present — NOT the missing-PSK path) allocates nothing,
-     * sends nothing (no UNBOND counter is consumed either), and surfaces
+     * sends nothing (no UNPAIR counter is consumed either), and surfaces
      * [Connectivity.Unpaired] + the repair copy. Vault still read once
      * (session cached, loop idles).
      */
@@ -321,7 +321,7 @@ class RobotControlViewModelTest {
         val device = testDevice().copy(lastCounter = DriveCounter.EXHAUSTION_GATE - 1u)
         val (viewModel, repo, udp, vault) = setup(
             repo = FakeDeviceRepository(device),
-            vault = FakeBondSecretStore().apply { seed(device.id, PSK_HEX) },
+            vault = FakePairSecretStore().apply { seed(device.id, PSK_HEX) },
             wireForget = true,
         )
         main.runCurrent()
@@ -332,9 +332,9 @@ class RobotControlViewModelTest {
         val state = viewModel.state.value
         assertEquals(Connectivity.Unpaired, state.connectivity)
         assertEquals("Session expired after long use — please re-pair", state.error)
-        // 2 vault reads: the session load + forget's UNBOND probe (null
+        // 2 vault reads: the session load + forget's UNPAIR probe (null
         // counter allocation skips the send) — both one-shot.
-        assertEquals(2, vault.loadCalls, "session load + forget UNBOND probe, then latched")
+        assertEquals(2, vault.loadCalls, "session load + forget UNPAIR probe, then latched")
         assertNull(repo.observePaired().first(), "exhausted session converged: repo cleared")
         assertEquals(1, repo.clearCalls, "forget fired once")
 
@@ -357,7 +357,7 @@ class RobotControlViewModelTest {
         val device = testDevice()
         val (viewModel, repo, udp, vault) = setup(
             repo = FakeDeviceRepository(device),
-            vault = FakeBondSecretStore().apply { seed(device.id, "ZZZ") },
+            vault = FakePairSecretStore().apply { seed(device.id, "ZZZ") },
         )
         main.runCurrent()
         main.advanceTimeBy(101)
@@ -397,7 +397,7 @@ class RobotControlViewModelTest {
         val device = testDevice()
         val (viewModel, _, udp, vault) = setup(
             repo = FakeDeviceRepository(device),
-            vault = FakeBondSecretStore().apply { seed(device.id, "ZZZ") },
+            vault = FakePairSecretStore().apply { seed(device.id, "ZZZ") },
             useAlive = true,
         )
         main.runCurrent()
@@ -425,7 +425,7 @@ class RobotControlViewModelTest {
         val device = testDevice()
         val (viewModel, _, udp, vault) = setup(
             repo = FakeDeviceRepository(device),
-            vault = FakeBondSecretStore().apply { seed(device.id, "ZZZ") },
+            vault = FakePairSecretStore().apply { seed(device.id, "ZZZ") },
         )
         main.runCurrent()
         promote(udp)
@@ -453,7 +453,7 @@ class RobotControlViewModelTest {
         val device = testDevice()
         val (viewModel, _, udp, vault) = setup(
             repo = FakeDeviceRepository(device),
-            vault = FakeBondSecretStore().apply { seed(device.id, "abcd") },
+            vault = FakePairSecretStore().apply { seed(device.id, "abcd") },
         )
         main.runCurrent()
         main.advanceTimeBy(101)
@@ -625,7 +625,7 @@ class RobotControlViewModelTest {
     fun forgetAfterUnpersistedFramesUsesLiveCounter() = runVmTest { main ->
         // Field-proven regression: the Room watermark persists only every
         // 128 sends, but the robot enforces strictly-greater against its
-        // LIVE counter. UNBOND must allocate from the shared holder (live),
+        // LIVE counter. UNPAIR must allocate from the shared holder (live),
         // never `device.lastCounter + 1` (watermark).
         val deviceId = testDevice().id
         val (viewModel, repo, udp, vault, holder) = setup(tickMs = 20)
@@ -642,18 +642,18 @@ class RobotControlViewModelTest {
         assertEquals(listOf(deviceId to 256u), repo.counterSaves)
 
         // Forget WITHOUT further persists: the holder still holds 150 live.
-        val forget = ForgetDeviceUseCase(repo, vault, udp, GetBondPskUseCase(vault, repo), holder)
+        val forget = ForgetDeviceUseCase(repo, vault, udp, GetPairPskUseCase(vault, repo), holder)
         val result = forget()
 
         assertIs<Outcome.Success<Unit>>(result, "forget result: $result")
-        // 3x fire-and-forget UNBOND on top of the 150 drive frames.
+        // 3x fire-and-forget UNPAIR on top of the 150 drive frames.
         assertEquals(153, udp.sent.size)
-        val unbonds = udp.sent.drop(150)
-        assertEquals(3, unbonds.size)
-        val expected = encodeUnbond(psk(), 151u)
-        unbonds.forEachIndexed { i, frame ->
-            assertEquals(UNBOND_HEADER, frame.bytes[0].toInt() and 0xFF, "unbond $i")
-            assertTrue(frame.bytes.contentEquals(expected), "unbond $i carries live counter 151, not watermark 129")
+        val unpairs = udp.sent.drop(150)
+        assertEquals(3, unpairs.size)
+        val expected = encodeUnpair(psk(), 151u)
+        unpairs.forEachIndexed { i, frame ->
+            assertEquals(UNPAIR_HEADER, frame.bytes[0].toInt() and 0xFF, "unpair $i")
+            assertTrue(frame.bytes.contentEquals(expected), "unpair $i carries live counter 151, not watermark 129")
         }
     }
 
@@ -1010,7 +1010,7 @@ class RobotControlViewModelTest {
         main.advanceTimeBy(101)
         assertEquals(6, udp.sent.size)
         udp.sent.forEachIndexed { i, frame ->
-            assertEquals(DRIVE_V2_HEADER, frame.bytes[0].toInt() and 0xFF, "frame $i")
+            assertEquals(DRIVE_HEADER, frame.bytes[0].toInt() and 0xFF, "frame $i")
             assertEquals(0x00, frame.bytes[1].toInt() and 0xFF, "frame $i mode")
             assertEquals(0x80, frame.bytes[2].toInt() and 0xFF, "frame $i throttle centered")
             assertEquals(0x80, frame.bytes[3].toInt() and 0xFF, "frame $i steering centered")
@@ -1057,7 +1057,7 @@ class RobotControlViewModelTest {
             "ALIVE counter stays dense with drive",
         )
         // Drive kept flowing underneath (idle-gated, but alive).
-        assertTrue(udp.sent.any { (it.bytes[0].toInt() and 0xFF) == DRIVE_V2_HEADER })
+        assertTrue(udp.sent.any { (it.bytes[0].toInt() and 0xFF) == DRIVE_HEADER })
         assertNull(viewModel.state.value.error, "ALIVE never touches the banner")
 
         // Next 500 ms window: third ALIVE at t=1000, still 2 Hz (+1 so the
@@ -1098,7 +1098,7 @@ class RobotControlViewModelTest {
         }
         assertTrue(
             goodbyes[0].bytes.contentEquals(goodbyes[1].bytes),
-            "byte-identical repeat: one allocation, like UNBOND",
+            "byte-identical repeat: one allocation, like UNPAIR",
         )
         assertTrue(
             goodbyes[0].bytes.contentEquals(encodeDisconnect(psk(), 0u, 3u)),
