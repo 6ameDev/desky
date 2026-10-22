@@ -9,10 +9,10 @@
 #include <math.h>
 
 #include "abilities/face/face_manager.h"
-#include "common/iactuator.h"
 #include "common/logger.h"
 #include "config.h"
 #include "hal/ssd1306_display.h"
+#include "services/display_port.h"
 
 #ifndef CFG_FACE_FPS
 #define CFG_FACE_FPS 25
@@ -30,7 +30,7 @@
 #define CFG_FACE_CORE 0
 #endif
 
-class FaceRenderer : public IActuator {
+class FaceRenderer : public IDisplayPort {
  public:
   explicit FaceRenderer(Ssd1306Display& panel) : panel_(panel) {}
 

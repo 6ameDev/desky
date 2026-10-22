@@ -27,9 +27,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Firmware minter of PersistReceipt (services/config_store.h). Forward
-// declaration only — this header stays dependency-free.
-class ConfigStore;
+#include "persist_receipt.h"
 
 namespace connection {
 
@@ -198,34 +196,6 @@ class ConnectionManager {
   uint32_t peer_;
   bool have_;
   uint32_t lastMs_;
-};
-
-// PersistReceipt: proof that the bond hit NVS before the ACK. Move-only.
-// Default-constructs INVALID; only ConfigStore (friend) can mark one valid.
-
-class PersistReceipt {
- public:
-  PersistReceipt() : valid_(false) {}
-  PersistReceipt(PersistReceipt&& other) : valid_(other.valid_) { other.valid_ = false; }
-  PersistReceipt& operator=(PersistReceipt&& other) {
-    if (this != &other) {
-      valid_ = other.valid_;
-      other.valid_ = false;
-    }
-    return *this;
-  }
-  PersistReceipt(const PersistReceipt&) = delete;
-  PersistReceipt& operator=(const PersistReceipt&) = delete;
-
-  bool valid() const { return valid_; }
-
- private:
-  // NOTE: the global qualifier matters — an unqualified `friend class
-  // ConfigStore` would befriend a never-defined connection::ConfigStore.
-  friend class ::ConfigStore;
-  void mark(bool valid) { valid_ = valid; }
-
-  bool valid_;
 };
 
 }  // namespace connection

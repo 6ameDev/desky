@@ -28,10 +28,10 @@ inline uint8_t resolveFace(int32_t arg) { return clampFace(arg); }
 
 #include <Arduino.h>
 
-#include "abilities/face/face_task.h"
 #include "common/logger.h"
 #include "config.h"
 #include "hal/camera_driver.h"
+#include "services/display_port.h"
 #include "services/event_bus.h"
 
 #ifndef HEAD_BOOT_LEAN
@@ -42,7 +42,7 @@ class PowerManager {
  public:
   PowerManager() : cam_(nullptr), disp_(nullptr), camState_(CAM_ON), oledState_(OLED_ON), faceId_(FACE_BOOT) {}
 
-  void begin(CameraDriver* cam, FaceRenderer* disp) {
+  void begin(CameraDriver* cam, IDisplayPort* disp) {
     cam_ = cam;
     disp_ = disp;
     bootPowerState(HEAD_BOOT_LEAN, camState_, oledState_);
@@ -95,27 +95,10 @@ class PowerManager {
     const uint32_t frames = (cam_ != nullptr) ? cam_->frames() : 0;
     const uint32_t dropped = (cam_ != nullptr) ? cam_->dropped() : 0;
     const size_t lastBytes = (cam_ != nullptr) ? cam_->lastSizeBytes() : 0;
-    const bool pair = disp_ != nullptr && disp_->pairActive();
-    LOG_I("PWR", "cam=%s oled=%s face=%s qr=%s pair=%s frames=%lu drops=%lu last=%uB fps=%lum", camStateName(camState_),
-          oledStateName(oledState_), faceName(faceId_), qrActive() ? "on" : "off", pair ? "on" : "off",
-          (unsigned long)frames, (unsigned long)dropped, (unsigned)lastBytes,
-          (unsigned long)((cam_ != nullptr) ? cam_->fpsMilli() : 0));
+    LOG_I("PWR", "cam=%s oled=%s face=%s frames=%lu drops=%lu last=%uB fps=%lum", camStateName(camState_),
+          oledStateName(oledState_), faceName(faceId_), (unsigned long)frames, (unsigned long)dropped,
+          (unsigned)lastBytes, (unsigned long)((cam_ != nullptr) ? cam_->fpsMilli() : 0));
   }
-
-  // Demo door: the USB CLI qr verb with no link involved.
-  void showQrDemo() {
-    if (disp_ != nullptr) {
-      disp_->showQrDemo();
-    }
-  }
-
-  void clearQr() {
-    if (disp_ != nullptr) {
-      disp_->clearQr("cli");
-    }
-  }
-
-  bool qrActive() const { return disp_ != nullptr && disp_->qrActive(); }
 
   CameraState camState() const { return camState_; }
   DisplayState oledState() const { return oledState_; }
@@ -138,7 +121,7 @@ class PowerManager {
   }
 
   CameraDriver* cam_;
-  FaceRenderer* disp_;
+  IDisplayPort* disp_;
   CameraState camState_;
   DisplayState oledState_;
   uint8_t faceId_;

@@ -17,7 +17,7 @@
 
 #include "../src/transport/udp_server.h"  // udpstatus top half
 // telemetry_manager.h requires udp_server.h first (order pin above).
-#include "../src/services/telemetry_manager.h"
+#include "../src/abilities/telemetry/telemetry_manager.h"
 #include "../src/transport/udp_codec.h"
 
 namespace {

@@ -12,6 +12,7 @@
 #include <unity.h>
 
 #include "../src/behavior/coordinator.h"
+#include "../src/transport/udp_codec.h"
 
 namespace {
 
@@ -40,17 +41,17 @@ coordinator::ArbitrateInput latchedDrive(float v, float omega) {
 }  // namespace
 
 void test_coord_stick_bytes_map_center_128() {
-  TEST_ASSERT_EQUAL_FLOAT(0.0f, coordinator::byteToUnit(128));
-  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, coordinator::byteToUnit(255));
-  TEST_ASSERT_FLOAT_WITHIN(0.001f, -1.0f, coordinator::byteToUnit(0));
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, udp::byteToUnit(128));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, udp::byteToUnit(255));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, -1.0f, udp::byteToUnit(0));
   // Big-endian pack [mode|throttle|steering|flags]; centered stick -> zero cmd.
-  const uint32_t payload = coordinator::packCommand(0x01, 128, 128, 0x00);
+  const uint32_t payload = udp::packCommand(0x01, 128, 128, 0x00);
   TEST_ASSERT_EQUAL_UINT32(0x01808000UL, payload);
   uint8_t mode = 0;
   uint8_t flags = 0;
   float v = 9.0f;
   float omega = 9.0f;
-  coordinator::unpackCommand(payload, mode, v, omega, flags);
+  udp::unpackCommand(payload, mode, v, omega, flags);
   TEST_ASSERT_EQUAL_UINT8(0x01, mode);
   TEST_ASSERT_EQUAL_FLOAT(0.0f, v);
   TEST_ASSERT_EQUAL_FLOAT(0.0f, omega);

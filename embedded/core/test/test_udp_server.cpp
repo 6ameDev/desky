@@ -13,14 +13,14 @@
 #include <type_traits>
 #include <utility>
 
+#include "../include/persist_receipt.h"  // PersistReceipt vocabulary home (move-only pins below)
 #include "../src/abilities/pairing/pairing_codec.h"
-#include "../src/behavior/coordinator.h"
 #include "../src/transport/udp_server.h"
 // Platform split 1.1: udp_server.h is included before telemetry_manager.h (it
 // defines UDPSTATUS_TOP_HALF_INCLUDED + pulls the connection core);
 // pairing_codec.h is the wire-codec owner, telemetry_manager.h the
 // cadence/encode owner.
-#include "../src/services/telemetry_manager.h"
+#include "../src/abilities/telemetry/telemetry_manager.h"
 #include "../src/transport/udp_codec.h"
 
 // Static assert #3 (platform split 1.1): frozen wire sizes + LastPair cache
@@ -112,12 +112,12 @@ void test_pack_command_center_edges() {
   uint8_t flags = 0;
   float v = 0.0f;
   float omega = 0.0f;
-  coordinator::unpackCommand(coordinator::packCommand(0x02, 0, 255, 0x05), mode, v, omega, flags);
+  udp::unpackCommand(udp::packCommand(0x02, 0, 255, 0x05), mode, v, omega, flags);
   TEST_ASSERT_EQUAL_UINT8(0x02, mode);
   TEST_ASSERT_FLOAT_WITHIN(0.002f, -1.0f, v);
   TEST_ASSERT_FLOAT_WITHIN(0.002f, 1.0f, omega);
   TEST_ASSERT_EQUAL_UINT8(0x05, flags);
-  coordinator::unpackCommand(coordinator::packCommand(0x00, 128, 128, 0x00), mode, v, omega, flags);
+  udp::unpackCommand(udp::packCommand(0x00, 128, 128, 0x00), mode, v, omega, flags);
   TEST_ASSERT_EQUAL_FLOAT(0.0f, v);
   TEST_ASSERT_EQUAL_FLOAT(0.0f, omega);
 }
@@ -296,7 +296,7 @@ void test_udp_classify_unbond() {
 
 void test_udp_unbond_tag_msg_golden() {
   uint8_t msg[udpstatus::kUnbondMsgLen];
-  udpstatus::unbondTagMsg(1u, msg);
+  pairing::unbondTagMsg(1u, msg);
   const uint8_t expected[10] = {0x55, 0x4E, 0x42, 0x4F, 0x4E, 0x44, 0x00, 0x00, 0x00, 0x01};
   TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, msg, sizeof(expected));
 }

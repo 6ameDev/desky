@@ -29,9 +29,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "abilities/pairing/pairing_codec.h"
 #include "common/udp_send.h"
+#include "link/qr_codec.h"
 #include "transport/connection_manager.h"
+#include "transport/udp_codec.h"
 
 // Fallback keeps the host tests + firmware compiling if config keys drift;
 // in-project include/config.h always wins (same pattern as pairing_codec.h).
@@ -85,30 +86,30 @@ inline int16_t degToDecideg(float deg) {
 // ── Pairing + authenticated drive v1 (frozen spec:
 // shared/protocol/README.md §"Pairing + authenticated drive v1") ─────────
 // Wire constants: DRIVE_V2 App->Robot 16B, PAIR_REQ App->Robot 12B. Legacy
-// literals below equal udp::kControlSize/kControlHeader (6/0xAA) but stay
-// literal so this top half needs no udp_codec.h include.
+// literals below equal udp::kControlHeader/kControlSize (0xAA/6) but stay
+// literal; pairing constants alias udp:: (single home in udp_codec.h).
 constexpr uint8_t kDriveV2Header = 0xAC;
 constexpr size_t kDriveV2Size = 16;
-// Pairing-owned vocabulary (single owner: pairing_codec.h; equality pinned by
-// test_udp_server static_asserts).
-constexpr uint8_t kPairReqHeader = pairing::kPairReqHeader;
-constexpr size_t kPairReqSize = pairing::kPairReqSize;
-constexpr uint8_t kUnbondHeader = pairing::kUnbondHeader;
-constexpr size_t kUnbondSize = pairing::kUnbondSize;
-constexpr size_t kUnbondTagLen = pairing::kUnbondTagLen;
-constexpr size_t kUnbondMsgLen = pairing::kUnbondMsgLen;  // "UNBOND" (6 ASCII) || counterBE4
+// Pairing demux spellings alias the frozen phone-wire table in
+// transport/udp_codec.h (same layer, no abilities header needed).
+constexpr uint8_t kPairReqHeader = udp::kPairReqHeader;
+constexpr size_t kPairReqSize = udp::kPairReqSize;
+constexpr uint8_t kUnbondHeader = udp::kUnbondHeader;
+constexpr size_t kUnbondSize = udp::kUnbondSize;
+constexpr size_t kUnbondTagLen = udp::kUnbondTagLen;
+constexpr size_t kUnbondMsgLen = udp::kUnbondMsgLen;
 // Tier-1 silent auto-rekey: REKEY_REQ 14B, REKEY_ACK 10B (TX only).
-// Headers 0x53/0x54 are claimed in pairing_codec.h — never reuse 0xAA/0xAC/0xBB/
-// 0x50/0x51/0x52/0xAD (Phase-2 SET_RATE must pick other values).
-constexpr uint8_t kRekeyReqHeader = pairing::kRekeyReqHeader;
-constexpr size_t kRekeyReqSize = pairing::kRekeyReqSize;
-constexpr uint8_t kRekeyAckHeader = pairing::kRekeyAckHeader;
-constexpr size_t kRekeyAckSize = pairing::kRekeyAckSize;
+// Headers 0x53/0x54 are claimed in transport/udp_codec.h — never reuse 0xAA/
+// 0xAC/0xBB/0x50/0x51/0x52/0xAD (Phase-2 SET_RATE must pick other values).
+constexpr uint8_t kRekeyReqHeader = udp::kRekeyReqHeader;
+constexpr size_t kRekeyReqSize = udp::kRekeyReqSize;
+constexpr uint8_t kRekeyAckHeader = udp::kRekeyAckHeader;
+constexpr size_t kRekeyAckSize = udp::kRekeyAckSize;
 // ALIVE + DISCONNECT: ALIVE 14B, DISCONNECT 14B.
-constexpr uint8_t kAliveHeader = pairing::kAliveHeader;
-constexpr size_t kAliveSize = pairing::kAliveSize;
-constexpr uint8_t kDisconnectHeader = pairing::kDisconnectHeader;
-constexpr size_t kDisconnectSize = pairing::kDisconnectSize;
+constexpr uint8_t kAliveHeader = udp::kAliveHeader;
+constexpr size_t kAliveSize = udp::kAliveSize;
+constexpr uint8_t kDisconnectHeader = udp::kDisconnectHeader;
+constexpr size_t kDisconnectSize = udp::kDisconnectSize;
 // Robot alive freshness window: a bonded peer counts as alive while its last
 // valid packet is within kAliveMs. DISCONNECT/UNBOND clear the net peer
 // immediately, so the window only matters for silent loss.
@@ -142,10 +143,6 @@ inline RxKind classifyRx(size_t len, uint8_t header) {
   }
   return RxKind::kDrop;
 }
-
-// UNBOND tag builder lives in pairing_codec.h; re-exported for the demux and
-// the host tests pinning udpstatus:: names.
-using pairing::unbondTagMsg;
 
 // Wrap-aware strictly-greater for the DRIVE_V2 32-bit BE counter (starts at
 // 1; initial lastSeen=0). Unsigned subtraction: wrap-safe across the 2^32
@@ -202,7 +199,7 @@ inline bool packQrBitmap(bool valid, const uint8_t* modules, uint8_t* out) {
 
 }  // namespace udpstatus
 
-// Order pin for services/telemetry_manager.h (consumers include udp_server.h first).
+// Order pin for abilities/telemetry/telemetry_manager.h (consumers include udp_server.h first).
 #define UDPSTATUS_TOP_HALF_INCLUDED
 
 #ifdef ARDUINO
@@ -216,13 +213,11 @@ inline bool packQrBitmap(bool valid, const uint8_t* modules, uint8_t* out) {
 
 #include <utility>
 
-#include "abilities/pairing/pairing_task.h"
-#include "behavior/coordinator.h"  // 8c: Arduino-free packCommand only; no Coordinator use.
 #include "common/diagnostics.h"
 #include "common/fault_manager.h"
 #include "common/logger.h"
 #include "config.h"
-#include "services/event_bus.h"
+#include "transport/pairing_session.h"
 #include "transport/udp_codec.h"
 
 // Fallbacks if config keys drift; in-project include/config.h always wins.
@@ -272,7 +267,7 @@ inline bool packQrBitmap(bool valid, const uint8_t* modules, uint8_t* out) {
 static_assert(sizeof(WIFI_SSID) > 1, "desky-sta needs WIFI_SSID from .env (use make build-sta)");
 #endif
 
-class UdpServer {
+class UdpServer : public transport::IUdpTransport {
  public:
   static constexpr uint16_t kPort = CFG_UDP_PORT;
   static constexpr uint32_t kStackWords = CFG_UDP_STACK_WORDS;
@@ -326,7 +321,7 @@ class UdpServer {
   // pairing session and restores the bond. Call once from setup() right after
   // begin(), before the radio sees traffic. Every pairing_ read on the RX
   // path is null-safe until this lands.
-  void attachPairing(pairing::PairingTask* pairing) {
+  void attachPairing(transport::IPairingSession* pairing) {
     DESKY_ASSERT(pairing != nullptr);
     if (pairing == nullptr) {
       return;
@@ -336,8 +331,15 @@ class UdpServer {
     pairing_->restoreFromStore();
   }
 
-  // ── Transport back-call API ──────────
-  // Called by PairingTask handlers via the duck-typed `Transport& t` param:
+  // Command-publish hook: the verified-drive fan-out without naming the bus.
+  // Registered once from setup() before begin(); invoked synchronously for
+  // every verified drive frame at the same point the direct publish ran.
+  // Null until set (fail-closed skip).
+  using CommandPublishFn = void (*)(uint32_t payload);
+  void setCommandPublisher(CommandPublishFn fn) { publishCmd_ = fn; }
+
+  // ── Transport back-call API (transport::IUdpTransport) ──────────
+  // Called by the PairingTask handlers through the seam interface:
   // byte composition lives in the ability, gate-check + unicast stays here.
 
   // Alive funnel for every VALID bonded packet: pins the telemetry unicast
@@ -347,7 +349,7 @@ class UdpServer {
   // Consumes the Verified token (proves the HMAC ran) and returns the Pinned
   // token. Invalid token -> no state change.
   connection::Pinned markAlive(connection::Verified&& verified, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
-                               uint16_t era) {
+                               uint16_t era) override {
     // Correlation marker (log-only, no behavior change): re-pin changes are
     // rare (AP rejoin/DHCP), so log the new peer once per change; steady
     // 50 Hz traffic re-pins the same IP/port and stays silent. IP+era only —
@@ -405,10 +407,10 @@ class UdpServer {
 
   // PAIR_OK redelivery unicast (lost-PAIR_OK race): failure accounting and
   // logs identical to the other senders.
-  void sendPairRedeliver(const IPAddress& ip, uint16_t port, const uint8_t (&ok39)[pairing::kPairOkSize]) {
-    if (!udpsend::udpSendChecked(udp_, ip, port, ok39, sizeof(ok39))) {
+  void sendPairRedeliver(const IPAddress& ip, uint16_t port, const uint8_t* ok, size_t len) override {
+    if (!udpsend::udpSendChecked(udp_, ip, port, ok, len)) {
       ++txFail_;
-      LOG_W("UDP", "udp send fail what=%s len=%u", "pair_redeliver", static_cast<unsigned>(sizeof(ok39)));
+      LOG_W("UDP", "udp send fail what=%s len=%u", "pair_redeliver", static_cast<unsigned>(len));
     } else {
       LOG_I("UDP", "pair redeliver");
     }
@@ -418,56 +420,52 @@ class UdpServer {
   // passed in as bytes. The token-gated sendRekeyAck is the only path the
   // verified switch takes (consumes Pinned by value). The idempotent
   // duplicate path calls the Impl directly (the ACK leaks no secret).
-  void sendRekeyAck(connection::Pinned pinned, const IPAddress& ip, uint16_t port,
-                    const uint8_t (&ack10)[pairing::kRekeyAckSize]) {
+  void sendRekeyAck(connection::Pinned pinned, const IPAddress& ip, uint16_t port, const uint8_t* ack,
+                    size_t len) override {
     if (!pinned.valid()) {
       return;
     }
-    sendRekeyAckImpl(ip, port, ack10);
+    sendRekeyAckImpl(ip, port, ack, len);
   }
 
-  void sendRekeyAckImpl(const IPAddress& ip, uint16_t port, const uint8_t (&ack10)[pairing::kRekeyAckSize]) {
-    if (!udpsend::udpSendChecked(udp_, ip, port, ack10, sizeof(ack10))) {
+  void sendRekeyAckImpl(const IPAddress& ip, uint16_t port, const uint8_t* ack, size_t len) override {
+    if (!udpsend::udpSendChecked(udp_, ip, port, ack, len)) {
       ++txFail_;
-      LOG_W("UDP", "udp send fail what=%s len=%u", "rekey_ack", static_cast<unsigned>(sizeof(ack10)));
+      LOG_W("UDP", "udp send fail what=%s len=%u", "rekey_ack", static_cast<unsigned>(len));
     }
   }
 
   // PAIR_ERR 4B unicast (composed by PairingTask): failure replies ride no
   // token gate (pre-verify paths).
-  void sendPairErr(const IPAddress& ip, uint16_t port, const uint8_t (&err4)[4]) {
-    if (!udpsend::udpSendChecked(udp_, ip, port, err4, sizeof(err4))) {
+  void sendPairErr(const IPAddress& ip, uint16_t port, const uint8_t* err, size_t len) override {
+    if (!udpsend::udpSendChecked(udp_, ip, port, err, len)) {
       ++txFail_;
-      LOG_W("UDP", "udp send fail what=%s len=%u", "pair_err", static_cast<unsigned>(sizeof(err4)));
+      LOG_W("UDP", "udp send fail what=%s len=%u", "pair_err", static_cast<unsigned>(len));
     }
   }
 
   // PAIR_OK 39B unicast: consumes the PersistReceipt by value — proves the
   // bond persisted BEFORE anything left the radio. Invalid receipt -> silent
   // no-op.
-  void sendPairOk(connection::PersistReceipt receipt, const IPAddress& ip, uint16_t port,
-                  const uint8_t ok39[pairing::kPairOkSize]) {
+  void sendPairOk(connection::PersistReceipt receipt, const IPAddress& ip, uint16_t port, const uint8_t* ok,
+                  size_t len) override {
     if (!receipt.valid()) {
       return;
     }
-    if (!udpsend::udpSendChecked(udp_, ip, port, ok39, pairing::kPairOkSize)) {
+    if (!udpsend::udpSendChecked(udp_, ip, port, ok, len)) {
       ++txFail_;
-      LOG_W("UDP", "udp send fail what=%s len=%u", "pair_ok", static_cast<unsigned>(pairing::kPairOkSize));
+      LOG_W("UDP", "udp send fail what=%s len=%u", "pair_ok", static_cast<unsigned>(len));
     }
   }
 
   // udpstatus predicate bridges (single owner stays in the top half):
   // the PairingTask handlers verify through these so this header keeps the
   // only textual dependency on the udpstatus names.
-  bool isFreshCounter(uint32_t lastSeen, uint32_t got) { return udpstatus::isFreshCounter(lastSeen, got); }
+  bool isFreshCounter(uint32_t lastSeen, uint32_t got) override { return udpstatus::isFreshCounter(lastSeen, got); }
 
   bool shouldRedeliver(bool valid, const uint8_t* storedCode, const uint8_t* storedNonce, const uint8_t* inCode,
-                       const uint8_t* inNonce, uint32_t bondMs, uint32_t nowMs) {
+                       const uint8_t* inNonce, uint32_t bondMs, uint32_t nowMs) override {
     return udpstatus::shouldRedeliver(valid, storedCode, storedNonce, inCode, inNonce, bondMs, nowMs);
-  }
-
-  bool packQrBitmap(bool valid, const uint8_t* modules, uint8_t* out) {
-    return udpstatus::packQrBitmap(valid, modules, out);
   }
 
   // Send-failure accounting: every UDP unicast goes through
@@ -630,7 +628,10 @@ class UdpServer {
     // Alive funnel BEFORE the publish: a valid frame keeps the robot alive
     // exactly like ALIVE.
     markAlive(std::move(verified), rip, rport, nowMs, pairing_->era());
-    EventBus::publish(EVENT_UDP_COMMAND_RECEIVED, coordinator::packCommand(buf[1], buf[2], buf[3], buf[4]));
+    DESKY_ASSERT(publishCmd_ != nullptr);
+    if (publishCmd_ != nullptr) {
+      publishCmd_(udp::packCommand(buf[1], buf[2], buf[3], buf[4]));
+    }
   }
 
   // ALIVE layout [0x55|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR checked by
@@ -665,11 +666,9 @@ class UdpServer {
       LOG_EVERY_N(20, "UDP", "drop alive replay ctr=%lu", static_cast<unsigned long>(ctr));
       return;
     }
-    // tag = first6(HMAC-SHA256(psk, "ALIVE"||eraBE2||counterBE4)).
-    uint8_t msg[pairing::kAliveMsgLen];
-    pairing::aliveTagMsg(era, ctr, msg);
-    connection::Verified verified = pairing_->tryConsume(ctr, era == pairing_->era(), buf + 7, msg, sizeof(msg));
-    mbedtls_platform_zeroize(msg, sizeof(msg));
+    // Tag composition lives ability-side; the session folds the same
+    // bonded/era/fresh/HMAC checks into one atomic step.
+    connection::Verified verified = pairing_->tryConsumeAlive(era, ctr, buf + 7);
     if (!verified.valid()) {
       dropFirst(firstAliveDrop_, "drop alive auth (first of boot)");
       LOG_EVERY_N(20, "UDP", "drop alive auth");
@@ -713,11 +712,9 @@ class UdpServer {
       LOG_EVERY_N(20, "UDP", "drop disconnect replay ctr=%lu", static_cast<unsigned long>(ctr));
       return;
     }
-    // tag = first6(HMAC-SHA256(psk, "DISCONNECT"||eraBE2||counterBE4)).
-    uint8_t msg[pairing::kDisconnectMsgLen];
-    pairing::disconnectTagMsg(era, ctr, msg);
-    connection::Verified verified = pairing_->tryConsume(ctr, era == pairing_->era(), buf + 7, msg, sizeof(msg));
-    mbedtls_platform_zeroize(msg, sizeof(msg));
+    // Tag composition lives ability-side; the session folds the same
+    // bonded/era/fresh/HMAC checks into one atomic step.
+    connection::Verified verified = pairing_->tryConsumeDisconnect(era, ctr, buf + 7);
     if (!verified.valid()) {
       dropFirst(firstDisconnectDrop_, "drop disconnect auth (first of boot)");
       LOG_EVERY_N(20, "UDP", "drop disconnect auth");
@@ -760,7 +757,9 @@ class UdpServer {
   // Pairing/auth session: owns bonded/psk/counter/era. Pinned by
   // attachPairing(); every RX-path deref is null-safe until then. No
   // setBonded mirror: the session is the single source of truth.
-  pairing::PairingTask* pairing_ = nullptr;
+  transport::IPairingSession* pairing_ = nullptr;
+  // Verified-drive fan-out, registered by setup() before begin().
+  CommandPublishFn publishCmd_ = nullptr;
   // Checked-send failures (udpSendChecked false), WARNed at every occurrence.
   uint32_t txFail_ = 0;
   // First-drop flags for dropFirst(): first occurrence per boot per class

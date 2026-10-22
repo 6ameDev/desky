@@ -17,6 +17,7 @@ void test_boot_lean_nonzero_cam_off_oled_dim();
 void test_cam_matrix_flips_both_ways();
 void test_oled_matrix_all_rows();
 void test_power_state_names();
+void test_display_port_rail_contract();
 void test_cli_cam_on_off();
 void test_cli_cam_rejects();
 void test_cli_face_numeric_and_name();
@@ -131,6 +132,7 @@ int main() {
   RUN_TEST(test_cam_matrix_flips_both_ways);
   RUN_TEST(test_oled_matrix_all_rows);
   RUN_TEST(test_power_state_names);
+  RUN_TEST(test_display_port_rail_contract);
   RUN_TEST(test_cli_cam_on_off);
   RUN_TEST(test_cli_cam_rejects);
   RUN_TEST(test_cli_face_numeric_and_name);

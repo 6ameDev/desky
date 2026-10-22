@@ -85,53 +85,11 @@ struct ArbitrateOutput {
   BehaviorId nextBehavior = BEHAVIOR_NONE;
 };
 
-// UDP stick byte (center-128) -> L1 unit (-1..1). Exact: 128 maps to 0.0f,
-// 255 to +1.0, 0 clamps to -1.0.
-inline float byteToUnit(uint8_t raw) {
-  float f = (static_cast<float>(static_cast<int>(raw) - 128)) / 127.0f;
-  if (f > 1.0f) {
-    return 1.0f;
-  }
-  if (f < -1.0f) {
-    return -1.0f;
-  }
-  return f;
-}
-
-// Unit (-1..1) -> stick byte, inverse of byteToUnit (for tests/synthetic).
-inline uint8_t unitToByte(float v) {
-  if (v > 1.0f) {
-    v = 1.0f;
-  }
-  if (v < -1.0f) {
-    v = -1.0f;
-  }
-  int b = static_cast<int>(v * 127.0f + 128.0f + (v >= 0.0f ? 0.5f : -0.5f));
-  if (b > 255) {
-    return 255;
-  }
-  if (b < 0) {
-    return 0;
-  }
-  return static_cast<uint8_t>(b);
-}
-
-// Big-endian pack: payload = mode<<24|throttle<<16|steering<<8|flags.
-inline uint32_t packCommand(uint8_t mode, uint8_t throttle, uint8_t steering, uint8_t flags) {
-  return (static_cast<uint32_t>(mode) << 24) | (static_cast<uint32_t>(throttle) << 16) |
-         (static_cast<uint32_t>(steering) << 8) | static_cast<uint32_t>(flags);
-}
-
-inline void unpackCommand(uint32_t payload, uint8_t& mode, float& v, float& omega, uint8_t& flags) {
-  mode = static_cast<uint8_t>((payload >> 24) & 0xFF);
-  v = byteToUnit(static_cast<uint8_t>((payload >> 16) & 0xFF));
-  omega = byteToUnit(static_cast<uint8_t>((payload >> 8) & 0xFF));
-  flags = static_cast<uint8_t>(payload & 0xFF);
-}
-
 // Pure priority arbitrator: P1 safety > P2 user UDP > P3 auto (stub: stop) >
 // P4 idle (stub: stop). No I/O, no statics — the Coordinator task owns state
-// and feeds one input per tick.
+// and feeds one input per tick. The command event payload pack/unpack and the
+// center-128 stick math live in transport/udp_codec.h (wire vocabulary
+// home); the drain below unpacks through udp::unpackCommand.
 inline ArbitrateOutput arbitrate(const ArbitrateInput& in) {
   ArbitrateOutput out;
   out.nextMode = in.mode;
@@ -254,10 +212,11 @@ inline ArbitrateOutput arbitrate(const ArbitrateInput& in) {
 #include "common/logger.h"
 #include "config.h"
 #include "services/event_bus.h"
+#include "transport/udp_codec.h"
 // The RX-observation report pin (TelemetryManager::noteCommand) requires
 // transport/udp_server.h first: every includer includes it before this header
-// (udp_server.h, services/telemetry_task.h, and main.cpp order them).
-#include "services/telemetry_manager.h"
+// (udp_server.h, abilities/telemetry/telemetry_task.h, and main.cpp order them).
+#include "abilities/telemetry/telemetry_manager.h"
 
 // Fallbacks if config keys drift; in-project include/config.h always wins.
 #ifndef CFG_COORDINATOR_STACK_WORDS
@@ -410,7 +369,7 @@ class Coordinator {
           case EVENT_UDP_COMMAND_RECEIVED: {
             uint8_t mode = 0;
             uint8_t flags = 0;
-            coordinator::unpackCommand(ev.payload, mode, cmdV_, cmdOmega_, flags);
+            udp::unpackCommand(ev.payload, mode, cmdV_, cmdOmega_, flags);
             hasCmd_ = true;
             lastCmdMs_ = nowMs;
             freshCommand = true;

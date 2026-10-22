@@ -12,7 +12,7 @@
 #include <Preferences.h>
 
 #include "common/logger.h"
-#include "transport/connection_manager.h"
+#include "persist_receipt.h"
 
 class ConfigStore {
  public:

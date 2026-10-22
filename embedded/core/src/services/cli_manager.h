@@ -113,12 +113,20 @@ inline bool parseOtaheadTail(const char* tail, char* urlOut129) {
 
 }  // namespace corecmd
 
+// OTA staging edge (binder-implemented): main.cpp owns the ability object and
+// implements this sink; the CLI only parses + triggers. Keeps services free
+// of ability bindings with identical verbs, logs, and dispatch outcomes.
+struct ICliOtaSink {
+  virtual ~ICliOtaSink() = default;
+  virtual bool stageOtaUrl(const char* url) = 0;
+  virtual size_t stagedOtaLen() const = 0;
+};
+
 #ifdef ARDUINO
 // ── Firmware: USB serial line door ─────────────────────────────────────────
 
 #include <Arduino.h>
 
-#include "abilities/ota/ota_task.h"
 #include "common/logger.h"
 #include "config.h"
 
@@ -131,7 +139,7 @@ class CoreCli {
  public:
   CoreCli() : ota_(nullptr), lineLen_(0) {}
 
-  void begin(OtaStaging* ota) {
+  void begin(ICliOtaSink* ota) {
     ota_ = ota;
     printHelp();
   }
@@ -192,7 +200,7 @@ class CoreCli {
 
   void printHelp() { LOG_I("CLI", "cmds: otahead <url> | help"); }
 
-  OtaStaging* ota_;
+  ICliOtaSink* ota_;
   char lineBuf_[CFG_CLI_LINE_LEN];
   size_t lineLen_;
 };
