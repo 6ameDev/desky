@@ -31,9 +31,11 @@
 //   pairing::ctEqual block — into one token; NO crypto is reimplemented
 //   here, the HMAC bytes stay verbatim at the call site), then Pinned via
 //   ConnectionManager::markAlive(Verified&&), then call the privileged
-//   effects publishDrive(Pinned&&) / sendRekeyAck(Pinned&&) /
-//   sendPairOk(PersistReceipt). Swapping the order (effect before verify)
-//   fails to compile: the effect signatures REQUIRE the moved token, and
+//   effects sendRekeyAck(Pinned&&) / sendPairOk(PersistReceipt) (the old
+//   token-gated drive publish died in 8c with the behavior call it guarded:
+//   drive dispatch is transport-inline now, sequential verify-before-effect).
+//   Swapping the order (effect before verify) fails to compile: the effect
+//   signatures REQUIRE the moved token, and
 //   every token is move-only with deleted copies (no duplication, no
 //   replay of a proof). Verified::valid()/Pinned::valid() stay fail-closed
 //   at runtime (invalid token -> no state change, silent drop).
