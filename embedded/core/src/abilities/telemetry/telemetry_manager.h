@@ -16,7 +16,7 @@
 // telemetry-ability-owned state, never coordinator state). The snapshot
 // fill + outer TX cadence live in abilities/telemetry/telemetry_task.h,
 // driven from the main loop.
-// Subscription placeholder: today the rate is the bonded-default; a future
+// Subscription placeholder: today the rate is the paired-default; a future
 // SET_RATE lands here (setRateMs + per-peer state).
 
 #ifndef UDPSTATUS_TOP_HALF_INCLUDED
@@ -33,7 +33,7 @@ namespace telemetry {
 
 class TelemetryManager {
  public:
-  // rateMs is the bonded-default cadence, owned by UdpServer::kTelemetryMs
+  // rateMs is the paired-default cadence, owned by UdpServer::kTelemetryMs
   // — always pass that; never a literal here. staleMs is the RX-observation
   // freshness window, owned by UdpServer::kStaleMs — same pattern. It defaults
   // to 0 only so existing host tests keep compiling; firmware must pass the

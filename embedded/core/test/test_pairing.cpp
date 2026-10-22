@@ -21,9 +21,9 @@ void test_pair_golden_accept_burns_once() {
   TEST_ASSERT_TRUE(core.openWindow(1000, kCode));
   TEST_ASSERT_EQUAL(static_cast<int>(pairing::Result::kOk),
                     static_cast<int>(core.tryCode(kCode, pairing::kCodeLen, 1001)));
-  TEST_ASSERT_TRUE(core.bonded());
-  // Same correct code replayed post-bond: never OK twice.
-  TEST_ASSERT_EQUAL(static_cast<int>(pairing::Result::kAlreadyBonded),
+  TEST_ASSERT_TRUE(core.isPaired());
+  // Same correct code replayed post-pairing: never OK twice.
+  TEST_ASSERT_EQUAL(static_cast<int>(pairing::Result::kAlreadyPaired),
                     static_cast<int>(core.tryCode(kCode, pairing::kCodeLen, 1002)));
 }
 
@@ -36,7 +36,7 @@ void test_pair_bad_code_counts_tries() {
   TEST_ASSERT_EQUAL(static_cast<int>(pairing::Result::kBadCode),
                     static_cast<int>(core.tryCode(kWrong, pairing::kCodeLen, 11)));
   TEST_ASSERT_EQUAL_UINT32(2, core.tries());
-  TEST_ASSERT_FALSE(core.bonded());
+  TEST_ASSERT_FALSE(core.isPaired());
 }
 
 void test_pair_fifth_try_locks_then_expires() {
@@ -80,7 +80,7 @@ void test_pair_malformed_input_is_bad_code() {
   const uint8_t nonDigit[pairing::kCodeLen] = {'1', '2', '3', '4', '5', 'X'};
   TEST_ASSERT_EQUAL(static_cast<int>(pairing::Result::kBadCode),
                     static_cast<int>(core.tryCode(nonDigit, pairing::kCodeLen, 12)));
-  TEST_ASSERT_FALSE(core.bonded());
+  TEST_ASSERT_FALSE(core.isPaired());
 }
 
 // v1.1 persist-interval byte: minimal guard (not an allowlist) — 8..255
@@ -108,8 +108,8 @@ void test_pair_wrap_layout_consts() {
   TEST_ASSERT_EQUAL(38, static_cast<int>(pairing::kPairOkLegacySize));
 }
 
-// Tier-1 silent auto-rekey: wire constants + tag-message goldens. The HKDF
-// key schedule (deriveRekeyPsk) is ARDUINO-only (mbedTLS) and exercised on
+// Tier-1 silent auto-refresh: wire constants + tag-message goldens. The HKDF
+// key schedule (deriveRefreshPsk) is ARDUINO-only (mbedTLS) and exercised on
 // hardware; the cross-side vectors live app-side (PairingCryptoTest rekey
 // goldens: nextPsk=df7441d0... + REQ/ACK tags) — these host tests pin the
 // message layouts both sides must agree on.
@@ -125,28 +125,28 @@ void test_rekey_wire_consts() {
 
 void test_rekey_tag_msg_golden() {
   uint8_t msg[pairing::kRekeyMsgLen];
-  pairing::rekeyTagMsg(1u, 100u, msg);
+  pairing::refreshTagMsg(1u, 100u, msg);
   // "REKEY" || eraBE2(0001) || counterBE4(00000064).
   const uint8_t expected[11] = {0x52, 0x45, 0x4B, 0x45, 0x59, 0x00, 0x01, 0x00, 0x00, 0x00, 0x64};
   TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, msg, sizeof(expected));
   // Era/counter lay out big-endian.
-  pairing::rekeyTagMsg(0x0102u, 0x01020304u, msg);
+  pairing::refreshTagMsg(0x0102u, 0x01020304u, msg);
   const uint8_t be[11] = {0x52, 0x45, 0x4B, 0x45, 0x59, 0x01, 0x02, 0x01, 0x02, 0x03, 0x04};
   TEST_ASSERT_EQUAL_UINT8_ARRAY(be, msg, sizeof(be));
   // Null-safe (no crash on null out).
-  pairing::rekeyTagMsg(1u, 1u, nullptr);
+  pairing::refreshTagMsg(1u, 1u, nullptr);
 }
 
 void test_rekey_ack_tag_msg_golden() {
   uint8_t msg[pairing::kRekeyAckMsgLen];
-  pairing::rekeyAckTagMsg(1u, msg);
+  pairing::refreshAckTagMsg(1u, msg);
   // "REKEYACK" || eraBE2(0001).
   const uint8_t expected[10] = {0x52, 0x45, 0x4B, 0x45, 0x59, 0x41, 0x43, 0x4B, 0x00, 0x01};
   TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, msg, sizeof(expected));
-  pairing::rekeyAckTagMsg(0x0102u, msg);
+  pairing::refreshAckTagMsg(0x0102u, msg);
   TEST_ASSERT_EQUAL_UINT8(0x01, msg[8]);
   TEST_ASSERT_EQUAL_UINT8(0x02, msg[9]);
-  pairing::rekeyAckTagMsg(1u, nullptr);
+  pairing::refreshAckTagMsg(1u, nullptr);
 }
 
 // ALIVE + DISCONNECT (robot alive rule): domain constants pin the claimed
@@ -197,50 +197,50 @@ void test_disconnect_tag_msg_golden() {
   pairing::disconnectTagMsg(1u, 1u, nullptr);
 }
 
-// Platform split 1.1, step 4 (PairingExchange absorb): bond/era lifecycle
-// in Core — fresh pair resets era 0 + stamps the bond clock, rotation moves
+// Platform split 1.1, step 4 (PairingExchange absorb): pair/era lifecycle
+// in Core — fresh pair resets era 0 + stamps the pair clock, rotation moves
 // the era, symmetric forget clears all three. UdpServer forwards at the
 // same points it flips its own flags (firmware-only, proven on-device).
-void test_pair_core_bond_lifecycle() {
+void test_pair_core_pair_lifecycle() {
   pairing::Core core;
-  TEST_ASSERT_FALSE(core.bonded());
+  TEST_ASSERT_FALSE(core.isPaired());
   TEST_ASSERT_EQUAL_UINT16(0, core.era());
-  TEST_ASSERT_EQUAL_UINT32(0, core.bondMs());
+  TEST_ASSERT_EQUAL_UINT32(0, core.pairMs());
   TEST_ASSERT_TRUE(core.openWindow(1000, kCode));
   TEST_ASSERT_EQUAL(static_cast<int>(pairing::Result::kOk),
                     static_cast<int>(core.tryCode(kCode, pairing::kCodeLen, 1001)));
-  TEST_ASSERT_TRUE(core.bonded());
+  TEST_ASSERT_TRUE(core.isPaired());
   TEST_ASSERT_EQUAL_UINT16(0, core.era());  // Fresh pair starts era 0.
-  TEST_ASSERT_EQUAL_UINT32(1001, core.bondMs());
-  core.onRekeyApplied(7);  // Forwarded after the NVS saveRekey + switch.
-  TEST_ASSERT_TRUE(core.bonded());
+  TEST_ASSERT_EQUAL_UINT32(1001, core.pairMs());
+  core.onPairRefreshApplied(7);  // Forwarded after the NVS savePairRefresh + switch.
+  TEST_ASSERT_TRUE(core.isPaired());
   TEST_ASSERT_EQUAL_UINT16(7, core.era());
-  TEST_ASSERT_EQUAL_UINT32(1001, core.bondMs());  // Rotation keeps the bond clock.
-  core.onPairBonded(2000);                        // Forward is idempotent (same values twice).
-  TEST_ASSERT_TRUE(core.bonded());
+  TEST_ASSERT_EQUAL_UINT32(1001, core.pairMs());  // Rotation keeps the pair clock.
+  core.onPaired(2000);                            // Forward is idempotent (same values twice).
+  TEST_ASSERT_TRUE(core.isPaired());
   TEST_ASSERT_EQUAL_UINT16(0, core.era());
-  TEST_ASSERT_EQUAL_UINT32(2000, core.bondMs());
-  core.onUnbonded();  // Symmetric forget.
-  TEST_ASSERT_FALSE(core.bonded());
+  TEST_ASSERT_EQUAL_UINT32(2000, core.pairMs());
+  core.onUnpaired();  // Symmetric forget.
+  TEST_ASSERT_FALSE(core.isPaired());
   TEST_ASSERT_EQUAL_UINT16(0, core.era());
-  TEST_ASSERT_EQUAL_UINT32(0, core.bondMs());
+  TEST_ASSERT_EQUAL_UINT32(0, core.pairMs());
 }
 
 // Additive reason 4 (internal_retry_fresh): reasons 0-3 frozen (never
 // renumber; 0 keeps explicit 0 semantics, 2 keeps not_in_window for genuine
-// window expiry). Burn-failure after tryCode kOk (saveBond/deriveKek/wrapPsk
+// window expiry). Burn-failure after tryCode kOk (savePair/deriveKek/wrapPsk
 // fail, code already burned) sends kInternal (4) via
 // UdpServer::handlePairReq — never 2. Old peers show generic for unknown.
 void test_pair_wire_reasons_frozen() {
   TEST_ASSERT_EQUAL_UINT8(0, static_cast<uint8_t>(pairing::Result::kBadCode));
   TEST_ASSERT_EQUAL_UINT8(1, static_cast<uint8_t>(pairing::Result::kLocked));
   TEST_ASSERT_EQUAL_UINT8(2, static_cast<uint8_t>(pairing::Result::kNotInWindow));
-  TEST_ASSERT_EQUAL_UINT8(3, static_cast<uint8_t>(pairing::Result::kAlreadyBonded));
+  TEST_ASSERT_EQUAL_UINT8(3, static_cast<uint8_t>(pairing::Result::kAlreadyPaired));
   TEST_ASSERT_EQUAL_UINT8(4, static_cast<uint8_t>(pairing::Result::kInternal));
   TEST_ASSERT_EQUAL_UINT8(0, pairing::toWireReason(pairing::Result::kBadCode));
   TEST_ASSERT_EQUAL_UINT8(1, pairing::toWireReason(pairing::Result::kLocked));
   TEST_ASSERT_EQUAL_UINT8(2, pairing::toWireReason(pairing::Result::kNotInWindow));
-  TEST_ASSERT_EQUAL_UINT8(3, pairing::toWireReason(pairing::Result::kAlreadyBonded));
+  TEST_ASSERT_EQUAL_UINT8(3, pairing::toWireReason(pairing::Result::kAlreadyPaired));
   TEST_ASSERT_EQUAL_UINT8(4, pairing::toWireReason(pairing::Result::kInternal));
   TEST_ASSERT_EQUAL_UINT8(0xFF, pairing::toWireReason(pairing::Result::kOk));
 }

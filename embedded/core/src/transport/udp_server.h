@@ -17,9 +17,9 @@
 // Telemetry source (services/TelemetryTask, not here): mode/active/cliff from
 // Coordinator::snapshot(); distanceMM from ToF live; pitch/roll from fusion
 // over the live MPU reading; isDriving from TelemetryManager::isDriving.
-// This class only gates (bonded + peer pinned + alive-fresh) and unicasts the
+// This class only gates (paired + peer pinned + alive-fresh) and unicasts the
 // bytes handed to sendTelemetry. Unicast-only to the last alive peer; silent
-// otherwise (no broadcast fallback, pre-bond silent).
+// otherwise (no broadcast fallback, pre-pair silent).
 //
 // Rules: no heap/String in RX/TX path (fixed stack buffers); WDT fed every
 // tick; logWatermarks("UDP") every ~5s; task never halts. Key, code and nonce
@@ -97,7 +97,7 @@ constexpr size_t kPairReqSize = udp::kPairReqSize;
 constexpr uint8_t kUnbondHeader = udp::kUnbondHeader;
 constexpr size_t kUnbondSize = udp::kUnbondSize;
 constexpr size_t kUnbondTagLen = udp::kUnbondTagLen;
-constexpr size_t kUnbondMsgLen = udp::kUnbondMsgLen;
+constexpr size_t kUnpairMsgLen = udp::kUnpairMsgLen;
 // Tier-1 silent auto-rekey: REKEY_REQ 14B, REKEY_ACK 10B (TX only).
 // Headers 0x53/0x54 are claimed in transport/udp_codec.h — never reuse 0xAA/
 // 0xAC/0xBB/0x50/0x51/0x52/0xAD (Phase-2 SET_RATE must pick other values).
@@ -110,7 +110,7 @@ constexpr uint8_t kAliveHeader = udp::kAliveHeader;
 constexpr size_t kAliveSize = udp::kAliveSize;
 constexpr uint8_t kDisconnectHeader = udp::kDisconnectHeader;
 constexpr size_t kDisconnectSize = udp::kDisconnectSize;
-// Robot alive freshness window: a bonded peer counts as alive while its last
+// Robot alive freshness window: a paired peer counts as alive while its last
 // valid packet is within kAliveMs. DISCONNECT/UNBOND clear the net peer
 // immediately, so the window only matters for silent loss.
 constexpr uint32_t kAliveMs = 5000;
@@ -151,21 +151,21 @@ inline bool isFreshCounter(uint32_t lastSeen, uint32_t got) {
   return got != lastSeen && (got - lastSeen) < 0x80000000u;
 }
 
-// Robot alive freshness: true while the last valid bonded packet is within
+// Robot alive freshness: true while the last valid paired packet is within
 // kAliveMs. Unsigned subtraction: wrap-safe across millis() rollover.
 inline bool isAliveFresh(uint32_t lastAliveMs, uint32_t nowMs) { return (nowMs - lastAliveMs) <= kAliveMs; }
 
-// Telemetry TX gate: unicast only when bonded AND peer pinned AND alive-fresh;
-// else silent. Pre-bond always silent.
-inline bool shouldSendTelemetry(bool bonded, bool havePeer, uint32_t lastAliveMs, uint32_t nowMs) {
-  return bonded && havePeer && isAliveFresh(lastAliveMs, nowMs);
+// Telemetry TX gate: unicast only when paired AND peer pinned AND alive-fresh;
+// else silent. Pre-pair always silent.
+inline bool shouldSendTelemetry(bool paired, bool havePeer, uint32_t lastAliveMs, uint32_t nowMs) {
+  return paired && havePeer && isAliveFresh(lastAliveMs, nowMs);
 }
 
 // PAIR_OK redelivery predicate (RAM-only cache in PairingTask::lastPair_).
 // True when the cache is valid, code (6B) and client nonce (4B) match, and
-// the bond is younger than kRedeliveryMs (wrap-safe). Nulls -> false.
+// the pairing is younger than kRedeliveryMs (wrap-safe). Nulls -> false.
 inline bool shouldRedeliver(bool valid, const uint8_t* storedCode, const uint8_t* storedNonce, const uint8_t* inCode,
-                            const uint8_t* inNonce, uint32_t bondMs, uint32_t nowMs) {
+                            const uint8_t* inNonce, uint32_t pairMs, uint32_t nowMs) {
   if (!valid) {
     return false;
   }
@@ -184,7 +184,7 @@ inline bool shouldRedeliver(bool valid, const uint8_t* storedCode, const uint8_t
       return false;
     }
   }
-  return (nowMs - bondMs) < kRedeliveryMs;
+  return (nowMs - pairMs) < kRedeliveryMs;
 }
 
 // QR pack bridge: valid window packs via qr::packBitmap; closed-window/null
@@ -318,7 +318,7 @@ class UdpServer : public transport::IUdpTransport {
   }
 
   // Pins the transport-owned shared state (peer slot + alive window) into the
-  // pairing session and restores the bond. Call once from setup() right after
+  // pairing session and restores the pair. Call once from setup() right after
   // begin(), before the radio sees traffic. Every pairing_ read on the RX
   // path is null-safe until this lands.
   void attachPairing(transport::IPairingSession* pairing) {
@@ -328,7 +328,7 @@ class UdpServer : public transport::IUdpTransport {
     }
     pairing_ = pairing;
     pairing_->attach(&conn_, &peerIp_, &peerPort_);
-    pairing_->restoreFromStore();
+    pairing_->restorePair();
   }
 
   // Command-publish hook: the verified-drive fan-out without naming the bus.
@@ -342,7 +342,7 @@ class UdpServer : public transport::IUdpTransport {
   // Called by the PairingTask handlers through the seam interface:
   // byte composition lives in the ability, gate-check + unicast stays here.
 
-  // Alive funnel for every VALID bonded packet: pins the telemetry unicast
+  // Alive funnel for every VALID paired packet: pins the telemetry unicast
   // peer AND refreshes the alive timestamp. Called for ALIVE, DRIVE_V2, and
   // REKEY_REQ after verify passes and BEFORE any opcode-specific effect.
   // DISCONNECT/UNBOND never call this: they refresh-then-clear instead.
@@ -368,7 +368,7 @@ class UdpServer : public transport::IUdpTransport {
     return pinned;
   }
 
-  // Telemetry TX gate: bonded && peer pinned && alive-fresh -> unicast; else
+  // Telemetry TX gate: paired && peer pinned && alive-fresh -> unicast; else
   // silent. The peer stays pinned across a stale window; the next valid
   // packet re-freshes via markAlive. Gate predicate: shouldSendTelemetry.
   bool telemetryGate(uint32_t nowMs) {
@@ -377,12 +377,12 @@ class UdpServer : public transport::IUdpTransport {
       return false;
     }
     const bool gateOk =
-        udpstatus::shouldSendTelemetry(pairing_->bonded(), conn_.havePeer(), conn_.lastAliveMs(), nowMs);
+        udpstatus::shouldSendTelemetry(pairing_->isPaired(), conn_.havePeer(), conn_.lastAliveMs(), nowMs);
     if (!gateOk) {
       // Correlation marker (log-only, no behavior change): the alive-stale
       // silence edge shares firstTelemetryDrop_ (one first-of-boot INFO) and
       // stays throttled afterwards — same pattern as the no-peer path.
-      if (pairing_->bonded() && conn_.havePeer()) {
+      if (pairing_->isPaired() && conn_.havePeer()) {
         dropFirst(firstTelemetryDrop_, "alive stale -> silent (first of boot)");
         LOG_EVERY_N(20, "UDP", "alive stale -> silent");
       } else {
@@ -445,7 +445,7 @@ class UdpServer : public transport::IUdpTransport {
   }
 
   // PAIR_OK 39B unicast: consumes the PairingReceipt by value — proves the
-  // bond persisted BEFORE anything left the radio. Invalid receipt -> silent
+  // pair persisted BEFORE anything left the radio. Invalid receipt -> silent
   // no-op.
   void sendPairOk(connection::PairingReceipt receipt, const IPAddress& ip, uint16_t port, const uint8_t* ok,
                   size_t len) override {
@@ -464,8 +464,8 @@ class UdpServer : public transport::IUdpTransport {
   bool isFreshCounter(uint32_t lastSeen, uint32_t got) override { return udpstatus::isFreshCounter(lastSeen, got); }
 
   bool shouldRedeliver(bool valid, const uint8_t* storedCode, const uint8_t* storedNonce, const uint8_t* inCode,
-                       const uint8_t* inNonce, uint32_t bondMs, uint32_t nowMs) override {
-    return udpstatus::shouldRedeliver(valid, storedCode, storedNonce, inCode, inNonce, bondMs, nowMs);
+                       const uint8_t* inNonce, uint32_t pairMs, uint32_t nowMs) override {
+    return udpstatus::shouldRedeliver(valid, storedCode, storedNonce, inCode, inNonce, pairMs, nowMs);
   }
 
   // Send-failure accounting: every UDP unicast goes through
@@ -582,10 +582,10 @@ class UdpServer : public transport::IUdpTransport {
   }
 
   // DRIVE_V2 layout [0xAC|mode|thr|str|flags|ctrBE 4B|tag6|XOR] (len +
-  // header + XOR checked by the caller). Verify order: bonded? -> counter
+  // header + XOR checked by the caller). Verify order: paired? -> counter
   // fresh -> atomic tryConsume. Pass runs the markAlive funnel, then
-  // publishes ONE EVENT_UDP_COMMAND_RECEIVED. Fail = silent drop. Pre-bond
-  // drive drops like pre-bond ALIVE. The bonded/fresh reads are logging-only
+  // publishes ONE EVENT_UDP_COMMAND_RECEIVED. Fail = silent drop. Pre-pair
+  // drive drops like pre-pair ALIVE. The paired/fresh reads are logging-only
   // pre-checks; tryConsume is the authoritative gate.
   void handleDrive(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs) {
     DESKY_ASSERT(buf != nullptr);
@@ -593,7 +593,7 @@ class UdpServer : public transport::IUdpTransport {
     if (buf == nullptr || pairing_ == nullptr) {
       return;
     }
-    if (!pairing_->bonded()) {
+    if (!pairing_->isPaired()) {
       dropFirst(firstDriveDrop_, "drop drive unbonded (first of boot)");
       LOG_EVERY_N(20, "UDP", "drop drive unbonded");
       return;
@@ -616,7 +616,7 @@ class UdpServer : public transport::IUdpTransport {
     msg[5] = buf[2];
     msg[6] = buf[3];
     msg[7] = buf[4];
-    // Atomic session gate: bonded + fresh + HMAC in one step. Consumes the
+    // Atomic session gate: paired + fresh + HMAC in one step. Consumes the
     // counter on success; zero state change on failure.
     connection::Verified verified = pairing_->tryConsume(ctr, true, buf + 9, msg, sizeof(msg));
     mbedtls_platform_zeroize(msg, sizeof(msg));
@@ -635,10 +635,10 @@ class UdpServer : public transport::IUdpTransport {
   }
 
   // ALIVE layout [0x55|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR checked by
-  // the caller). Keepalive under the bonded PSK. Verify order mirrors drive
-  // (bonded? -> era current -> counter fresh -> atomic tryConsume). Pass
+  // the caller). Keepalive under the paired PSK. Verify order mirrors drive
+  // (paired? -> era current -> counter fresh -> atomic tryConsume). Pass
   // refreshes the alive funnel with no drive effect. Fail = silent drop. The
-  // bonded/era/fresh reads are logging-only pre-checks; tryConsume is the
+  // paired/era/fresh reads are logging-only pre-checks; tryConsume is the
   // authoritative gate.
   void handleAlive(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs) {
     DESKY_ASSERT(buf != nullptr);
@@ -646,7 +646,7 @@ class UdpServer : public transport::IUdpTransport {
     if (buf == nullptr || pairing_ == nullptr) {
       return;
     }
-    if (!pairing_->bonded()) {
+    if (!pairing_->isPaired()) {
       dropFirst(firstAliveDrop_, "drop alive unbonded (first of boot)");
       LOG_EVERY_N(20, "UDP", "drop alive unbonded");
       return;
@@ -667,7 +667,7 @@ class UdpServer : public transport::IUdpTransport {
       return;
     }
     // Tag composition lives ability-side; the session folds the same
-    // bonded/era/fresh/HMAC checks into one atomic step.
+    // paired/era/fresh/HMAC checks into one atomic step.
     connection::Verified verified = pairing_->tryConsumeAlive(era, ctr, buf + 7);
     if (!verified.valid()) {
       dropFirst(firstAliveDrop_, "drop alive auth (first of boot)");
@@ -680,8 +680,8 @@ class UdpServer : public transport::IUdpTransport {
   }
 
   // DISCONNECT layout [0x56|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR
-  // checked by the caller). Graceful goodbye under the bonded PSK; verify
-  // mirrors ALIVE. Pass runs refresh-then-clear: net peer gone, bond kept
+  // checked by the caller). Graceful goodbye under the paired PSK; verify
+  // mirrors ALIVE. Pass runs refresh-then-clear: net peer gone, pair kept
   // (no key clear, no pairing window). Never drives. Fail = silent drop.
   void handleDisconnect(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs) {
     (void)rip;
@@ -691,7 +691,7 @@ class UdpServer : public transport::IUdpTransport {
     if (buf == nullptr || pairing_ == nullptr) {
       return;
     }
-    if (!pairing_->bonded()) {
+    if (!pairing_->isPaired()) {
       dropFirst(firstDisconnectDrop_, "drop disconnect unbonded (first of boot)");
       LOG_EVERY_N(20, "UDP", "drop disconnect unbonded");
       return;
@@ -713,7 +713,7 @@ class UdpServer : public transport::IUdpTransport {
       return;
     }
     // Tag composition lives ability-side; the session folds the same
-    // bonded/era/fresh/HMAC checks into one atomic step.
+    // paired/era/fresh/HMAC checks into one atomic step.
     connection::Verified verified = pairing_->tryConsumeDisconnect(era, ctr, buf + 7);
     if (!verified.valid()) {
       dropFirst(firstDisconnectDrop_, "drop disconnect auth (first of boot)");
@@ -721,19 +721,19 @@ class UdpServer : public transport::IUdpTransport {
       return;
     }
     // tryConsume consumed the counter (a replayed goodbye can never clear
-    // twice). Refresh-then-clear: net gone, bond kept.
+    // twice). Refresh-then-clear: net gone, pair kept.
     conn_.refreshThenClear(std::move(verified), nowMs);
     LOG_I("UDP", "disconnect ok");
   }
 
-  // Pre-bond pin-only: remember the peer for unicast replies but never
-  // publish — nothing drives pre-bond. Post-bond legacy datagrams: drop.
+  // Pre-pair pin-only: remember the peer for unicast replies but never
+  // publish — nothing drives pre-pair. Post-pair legacy datagrams: drop.
   void handleLegacy(const IPAddress& rip, uint16_t rport) {
     DESKY_ASSERT(pairing_ != nullptr);
     if (pairing_ == nullptr) {
       return;  // begin/attachPairing setup micro-window: fail-closed drop.
     }
-    if (pairing_->bonded()) {
+    if (pairing_->isPaired()) {
       dropFirst(firstLegacyDrop_, "drop legacy post-bond (first of boot)");
       LOG_EVERY_N(20, "UDP", "drop legacy post-bond");
       return;
@@ -748,15 +748,15 @@ class UdpServer : public transport::IUdpTransport {
   IPAddress peerIp_;
   uint16_t peerPort_;
   // Peer slot + alive window (connection::ConnectionManager, host-pinned).
-  // Refreshed by the markAlive funnel on every valid bonded packet;
+  // Refreshed by the markAlive funnel on every valid paired packet;
   // DISCONNECT/UNBOND refresh then drop the net peer. peerIp_/peerPort_ stay
   // here: WiFiUDP::beginPacket needs an IPAddress; the u32 in conn_ is the
   // portable identity.
   connection::ConnectionManager conn_;
   uint32_t lastRetryMs_;
-  // Pairing/auth session: owns bonded/psk/counter/era. Pinned by
+  // Pairing/auth session: owns paired/psk/counter/era. Pinned by
   // attachPairing(); every RX-path deref is null-safe until then. No
-  // setBonded mirror: the session is the single source of truth.
+  // No isPaired mirror: the session is the single source of truth.
   transport::IPairingSession* pairing_ = nullptr;
   // Verified-drive fan-out, registered by setup() before begin().
   CommandPublishFn publishCmd_ = nullptr;

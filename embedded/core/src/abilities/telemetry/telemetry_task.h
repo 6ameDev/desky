@@ -107,7 +107,7 @@ class TelemetryTask {
     udp::TelemetryPacket tp;
     telemetry::encodeSnapshot(tsnap, tp);
 
-    // Transport gate (bonded + peer pinned + alive-fresh, with the silence
+    // Transport gate (paired + peer pinned + alive-fresh, with the silence
     // logging) + manager cadence/edge; bytes leave through the transport's
     // dumb unicast.
     const bool gateOk = udp_->telemetryGate(nowMs);
