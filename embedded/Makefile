@@ -10,7 +10,12 @@
 # Run per-firmware work inside its dir (e.g. `cd core && make check`).
 # This file only forwards, so `make check` from embedded/ still gates all.
 
-.PHONY: check check-all check-core check-head check-testbench build build-all build-core build-head build-testbench test-core clean-core
+.PHONY: check check-all check-core check-head check-testbench build build-all build-core build-head build-testbench test-core clean-core setup
+
+# One-time tooling for gates (pinned to CI): pipx install pipx first if needed.
+setup:
+	pipx install semgrep==1.182.1
+	pipx install clang-format==18.1.8
 
 check: check-all
 
