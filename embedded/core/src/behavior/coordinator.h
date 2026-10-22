@@ -247,9 +247,6 @@ inline ArbitrateOutput arbitrate(const ArbitrateInput& in) {
 // ── Firmware: Coordinator task (EventBus subscriber, Core 1) ──────────────
 
 #include <Arduino.h>
-#include <mbedtls/platform_util.h>
-
-#include <utility>
 
 #include "abilities/pairing/pairing_task.h"
 #include "behavior/motion_controller.h"
@@ -258,6 +255,12 @@ inline ArbitrateOutput arbitrate(const ArbitrateInput& in) {
 #include "common/logger.h"
 #include "config.h"
 #include "services/event_bus.h"
+// Slice 8c: the RX-observation report pin (TelemetryManager::noteCommand).
+// Requires transport/udp_server.h first (it owns the udpstatus math this
+// header builds on): every includer satisfies this — udp_server.h and
+// services/telemetry_task.h include it before this header, and main.cpp
+// orders them (see its NOTE).
+#include "services/telemetry_manager.h"
 
 // Fallbacks keep this header compilable if config keys ever drift; in-project
 // include/config.h always wins (same pattern as sensors_codec.h).
@@ -299,7 +302,8 @@ class Coordinator {
         cmdOmega_(0.0f),
         hasCmd_(false),
         lastCmdMs_(0),
-        pairing_(nullptr) {}
+        pairing_(nullptr),
+        telem_(nullptr) {}
 
   // Subscribes to the bus and pins the coordinator task to Core 1. Call once
   // in setup(), after MotionController::begin (the task drives L1 from its
@@ -329,8 +333,10 @@ class Coordinator {
   // Telemetry seam (Workstream B, additive only — arbitration untouched):
   // mutex-guarded copy of coordinator-owned intent {mode, activeBehavior,
   // cliffDetected level} for the UDP telemetry task. Returns false before
-  // begin(). isDriving is NOT here: the server tracks it locally from RX
-  // freshness (see udp_server.h).
+  // begin(). isDriving is NOT here: it lives in services/TelemetryManager
+  // (telemetry-owned RX observation), fed by this loop's direct noteCommand
+  // on every verified command event (see the EVENT_UDP_COMMAND_RECEIVED
+  // drain below) — no transport passthrough since 8c.
   bool snapshot(SystemState& out) {
     if (mutex_ == nullptr) {
       return false;
@@ -341,85 +347,39 @@ class Coordinator {
     return true;
   }
 
-  // Slice 7 drive handler (semantic owner: behavior owns intent; the moved
-  // lines are the old PairingTask::handleDriveV2 body minus the session
-  // verify, which now lives in pairing::tryConsume — noted as a future
-  // drive_codec candidate, not split out in this slice). Fail = silent drop
-  // (the 500ms failsafe stops safely). No heap, no String, fixed stack
-  // buffers only; key/code/nonce material never logged.
+  // Slice 8c drive dispatch (semantic owner: behavior owns intent AND the
+  // RX observation). The wire-facing half (DRIVE_V2 framing + session
+  // verify + alive funnel) lives transport-inline in UdpServer::handleDrive,
+  // which publishes ONE EVENT_UDP_COMMAND_RECEIVED per verified frame —
+  // transport never calls here. This loop drains that event below (fresh
+  // command edge for arbitration) and reports it straight to the
+  // setup-owned TelemetryManager (noteCommand): same frame bytes as the old
+  // transport passthrough, timing anchored to the drain tick (<=20ms skew,
+  // far inside the 500ms stale window). No heap, no String, no sockets;
+  // key/code/nonce material never logged.
   //
-  // Transport concept (duck-typed `Transport& t`, always UdpServer): the
-  // coordinator never touches sockets —
-  //   t.markAlive(Verified&&, IPAddress, uint16_t, uint32_t, uint16_t era)
-  //     -> connection::Pinned (alive funnel; runs BEFORE any effect)
-  //   t.publishDrive(Pinned, uint32_t, mode, thr, str, flags) (token-gated
-  //     EventBus publish; effect-before-verify fails to compile without it)
-  //   t.noteDriveCommand(float v, float omega, uint32_t nowMs) (telemetry RX
-  //     observation; transport owns telem_)
-  //   t.isFreshCounter(lastSeen, got) -> bool (udpstatus bridge, pre-check only)
-  //   t.driveDropFirst(fmt, args...) (transport-owned firstDriveDrop_ flag)
-  // Session access is via pairing_ (pinned by attachPairing from
-  // UdpServer::begin before the task reads the radio): bonded()/lastCounter()
-  // reads are LOGGING-ONLY pre-checks preserving the per-cause drops; the
-  // AUTHORITATIVE gate is pairing_->tryConsume (same thread, so no
-  // interleaving between the pre-check and the commit).
-  template <typename Transport>
-  void handleDriveV2(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs, Transport& t) {
-    DESKY_ASSERT(buf != nullptr);
-    DESKY_ASSERT(pairing_ != nullptr);
-    if (buf == nullptr || pairing_ == nullptr) {
-      return;
-    }
-    if (!pairing_->bonded()) {
-      t.driveDropFirst("drop drive unbonded (first of boot)");
-      LOG_EVERY_N(20, "UDP", "drop drive unbonded");
-      return;
-    }
-    // Layout [0xAC|mode|thr|str|flags|ctrBE 4B|tag 6B|XOR]: mode=1 thr=2
-    // str=3 flags=4 ctr=5..8 tag=9..14 xor=15 (len + header + XOR checked by
-    // the caller).
-    const uint32_t ctr = (static_cast<uint32_t>(buf[5]) << 24) | (static_cast<uint32_t>(buf[6]) << 16) |
-                         (static_cast<uint32_t>(buf[7]) << 8) | static_cast<uint32_t>(buf[8]);
-    if (!t.isFreshCounter(pairing_->lastCounter(), ctr)) {
-      t.driveDropFirst("drop drive replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
-      LOG_EVERY_N(20, "UDP", "drop drive replay ctr=%lu", static_cast<unsigned long>(ctr));
-      return;
-    }
-    // HMAC msg (8B stack): counterBE||mode||thr||str||flags.
-    uint8_t msg[8];
-    msg[0] = buf[5];
-    msg[1] = buf[6];
-    msg[2] = buf[7];
-    msg[3] = buf[8];
-    msg[4] = buf[1];
-    msg[5] = buf[2];
-    msg[6] = buf[3];
-    msg[7] = buf[4];
-    // Atomic session gate: bonded + fresh + HMAC in one step (eraOk = true —
-    // DRIVE_V2 carries no era; the session era rides along). Consumes the
-    // counter + runs the persist cadence on success; zero state change on
-    // failure.
-    connection::Verified verified = pairing_->tryConsume(ctr, true, buf + 9, msg, sizeof(msg));
-    mbedtls_platform_zeroize(msg, sizeof(msg));
-    if (!verified.valid()) {
-      t.driveDropFirst("drop drive auth (first of boot)");
-      LOG_EVERY_N(20, "UDP", "drop drive auth");
-      return;
-    }
-    // Alive funnel BEFORE the drive effects below.
-    connection::Pinned pinned = t.markAlive(std::move(verified), rip, rport, nowMs, pairing_->era());
-    // Drive effects REQUIRE the Pinned proof (effect-before-verify fails to
-    // compile without it): coordinator EventBus publish via the transport's
-    // token-gated publishDrive, then the telemetry RX observation.
-    t.publishDrive(std::move(pinned), nowMs, buf[1], buf[2], buf[3], buf[4]);
-    t.noteDriveCommand(coordinator::byteToUnit(buf[2]), coordinator::byteToUnit(buf[3]), nowMs);
-  }
+  // (The old template handleDriveV2(Transport&) — verify + token-gated
+  // publishDrive + noteDriveCommand back-calls — is deleted: its verify half
+  // moved to transport-inline handleDrive, its publish half is that
+  // function's dumb EventBus::publish, and its note half is the direct
+  // noteCommand in the drain below.)
 
-  // Pins the pairing/auth session (set once from UdpServer::begin before the
-  // radio task reads; the drive handler dereferences it on every packet).
+  // Pins the pairing/auth session (set once from main()/setup() via
+  // g_coordinator.attachPairing — never via transport since 8c — before the
+  // radio task reads; retained for the pairing-ability seam).
   void attachPairing(pairing::PairingTask* pairing) {
     DESKY_ASSERT(pairing != nullptr);
     pairing_ = pairing;
+  }
+
+  // Pins the setup-owned telemetry manager for the direct RX-observation
+  // report (noteCommand on every verified command event in the drain below).
+  // Set once from main()/setup() alongside attachPairing; null-safe until
+  // then (the note is skipped — same fail-silent posture as the old
+  // transport passthrough's null telem_).
+  void attachTelemetry(telemetry::TelemetryManager* telem) {
+    DESKY_ASSERT(telem != nullptr);
+    telem_ = telem;
   }
 
  private:
@@ -472,6 +432,13 @@ class Coordinator {
             hasCmd_ = true;
             lastCmdMs_ = nowMs;
             freshCommand = true;
+            // Slice 8c RX observation: report the verified command straight
+            // to the setup-owned manager (drives TelemetryManager::isDriving;
+            // same bytes the old transport passthrough carried). Null-safe
+            // until attachTelemetry lands (bench boots never see commands).
+            if (telem_ != nullptr) {
+              telem_->noteCommand(cmdV_, cmdOmega_, nowMs);
+            }
             LOG_EVERY_N(50, "COORD", "udp mode=%u v=%.2f w=%.2f flags=%u", mode, cmdV_, cmdOmega_, flags);
             break;
           }
@@ -561,6 +528,10 @@ class Coordinator {
   bool hasCmd_;
   uint32_t lastCmdMs_;
   pairing::PairingTask* pairing_;
+  // Telemetry RX-observation report target (services/telemetry_manager.h,
+  // setup-owned; pinned by attachTelemetry()). The coordinator owns no
+  // driving flag — the manager does.
+  telemetry::TelemetryManager* telem_ = nullptr;
 };
 
 #endif  // ARDUINO

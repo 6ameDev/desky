@@ -14,15 +14,17 @@
 // Split of the old UdpServer::sendTelemetry (moved here verbatim minus the
 // socket call; sequencing preserved: fill -> pack -> gate -> due/edge ->
 // encode -> send):
-//   STAYS in UdpServer (needs hardware + socket + logging):
-//     snapshot fill (coord snapshot, ToF live, MPU->fusion on demand), the
-//     udpstatus:: shouldSendTelemetry gate + its dropFirst/logging, the
-//     WiFiUDP fd + beginPacket/write/endPacket (passed in as the send fn).
+//   STAYS in UdpServer = transport dumb pipes (needs socket + logging):
+//     the udpstatus::shouldSendTelemetry gate + its dropFirst/logging
+//     (telemetryGate) and the WiFiUDP unicast (sendTelemetry(bytes)).
 //   MOVED here: aggregate Snapshot (plain struct below), encodeSnapshot
 //     (the degToDecideg/packStatus lines), cadence + edge + encode state,
 //     the encodeTelemetry call, and the RX-observation triple (noteCommand /
 //     isDriving — Slice 7: the driving bit is services-owned telemetry
 //     state fed by the transport passthrough, never coordinator state).
+//   MOVED to services/TelemetryTask (Slice 8a): the snapshot fill (coord
+//     snapshot, ToF live, MPU->fusion on demand) + the outer TX cadence,
+//     driven from the main loop.
 // Subscription placeholder: today the rate is the bonded-default
 // (UdpServer::kTelemetryMs passthrough, no new logic — edge sends cannot
 // fire early because UdpServer polls at exactly the cadence rate, so TX
@@ -130,8 +132,9 @@ class TelemetryManager {
   // UdpServer) ────────────────────────────────────────────────────────────
   // The driving bit is a server-local RX observation (last commanded stick
   // nonzero AND fresh), NOT coordinator state — the coordinator owns no
-  // driving flag. Transport reports every verified drive frame through the
-  // noteDriveCommand passthrough; the encode path reads isDriving(nowMs).
+  // driving flag. The coordinator loop reports every verified drive command
+  // here directly (noteCommand in its EVENT_UDP_COMMAND_RECEIVED drain);
+  // the encode path reads isDriving(nowMs).
   // Unsigned subtraction: wrap-safe across the millis() rollover (same
   // idiom as the coordinator/pairing math). The boundary counts as fresh.
   void noteCommand(float v, float omega, uint32_t nowMs) {

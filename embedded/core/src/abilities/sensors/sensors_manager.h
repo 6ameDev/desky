@@ -3,8 +3,8 @@
 //
 // Owns the production Fusion instance built from fusion::kBoardMounting plus
 // a thin evaluate(snapshot, state) entry point wrapping it, so the two
-// current call sites (SensorTask bottom half, UdpServer sendTelemetry) share
-// one home instead of each constructing Fusion locally. Pure logic only:
+// current call sites (SensorTask bottom half, services/TelemetryTask::poll)
+// share one home instead of each constructing Fusion locally. Pure logic only:
 // zero sockets, zero NVS, zero RNG. Fusion math + edge helpers live in
 // sensors_codec.h; the FreeRTOS binder lives in sensors_task.h.
 //

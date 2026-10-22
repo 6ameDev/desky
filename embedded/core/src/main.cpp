@@ -5,7 +5,6 @@
 #include "abilities/ota/ota_task.h"
 #include "abilities/pairing/pairing_task.h"
 #include "abilities/sensors/sensors_task.h"
-#include "behavior/coordinator.h"
 #include "behavior/motion_controller.h"
 #include "common/diagnostics.h"
 #include "common/fault_manager.h"
@@ -19,8 +18,13 @@
 #include "services/cli_manager.h"
 #include "services/config_store.h"
 #include "services/event_bus.h"
+#include "services/telemetry_task.h"
 #include "transport/link_server.h"
 #include "transport/udp_server.h"
+// NOTE (Slice 8c include order): behavior/coordinator.h after
+// transport/udp_server.h — its firmware section needs udpstatus (transport
+// top half) first for services/telemetry_manager.h.
+#include "behavior/coordinator.h"
 
 // Bench-mode WiFi kill (desky-bench env sets -D DESKY_NO_WIFI=1): default
 // build has WiFi on. Same fallback pattern as DESKY_WIFI_STA in udp_server.h.
@@ -36,6 +40,8 @@ SensorTask g_sensor;
 AudioTask g_audio;
 UdpServer g_udp;
 pairing::PairingTask g_pairing;
+telemetry::TelemetryManager g_telem(UdpServer::kTelemetryMs, UdpServer::kStaleMs);
+TelemetryTask g_telemetry;
 LinkServer g_link;
 OtaStaging g_otaStage;  // Carrier head-image staging (POST /head.bin + GETs).
 CoreCli g_cli;          // Minimal USB door: `otahead <url> [version]` only.
@@ -80,8 +86,17 @@ void setup() {
   // sees no UDP commands and sits in failsafe stop — safe by construction.
   LOG_I("BOOT", "wifi OFF bench mode (DESKY_NO_WIFI=1): TCRT rails live, coordinator failsafe-stopped");
 #else
-  const bool udpOk = g_udp.begin(&g_coordinator, &g_tof, &g_mpu, &g_pairing);
+  const bool udpOk = g_udp.begin();
   DESKY_ASSERT(udpOk);
+  // Slice 8c wiring (transport owns dumb pipes only): the transport-owned
+  // peer/alive binding + bond restore lands via attachPairing; the behavior
+  // pins (pairing seam + telemetry RX-observation report) are wired directly
+  // on the coordinator — never through transport.
+  g_udp.attachPairing(&g_pairing);
+  g_coordinator.attachPairing(&g_pairing);
+  g_coordinator.attachTelemetry(&g_telem);
+  const bool telemOk = g_telemetry.begin(&g_coordinator, &g_tof, &g_mpu, &g_telem, &g_udp);
+  DESKY_ASSERT(telemOk);
   // Link endpoint (H2.2, B-link sockets only): never bricks driving — a bind
   // or task failure only warns and the boot continues headless.
   const bool linkOk = g_link.begin();
@@ -133,8 +148,25 @@ void loop() {
   // seq/ACK machinery.
   g_pairing.pumpPairShow(g_link);
   g_otaStage.pumpOtaLink(g_link);
+  // Telemetry consumer (services/TelemetryTask, Slice 8a): snapshot + encode
+  // + publish at CFG_TELEMETRY_HZ through the transport's dumb send (outer
+  // cadence inside poll — non-blocking, silent off-cadence).
+  g_telemetry.poll(millis());
 #endif
+#if !DESKY_NO_WIFI
+  // The loop runs hot (~5ms) for the 15 Hz telemetry cadence now; the
+  // skeleton heartbeat + watermarks stay on the old ~2 s cadence.
+  static uint32_t lastWmMs = 0;
+  const uint32_t nowMs = millis();
+  if (nowMs - lastWmMs >= 2000) {
+    lastWmMs = nowMs;
+    LOG_D("MAIN", "desky v2 skeleton alive");
+    Diagnostics::logWatermarks();
+  }
+  delay(5);
+#else
   LOG_D("MAIN", "desky v2 skeleton alive");
   Diagnostics::logWatermarks();
   delay(2000);
+#endif
 }

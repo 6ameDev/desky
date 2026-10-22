@@ -8,7 +8,10 @@
 // moves drive/alive/disconnect back out to their semantic owners (coordinator
 // drive, transport alive/disconnect) behind the atomic tryConsume auth
 // service; pairing retains enrolment + bond destruction + rekey
-// (handlePairReq/Unbond/Rekey) plus the LastPair/QR state. Never included
+// (handlePairReq/Unbond/Rekey) plus the LastPair/QR state. Slice 8b moves
+// the pair-family RX dispatch in too (handlePairFrame maps header ->
+// handler); transport keeps only the framing demux (classifyRx len/header +
+// XOR) and routes the family here. Never included
 // by host tests.
 
 #include "pairing_codec.h"
@@ -229,10 +232,6 @@ inline bool deriveRekeyPsk(const uint8_t oldPsk[kPskLen], uint16_t nextEra, uint
 // gate-check + unicast stays in transport:
 //   t.markAlive(Verified&&, IPAddress, uint16_t, uint32_t, uint16_t era)
 //     -> connection::Pinned (pins the telemetry peer + refreshes the stamp)
-//   t.publishDrive(Pinned, uint32_t, mode, thr, str, flags) (token-gated drive
-//     effect: coordinator EventBus publish; no-op on invalid token)
-//   t.noteDriveCommand(float v, float omega, uint32_t nowMs) (telemetry RX
-//     observation; transport owns telem_)
 //   t.sendPairOk(PersistReceipt, IPAddress, uint16_t, ok39)
 //   t.sendPairRedeliver(IPAddress, uint16_t, ok39) (lost-PAIR_OK race)
 //   t.sendPairErr(IPAddress, uint16_t, err4)
@@ -240,10 +239,12 @@ inline bool deriveRekeyPsk(const uint8_t oldPsk[kPskLen], uint16_t nextEra, uint
 //   t.sendRekeyAckImpl(IPAddress, uint16_t, ack10) (idempotent duplicate path)
 //   t.isFreshCounter(lastSeen, got) -> bool (udpstatus bridge)
 //   t.shouldRedeliver(...) -> bool (udpstatus bridge)
-//   t.driveDropFirst(fmt, args...) (transport-owned firstDriveDrop_ flag)
+// (Slice 8c deleted the drive back-calls — publishDrive / noteDriveCommand /
+// driveDropFirst: drive dispatch is transport-inline now, and the coordinator
+// reports to telemetry directly.)
 // Shared socket-adjacent state (peer slot + alive stamp) stays in transport:
 // attach() pins the ConnectionManager + IPAddress peer pointers (set once
-// from UdpServer::begin before the task reads the radio).
+// from UdpServer::attachPairing before the task reads the radio).
 // Link back-call (pinned by attachLink from setup after UdpServer::begin +
 // LinkServer::begin; null-checked like Coordinator::pairing_): the ability
 // never touches sockets — notifyPairingDone fire-and-forgets the empty
@@ -265,7 +266,7 @@ class PairingTask {
     lastPair_.valid = false;
   }
 
-  // Pins transport-owned shared state. Call once from UdpServer::begin
+  // Pins transport-owned shared state. Call once from UdpServer::attachPairing
   // before restoreFromStore (handlers dereference these on every packet).
   void attach(connection::ConnectionManager* conn, IPAddress* peerIp, uint16_t* peerPort) {
     DESKY_ASSERT(conn != nullptr);
@@ -496,6 +497,29 @@ class PairingTask {
       notifyPairingDone(*link_);  // Fire-and-forget; peerless = silent no-op.
     }
     return ConfigStore::clearBond();
+  }
+
+  // Slice 8b pair-family RX entry (transport -> ability): the UdpServer RX
+  // path calls this (and ONLY this) for the pair family after its framing
+  // demux (classifyRx len/header + XOR). The header -> handler map lives
+  // here — transport never names a pair opcode. Default is unreachable
+  // (transport pre-classified) and fail-closed silent.
+  template <typename Transport>
+  void handlePairFrame(uint8_t header, const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
+                       Transport& t) {
+    switch (header) {
+      case pairing::kPairReqHeader:
+        handlePairReq(buf, rip, rport, nowMs, t);
+        break;
+      case pairing::kUnbondHeader:
+        handleUnbond(buf, rip, rport, nowMs, t);
+        break;
+      case pairing::kRekeyReqHeader:
+        handleRekey(buf, rip, rport, nowMs, t);
+        break;
+      default:
+        break;
+    }
   }
 
   // PAIR_REQ layout [0x50|code6 1..6|clientNonce4 7..10|XOR] (len + header +

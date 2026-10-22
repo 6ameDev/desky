@@ -4,8 +4,9 @@
 // Owns dual-mode WiFi + the binary control/telemetry sockets (wire format in
 // transport/udp_codec.h, FROZEN) + one Core 0 FreeRTOS task. Control RX
 // publishes EVENT_UDP_COMMAND_RECEIVED per datagram (never deduped — the
-// coordinator resume edge needs every fresh command); telemetry TX encodes
-// udp::TelemetryPacket at CFG_TELEMETRY_HZ from live sensors.
+// coordinator resume edge needs every fresh command); telemetry TX is a dumb
+// gated unicast of consumer-composed bytes (snapshot + encode + pacing live
+// in services/TelemetryTask via telemetry::TelemetryManager).
 //
 // Structure mirrors coordinator.h: the top half (namespace udpstatus) is
 // Arduino-free byte math (stdint only) so host Unity tests include this
@@ -22,7 +23,8 @@
 // loop retries WiFi.begin() every CFG_WIFI_STA_RETRY_MS and logs the DHCP
 // IP once when the link comes up.
 //
-// Telemetry source:
+// Telemetry source (Slice 8a: owned by the services consumer
+// services/TelemetryTask, not here — same sources, moved verbatim):
 //   mode/active/cliff = Coordinator::snapshot() (coordinator-owned intent;
 //     the cliff level is fed by the sensor task's EVENT_CLIFF_DETECTED edge
 //     publish, so the bit is live);
@@ -31,11 +33,16 @@
 //     tilt once the MPU is healthy, 0 before that);
 //   isDriving = telemetry::TelemetryManager::isDriving (services-owned RX
 //     observation: last commanded v/omega nonzero AND fresh within
-//     CFG_COORDINATOR_STALE_MS; fed by the coordinator drive handler via the
-//     noteDriveCommand passthrough — the coordinator owns no driving flag).
-// Destination: unicast-only to the last alive peer (IP+port pinned by the
-// markAlive funnel on every valid bonded packet); silent otherwise — the
-// subnet-broadcast fallback is deleted, pre-bond stays silent.
+//     CFG_COORDINATOR_STALE_MS; fed by the coordinator loop, which reports
+//     every verified command straight to the setup-owned manager when it
+//     drains EVENT_UDP_COMMAND_RECEIVED — the coordinator owns no driving
+//     flag; transport never notes, never calls behavior).
+// This class only gates (bonded + peer pinned + alive-fresh, with the
+// silence logging) and unicasts the bytes the consumer hands to
+// sendTelemetry. Destination: unicast-only to the last alive peer (IP+port
+// pinned by the markAlive funnel on every valid bonded packet); silent
+// otherwise — the subnet-broadcast fallback is deleted, pre-bond stays
+// silent.
 //
 // Rules: no heap/String in the RX/TX path (fixed stack buffers: 20B RX,
 // 9B telemetry, 39B PAIR_OK, 8/11/16B HMAC msg), WDT fed every tick,
@@ -267,14 +274,11 @@ inline bool packQrBitmap(bool valid, const uint8_t* modules, uint8_t* out) {
 #include <utility>
 
 #include "abilities/pairing/pairing_task.h"
-#include "abilities/sensors/sensors_manager.h"
-#include "behavior/coordinator.h"
+#include "behavior/coordinator.h"  // 8c: Arduino-free packCommand only; no Coordinator use.
 #include "common/diagnostics.h"
 #include "common/fault_manager.h"
 #include "common/logger.h"
 #include "config.h"
-#include "hal/mpu6500_driver.h"
-#include "hal/vl53l0x_driver.h"
 #include "services/event_bus.h"
 #include "transport/udp_codec.h"
 
@@ -335,37 +339,25 @@ class UdpServer {
   static constexpr UBaseType_t kPriority = tskIDLE_PRIORITY + CFG_UDP_PRIORITY_OFFSET;
   static constexpr BaseType_t kCore = CFG_UDP_CORE;
   static constexpr uint32_t kLoopMs = CFG_UDP_LOOP_MS;
+  // Telemetry cadence + RX-observation windows (Slice 8a: owned by the
+  // services consumer now — setup() passes these to TelemetryManager so the
+  // rate stays single-sourced here; no new logic, passthrough only).
   static constexpr uint32_t kTelemetryMs = 1000 / CFG_TELEMETRY_HZ;
   static constexpr uint32_t kStaleMs = CFG_COORDINATOR_STALE_MS;
   static constexpr uint32_t kStaRetryMs = CFG_WIFI_STA_RETRY_MS;
   static constexpr bool kStaMode = DESKY_WIFI_STA != 0;
 
-  UdpServer()
-      : coord_(nullptr),
-        tof_(nullptr),
-        mpu_(nullptr),
-        task_(nullptr),
-        peerPort_(0),
-        conn_(udpstatus::kAliveMs),
-        telem_(kTelemetryMs, kStaleMs),
-        lastRetryMs_(0) {}
+  UdpServer() : task_(nullptr), peerPort_(0), conn_(udpstatus::kAliveMs), lastRetryMs_(0) {}
 
   // Starts WiFi (async both modes), binds the UDP port, and pins the server
-  // task to Core 0. Call once in setup(), AFTER Coordinator::begin (the RX
-  // path publishes to the bus from its first datagram) with logging up.
+  // task to Core 0. Call once in setup() with logging up.
+  // Slice 8c: transport bring-up ONLY (sockets + task) — begin takes no
+  // component pins. The pairing session is bound via attachPairing() below;
+  // the coordinator pins (drive intent + telemetry report) are wired in
+  // main()/setup() directly, never through transport.
   // Logs ONE BOOT line: wifi mode + ssid + ip + udp port (STA pre-link logs
   // "connecting…"; the task logs the DHCP IP when the link comes up).
-  bool begin(Coordinator* coord, Vl53l0xDriver* tof, Mpu6500Driver* mpu, pairing::PairingTask* pairing) {
-    DESKY_ASSERT(coord != nullptr);
-    DESKY_ASSERT(tof != nullptr);
-    DESKY_ASSERT(mpu != nullptr);
-    DESKY_ASSERT(pairing != nullptr);
-    if (coord == nullptr || tof == nullptr || mpu == nullptr || pairing == nullptr) {
-      return false;
-    }
-    coord_ = coord;
-    tof_ = tof;
-    mpu_ = mpu;
+  bool begin() {
     if (kStaMode) {
       WiFi.mode(WIFI_STA);
       WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -386,27 +378,43 @@ class UdpServer {
     if (!udpOk) {
       return false;
     }
-    // Pairing/auth v1 session lives in PairingTask (abilities/pairing): pin
-    // the shared transport state and restore the bond before the task reads
-    // the radio. ConfigStore::begin() already ran in setup(). The
-    // coordinator's drive handler authenticates through the same session,
-    // so pin it here too (UdpServer owns both pointers at this point).
-    pairing_ = pairing;
-    pairing_->attach(&conn_, &peerIp_, &peerPort_);
-    pairing_->restoreFromStore();
-    coord_->attachPairing(pairing);
+    // Slice 8b: the pairing session is wired via attachPairing() (ability
+    // binding, below) — begin only brings up sockets + task. The RX task
+    // publishes to the bus from its first datagram; the coordinator
+    // subscribes at its own begin, so no ordering pin is needed here.
     const BaseType_t ok =
         xTaskCreatePinnedToCore(&UdpServer::taskEntry, "udp", kStackWords, this, kPriority, &task_, kCore);
     DESKY_ASSERT(ok == pdPASS);
     return ok == pdPASS;
   }
 
-  // ── Transport back-call API (Slice 6b + Slice 7) ─────────────────────────
-  // Called by PairingTask handlers (pair/unbond/rekey) and the Coordinator
-  // drive handler via the duck-typed `Transport& t` param: byte composition
-  // lives in the ability/behavior, the gate-check + unicast stays here.
-  // Public by necessity (template back-calls from pairing_task.h and
-  // coordinator.h); nothing else calls these.
+  // Slice 8b/8c policy wiring (ability binding, NOT socket bring-up): pins
+  // the transport-owned shared state (peer slot + alive window) into the
+  // pairing session and restores the bond (ConfigStore::begin() already ran
+  // in setup()). Call once from setup() right after begin(), before the
+  // radio sees traffic. The task may already be looping — every pairing_
+  // read on the RX path is null-safe until this lands (fail-closed drops).
+  // Slice 8c: the coordinator pin moved to main()/setup()
+  // (g_coordinator.attachPairing) — transport stores no Coordinator*.
+  void attachPairing(pairing::PairingTask* pairing) {
+    DESKY_ASSERT(pairing != nullptr);
+    if (pairing == nullptr) {
+      return;
+    }
+    pairing_ = pairing;
+    pairing_->attach(&conn_, &peerIp_, &peerPort_);
+    pairing_->restoreFromStore();
+  }
+
+  // ── Transport back-call API (Slice 6b + Slice 7, shrunk in 8c) ──────────
+  // Called by PairingTask handlers (pair/unbond/rekey) via the duck-typed
+  // `Transport& t` param: byte composition lives in the ability, the
+  // gate-check + unicast stays here. Public by necessity (template
+  // back-calls from pairing_task.h); nothing else calls these. The
+  // coordinator drive back-calls (publishDrive / noteDriveCommand /
+  // driveDropFirst) are deleted in 8c: drive dispatch is transport-inline
+  // now (handleDrive below), and the coordinator reports to telemetry
+  // directly — transport never calls behavior.
 
   // Robot alive funnel (single call site for every VALID bonded packet):
   // pins the telemetry unicast peer AND refreshes the alive timestamp.
@@ -442,26 +450,54 @@ class UdpServer {
     return pinned;
   }
 
-  // Drive effect (Slice 6b drive split, Slice 7 transport half): runs ONLY
-  // on a valid Pinned token (invalid -> silent no-op, fail-closed) — the
-  // effect-before-verify proof survives the split: callers cannot publish
-  // without the markAlive funnel. Publishes the coordinator command (never
-  // deduped — the coordinator resume edge needs every fresh command); the
-  // RX-observation triple left for services/TelemetryManager (fed via
-  // noteDriveCommand below). The failsafe policy itself stays in
-  // behavior/coordinator.h.
-  void publishDrive(connection::Pinned pinned, uint32_t nowMs, uint8_t mode, uint8_t thr, uint8_t str, uint8_t flags) {
-    if (!pinned.valid()) {
-      return;
+  // Telemetry TX gate (Slice 8a, transport-owned): bonded && peer pinned &&
+  // alive-fresh -> the services consumer may unicast; else silent (broadcast
+  // fallback deleted). The peer stays pinned across a stale window — the
+  // next ALIVE/drive re-freshes via markAlive (which re-pins IP/port each
+  // time) with no re-registration. DISCONNECT/UNBOND cleared the peer, so
+  // silence follows naturally there too. Gate predicate single-owned by
+  // udpstatus::shouldSendTelemetry; logging here.
+  // Slice 8b: the bonded input stays a direct pairing_->bonded() session
+  // read (single source of truth — same posture as the coordinator drive
+  // handler's pairing_ reads). No setBonded mirror by design: a mirror
+  // could read stale-true after PairingTask::clearBond, which has no
+  // transport back-call in scope to re-sync it. Gate verdict unchanged:
+  // bonded + peer pinned + alive-fresh.
+  bool telemetryGate(uint32_t nowMs) {
+    DESKY_ASSERT(pairing_ != nullptr);
+    if (pairing_ == nullptr) {
+      return false;
     }
-    (void)nowMs;
-    EventBus::publish(EVENT_UDP_COMMAND_RECEIVED, coordinator::packCommand(mode, thr, str, flags));
+    const bool gateOk =
+        udpstatus::shouldSendTelemetry(pairing_->bonded(), conn_.havePeer(), conn_.lastAliveMs(), nowMs);
+    if (!gateOk) {
+      // Correlation marker (log-only, no behavior change): the alive-stale
+      // silence edge shares firstTelemetryDrop_ (one first-of-boot INFO) and
+      // stays throttled afterwards — same pattern as the no-peer path.
+      if (pairing_->bonded() && conn_.havePeer()) {
+        dropFirst(firstTelemetryDrop_, "alive stale -> silent (first of boot)");
+        LOG_EVERY_N(20, "UDP", "alive stale -> silent");
+      } else {
+        dropFirst(firstTelemetryDrop_, "drop telemetry no-peer/stale (first of boot)");
+        LOG_EVERY_N(20, "UDP", "drop telemetry no-peer/stale");
+      }
+    }
+    return gateOk;
   }
 
-  // Telemetry RX observation passthrough (Slice 7): the coordinator drive
-  // handler reports every verified frame here; the triple lives in telem_
-  // (services/TelemetryManager), never in transport or behavior.
-  void noteDriveCommand(float v, float omega, uint32_t nowMs) { telem_.noteCommand(v, omega, nowMs); }
+  // Dumb telemetry unicast (Slice 8a, transport-owned): bytes arrive composed
+  // (services/TelemetryTask encodes via telemetry::encodeSnapshot +
+  // TelemetryManager::publish cadence/edge); this only unicasts to the last
+  // alive peer. Called only when telemetryGate passed, so no gate here.
+  void sendTelemetry(const uint8_t* buf, size_t len) {
+    if (buf == nullptr || len == 0) {
+      return;
+    }
+    if (!udpsend::udpSendChecked(udp_, peerIp_, peerPort_, buf, len)) {
+      ++txFail_;
+      LOG_W("UDP", "udp send fail what=%s len=%u", "telemetry", static_cast<unsigned>(len));
+    }
+  }
 
   // PAIR_OK redelivery unicast (lost-PAIR_OK race): the socket-send half of
   // the PairingTask redelivery check — failure accounting and logs identical
@@ -535,14 +571,6 @@ class UdpServer {
     return udpstatus::packQrBitmap(valid, modules, out);
   }
 
-  // Drive-drop first-of-boot log via the transport-owned firstDriveDrop_
-  // flag (the flag stays here with the retained dropFirst infra; the moved
-  // handleDriveV2 logs through this bridge).
-  template <typename... Args>
-  void driveDropFirst(const char* fmt, Args... args) {
-    dropFirst(firstDriveDrop_, fmt, args...);
-  }
-
   // Send-failure accounting: every UDP unicast goes through
   // udpsend::udpSendChecked; failures bump txFail_ + LOG_W (release-visible).
   // Benign tear-tolerant read like the LinkServer counters; task only.
@@ -552,12 +580,10 @@ class UdpServer {
   static void taskEntry(void* arg) { static_cast<UdpServer*>(arg)->loop(); }
 
   void loop() {
-    DESKY_ASSERT(coord_ != nullptr);
     esp_task_wdt_add(nullptr);
     TickType_t lastWake = xTaskGetTickCount();
     const TickType_t period = pdMS_TO_TICKS(kLoopMs);
     uint32_t ticks = 0;
-    uint32_t lastTxMs = 0;
     bool linkLogged = false;
     // Never returns / never halts by design (see coordinator.h: a halted
     // WDT-subscribed task becomes a panic-reboot loop).
@@ -616,20 +642,25 @@ class UdpServer {
             handleLegacy(rip, rport);
             break;
           case udpstatus::RxKind::kDriveV2:
-            // Slice 7: the coordinator owns drive intent; the token-gated
-            // drive effects (EventBus publish + telemetry note) run through
-            // the transport back-calls inside the handler, which require the
-            // Pinned proof — effect-before-verify still fails to compile.
-            coord_->handleDriveV2(buf, rip, rport, nowMs, *this);
+            // Slice 8c: transport-owned session-authenticated dispatch
+            // (handleDrive below: verify -> markAlive funnel -> dumb bus
+            // publish). The coordinator consumes the published event on its
+            // bus edge and reports the RX observation to telemetry itself —
+            // transport never calls behavior (no handleDriveV2).
+            handleDrive(buf, rip, rport, nowMs);
             break;
           case udpstatus::RxKind::kPairReq:
-            pairing_->handlePairReq(buf, rip, rport, nowMs, *this);
-            break;
           case udpstatus::RxKind::kUnbond:
-            pairing_->handleUnbond(buf, rip, rport, nowMs, *this);
-            break;
           case udpstatus::RxKind::kRekeyReq:
-            pairing_->handleRekey(buf, rip, rport, nowMs, *this);
+            // Slice 8b: pair-family policy dispatch owned by the pairing
+            // ability (PairingTask::handlePairFrame maps header -> handler).
+            // Transport keeps only framing (classifyRx demux + XOR above);
+            // per-opcode session handling never lives here. Null-safe for
+            // the begin/attachPairing setup micro-window (fail-closed drop;
+            // the app retries pairing).
+            if (pairing_ != nullptr) {
+              pairing_->handlePairFrame(buf[0], buf, rip, rport, nowMs, *this);
+            }
             break;
           case udpstatus::RxKind::kAlive:
             handleAlive(buf, rip, rport, nowMs);
@@ -644,11 +675,9 @@ class UdpServer {
         }
       }
 
-      // TX: telemetry at CFG_TELEMETRY_HZ from the live snapshot.
-      if (nowMs - lastTxMs >= kTelemetryMs) {
-        lastTxMs = nowMs;
-        sendTelemetry(nowMs);
-      }
+      // TX (Slice 8a): telemetry is composed + paced by the services
+      // consumer (TelemetryTask::poll from the main loop) through the dumb
+      // sendTelemetry(bytes) primitive below — no snapshot reads here.
 
       FaultManager::watchdogFeed();
       ++ticks;
@@ -668,6 +697,70 @@ class UdpServer {
       first = false;
       LOG_I("UDP", fmt, args...);
     }
+  }
+
+  // DRIVE_V2 layout [0xAC|mode|thr|str|flags|ctrBE 4B|tag6|XOR] (len +
+  // header + XOR checked by the caller). Slice 8c transport-owned
+  // (collapsed from Coordinator::handleDriveV2, which the RX switch used to
+  // call): verify order mirrors ALIVE (bonded? -> counter fresh -> atomic
+  // tryConsume). Pass runs the markAlive funnel, then publishes ONE
+  // EVENT_UDP_COMMAND_RECEIVED (never deduped — the coordinator resume rule
+  // needs the fresh nonzero edge). The ordering itself is the
+  // verify-before-effect proof now (sequential fail-closed returns; the old
+  // Pinned-token threading died with the behavior call it guarded). Fail =
+  // silent drop (the 500ms failsafe stops safely). Pre-bond drive drops like
+  // pre-bond ALIVE. The bonded/fresh reads are LOGGING-ONLY pre-checks
+  // preserving the per-cause drops; tryConsume is the AUTHORITATIVE gate
+  // (same thread, no interleaving). Drive intent policy lives in
+  // behavior/coordinator.h (arbitration of the published event); the RX
+  // observation (telemetry driving bit) is reported by the coordinator loop
+  // straight to the setup-owned TelemetryManager — transport never notes.
+  void handleDrive(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs) {
+    DESKY_ASSERT(buf != nullptr);
+    DESKY_ASSERT(pairing_ != nullptr);
+    if (buf == nullptr || pairing_ == nullptr) {
+      return;
+    }
+    if (!pairing_->bonded()) {
+      dropFirst(firstDriveDrop_, "drop drive unbonded (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop drive unbonded");
+      return;
+    }
+    // Layout: mode=1 thr=2 str=3 flags=4 ctr=5..8 tag=9..14 xor=15.
+    const uint32_t ctr = (static_cast<uint32_t>(buf[5]) << 24) | (static_cast<uint32_t>(buf[6]) << 16) |
+                         (static_cast<uint32_t>(buf[7]) << 8) | static_cast<uint32_t>(buf[8]);
+    if (!isFreshCounter(pairing_->lastCounter(), ctr)) {
+      dropFirst(firstDriveDrop_, "drop drive replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
+      LOG_EVERY_N(20, "UDP", "drop drive replay ctr=%lu", static_cast<unsigned long>(ctr));
+      return;
+    }
+    // HMAC msg (8B stack): counterBE||mode||thr||str||flags.
+    uint8_t msg[8];
+    msg[0] = buf[5];
+    msg[1] = buf[6];
+    msg[2] = buf[7];
+    msg[3] = buf[8];
+    msg[4] = buf[1];
+    msg[5] = buf[2];
+    msg[6] = buf[3];
+    msg[7] = buf[4];
+    // Atomic session gate: bonded + fresh + HMAC in one step (eraOk = true —
+    // DRIVE_V2 carries no era; the session era rides along). Consumes the
+    // counter + runs the persist cadence on success; zero state change on
+    // failure.
+    connection::Verified verified = pairing_->tryConsume(ctr, true, buf + 9, msg, sizeof(msg));
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    if (!verified.valid()) {
+      dropFirst(firstDriveDrop_, "drop drive auth (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop drive auth");
+      return;
+    }
+    // Alive funnel BEFORE the publish below: a valid frame keeps the robot
+    // alive exactly like ALIVE (no opcode privilege). The returned Pinned
+    // proof has no consumer left (the token-gated publishDrive died with the
+    // behavior call) — the sequential order above is the proof now.
+    markAlive(std::move(verified), rip, rport, nowMs, pairing_->era());
+    EventBus::publish(EVENT_UDP_COMMAND_RECEIVED, coordinator::packCommand(buf[1], buf[2], buf[3], buf[4]));
   }
 
   // ALIVE layout [0x55|eraBE2 1..2|ctrBE4 3..6|tag6 7..12|XOR] (len +
@@ -777,9 +870,14 @@ class UdpServer {
   // Pre-bond pin-only: remember the peer for unicast replies (pair + tele-
   // metry) but NEVER publish to the coordinator — nothing drives pre-bond.
   // Post-bond legacy drive datagrams are dead: silent drop. Freshness
-  // tracking (telem_.isDriving) is untouched on both paths, so the
-  // telemetry driving bit never asserts pre-bond.
+  // tracking (TelemetryManager::isDriving, fed by the coordinator loop) is
+  // untouched on both paths, so the telemetry driving bit never asserts
+  // pre-bond.
   void handleLegacy(const IPAddress& rip, uint16_t rport) {
+    DESKY_ASSERT(pairing_ != nullptr);
+    if (pairing_ == nullptr) {
+      return;  // begin/attachPairing setup micro-window: fail-closed drop.
+    }
     if (pairing_->bonded()) {
       dropFirst(firstLegacyDrop_, "drop legacy post-bond (first of boot)");
       LOG_EVERY_N(20, "UDP", "drop legacy post-bond");
@@ -790,83 +888,11 @@ class UdpServer {
     conn_.pinPeer(connection::ipToU32(rip[0], rip[1], rip[2], rip[3]));
   }
 
-  void sendTelemetry(uint32_t nowMs) {
-    // Coordinator-owned intent (mode/active/cliff level); defaults hold if
-    // the snapshot ever fails (boot race): MANUAL, stopped, no cliff.
-    SystemState snap;
-    coord_->snapshot(snap);
-
-    // Live sensors -> fusion on demand (same atan2f convention as fusion):
-    // real tilt once the MPU is healthy (the sensor task polls it), 0 before.
-    float pitchDeg = 0.0f;
-    float rollDeg = 0.0f;
-    const uint16_t distMm = tof_->distanceMm();
-    if (mpu_->isHealthy()) {
-      const MpuReading& r = mpu_->reading();
-      fusion::SensorSnapshot fs;
-      fs.ax = r.ax;
-      fs.ay = r.ay;
-      fs.az = r.az;
-      fs.tofMm = distMm;
-      fs.tofValid = true;
-      fs.mpuHealthy = true;
-      SystemState fused;
-      fusion::Fusion{fusion::kBoardMounting}.evaluate(fs, fused);
-      pitchDeg = fused.pitch;
-      rollDeg = fused.roll;
-    }
-
-    // Driving = services-owned RX observation (last commanded stick nonzero
-    // AND fresh): the coordinator drive handler feeds it via noteDriveCommand
-    // on every verified frame; the coordinator owns no driving flag. The
-    // cliff bit below mirrors the coordinator level, which the sensor task
-    // keeps live.
-    const bool driving = telem_.isDriving(nowMs);
-    // Platform split 1.1: the aggregate snapshot fills here (verbatim
-    // sources as above); pack + cadence/edge + encode live in
-    // telemetry::TelemetryManager, the socket send stays here.
-    telemetry::Snapshot tsnap;
-    tsnap.mode = static_cast<uint8_t>(snap.mode);
-    tsnap.cliff = snap.cliffDetected;
-    tsnap.driving = driving;
-    tsnap.pitchDeg = pitchDeg;
-    tsnap.rollDeg = rollDeg;
-    tsnap.distMm = distMm;
-    udp::TelemetryPacket tp;
-    telemetry::encodeSnapshot(tsnap, tp);
-
-    // Telemetry gate: bonded && peer pinned && alive-fresh -> unicast;
-    // else silent (broadcast fallback deleted). The peer stays pinned across
-    // a stale window — the next ALIVE/drive re-freshes via markAlive (which
-    // re-pins IP/port each time) with no re-registration. DISCONNECT/UNBOND
-    // cleared the peer, so silence follows naturally there too. Gate
-    // predicate single-owned by udpstatus::shouldSendTelemetry; logging here.
-    const bool gateOk =
-        udpstatus::shouldSendTelemetry(pairing_->bonded(), conn_.havePeer(), conn_.lastAliveMs(), nowMs);
-    if (!gateOk) {
-      // Correlation marker (log-only, no behavior change): the alive-stale
-      // silence edge shares firstTelemetryDrop_ (one first-of-boot INFO) and
-      // stays throttled afterwards — same pattern as the no-peer path.
-      if (pairing_->bonded() && conn_.havePeer()) {
-        dropFirst(firstTelemetryDrop_, "alive stale -> silent (first of boot)");
-        LOG_EVERY_N(20, "UDP", "alive stale -> silent");
-      } else {
-        dropFirst(firstTelemetryDrop_, "drop telemetry no-peer/stale (first of boot)");
-        LOG_EVERY_N(20, "UDP", "drop telemetry no-peer/stale");
-      }
-      return;
-    }
-    telem_.publish(tp, gateOk, nowMs, [this](const uint8_t* buf, size_t len) {
-      if (!udpsend::udpSendChecked(udp_, peerIp_, peerPort_, buf, len)) {
-        ++txFail_;
-        LOG_W("UDP", "udp send fail what=%s len=%u", "telemetry", static_cast<unsigned>(len));
-      }
-    });
-  }
-
-  Coordinator* coord_;
-  Vl53l0xDriver* tof_;
-  Mpu6500Driver* mpu_;
+  // Slice 8c: no Coordinator* stored in transport (dumb pipes only — the
+  // drive dispatch is transport-inline handleDrive above; intent + telemetry
+  // report live in behavior/coordinator.h). The behavior/coordinator.h
+  // include stays for the Arduino-free command-word math only
+  // (coordinator::packCommand for the drive publish).
   TaskHandle_t task_;
   WiFiUDP udp_;
   IPAddress peerIp_;
@@ -883,16 +909,18 @@ class UdpServer {
   // WiFiUDP::beginPacket needs an IPAddress; the u32 in conn_ is the
   // portable identity (adapter: connection::ipToU32/u32ToIp).
   connection::ConnectionManager conn_;
-  // Telemetry cadence + encode core + RX observation
-  // (services/telemetry_manager.h): the bonded-default rate is kTelemetryMs
-  // passthrough and the stale window is kStaleMs passthrough (no new
-  // logic — construction takes both, same pattern); the socket + gate
-  // logging stay here in sendTelemetry.
-  telemetry::TelemetryManager telem_;
   uint32_t lastRetryMs_;
   // Pairing/auth session (abilities/pairing, Slice 6b): owns bonded_/psk_/
   // counter/era/validCount_/pairCore_/LastPair/QR/dropFirst-for-moved-paths.
-  // Set in begin() before the task reads the radio; never null afterwards.
+  // Pinned by attachPairing() (after begin); every RX-path deref is
+  // null-safe until then (fail-closed drops). Pair enrolment/destruction/
+  // rekey dispatch enters through PairingTask::handlePairFrame
+  // (ability-owned); pairing_ is retained ONLY for the transport-owned
+  // session-authenticated paths — handleDrive/handleAlive/handleDisconnect
+  // verify (tryConsume + era/counter reads) and the telemetryGate bonded()
+  // input. No setBonded mirror by design (single source of truth — a mirror
+  // could read stale-true after PairingTask::clearBond, which has no
+  // transport back-call in scope to re-sync it).
   pairing::PairingTask* pairing_ = nullptr;
   // Checked-send failures (udpsend::udpSendChecked false): rare/backpressure
   // class, WARNed at every occurrence (release-visible). Task-written, benign
@@ -903,8 +931,8 @@ class UdpServer {
   // First-drop flags for dropFirst() (bench lesson: first occurrence per
   // boot per class always logs). Reset only by reboot — never per window.
   // (firstPairDrop_/firstUnbondDrop_/firstRekeyDrop_ stay in PairingTask with
-  // the handlers that log them; firstDriveDrop_ is logged through the
-  // driveDropFirst bridge for the coordinator-owned drive handler.)
+  // the handlers that log them; firstDriveDrop_ is logged by the inline
+  // handleDrive above.)
   bool firstMalformedDrop_ = true;
   bool firstLegacyDrop_ = true;
   bool firstDriveDrop_ = true;
