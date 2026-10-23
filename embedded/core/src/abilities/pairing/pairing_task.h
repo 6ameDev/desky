@@ -408,6 +408,10 @@ class PairingTask : public transport::IPairingSession {
   // lives here.
   bool isPaired() const override { return paired_; }
 
+  // Open-window read for the mode policy: the staged send latch AND the core
+  // window must agree (expiry closes the core without clearing the latch).
+  bool pairWindowOpen(uint32_t nowMs) const { return pendingValid_ && pairCore_.windowOpen(nowMs); }
+
   // Session-era read for the ALIVE/DISCONNECT handlers and the drive
   // publish pin (DRIVE carries no era).
   uint16_t era() const override { return era_; }
