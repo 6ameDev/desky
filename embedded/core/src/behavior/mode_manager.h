@@ -100,14 +100,11 @@ inline bool motionInhibited(Mode mode, bool commandStale) {
 }
 
 // Drive gating hook, consulted by the coordinator before stick intent reaches
-// the motion layer. Preserves current behavior exactly: stick intent is
-// honored whenever the session verifies (the transport only publishes
-// verified command events, so unpaired ticks carry no intent either way).
-// Narrow this to the manual mode once the take/release actions land.
-inline bool manualDriveAllowed(Mode mode, bool paired) {
-  (void)mode;
-  return paired;
-}
+// the motion layer. MANUAL-only: verified drive frames still verify, consume
+// the shared counter, and refresh the alive funnel in every mode, but stick
+// intent reaches motion only while the app holds the MANUAL session (entered
+// by an explicit MANUAL_TAKE, left by MANUAL_RELEASE or the stale auto-exit).
+inline bool manualDriveAllowed(Mode mode, bool paired) { return mode == Mode::kManual && paired; }
 
 // Mode query the display layer reads: which overlay follows the active mode.
 inline Display displayFor(Mode mode) {

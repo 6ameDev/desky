@@ -500,6 +500,44 @@ class PairingTask : public transport::IPairingSession {
     return verified;
   }
 
+  // MANUAL_TAKE verify: tag = first6(HMAC-SHA256(psk,
+  // "MANUALTAKE"||eraBE2||counterBE4)). Consumes the shared fromApp
+  // counter on accept exactly like drive, so a replayed take can never
+  // fire twice. Zero state change on any failure.
+  connection::Verified tryConsumeManualTake(uint16_t wireEra, uint32_t ctr, const uint8_t* tag) {
+    uint8_t msg[pairing::kManualTakeMsgLen];
+    pairing::manualTakeTagMsg(wireEra, ctr, msg);
+    connection::Verified verified = tryConsume(ctr, wireEra == era_, tag, msg, sizeof(msg));
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    return verified;
+  }
+
+  // MANUAL_RELEASE verify: tag = first6(HMAC-SHA256(psk,
+  // "MANUALRELEASE"||eraBE2||counterBE4)). Same consume-on-accept domain
+  // as the take path.
+  connection::Verified tryConsumeManualRelease(uint16_t wireEra, uint32_t ctr, const uint8_t* tag) {
+    uint8_t msg[pairing::kManualReleaseMsgLen];
+    pairing::manualReleaseTagMsg(wireEra, ctr, msg);
+    connection::Verified verified = tryConsume(ctr, wireEra == era_, tag, msg, sizeof(msg));
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    return verified;
+  }
+
+  // MANUAL session poll seam: the coordinator drains these each tick into
+  // onManualTake/onManualRelease. Consume-on-read — a staged take fires
+  // exactly once.
+  bool takeManualTake() {
+    const bool pending = manualTakePending_;
+    manualTakePending_ = false;
+    return pending;
+  }
+
+  bool takeManualRelease() {
+    const bool pending = manualReleasePending_;
+    manualReleasePending_ = false;
+    return pending;
+  }
+
   // Explicit unpair / 10s-hold factory reset hook: clears the NVS pair +
   // in-memory Core + key material. Also invalidates the PAIR_OK redelivery
   // cache (+zeroizes its secrets).
@@ -521,8 +559,10 @@ class PairingTask : public transport::IPairingSession {
     mbedtls_platform_zeroize(lastPair_.srvNonce4, sizeof(lastPair_.srvNonce4));
     mbedtls_platform_zeroize(lastPair_.ok39, sizeof(lastPair_.ok39));
     lastPair_.pairMs = 0;
-    pendingValid_ = false;  // No open window after an unpair/reset.
-    pairShowSent_ = false;  // Next window sends exactly once.
+    pendingValid_ = false;       // No open window after an unpair/reset.
+    pairShowSent_ = false;       // Next window sends exactly once.
+    manualTakePending_ = false;  // A staged take dies with the session.
+    manualReleasePending_ = false;
     if (link_ != nullptr) {
       notifyPairingDone(*link_);  // Fire-and-forget; peerless = silent no-op.
     }
@@ -544,6 +584,12 @@ class PairingTask : public transport::IPairingSession {
         break;
       case pairing::kPairRefreshReqHeader:
         handlePairRefresh(buf, rip, rport, nowMs, t);
+        break;
+      case pairing::kManualTakeHeader:
+        handleManualTake(buf, rip, rport, nowMs, t);
+        break;
+      case pairing::kManualReleaseHeader:
+        handleManualRelease(buf, rip, rport, nowMs, t);
         break;
       default:
         break;
@@ -772,10 +818,106 @@ class PairingTask : public transport::IPairingSession {
     lastPair_.pairMs = 0;
     pendingValid_ = false;  // Window consumed; reopen stages the fresh code.
     pairShowSent_ = false;
+    manualTakePending_ = false;  // A staged take dies with the session.
+    manualReleasePending_ = false;
     if (link_ != nullptr) {
       notifyPairingDone(*link_);  // Fire-and-forget; peerless = silent no-op.
     }
     LOG_I("UDP", "unpair ok, idle");
+  }
+
+  // MANUAL_TAKE layout [0x57|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR
+  // checked by the caller). Explicit drive-session take under the paired
+  // PSK; verify order mirrors DISCONNECT (paired? -> era current -> counter
+  // fresh -> atomic tryConsume). Pass consumes the shared fromApp counter
+  // exactly like drive and stages the coordinator-polled pending flag (the
+  // coordinator tick drains it into onManualTake). Never drives. Fail =
+  // silent drop. The paired/era/fresh reads are logging-only pre-checks;
+  // tryConsume is the authoritative gate.
+  void handleManualTake(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
+                        transport::IUdpTransport& t) {
+    (void)rip;
+    (void)rport;
+    (void)nowMs;
+    DESKY_ASSERT(buf != nullptr);
+    if (buf == nullptr) {
+      return;
+    }
+    if (!paired_) {
+      dropFirst(firstManualDrop_, "drop manual-take unpaired (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop manual-take unpaired");
+      return;
+    }
+    const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(buf[1]) << 8) | static_cast<uint16_t>(buf[2]));
+    if (era != era_) {
+      dropFirst(firstManualDrop_, "drop manual-take era=%u have=%u (first of boot)", static_cast<unsigned>(era),
+                static_cast<unsigned>(era_));
+      LOG_EVERY_N(20, "UDP", "drop manual-take era=%u have=%u", static_cast<unsigned>(era),
+                  static_cast<unsigned>(era_));
+      return;
+    }
+    const uint32_t ctr = (static_cast<uint32_t>(buf[3]) << 24) | (static_cast<uint32_t>(buf[4]) << 16) |
+                         (static_cast<uint32_t>(buf[5]) << 8) | static_cast<uint32_t>(buf[6]);
+    if (!t.isFreshCounter(fromAppCounter_, ctr)) {
+      dropFirst(firstManualDrop_, "drop manual-take replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
+      LOG_EVERY_N(20, "UDP", "drop manual-take replay ctr=%lu", static_cast<unsigned long>(ctr));
+      return;
+    }
+    // Tag composition + atomic consume live in tryConsumeManualTake above.
+    const connection::Verified verified = tryConsumeManualTake(era, ctr, buf + 7);
+    if (!verified.valid()) {
+      dropFirst(firstManualDrop_, "drop manual-take auth (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop manual-take auth");
+      return;
+    }
+    // Counter consumed (a replayed take can never stage twice). The
+    // coordinator tick drains the flag into onManualTake.
+    manualTakePending_ = true;
+    LOG_I("UDP", "manual take ok");
+  }
+
+  // MANUAL_RELEASE layout [0x58|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR
+  // checked by the caller). Explicit drive-session release; verify mirrors
+  // the take path. Pass stages the coordinator-polled pending flag (drained
+  // into onManualRelease). Fail = silent drop.
+  void handleManualRelease(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
+                           transport::IUdpTransport& t) {
+    (void)rip;
+    (void)rport;
+    (void)nowMs;
+    DESKY_ASSERT(buf != nullptr);
+    if (buf == nullptr) {
+      return;
+    }
+    if (!paired_) {
+      dropFirst(firstManualDrop_, "drop manual-release unpaired (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop manual-release unpaired");
+      return;
+    }
+    const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(buf[1]) << 8) | static_cast<uint16_t>(buf[2]));
+    if (era != era_) {
+      dropFirst(firstManualDrop_, "drop manual-release era=%u have=%u (first of boot)", static_cast<unsigned>(era),
+                static_cast<unsigned>(era_));
+      LOG_EVERY_N(20, "UDP", "drop manual-release era=%u have=%u", static_cast<unsigned>(era),
+                  static_cast<unsigned>(era_));
+      return;
+    }
+    const uint32_t ctr = (static_cast<uint32_t>(buf[3]) << 24) | (static_cast<uint32_t>(buf[4]) << 16) |
+                         (static_cast<uint32_t>(buf[5]) << 8) | static_cast<uint32_t>(buf[6]);
+    if (!t.isFreshCounter(fromAppCounter_, ctr)) {
+      dropFirst(firstManualDrop_, "drop manual-release replay ctr=%lu (first of boot)",
+                static_cast<unsigned long>(ctr));
+      LOG_EVERY_N(20, "UDP", "drop manual-release replay ctr=%lu", static_cast<unsigned long>(ctr));
+      return;
+    }
+    const connection::Verified verified = tryConsumeManualRelease(era, ctr, buf + 7);
+    if (!verified.valid()) {
+      dropFirst(firstManualDrop_, "drop manual-release auth (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop manual-release auth");
+      return;
+    }
+    manualReleasePending_ = true;
+    LOG_I("UDP", "manual release ok");
   }
 
   // PAIR_REFRESH_REQ layout [0x53|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR
@@ -980,8 +1122,9 @@ class PairingTask : public transport::IPairingSession {
   pairing::Core pairCore_;
   uint8_t psk_[16];
   // Per-link counter domains, session-scoped with PSK+era: fromAppCounter_
-  // consumes the app->robot stream (drive/alive/unpair/refresh, verified via
-  // tryConsume); toAppCounter_ stamps the robot->app stream (evictions).
+  // consumes the app->robot stream (drive/alive/unpair/refresh/manual
+  // take-release, verified via tryConsume); toAppCounter_ stamps the
+  // robot->app stream (evictions).
   uint32_t fromAppCounter_;
   uint32_t toAppCounter_;
   bool paired_;
@@ -1000,6 +1143,11 @@ class PairingTask : public transport::IPairingSession {
   // frame is handed to the radio; cleared when the window closes or the pair
   // clears. Main-loop-written.
   bool pairShowSent_ = false;
+  // MANUAL session pending flags: staged by handleManualTake/Release on
+  // verify pass, drained exactly once by the coordinator tick (poll seam
+  // above). Cleared with the pair. RX-written, coordinator-read.
+  bool manualTakePending_ = false;
+  bool manualReleasePending_ = false;
   // Staged eviction burst (pair-button DISCONNECT resends): the byte-identical
   // frame composed under the cleared session + its peer + remaining resends +
   // next-due timestamp + stamped counter (log-only). Drained by the main-loop
@@ -1030,6 +1178,7 @@ class PairingTask : public transport::IPairingSession {
   bool firstPairDrop_ = true;
   bool firstUnpairDrop_ = true;
   bool firstPairRefreshDrop_ = true;
+  bool firstManualDrop_ = true;
 };
 
 }  // namespace pairing

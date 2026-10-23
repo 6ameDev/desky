@@ -157,13 +157,13 @@ void test_mode_failsafe_clear_when_fresh_in_every_mode() {
   }
 }
 
-void test_mode_drive_allowed_when_paired_in_every_mode() {
-  // Default preserves current behavior: stick intent honored whenever paired.
-  const sysmode::Mode modes[] = {sysmode::Mode::kNormal, sysmode::Mode::kManual, sysmode::Mode::kPairing,
-                                 sysmode::Mode::kOta};
-  for (size_t i = 0; i < 4; ++i) {
-    TEST_ASSERT_TRUE(sysmode::manualDriveAllowed(modes[i], true));
-  }
+void test_mode_drive_allowed_manual_only_when_paired() {
+  // MANUAL-only gate: verified drive verifies/consumes in every mode, but
+  // stick intent reaches motion solely while the MANUAL session is held.
+  TEST_ASSERT_TRUE(sysmode::manualDriveAllowed(sysmode::Mode::kManual, true));
+  TEST_ASSERT_FALSE(sysmode::manualDriveAllowed(sysmode::Mode::kNormal, true));
+  TEST_ASSERT_FALSE(sysmode::manualDriveAllowed(sysmode::Mode::kPairing, true));
+  TEST_ASSERT_FALSE(sysmode::manualDriveAllowed(sysmode::Mode::kOta, true));
 }
 
 void test_mode_drive_denied_when_unpaired_in_every_mode() {

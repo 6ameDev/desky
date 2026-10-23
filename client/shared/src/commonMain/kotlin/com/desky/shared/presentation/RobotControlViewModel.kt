@@ -16,8 +16,10 @@ import com.desky.shared.domain.ObserveRemoteDisconnectUseCase
 import com.desky.shared.domain.Outcome
 import com.desky.shared.domain.PairedDevice
 import com.desky.shared.domain.PairRefreshUseCase
+import com.desky.shared.domain.ReleaseManualUseCase
 import com.desky.shared.domain.RobotMode
 import com.desky.shared.domain.SendSignedControlUseCase
+import com.desky.shared.domain.TakeManualUseCase
 import com.desky.shared.domain.Telemetry
 import com.desky.shared.domain.UdpSocketBinder
 import com.desky.shared.domain.UdpSocketManager
@@ -41,6 +43,13 @@ enum class Connectivity {
     Disconnected,
     Unpaired,
     Connected,
+}
+
+/** Gated-tick session probe outcome (see `RobotControlViewModel.probeSessionLocked`). */
+private enum class SessionHealth {
+    Healthy,
+    MissingPsk,
+    Expired,
 }
 
 /**
@@ -107,6 +116,14 @@ data class RobotControlUiState(
     val mode: RobotMode = RobotMode.MANUAL,
     val eStopped: Boolean = false,
     val error: String? = null,
+    /**
+     * Robot-reported MANUAL hold (telemetry `statusFlags` bit 4). Paired no
+     * longer implies drivable: the drive send loop only transmits while
+     * this is true (drive frames outside MANUAL are ignored robot-side).
+     * Set by [onTakeManual], cleared by [onReleaseManual] (both converge
+     * via telemetry).
+     */
+    val manualMode: Boolean = false,
 )
 
 /**
@@ -167,6 +184,18 @@ data class RobotControlUiState(
  * error kept). The drive send loop and the `ALIVE` knock keep running
  * underneath; the first telemetry promotes back to [Connectivity.Connected]
  * via the existing path and re-enables input.
+ *
+ * Manual gating: paired no longer implies drivable. Drive frames are only
+ * transmitted while [RobotControlUiState.manualMode] is true (the
+ * robot-reported MANUAL hold, telemetry `statusFlags` bit 4, on a
+ * [Connectivity.Connected] link — frames outside MANUAL are ignored
+ * robot-side). Ticks without the hold probe session health WITHOUT
+ * allocating (the missing-PSK repair copy still surfaces pre-link; the
+ * dense counter sequence is untouched) and idle until MANUAL is reported.
+ * The `ALIVE` knock keeps going underneath (it is what keeps telemetry — and
+ * the MANUAL report — flowing). [onTakeManual] enters MANUAL (one
+ * `MANUAL_TAKE` per user action), [onReleaseManual] exits it (best-effort 2x
+ * `MANUAL_RELEASE`); both converge via telemetry like every other mode edge.
  *
  * Lifecycle / ownership (no behavior change while driving):
  * - the telemetry + send loops are children of `viewModelScope` and stop
@@ -247,6 +276,19 @@ class RobotControlViewModel(
      * Collection body is correlation logging only.
      */
     private val remoteDisconnectUC: ObserveRemoteDisconnectUseCase? = null,
+    /**
+     * Manual take/release (see `shared/protocol/README.md` §"Pairing +
+     * authenticated drive v1", MANUAL take/release bullets): null in tests/legacy call sites (take/release intents
+     * inert — the drive loop still gates on the reported MANUAL bit, so a
+     * legacy graph simply never becomes drivable); production DI passes the
+     * shared [TakeManualUseCase] + [ReleaseManualUseCase]. [onTakeManual]
+     * sends one `MANUAL_TAKE` per user action, [onReleaseManual] sends
+     * `MANUAL_RELEASE` 2x byte-identical best-effort — both allocate from
+     * the shared [ToRobotCounter] via the session helper, preserving the
+     * monotonic sequence with drive/`ALIVE`.
+     */
+    private val takeManualUC: TakeManualUseCase? = null,
+    private val releaseManualUC: ReleaseManualUseCase? = null,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(RobotControlUiState())
@@ -427,18 +469,19 @@ class RobotControlViewModel(
                         logMarker("firstTelemetrySeen mode=${telemetry.mode}")
                     }
                     val prev = _state.value
-                    // UI path (gated, expensive): copy telemetry/mode only
+                    // UI path (gated, expensive): copy telemetry/mode/manual only
                     // when due or high-value, so a 15 Hz stream recomposes
                     // at ~5 Hz. Promotion from non-Connected always paints
                     // (fresh packet after silence must be visible); edges
-                    // (mode/cliff/driving flips) paint immediately even
+                    // (mode/cliff/driving/manual flips) paint immediately even
                     // inside the window. Otherwise skip [_state] entirely —
                     // already Connected means "ensure Connected" is a no-op.
                     val highValueChange = prev.telemetry == null ||
                         prev.mode != telemetry.mode ||
                         prev.telemetry.mode != telemetry.mode ||
                         prev.telemetry.cliff != telemetry.cliff ||
-                        prev.telemetry.driving != telemetry.driving
+                        prev.telemetry.driving != telemetry.driving ||
+                        prev.telemetry.manual != telemetry.manual
                     val timeDue = ticksSinceTelemetryUi >= telemetryUiEvery
                     if (prev.connectivity != Connectivity.Connected || highValueChange || timeDue) {
                         ticksSinceTelemetryUi = 0
@@ -446,6 +489,7 @@ class RobotControlViewModel(
                             it.copy(
                                 telemetry = telemetry,
                                 mode = telemetry.mode,
+                                manualMode = telemetry.manual,
                                 connectivity = Connectivity.Connected,
                             )
                         }
@@ -567,22 +611,37 @@ class RobotControlViewModel(
                     } else {
                         ControlCommand(snapshot.mode, snapshot.throttle, snapshot.steering, 0)
                     }
-                    // Allocate (psk, counter) under the session mutex, then
-                    // send OUTSIDE the lock: udp.send has unbounded latency
-                    // and must never stall the e-stop path behind a loop tick.
                     // Tier-1 pair-refresh probe first (stub: no-op unless the era is
                     // within PAIR_REFRESH_MARGIN of the gate — see maybePairRefresh).
                     maybePairRefresh(dev)
-                    val prepared = sessionMutex.withLock { sessionCounterLocked(dev) }
-                    val result = if (prepared == null) {
-                        // Exhaustion (fail-closed counter gate) vs. missing
-                        // PSK: distinct copy — the former needs an explicit
-                        // re-pair, and no UNPAIR counter is consumed after it
-                        // (ForgetDeviceUseCase skips the send on null).
-                        if (toRobotCounter.isExhausted()) sessionExpired(dev) else missingPsk(dev)
+                    val result: Outcome<Unit>? = if (!drivable(snapshot)) {
+                        // Gated: linked-but-not-MANUAL (or pre-link) — drive
+                        // frames would be ignored robot-side, so probe session
+                        // health WITHOUT allocating (nothing transmits while
+                        // gated; the dense counter sequence is untouched) and
+                        // idle until MANUAL is reported. The `ALIVE` knock
+                        // above is unaffected: it is what keeps telemetry —
+                        // and the MANUAL report — flowing.
+                        when (sessionMutex.withLock { probeSessionLocked(dev) }) {
+                            SessionHealth.MissingPsk -> missingPsk(dev)
+                            SessionHealth.Expired -> sessionExpired(dev)
+                            SessionHealth.Healthy -> null
+                        }
                     } else {
-                        val (psk, next) = prepared
-                        sendUC(dev, cmd, psk, next)
+                        // Allocate (psk, counter) under the session mutex, then
+                        // send OUTSIDE the lock: udp.send has unbounded latency
+                        // and must never stall the e-stop path behind a loop tick.
+                        val prepared = sessionMutex.withLock { sessionCounterLocked(dev) }
+                        if (prepared == null) {
+                            // Exhaustion (fail-closed counter gate) vs. missing
+                            // PSK: distinct copy — the former needs an explicit
+                            // re-pair, and no UNPAIR counter is consumed after it
+                            // (ForgetDeviceUseCase skips the send on null).
+                            if (toRobotCounter.isExhausted()) sessionExpired(dev) else missingPsk(dev)
+                        } else {
+                            val (psk, next) = prepared
+                            sendUC(dev, cmd, psk, next)
+                        }
                     }
                     when (result) {
                         is Outcome.Success ->
@@ -593,6 +652,8 @@ class RobotControlViewModel(
                             if (_state.value.error != result.reason) {
                                 _state.update { it.copy(error = result.reason) }
                             }
+                        null ->
+                            Unit
                     }
                     delay(tickMs)
                 }
@@ -616,6 +677,27 @@ class RobotControlViewModel(
      * latch and report [sessionExpired] instead of [missingPsk].
      */
     private suspend fun sessionCounterLocked(dev: PairedDevice): Pair<ByteArray, UInt>? {
+        val psk = loadSessionPskLocked(dev) ?: return null
+        // Seed from Room on a fresh era only; a live era is a no-op, so the
+        // watermark (and the negotiated persist cadence + pair-refresh era) can
+        // never be rewound mid-session.
+        toRobotCounter.ensure(dev.id, dev.lastCounter, dev.persistEvery, dev.era)
+        val next = toRobotCounter.next() ?: return null
+        if (!loggedSessionReady) {
+            loggedSessionReady = true
+            logMarker("sessionReady id=${dev.id} era=${dev.era} ctr=$next")
+        }
+        return psk to next
+    }
+
+    /**
+     * Vault PSK load + cache shared by [sessionCounterLocked] and
+     * [probeSessionLocked]. Must hold [sessionMutex]. Null when the vault
+     * has no entry for this device or the entry is undecodable (both
+     * latched per device: at most one vault read per session). Cancellation
+     * propagates.
+     */
+    private suspend fun loadSessionPskLocked(dev: PairedDevice): ByteArray? {
         var psk = sessionPsk
         if (psk == null) {
             // Missing-PSK latch: the loop idles for this device instead of
@@ -650,17 +732,32 @@ class RobotControlViewModel(
             psk = decoded
             sessionPsk = psk
         }
-        // Seed from Room on a fresh era only; a live era is a no-op, so the
-        // watermark (and the negotiated persist cadence + pair-refresh era) can
-        // never be rewound mid-session.
-        toRobotCounter.ensure(dev.id, dev.lastCounter, dev.persistEvery, dev.era)
-        val next = toRobotCounter.next() ?: return null
-        if (!loggedSessionReady) {
-            loggedSessionReady = true
-            logMarker("sessionReady id=${dev.id} era=${dev.era} ctr=$next")
-        }
-        return psk to next
+        return psk
     }
+
+    /**
+     * Session health for gated (non-drivable) loop ticks. Must hold
+     * [sessionMutex]. Loads/caches the PSK exactly like the send path but
+     * allocates NO counter — nothing transmits while gated, so the dense
+     * sequence is untouched. A missing/undecodable PSK reports
+     * [SessionHealth.MissingPsk] (the caller surfaces the same repair copy
+     * as the drive path, so keyless pairs still converge); a latched
+     * exhaustion reports [SessionHealth.Expired]. Cancellation propagates.
+     */
+    private suspend fun probeSessionLocked(dev: PairedDevice): SessionHealth {
+        if (loadSessionPskLocked(dev) == null) return SessionHealth.MissingPsk
+        if (toRobotCounter.isExhausted()) return SessionHealth.Expired
+        return SessionHealth.Healthy
+    }
+
+    /**
+     * Drivability: paired no longer implies drivable. Drive frames transmit
+     * only on a [Connectivity.Connected] link while the robot reports the
+     * MANUAL hold ([RobotControlUiState.manualMode], telemetry `statusFlags`
+     * bit 4) — frames outside MANUAL are ignored robot-side.
+     */
+    private fun drivable(snapshot: RobotControlUiState): Boolean =
+        snapshot.connectivity == Connectivity.Connected && snapshot.manualMode
 
     /**
      * Tier-1 silent auto-pair-refresh trigger STUB (this pass): called once per
@@ -848,6 +945,70 @@ class RobotControlViewModel(
     fun onReleaseEmergency() {
         if (_state.value.connectivity == Connectivity.Disconnected) return
         _state.update { it.copy(eStopped = false) }
+    }
+
+    /**
+     * Enters MANUAL: one signed `MANUAL_TAKE` frame goes out immediately via
+     * [takeManualUC] (sharing the session counter with the loop tick under
+     * [sessionMutex]). Entry is deliberate — exactly one frame per user
+     * action, never repeated. The robot reports back via the telemetry
+     * MANUAL bit, which gates the drive loop and paints [RobotControlUiState.manualMode].
+     *
+     * Disconnected gate (same as [onStick] / [onEmergencyStop]): while
+     * [RobotControlUiState.connectivity] is [Connectivity.Disconnected] this
+     * is a no-op. Already-manual is a no-op too (repeats add nothing — no
+     * counter consumed). When no session is loaded yet the frame is skipped
+     * silently except exhaustion, which surfaces the repair copy like the
+     * immediate e-stop path; a transport failure surfaces its reason (entry
+     * was an explicit user action).
+     */
+    fun onTakeManual() {
+        if (_state.value.connectivity == Connectivity.Disconnected) return
+        if (_state.value.manualMode) return
+        val take = takeManualUC ?: return
+        viewModelScope.launch {
+            val paired = currentDevice.value ?: return@launch
+            // Allocate under the session mutex, send outside it: an
+            // in-flight loop send never blocks this immediate frame's
+            // allocation (and vice versa).
+            val prepared = sessionMutex.withLock { sessionCounterLocked(paired) }
+            if (prepared == null) {
+                // Exhausted era: surface the repair copy here too (the loop
+                // tick would on its next pass); a missing PSK stays silent —
+                // the loop owns that copy.
+                if (toRobotCounter.isExhausted()) sessionExpired(paired)
+                return@launch
+            }
+            val (psk, next) = prepared
+            val result = take(paired, psk, paired.era, next)
+            if (result is Outcome.Failure) {
+                _state.update { it.copy(error = result.reason) }
+            }
+        }
+    }
+
+    /**
+     * Exits MANUAL: one shared counter is allocated and the resulting
+     * `MANUAL_RELEASE` frame goes out 2x byte-identical via
+     * [releaseManualUC] (same counter — one allocation, like `DISCONNECT`'s
+     * 2x goodbye). Fire-and-forget best-effort: the robot never replies and
+     * every send error is already swallowed inside the use case, so the
+     * result is ignored here; the telemetry MANUAL bit converging to clear
+     * is the confirmation.
+     *
+     * Disconnected gate (same as [onTakeManual]): while
+     * [RobotControlUiState.connectivity] is [Connectivity.Disconnected] this
+     * is a no-op (the robot's own command-stale exit covers the stop).
+     */
+    fun onReleaseManual() {
+        if (_state.value.connectivity == Connectivity.Disconnected) return
+        val release = releaseManualUC ?: return
+        viewModelScope.launch {
+            val paired = currentDevice.value ?: return@launch
+            val prepared = sessionMutex.withLock { sessionCounterLocked(paired) } ?: return@launch
+            val (psk, next) = prepared
+            release(paired, psk, paired.era, next)
+        }
     }
 
     /**

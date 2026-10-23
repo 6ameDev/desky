@@ -20,6 +20,11 @@ struct SystemState {
   bool isPickedUp = false;
   bool cliffDetected = false;
   bool isDriving = false;
+  // MANUAL drive session granted (sysmode MANUAL: explicit MANUAL_TAKE held,
+  // MANUAL_RELEASE or the stale auto-exit clears it). Distinct from
+  // RobotMode::MODE_MANUAL below (the motion arbitrator's default mode).
+  // Shadowed by the coordinator each tick for the telemetry status bit.
+  bool manual = false;
   bool gndFwd = true;  // fwd = TCRT rail (firmware threshold + hysteresis)
   bool gndRev = true;  // rev = TCRT rail (firmware threshold + hysteresis)
 

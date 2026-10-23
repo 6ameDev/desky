@@ -86,6 +86,25 @@ const val ALIVE_SIZE = 14
 const val DISCONNECT_HEADER = 0x56
 const val DISCONNECT_SIZE = 14
 
+/**
+ * Manual take/release headers/sizes (see `shared/protocol/README.md`
+ * §"Pairing + authenticated drive v1", MANUAL take/release bullets): `MANUAL_TAKE` 14 bytes
+ * `[0x57 | eraBE2 | counterBE4 | tag6 | XOR]` (App -> Robot mode entry,
+ * `tag = first6(HMAC-SHA256(psk, "MANUALTAKE" || eraBE2 || counterBE4))`)
+ * and `MANUAL_RELEASE` 14 bytes
+ * `[0x58 | eraBE2 | counterBE4 | tag6 | XOR]` (App -> Robot mode exit,
+ * `tag = first6(HMAC-SHA256(psk, "MANUALRELEASE" || eraBE2 || counterBE4))`,
+ * era = CURRENT paired era). Both ride the shared strictly-increasing
+ * counter (same holder as `DRIVE` + `ALIVE` + `DISCONNECT`).
+ * Headers `0x57`/`0x58` are claimed here — never `0xAA`/`0xAC`/`0xBB`/
+ * `0x50`/`0x51`/`0x52`/`0x53`/`0x54`/`0x55`/`0x56`/`0xAD` (Phase-2
+ * `SET_RATE` must pick other values).
+ */
+const val MANUAL_TAKE_HEADER = 0x57
+const val MANUAL_TAKE_SIZE = 14
+const val MANUAL_RELEASE_HEADER = 0x58
+const val MANUAL_RELEASE_SIZE = 14
+
 /** Failsafe window: the robot stops ~500 ms after the last control datagram. */
 const val STALE_MS = 500
 
@@ -94,6 +113,13 @@ const val CLIFF_BIT = 0
 const val DRIVING_BIT = 1
 const val MODE_SHIFT = 2
 const val MODE_MASK = 0x03
+/**
+ * statusFlags bit 4: robot reports MANUAL mode active (see
+ * `shared/protocol/README.md` §"Pairing + authenticated drive v1" (MANUAL take/release). Bits 5-7 stay
+ * reserved. The mode bits (2-3) keep their existing meaning; this bit is
+ * the authoritative drivability report the drive loop gates on.
+ */
+const val MANUAL_BIT = 4
 
 /**
  * Stick byte (center-128) -> unit (-1..1). Exact mirror of
@@ -131,12 +157,13 @@ fun degToDecideg(deg: Float): Short {
 /** Decidegrees -> degrees. */
 fun decidegToDeg(raw: Short): Float = raw.toFloat() / 10f
 
-/** Pack cliff/driving/mode into the telemetry statusFlags byte (0..255). */
-fun packStatusFlags(cliff: Boolean, driving: Boolean, mode: RobotMode): Int {
+/** Pack cliff/driving/mode/manual into the telemetry statusFlags byte (0..255). */
+fun packStatusFlags(cliff: Boolean, driving: Boolean, mode: RobotMode, manual: Boolean = false): Int {
     var flags = 0
     if (cliff) flags = flags or (1 shl CLIFF_BIT)
     if (driving) flags = flags or (1 shl DRIVING_BIT)
     flags = flags or ((mode.toBits() and MODE_MASK) shl MODE_SHIFT)
+    if (manual) flags = flags or (1 shl MANUAL_BIT)
     return flags
 }
 
@@ -145,6 +172,9 @@ fun statusCliff(flags: Int): Boolean = (flags and (1 shl CLIFF_BIT)) != 0
 fun statusDriving(flags: Int): Boolean = (flags and (1 shl DRIVING_BIT)) != 0
 
 fun statusMode(flags: Int): RobotMode = RobotMode.fromBits((flags shr MODE_SHIFT) and MODE_MASK)
+
+/** True while the robot reports MANUAL mode active (statusFlags bit 4). */
+fun statusManual(flags: Int): Boolean = (flags and (1 shl MANUAL_BIT)) != 0
 
 private fun xorChecksum(bytes: ByteArray, len: Int): Byte {
     var sum = 0
@@ -455,6 +485,74 @@ suspend fun encodeDisconnect(psk: ByteArray, era: UShort, counter: UInt): ByteAr
 }
 
 /**
+ * `MANUAL_TAKE` mode-entry frame: App -> Robot, 14 bytes
+ * `[0x57 | eraBE2 | counterBE4 | tag6 | XOR]`
+ * (`tag = manualTakeTag(psk, era, counter)`).
+ *
+ * Fire-and-forget: the robot never replies — the telemetry `statusFlags`
+ * MANUAL bit (bit 4) is the ACK. The app sends it once per user action
+ * (entry is deliberate; repeats add nothing). No decode side exists.
+ * See `shared/protocol/README.md` §"Pairing + authenticated drive v1" (MANUAL take/release).
+ *
+ * Top-level (not an `object` member) per the SKIE constraint documented in
+ * `client/ARCHITECTURE.md` (same reason as [encodeSigned]/[encodeUnpair]).
+ *
+ * Suspend: the tag needs the platform HMAC backend ([manualTakeTag]).
+ *
+ * @param psk 16-byte pair PSK.
+ * @param era CURRENT paired era.
+ * @param counter next drive counter from the shared [ToRobotCounter].
+ */
+suspend fun encodeManualTake(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
+    require(psk.size == 16) { "encodeManualTake: psk must be 16 bytes" }
+    val out = ByteArray(MANUAL_TAKE_SIZE)
+    out[0] = MANUAL_TAKE_HEADER.toByte()
+    out[1] = ((era.toInt() shr 8) and 0xFF).toByte()
+    out[2] = (era.toInt() and 0xFF).toByte()
+    out[3] = (counter shr 24).toByte()
+    out[4] = (counter shr 16).toByte()
+    out[5] = (counter shr 8).toByte()
+    out[6] = counter.toByte()
+    manualTakeTag(psk, era, counter).copyInto(out, destinationOffset = 7)
+    out[MANUAL_TAKE_SIZE - 1] = xorChecksum(out, MANUAL_TAKE_SIZE - 1)
+    return out
+}
+
+/**
+ * `MANUAL_RELEASE` mode-exit frame: App -> Robot, 14 bytes
+ * `[0x58 | eraBE2 | counterBE4 | tag6 | XOR]`
+ * (`tag = manualReleaseTag(psk, era, counter)`).
+ *
+ * Fire-and-forget like [encodeManualTake] (no reply ever comes back): the
+ * app sends it 2x byte-identical (same counter — one allocation, like
+ * `DISCONNECT`'s 2x in `RobotControlViewModel`) on user release.
+ * See `shared/protocol/README.md` §"Pairing + authenticated drive v1" (MANUAL take/release).
+ *
+ * Top-level (not an `object` member) per the SKIE constraint documented in
+ * `client/ARCHITECTURE.md` (same reason as [encodeSigned]/[encodeUnpair]).
+ *
+ * Suspend: the tag needs the platform HMAC backend ([manualReleaseTag]).
+ *
+ * @param psk 16-byte pair PSK.
+ * @param era CURRENT paired era.
+ * @param counter next drive counter from the shared [ToRobotCounter].
+ */
+suspend fun encodeManualRelease(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
+    require(psk.size == 16) { "encodeManualRelease: psk must be 16 bytes" }
+    val out = ByteArray(MANUAL_RELEASE_SIZE)
+    out[0] = MANUAL_RELEASE_HEADER.toByte()
+    out[1] = ((era.toInt() shr 8) and 0xFF).toByte()
+    out[2] = (era.toInt() and 0xFF).toByte()
+    out[3] = (counter shr 24).toByte()
+    out[4] = (counter shr 16).toByte()
+    out[5] = (counter shr 8).toByte()
+    out[6] = counter.toByte()
+    manualReleaseTag(psk, era, counter).copyInto(out, destinationOffset = 7)
+    out[MANUAL_RELEASE_SIZE - 1] = xorChecksum(out, MANUAL_RELEASE_SIZE - 1)
+    return out
+}
+
+/**
  * Decode a core-originated `DISCONNECT` eviction frame: null on wrong
  * header, wrong length, or bad checksum. On success the `Triple` is
  * `(era, counter, tag6)` — the caller must still verify the era against
@@ -462,8 +560,7 @@ suspend fun encodeDisconnect(psk: ByteArray, era: UShort, counter: UInt): ByteAr
  * [disconnectTag] under the vault PSK (constant-time) before trusting it.
  * See `shared/protocol/README.md` §"ALIVE + DISCONNECT + robot alive rule".
  */
-fun decodeDisconnect(bytes: ByteArray): Triple<UShort, UInt, ByteArray>? {
-    if (bytes.size != DISCONNECT_SIZE) return null
+fun decodeDisconnect(bytes: ByteArray): Triple<UShort, UInt, ByteArray>? {    if (bytes.size != DISCONNECT_SIZE) return null
     if ((bytes[0].toInt() and 0xFF) != DISCONNECT_HEADER) return null
     if (xorChecksum(bytes, DISCONNECT_SIZE - 1) != bytes[DISCONNECT_SIZE - 1]) return null
     val era = (((bytes[1].toInt() and 0xFF) shl 8) or (bytes[2].toInt() and 0xFF)).toUShort()
@@ -488,7 +585,7 @@ object TelemetryPacketCodec {
         putI16BE(out, 3, degToDecideg(t.rollDeg))
         out[5] = ((t.distanceMm shr 8) and 0xFF).toByte()
         out[6] = (t.distanceMm and 0xFF).toByte()
-        out[7] = packStatusFlags(t.cliff, t.driving, t.mode).toByte()
+        out[7] = packStatusFlags(t.cliff, t.driving, t.mode, t.manual).toByte()
         out[8] = xorChecksum(out, TELEMETRY_SIZE - 1)
         return out
     }
@@ -509,6 +606,7 @@ object TelemetryPacketCodec {
             cliff = statusCliff(flags),
             driving = statusDriving(flags),
             mode = statusMode(flags),
+            manual = statusManual(flags),
         )
     }
 }
