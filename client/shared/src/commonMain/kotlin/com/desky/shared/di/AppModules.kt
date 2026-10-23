@@ -11,6 +11,7 @@ import com.desky.shared.domain.EmergencyStopUseCase
 import com.desky.shared.domain.ForgetDeviceUseCase
 import com.desky.shared.domain.GetPairPskUseCase
 import com.desky.shared.domain.ObserveDeviceConfigUseCase
+import com.desky.shared.domain.ObserveRemoteDisconnectUseCase
 import com.desky.shared.domain.ObserveTelemetryUseCase
 import com.desky.shared.domain.PairDeviceWithCodeUseCase
 import com.desky.shared.domain.AliveUseCase
@@ -72,6 +73,7 @@ val domainModule: Module = module {
     factory { ForgetDeviceUseCase(get(), get(), get(), get(), get()) }
     factory { PairRefreshUseCase(get(), get(), get(), get(), get()) }
     factory { AliveUseCase(get()) }
+    factory { ObserveRemoteDisconnectUseCase(get(), get(), get(), get(), get()) }
 }
 
 /**
@@ -85,7 +87,7 @@ val presentationModule: Module = module {
     // binding, the ALIVE/DISCONNECT knock stays inert without an AliveUseCase
     // binding, and the AP-rejoin knock stays inert without a UdpSocketBinder
     // binding (JVM/iOS — getOrNull, tests, legacy graphs).
-    viewModel { RobotControlViewModel(get(), get(), get(), get(), get(), get(), get(), pairRefreshUC = getOrNull<PairRefreshUseCase>(), aliveUC = getOrNull<AliveUseCase>(), socketBinder = getOrNull<UdpSocketBinder>(), forgetUC = get()) }
+    viewModel { RobotControlViewModel(get(), get(), get(), get(), get(), get(), get(), pairRefreshUC = getOrNull<PairRefreshUseCase>(), aliveUC = getOrNull<AliveUseCase>(), socketBinder = getOrNull<UdpSocketBinder>(), forgetUC = get(), remoteDisconnectUC = getOrNull<ObserveRemoteDisconnectUseCase>()) }
     viewModel { SettingsViewModel(get(), get(), get()) }
     viewModel { SessionGateViewModel(get()) }
 }
