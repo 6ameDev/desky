@@ -173,8 +173,9 @@ inline bool derivePairRefreshPsk(const uint8_t oldPsk[kPskLen], uint16_t nextEra
 }
 
 // PairingTask: pairing/auth session policy + PIN PairShow link stage +
-// atomic auth service. Owns ALL session state: paired_, psk_, lastCounter_,
-// era_, validCount_, pairCore_, the LastPair redelivery cache, pendingCode_/pendingValid_,
+// atomic auth service. Owns ALL session state: paired_, psk_,
+// fromAppCounter_ (app->robot receive domain), toAppCounter_ (robot->app
+// send domain), era_, validCount_, pairCore_, the LastPair redelivery cache, pendingCode_/pendingValid_,
 // and the dropFirst flags for the retained handlers. The open window's 6-digit
 // code + valid-seconds go out once per window via publishPairShow (transport only
 // unicasts); completion goes out via notifyPairingDone (empty PairDone frame,
@@ -209,7 +210,8 @@ class PairingTask : public transport::IPairingSession {
         link_(nullptr),
         pairCore_(),
         psk_{},
-        lastCounter_(0),
+        fromAppCounter_(0),
+        toAppCounter_(0),
         paired_(false),
         era_(0),
         validCount_(0),
@@ -248,7 +250,9 @@ class PairingTask : public transport::IPairingSession {
     bool storedPair = false;
     if (ConfigStore::loadPair(loadedPsk, storedCtr, storedPair) && storedPair) {
       paired_ = true;
-      lastCounter_ = storedCtr;
+      fromAppCounter_ = storedCtr;
+      toAppCounter_ = ConfigStore::loadToAppCounter();
+      evictRemaining_ = 0;
       era_ = ConfigStore::loadEra();
       for (size_t i = 0; i < sizeof(psk_); ++i) {
         psk_[i] = loadedPsk[i];
@@ -257,8 +261,10 @@ class PairingTask : public transport::IPairingSession {
             static_cast<unsigned>(era_));
     } else {
       paired_ = false;
-      lastCounter_ = 0;
+      fromAppCounter_ = 0;
+      toAppCounter_ = 0;
       era_ = 0;
+      evictRemaining_ = 0;
       pendingValid_ = false;
       pairShowSent_ = false;
       LOG_I("UDP", "unpaired idle, press pair button to pair");
@@ -295,13 +301,11 @@ class PairingTask : public transport::IPairingSession {
     return true;
   }
 
-  // Evicts the owner with an authenticated DISCONNECT, then clears and
-  // re-opens the window. No peer pinned -> the send is skipped.
+  // Evicts the owner with an authenticated DISCONNECT burst, then clears
+  // and re-opens the window. No peer pinned -> the send is skipped.
   bool enterPairMode(transport::IUdpTransport& t, uint32_t nowMs) {
-    (void)nowMs;
     const bool wasPaired = paired_;
     const uint16_t wasEra = era_;
-    const uint32_t wasCounter = lastCounter_;
     uint8_t wasPsk[16];
     for (size_t i = 0; i < sizeof(wasPsk); ++i) {
       wasPsk[i] = psk_[i];
@@ -315,44 +319,52 @@ class PairingTask : public transport::IPairingSession {
       const uint32_t peerU32 = connection::ipToU32(wasIp[0], wasIp[1], wasIp[2], wasIp[3]);
       havePeer = (conn_ != nullptr && conn_->havePeer()) || peerU32 != 0 || wasPort != 0;
     }
+    uint8_t frame[pairing::kDisconnectSize] = {};
+    uint32_t ctr = 0;
+    bool haveFrame = false;
     if (wasPaired && havePeer) {
-      uint32_t ctr = wasCounter + 1;
-      if (ctr == 0) {
-        ctr = 1;
+      ctr = nextToAppCounter();
+      haveFrame = composeEvictFrame(wasEra, ctr, wasPsk, frame);
+      if (haveFrame) {
+        t.sendDisconnect(wasIp, wasPort, frame, sizeof(frame));
       }
-      uint8_t msg[pairing::kDisconnectMsgLen];
-      pairing::disconnectTagMsg(wasEra, ctr, msg);
-      uint8_t mac[32];
-      const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-      int rc = -1;
-      if (md != nullptr) {
-        rc = mbedtls_md_hmac(md, wasPsk, sizeof(wasPsk), msg, sizeof(msg), mac);
-      }
-      mbedtls_platform_zeroize(msg, sizeof(msg));
-      if (rc == 0) {
-        uint8_t out[pairing::kDisconnectSize];
-        out[0] = pairing::kDisconnectHeader;
-        out[1] = static_cast<uint8_t>((wasEra >> 8) & 0xFFu);
-        out[2] = static_cast<uint8_t>(wasEra & 0xFFu);
-        out[3] = static_cast<uint8_t>((ctr >> 24) & 0xFFu);
-        out[4] = static_cast<uint8_t>((ctr >> 16) & 0xFFu);
-        out[5] = static_cast<uint8_t>((ctr >> 8) & 0xFFu);
-        out[6] = static_cast<uint8_t>(ctr & 0xFFu);
-        for (size_t i = 0; i < pairing::kDisconnectTagLen; ++i) {
-          out[7 + i] = mac[i];
-        }
-        uint8_t xorSum = 0;
-        for (size_t i = 0; i + 1 < sizeof(out); ++i) {
-          xorSum ^= out[i];
-        }
-        out[sizeof(out) - 1] = xorSum;
-        t.sendDisconnect(wasIp, wasPort, out, sizeof(out));
-      }
-      mbedtls_platform_zeroize(mac, sizeof(mac));
     }
     mbedtls_platform_zeroize(wasPsk, sizeof(wasPsk));
     clearPair();
+    if (haveFrame) {
+      for (size_t i = 0; i < sizeof(evictFrame_); ++i) {
+        evictFrame_[i] = frame[i];
+      }
+      evictIp_ = wasIp;
+      evictPort_ = wasPort;
+      evictCtr_ = ctr;
+      evictRemaining_ = pairing::kEvictBurstResends;
+      evictDueMs_ = nowMs + pairing::kEvictBurstGapMs;
+      LOG_I("UDP", "evict sent ctr=%lu resends=%u", static_cast<unsigned long>(ctr),
+            static_cast<unsigned>(evictRemaining_));
+    }
+    mbedtls_platform_zeroize(frame, sizeof(frame));
     return openPairingWindow();
+  }
+
+  // Eviction-burst pump: ability-side policy half of the pair-button goodbye.
+  // Called from the main loop: while resends remain and the gap has elapsed
+  // (wrap-safe), re-unicasts the staged byte-identical frame via the
+  // transport's dumb send. Transport never touches the staged bytes beyond
+  // the pointer + length. Logs counters only.
+  bool pumpEvictionBurst(transport::IUdpTransport& t, uint32_t nowMs) {
+    if (evictRemaining_ == 0) {
+      return false;
+    }
+    if ((nowMs - evictDueMs_) >= 0x80000000u) {
+      return false;
+    }
+    t.sendDisconnect(evictIp_, evictPort_, evictFrame_, sizeof(evictFrame_));
+    --evictRemaining_;
+    evictDueMs_ += pairing::kEvictBurstGapMs;
+    LOG_I("UDP", "evict resend ctr=%lu left=%u", static_cast<unsigned long>(evictCtr_),
+          static_cast<unsigned>(evictRemaining_));
+    return true;
   }
 
   // PIN link pump: ability-side policy half of the head display path. Called
@@ -403,7 +415,7 @@ class PairingTask : public transport::IPairingSession {
   // Last-consumed-counter read for the logging-only freshness pre-checks in
   // the opcode handlers. The authoritative freshness gate is inside tryConsume
   // (same thread, no interleaving between pre-check and commit).
-  uint32_t lastCounter() const override { return lastCounter_; }
+  uint32_t fromAppCounter() const override { return fromAppCounter_; }
 
   // Atomic session-auth service: separates proving a frame belongs to the
   // session from acting on it. Folds paired_ + eraOk + counter freshness +
@@ -426,7 +438,7 @@ class PairingTask : public transport::IPairingSession {
     bool fresh = false;
     bool hmacOk = false;
     if (paired_ && eraOk && tag != nullptr && msg != nullptr && msgLen != 0) {
-      fresh = (ctr != lastCounter_) && ((ctr - lastCounter_) < 0x80000000u);
+      fresh = (ctr != fromAppCounter_) && ((ctr - fromAppCounter_) < 0x80000000u);
       if (fresh) {
         uint8_t mac[32];
         const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
@@ -453,12 +465,12 @@ class PairingTask : public transport::IPairingSession {
     if (!verified.valid()) {
       return verified;  // Zero state change on any failure (fail-closed).
     }
-    lastCounter_ = ctr;
+    fromAppCounter_ = ctr;
     ++validCount_;
     // Robot-side persist cadence matches the interval advertised in PAIR_OK
     // (pairing::kPairPersistDefault); the app mirrors it per negotiated byte.
     if ((validCount_ % pairing::kPairPersistDefault) == 0) {
-      ConfigStore::saveCounter(lastCounter_);  // Periodic persist, never per-packet (flash wear).
+      ConfigStore::saveCounter(fromAppCounter_);  // Periodic persist, never per-packet (flash wear).
     }
     return verified;
   }
@@ -492,10 +504,12 @@ class PairingTask : public transport::IPairingSession {
   bool clearPair() {
     pairCore_.clearPair();
     paired_ = false;
-    lastCounter_ = 0;
+    fromAppCounter_ = 0;
+    toAppCounter_ = 0;
     conn_->clear();
     era_ = 0;
     validCount_ = 0;
+    evictRemaining_ = 0;
     mbedtls_platform_zeroize(psk_, sizeof(psk_));
     lastPair_.valid = false;
     mbedtls_platform_zeroize(lastPair_.code6, sizeof(lastPair_.code6));
@@ -638,8 +652,9 @@ class PairingTask : public transport::IPairingSession {
       for (size_t i = 0; i < sizeof(psk_); ++i) {
         psk_[i] = newPsk[i];
       }
-      lastCounter_ = 0;
-      era_ = 0;  // Fresh pair starts era 0 (savePair persists it).
+      fromAppCounter_ = 0;
+      toAppCounter_ = 0;  // Fresh pair resets the send domain (savePair persists it).
+      era_ = 0;           // Fresh pair starts era 0 (savePair persists it).
       paired_ = true;
       pendingValid_ = false;      // Code burned: the window is consumed.
       pairShowSent_ = false;      // Closed window unlatches the pump.
@@ -705,7 +720,7 @@ class PairingTask : public transport::IPairingSession {
     }
     const uint32_t ctr = (static_cast<uint32_t>(buf[1]) << 24) | (static_cast<uint32_t>(buf[2]) << 16) |
                          (static_cast<uint32_t>(buf[3]) << 8) | static_cast<uint32_t>(buf[4]);
-    if (!t.isFreshCounter(lastCounter_, ctr)) {
+    if (!t.isFreshCounter(fromAppCounter_, ctr)) {
       dropFirst(firstUnpairDrop_, "drop unpair replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
       LOG_EVERY_N(20, "UDP", "drop unpair replay ctr=%lu", static_cast<unsigned long>(ctr));
       return;
@@ -732,13 +747,15 @@ class PairingTask : public transport::IPairingSession {
     }
     // Fold the passed prechecks into Verified (per-cause drops+logs above
     // stay verbatim), consumed by the refresh-then-clear below.
-    const connection::Checks unpairChecks{paired_, true, t.isFreshCounter(lastCounter_, ctr), ok};
+    const connection::Checks unpairChecks{paired_, true, t.isFreshCounter(fromAppCounter_, ctr), ok};
     connection::Verified unpairVerified = connection::AuthVerifier::verify(unpairChecks, ctr, era_);
     ConfigStore::clearPair();
     pairCore_.onUnpaired();  // PairingExchange forward (superset of clearPair: +era/pairMs reset).
     mbedtls_platform_zeroize(psk_, sizeof(psk_));
     paired_ = false;
-    lastCounter_ = 0;
+    fromAppCounter_ = 0;
+    toAppCounter_ = 0;
+    evictRemaining_ = 0;
     era_ = 0;
     // Refresh-then-clear: the signed goodbye still proves the owner was alive
     // at nowMs; the net peer is gone.
@@ -799,7 +816,7 @@ class PairingTask : public transport::IPairingSession {
     }
     const uint32_t ctr = (static_cast<uint32_t>(buf[3]) << 24) | (static_cast<uint32_t>(buf[4]) << 16) |
                          (static_cast<uint32_t>(buf[5]) << 8) | static_cast<uint32_t>(buf[6]);
-    if (!t.isFreshCounter(lastCounter_, ctr)) {
+    if (!t.isFreshCounter(fromAppCounter_, ctr)) {
       dropFirst(firstPairRefreshDrop_, "drop pair-refresh replay ctr=%lu (first of boot)",
                 static_cast<unsigned long>(ctr));
       LOG_EVERY_N(20, "UDP", "drop pair-refresh replay ctr=%lu", static_cast<unsigned long>(ctr));
@@ -828,7 +845,7 @@ class PairingTask : public transport::IPairingSession {
     // Fold the passed prechecks into Verified (per-cause drops+logs above
     // stay verbatim).
     const connection::Checks pairRefreshChecks{paired_, era == static_cast<uint16_t>(era_ + 1),
-                                               t.isFreshCounter(lastCounter_, ctr), ok};
+                                               t.isFreshCounter(fromAppCounter_, ctr), ok};
     connection::Verified pairRefreshVerified = connection::AuthVerifier::verify(pairRefreshChecks, ctr, era);
     uint8_t nextPsk[pairing::kPskLen];
     if (!pairing::derivePairRefreshPsk(psk_, era, nextPsk)) {
@@ -848,7 +865,8 @@ class PairingTask : public transport::IPairingSession {
     mbedtls_platform_zeroize(nextPsk, sizeof(nextPsk));
     era_ = era;
     pairCore_.onPairRefreshApplied(era);  // PairingExchange forward (same point, same order).
-    lastCounter_ = 0;
+    fromAppCounter_ = 0;
+    toAppCounter_ = 0;  // Rotation resets both counter domains (savePairRefresh persists it).
     validCount_ = 0;
     // Alive funnel BEFORE the ACK below.
     connection::Pinned pairRefreshPinned = t.markAlive(std::move(pairRefreshVerified), rip, rport, nowMs, era_);
@@ -860,6 +878,51 @@ class PairingTask : public transport::IPairingSession {
   }
 
  private:
+  // Robot->app send-domain step: strictly increasing, persisted on every
+  // authenticated robot->app send. Evictions are rare; direct save is fine.
+  uint32_t nextToAppCounter() {
+    toAppCounter_ = pairing::nextToAppCounter(toAppCounter_);
+    ConfigStore::saveToAppCounter(toAppCounter_);
+    return toAppCounter_;
+  }
+
+  // DISCONNECT 14B composer under an explicit era/psk (the eviction path
+  // stamps under the CURRENT session before clearing). False on HMAC failure
+  // (no send). Key material never logged.
+  static bool composeEvictFrame(uint16_t era, uint32_t ctr, const uint8_t psk[16],
+                                uint8_t out[pairing::kDisconnectSize]) {
+    uint8_t msg[pairing::kDisconnectMsgLen];
+    pairing::disconnectTagMsg(era, ctr, msg);
+    uint8_t mac[32];
+    const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    int rc = -1;
+    if (md != nullptr) {
+      rc = mbedtls_md_hmac(md, psk, 16, msg, sizeof(msg), mac);
+    }
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    if (rc != 0) {
+      mbedtls_platform_zeroize(mac, sizeof(mac));
+      return false;
+    }
+    out[0] = pairing::kDisconnectHeader;
+    out[1] = static_cast<uint8_t>((era >> 8) & 0xFFu);
+    out[2] = static_cast<uint8_t>(era & 0xFFu);
+    out[3] = static_cast<uint8_t>((ctr >> 24) & 0xFFu);
+    out[4] = static_cast<uint8_t>((ctr >> 16) & 0xFFu);
+    out[5] = static_cast<uint8_t>((ctr >> 8) & 0xFFu);
+    out[6] = static_cast<uint8_t>(ctr & 0xFFu);
+    for (size_t i = 0; i < pairing::kDisconnectTagLen; ++i) {
+      out[7 + i] = mac[i];
+    }
+    mbedtls_platform_zeroize(mac, sizeof(mac));
+    uint8_t xorSum = 0;
+    for (size_t i = 0; i + 1 < pairing::kDisconnectSize; ++i) {
+      xorSum ^= out[i];
+    }
+    out[pairing::kDisconnectSize - 1] = xorSum;
+    return true;
+  }
+
   // PAIR_REFRESH_ACK 10B composer: [0x54|eraBE2|tag6|XOR] with tag =
   // first6(HMAC-SHA256(newPsk, "PAIRREFRESHACK"||eraBE2)). `psk_` IS the new key at
   // both call sites. False on HMAC failure (no send). Key material never
@@ -912,7 +975,11 @@ class PairingTask : public transport::IPairingSession {
   LinkServer* link_;
   pairing::Core pairCore_;
   uint8_t psk_[16];
-  uint32_t lastCounter_;
+  // Per-link counter domains, session-scoped with PSK+era: fromAppCounter_
+  // consumes the app->robot stream (drive/alive/unpair/refresh, verified via
+  // tryConsume); toAppCounter_ stamps the robot->app stream (evictions).
+  uint32_t fromAppCounter_;
+  uint32_t toAppCounter_;
   bool paired_;
   // Tier-1 pair-refresh era (u16, NVS; fresh pair resets to 0). DRIVE carries no
   // era — post-switch old-key frames drop via HMAC.
@@ -929,6 +996,16 @@ class PairingTask : public transport::IPairingSession {
   // frame is handed to the radio; cleared when the window closes or the pair
   // clears. Main-loop-written.
   bool pairShowSent_ = false;
+  // Staged eviction burst (pair-button DISCONNECT resends): the byte-identical
+  // frame composed under the cleared session + its peer + remaining resends +
+  // next-due timestamp + stamped counter (log-only). Drained by the main-loop
+  // pump; cleared with the pair. Transport only unicasts the staged bytes.
+  uint8_t evictFrame_[pairing::kDisconnectSize] = {};
+  IPAddress evictIp_;
+  uint16_t evictPort_ = 0;
+  uint32_t evictCtr_ = 0;
+  uint8_t evictRemaining_ = 0;
+  uint32_t evictDueMs_ = 0;
   // Last PAIR_OK redelivery cache (RAM-only, never persisted): an identical
   // PAIR_REQ inside kRedeliveryMs re-unicasts the cached bytes. Invalidated
   // on reboot, clearPair, and signed UNPAIR; secrets zeroized alongside psk_.

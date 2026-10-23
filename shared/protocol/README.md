@@ -111,11 +111,20 @@ neither side may extend unilaterally:
 
 Constants: code = 6 ASCII digits (`esp_random`, CSPRNG); single-use,
 5-min window, 5 bad tries -> 30s lockout; PSK = 16 bytes (`esp_random`);
-counter = 32-bit BE, first drive packet uses 1 (0 is reserved as the pair
-baseline and never valid on the wire), strictly increasing, persisted
-periodically;
+counter = 32-bit BE, 0 never goes on the wire (pair baseline), strictly
+increasing, persisted periodically;
 `KEK = HKDF-SHA256(salt=client_nonce||server_nonce, IKM=code ASCII,
 info="desky-pair-v1", L=16)`.
+
+Per-link counter domains: every authenticated link holds from{Peer}/
+to{Peer} counter pairs scoped to that peer's session (PSK+era). The
+app->robot stream (DRIVE/ALIVE/UNPAIR/PAIR_REFRESH_REQ) rides the app's
+toRobotCounter, verified against the robot's fromAppCounter (first drive
+packet uses 1). The robot->app stream (pair-button DISCONNECT eviction)
+rides the robot's toAppCounter (starts at 1 per pair), verified against
+the app's fromRobotCounter. Neither domain ever reuses the other's
+values; both reset to the pair baseline on fresh pair and on
+pair-refresh rotation.
 
 - `PAIR_REQ` App -> Robot, 12 bytes:
   `[0x50 | code 6B ASCII | client_nonce 4B | XOR]`
@@ -158,7 +167,7 @@ info="desky-pair-v1", L=16)`.
   with `tag = first6(HMAC-SHA256(oldPsk, "PAIRREFRESH"||eraBE2||counterBE4))` —
   the 17B message is the 11 ASCII bytes of `"PAIRREFRESH"` + the 2B big-endian
   requested era (stored era + 1, u16 wrap mod 65536) + the 4B big-endian
-  counter (fresh per `isFreshCounter`, allocated from the shared holder).
+  counter (fresh per `isFreshCounter`, allocated from the app's toRobotCounter).
 - `PAIR_REFRESH_ACK` Robot -> App, 10 bytes:
   `[0x54 | eraBE2 | tag 6B | XOR]`
   with `tag = first6(HMAC-SHA256(newPsk, "PAIRREFRESHACK"||eraBE2))` — the 16B
@@ -169,9 +178,9 @@ info="desky-pair-v1", L=16)`.
   with `tag = first6(HMAC-SHA256(psk, "ALIVE"||eraBE2||counterBE4))` —
   the 11B message is the 5 ASCII bytes of `"ALIVE"` + the 2B big-endian
   CURRENT era (stored era; a pair-refresh moves it) + the 4B big-endian counter
-  (fresh per `isFreshCounter`, allocated from the shared holder — a valid
-  ALIVE consumes `lastCounter_` exactly like drive, so a replayed ALIVE
-  can never refresh twice).
+  (fresh per `isFreshCounter`, allocated from the app's toRobotCounter — a
+  valid ALIVE consumes the robot's fromAppCounter exactly like drive, so a
+  replayed ALIVE can never refresh twice).
 - `DISCONNECT` 14 bytes (graceful goodbye, fire-and-forget,
   no reply), same layout both directions:
   `[0x56 | eraBE2 | counterBE4 | tag 6B | XOR]`
@@ -180,10 +189,13 @@ info="desky-pair-v1", L=16)`.
   counterBE4. App -> Robot: verify order mirrors ALIVE. Pass runs
   refresh-then-clear like UNPAIR (alive timestamp refreshed, net peer
   dropped) but the pair is KEPT: the next launch rejoins instantly.
-  Never drives. Robot -> App: the physical pair button sends exactly one
-  frame with counter last+1 (0 never goes on the wire) before clearing
-  its own pair and opening a window; the app verifies the same way and
-  on pass clears its vault + Room row. No retry either direction.
+  Never drives. Robot -> App: the physical pair button sends a burst of 3
+  byte-identical frames ~50ms apart (first at press, then 2 resends via a
+  non-blocking pump) stamped from the robot's toAppCounter — the per-link
+  send domain, starts at 1 per pair, strictly increasing, session-scoped
+  with PSK+era — before clearing its own pair and opening a window; the
+  app verifies against its fromRobotCounter and on pass clears its vault
+  + Room row. No retry beyond the burst either direction.
   Headers `0x55`/`0x56` are claimed here — never reuse
   `0xAA`/`0xAC`/`0xBB`/`0x50`/`0x51`/`0x52`/`0x53`/`0x54`/`0xAD`.
 

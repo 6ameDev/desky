@@ -163,6 +163,7 @@ void loop() {
   // linked -> the pumps wait silently. Duplicate protection is the link
   // seq/ACK machinery.
   g_pairing.publishPairShow(g_link);
+  g_pairing.pumpEvictionBurst(g_udp, millis());
   g_otaStage.pumpOtaLink(g_link);
   // Telemetry consumer: snapshot + encode + publish at CFG_TELEMETRY_HZ
   // through the transport's dumb send (outer cadence inside poll —

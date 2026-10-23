@@ -88,13 +88,13 @@ void test_units_pair_refresh_margin_seconds() {
   // the fail-closed exhaustion gate, leaving seconds (not frames) of
   // headroom for the 3x 1s PAIR_REFRESH_REQ/ACK exchange plus retries. Pinned as a
   // rate-parameterized relation (seconds = frames / Hz), never a bare 20.
-  // Tree values: margin is 1000 frames (app-side DriveCounter.PAIR_REFRESH_MARGIN,
-  // client/.../DriveCounter.kt:239 — no firmware constexpr exists, and the
+  // Tree values: margin is 1000 frames (app-side ToRobotCounter.PAIR_REFRESH_MARGIN,
+  // client/.../ToRobotCounter.kt — no firmware constexpr exists, and the
   // brief's "50" matches nothing in-tree, so it is NOT pinned here) at the
   // spec 50Hz drive rate (telemetry-phase2-spec.md:11, README §pair-refresh).
   const uint32_t kDriveHz = 50;
-  const uint32_t kMarginFrames = 1000;  // == DriveCounter.PAIR_REFRESH_MARGIN
-  const uint32_t kGate = 0xFFFFFF00u;   // == DriveCounter.EXHAUSTION_GATE
+  const uint32_t kMarginFrames = 1000;  // == ToRobotCounter.PAIR_REFRESH_MARGIN
+  const uint32_t kGate = 0xFFFFFF00u;   // == ToRobotCounter.EXHAUSTION_GATE
   TEST_ASSERT_EQUAL_UINT32(1000, kMarginFrames);
   TEST_ASSERT_EQUAL_UINT32(0xFFFFFB18u, kGate - kMarginFrames);
   TEST_ASSERT_EQUAL_UINT32(20000, kMarginFrames * 1000u / kDriveHz);

@@ -94,6 +94,22 @@ class RoomRepositoriesTest {
     }
 
     @Test
+    fun deviceMappingRoundTripsLastRobotCounter() {
+        val device = PairedDevice(
+            id = "desky-192.168.4.1",
+            ip = "192.168.4.1",
+            port = 3333,
+            authToken = "psk-v1",
+            lastCounter = 100u,
+            alias = "192.168.4.1",
+            persistEvery = 128,
+            era = 1u,
+            lastRobotCounter = 77u,
+        )
+        assertEquals(device, device.toEntity().toDomain())
+    }
+
+    @Test
     fun configMappingRoundTrip() {
         val config = RobotConfig(
             speedLimit = 0.6f,
@@ -213,6 +229,7 @@ class RoomRepositoriesTest {
                 alias = "192.168.4.1",
                 persistEvery = 128,
                 era = 0u,
+                lastRobotCounter = 77u,
             ),
         )
 
@@ -223,6 +240,30 @@ class RoomRepositoriesTest {
             assertEquals(0u, device.lastCounter)
             assertEquals(1u, device.era)
             assertEquals(128, device.persistEvery, "rotation keeps the negotiated cadence")
+            assertEquals(0u, device.lastRobotCounter, "rotation resets the receive domain")
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun updateRobotCounterPersistsKeepingRow() = runTest {
+        val repo = RoomDeviceRepository(db.pairedDeviceDao())
+        repo.save(
+            PairedDevice(
+                id = "desky-192.168.4.1",
+                ip = "192.168.4.1",
+                authToken = "psk-v1",
+                lastCounter = 5000u,
+                alias = "192.168.4.1",
+            ),
+        )
+
+        repo.updateRobotCounter("desky-192.168.4.1", 5u)
+
+        repo.observePaired().test {
+            val device = assertNotNull(awaitItem())
+            assertEquals(5u, device.lastRobotCounter)
+            assertEquals(5000u, device.lastCounter, "send watermark untouched by the receive persist")
             cancelAndIgnoreRemainingEvents()
         }
     }

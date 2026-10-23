@@ -37,9 +37,20 @@ interface PairedDeviceDao {
      * counter (0 — the first post-pair-refresh drive uses 1, same as a fresh
      * pair). Called once per confirmed `PAIR_REFRESH_ACK` by the pair-refresh use case;
      * keeps the row (the vault PSK update is a separate call).
+     * Also resets the receive-domain watermark (`lastRobotCounter = 0`):
+     * the robot restarts its own send sequence with the new era.
      */
-    @Query("UPDATE paired_device SET lastCounter = :counter, era = :era WHERE id = :deviceId")
+    @Query("UPDATE paired_device SET lastCounter = :counter, era = :era, lastRobotCounter = 0 WHERE id = :deviceId")
     suspend fun updatePairRefresh(deviceId: String, counter: Long, era: Int)
+
+    /**
+     * Persist an accepted robot-originated counter mid-session (called on
+     * every verified robot frame by the receive domain — evictions are
+     * rare, so direct persist, no cadence). Keeps the row; keyed by the
+     * peer id.
+     */
+    @Query("UPDATE paired_device SET lastRobotCounter = :counter WHERE id = :deviceId")
+    suspend fun updateRobotCounter(deviceId: String, counter: Long)
 }
 
 @Dao

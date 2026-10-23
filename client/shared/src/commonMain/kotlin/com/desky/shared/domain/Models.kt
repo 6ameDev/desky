@@ -70,6 +70,13 @@ data class Telemetry(
  * every silent era+PSK rotation increments it and resets [lastCounter] to
  * the pair baseline (0 persisted, first post-pair-refresh drive uses 1). Never
  * shown in UI state — domain/session fields only.
+ * [lastRobotCounter] is the receive-domain watermark: the last
+ * robot-originated counter accepted (`DISCONNECT` evictions travel
+ * robot -> app on the robot's own sequence starting at 1 per pair —
+ * verified by [ObserveRemoteDisconnectUseCase] against
+ * [FromRobotCounter], never against the send sequence). Room-persisted
+ * (v6 column, default 0 = fresh-pair baseline); reset to 0 on every
+ * pair success and refresh switch, alongside the send baseline.
  */
 data class PairedDevice(
     val id: String,
@@ -78,8 +85,9 @@ data class PairedDevice(
     val authToken: String,
     val lastCounter: UInt = 0u,
     val alias: String = ip,
-    val persistEvery: Int = DriveCounter.COUNTER_PERSIST_EVERY,
+    val persistEvery: Int = ToRobotCounter.COUNTER_PERSIST_EVERY,
     val era: UShort = 0u,
+    val lastRobotCounter: UInt = 0u,
 )
 
 /** Plain robot settings holder (persistence lives elsewhere). */

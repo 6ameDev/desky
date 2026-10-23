@@ -248,5 +248,25 @@ void test_pair_wire_reasons_frozen() {
   TEST_ASSERT_EQUAL_UINT8(0xFF, pairing::toWireReason(pairing::Result::kOk));
 }
 
+// Robot->app send-domain step (per-link counter split): strictly increasing
+// from the pair baseline, 0 never goes on the wire. Host-pins the helper the
+// firmware eviction path steps through.
+void test_toapp_counter_increments_from_baseline() {
+  TEST_ASSERT_EQUAL_UINT32(1, pairing::nextToAppCounter(0));
+  TEST_ASSERT_EQUAL_UINT32(2, pairing::nextToAppCounter(1));
+  TEST_ASSERT_EQUAL_UINT32(101, pairing::nextToAppCounter(100));
+}
+
+void test_toapp_counter_skips_zero_on_wrap() {
+  TEST_ASSERT_EQUAL_UINT32(1, pairing::nextToAppCounter(0xFFFFFFFFu));
+  TEST_ASSERT_EQUAL_UINT32(1, pairing::nextToAppCounter(0xFFFFFFFEu + 1u));
+}
+
+void test_evict_burst_shape() {
+  TEST_ASSERT_EQUAL_UINT8(3, pairing::kEvictBurstSends);
+  TEST_ASSERT_EQUAL_UINT8(2, pairing::kEvictBurstResends);
+  TEST_ASSERT_EQUAL_UINT32(50, pairing::kEvictBurstGapMs);
+}
+
 // Runner lives in test_udp_codec.cpp (single main for the native-test
 // binary): the pairing tests are declared extern there.

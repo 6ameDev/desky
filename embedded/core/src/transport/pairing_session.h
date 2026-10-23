@@ -70,7 +70,7 @@ class IPairingSession {
   virtual void restorePair() = 0;
   virtual bool isPaired() const = 0;
   virtual uint16_t era() const = 0;
-  virtual uint32_t lastCounter() const = 0;
+  virtual uint32_t fromAppCounter() const = 0;
   // Atomic session verify: folds paired + eraOk + freshness + HMAC into one
   // step. On success consumes the counter and mints a valid token; on any
   // failure returns invalid with zero state change.

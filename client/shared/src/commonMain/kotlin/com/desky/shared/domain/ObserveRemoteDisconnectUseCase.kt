@@ -8,10 +8,10 @@ import kotlinx.coroutines.flow.mapNotNull
 /**
  * Core-originated `DISCONNECT` eviction observer (physical pair-button
  * press: the robot sends exactly one authenticated `DISCONNECT`
- * (`[0x56 | eraBE2 | counterBE4 | tag6 | XOR]`, counter `last+1`,
- * fire-and-forget, no retry) before clearing its own pair and opening a
- * window — see `shared/protocol/README.md` §"ALIVE + DISCONNECT + robot
- * alive rule").
+ * (`[0x56 | eraBE2 | counterBE4 | tag6 | XOR]`, counter from the robot's
+ * OWN send sequence starting at 1 per pair, fire-and-forget, no retry)
+ * before clearing its own pair and opening a window — see
+ * `shared/protocol/README.md` §"ALIVE + DISCONNECT + robot alive rule").
  *
  * Dispatch rides the shared [UdpSocketManager.incoming] flow (no new
  * network stack): non-`0x56` datagrams (telemetry, pairing replies) pass
@@ -20,24 +20,35 @@ import kotlinx.coroutines.flow.mapNotNull
  * Verify order (mirrors the firmware receive funnel): len -> header ->
  * XOR ([decodeDisconnect]) -> paired (Room row + vault PSK present) ->
  * era equals the stored era -> counter wrap-aware strictly greater than
- * the live sequence (same idiom as firmware `isFreshCounter`) -> tag
+ * the RECEIVE sequence ([FromRobotCounter], same idiom as firmware
+ * `isFreshCounter` — never the send sequence: the two 32-bit domains
+ * advance independently, so a busy drive loop can no longer starve an
+ * eviction stamp) -> tag
  * `first6(HMAC-SHA256(psk, "DISCONNECT" || era || counter))` in
  * constant time. Every `0x56` candidate logs one debug line at entry
  * (never key material — lengths and booleans only); any failure drops
  * silently with no state change. The unpaired case needs no extra branch:
  * with no Room row (hence no PSK) verify fails on its own down the same
- * path.
+ * path. Burst duplicates (same counter) drop as stale after the first —
+ * idempotent, no special-casing.
  *
- * On pass the local pair is forgotten WITHOUT any reply packet (the robot
- * already cleared itself — an `UNPAIR` would be a dead send, so this
- * deliberately does NOT go through [ForgetDeviceUseCase.invoke], which
- * best-effort sends one): Room row deleted first (a throw leaves the vault
- * entry referenced by the surviving row, same order as [ForgetDeviceUseCase]),
- * then the vault entry, then the shared [DriveCounter] era reset. The
- * control ViewModel's existing unpair branch (repo null -> pause the send
- * loop, drop the session cache, surface Unpaired) plus the global session
- * gate (repo null -> force to Pairing) own the UI convergence — this flow
- * just emits [Unit] per verified eviction for correlation logging.
+ * Rollout safety: the app ships first safely — an old core never sends
+ * `0x56` robot -> app, so this verify path is inert until the firmware
+ * half lands (no frame ever enters verify before then).
+ *
+ * On pass the accepted counter is consumed (persisted via
+ * [FromRobotCounter.consume]), then the local pair is forgotten WITHOUT
+ * any reply packet (the robot already cleared itself — an `UNPAIR` would
+ * be a dead send, so this deliberately does NOT go through
+ * [ForgetDeviceUseCase.invoke], which best-effort sends one): Room row
+ * deleted first (a throw leaves the vault entry referenced by the
+ * surviving row, same order as [ForgetDeviceUseCase]), then the vault
+ * entry, then both counter holders reset (send [ToRobotCounter] era +
+ * receive [FromRobotCounter] peer). The control ViewModel's existing
+ * unpair branch (repo null -> pause the send loop, drop the session
+ * cache, surface Unpaired) plus the global session gate (repo null ->
+ * force to Pairing) own the UI convergence — this flow just emits [Unit]
+ * per verified eviction for correlation logging.
  * Cancellation is never swallowed.
  */
 class ObserveRemoteDisconnectUseCase(
@@ -45,7 +56,8 @@ class ObserveRemoteDisconnectUseCase(
     private val deviceRepo: DeviceRepository,
     private val getPairPsk: GetPairPskUseCase,
     private val secretStore: PairSecretStore,
-    private val driveCounter: DriveCounter,
+    private val toRobotCounter: ToRobotCounter,
+    private val fromRobotCounter: FromRobotCounter,
 ) {
     /** Hot stream of verified core-originated evictions (local forget runs per emission). */
     fun observe(): Flow<Unit> =
@@ -76,20 +88,23 @@ class ObserveRemoteDisconnectUseCase(
             }
             if (psk == null || psk.size != 16) return null
             if (era != device.era) return null
-            // Freshness against the LIVE sequence, not the Room watermark:
-            // the watermark is write-ahead (up to one persist cadence past
-            // the live counter), so the robot's last+1 would read stale
-            // against it in steady state. Fall back to the watermark only
-            // when the holder has no era yet (cold start, loop never ran).
-            driveCounter.ensure(device.id, device.lastCounter, device.persistEvery, device.era)
-            val lastSeen = driveCounter.current() ?: device.lastCounter
-            if (!isFreshCounter(lastSeen, counter)) return null
+            // Freshness against the LIVE receive sequence, not the send
+            // sequence and not the Room watermark: the watermark is the
+            // last ACCEPTED robot counter (evictions are rare — persisted
+            // on accept), so it only leads the live holder when the holder
+            // has no peer yet (cold start, no eviction seen). Fall back to
+            // the watermark only then.
+            fromRobotCounter.ensure(device.id, device.lastRobotCounter)
+            val lastSeen = fromRobotCounter.current() ?: device.lastRobotCounter
+            if (!FromRobotCounter.isFresh(lastSeen, counter)) return null
             val expected = disconnectTag(psk, era, counter)
             if (!constantTimeEquals(tag, expected)) return null
             try {
+                fromRobotCounter.consume(counter)
                 deviceRepo.clear()
                 secretStore.clear(device.id)
-                driveCounter.reset()
+                toRobotCounter.reset()
+                fromRobotCounter.reset()
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -112,10 +127,10 @@ class ObserveRemoteDisconnectUseCase(
          * Wrap-aware strictly-greater for the 32-bit counter. Unsigned
          * subtraction: wrap-safe across the 2^32 rollover; a diff of exactly
          * half the range is rejected as ambiguous. Exact mirror of firmware
-         * `udpstatus::isFreshCounter`.
+         * `udpstatus::isFreshCounter` (canonical in [FromRobotCounter]).
          */
         fun isFreshCounter(lastSeen: UInt, got: UInt): Boolean =
-            got != lastSeen && (got - lastSeen) < 0x80000000u
+            FromRobotCounter.isFresh(lastSeen, got)
 
         /** Length-sensitive constant-time equality (tag comparison only — never log inputs). */
         fun constantTimeEquals(a: ByteArray, b: ByteArray): Boolean {

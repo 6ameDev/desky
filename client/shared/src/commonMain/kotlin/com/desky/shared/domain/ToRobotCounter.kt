@@ -4,7 +4,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * Single source of truth for the app's drive counter (pairing/auth).
+ * Single source of truth for the app-to-robot send counter (pairing/auth).
  *
  * Every counter-bearing send app-wide allocates here — the drive-loop tick,
  * the immediate e-stop frame (both via `RobotControlViewModel`), and the
@@ -21,8 +21,13 @@ import kotlinx.coroutines.sync.withLock
  * Threading: internally serialized with a [Mutex]; callers that also need
  * the session mutex (the VM's loop tick vs. immediate e-stop) hold that one
  * outside — lock order is always session-then-holder, never the reverse.
+ *
+ * Send domain only: robot-originated frames (`DISCONNECT` evictions) verify
+ * against the separate receive domain ([FromRobotCounter]) — the two 32-bit
+ * sequences advance independently, so a busy drive loop can never starve an
+ * eviction stamp (or vice versa).
  */
-class DriveCounter(
+class ToRobotCounter(
     private val deviceRepo: DeviceRepository,
 ) {
     private val mutex = Mutex()

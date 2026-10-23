@@ -1,8 +1,9 @@
 package com.desky.shared.presentation
 
 import app.cash.turbine.test
-import com.desky.shared.domain.DriveCounter
+import com.desky.shared.domain.ToRobotCounter
 import com.desky.shared.domain.ForgetDeviceUseCase
+import com.desky.shared.domain.FromRobotCounter
 import com.desky.shared.domain.GetPairPskUseCase
 import com.desky.shared.domain.ObserveDeviceConfigUseCase
 import com.desky.shared.domain.RobotConfig
@@ -33,7 +34,8 @@ class SettingsViewModelTest {
             vault,
             FakeUdpSocketManager(),
             GetPairPskUseCase(vault, forgetRepo),
-            DriveCounter(forgetRepo),
+            ToRobotCounter(forgetRepo),
+            FromRobotCounter(forgetRepo),
         )
     }
 
