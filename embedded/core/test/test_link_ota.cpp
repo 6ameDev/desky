@@ -120,12 +120,13 @@ void test_link_ota_length_gates_reject_0_and_129() {
 }
 
 void test_link_ota_known_type_literal_set() {
-  // New bump + frozen history: exactly the eight old types + 0x05 (OTA) +
-  // 0x06 (PAIRSHOW) + 0x07 (PAIRDONE).
+  // New bump + frozen history: 0x01/0x02/0x03 + 0x05 (OTA) +
+  // 0x06 (PAIRSHOW) + 0x07 (PAIRDONE). 0x04 (retired QRBITMAP) stays
+  // unknown: tombstoned, never reused.
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x01));
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x02));
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x03));
-  TEST_ASSERT_TRUE(linkcode::isKnownType(0x04));
+  TEST_ASSERT_FALSE(linkcode::isKnownType(0x04));
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x05));  // literal: the OTA bump
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x06));  // literal: the PAIRSHOW bump
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x07));  // literal: the PAIRDONE bump

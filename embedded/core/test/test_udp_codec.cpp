@@ -251,7 +251,6 @@ void test_udp_unpair_frame_golden();
 void test_udp_pair_refresh_frame_goldens();
 void test_udp_alive_disconnect_frame_goldens();
 void test_udp_pair_ok_framing();
-void test_udp_pack_qr_bitmap_bridge();
 
 // QR pairing bitmap, defined in test_qr_pairing.cpp.
 void test_qr_size_is_21();
@@ -278,8 +277,6 @@ void test_link_rejects_length_mismatch();
 void test_link_null_safety();
 void test_link_encode_rejects_bad_args();
 void test_link_decode_rejects_bad_frag_and_unknown_type();
-void test_link_qr_exact63_accept();
-void test_link_qr_rejects_62_and_64();
 void test_link_jpeg_max_boundary();
 void test_link_fixed_type_lengths();
 void test_link_round_trip_all_types();
@@ -312,7 +309,6 @@ void test_linkserver_duplicate_stale_fresh();
 void test_linkserver_pull_framing();
 void test_linkserver_type_names();
 void test_linkserver_qr_pin_rule();
-void test_linkserver_qr_frame_63_round_trip();
 void test_linkserver_boot_epoch_resync_gate();
 
 // Telemetry X-WIRE (literal producer bytes -> real consumer + independent
@@ -531,7 +527,6 @@ int main() {
   RUN_TEST(test_udp_pair_refresh_frame_goldens);
   RUN_TEST(test_udp_alive_disconnect_frame_goldens);
   RUN_TEST(test_udp_pair_ok_framing);
-  RUN_TEST(test_udp_pack_qr_bitmap_bridge);
   RUN_TEST(test_qr_size_is_21);
   RUN_TEST(test_qr_golden_encodes);
   RUN_TEST(test_qr_finder_patterns_three_corners);
@@ -554,8 +549,6 @@ int main() {
   RUN_TEST(test_link_null_safety);
   RUN_TEST(test_link_encode_rejects_bad_args);
   RUN_TEST(test_link_decode_rejects_bad_frag_and_unknown_type);
-  RUN_TEST(test_link_qr_exact63_accept);
-  RUN_TEST(test_link_qr_rejects_62_and_64);
   RUN_TEST(test_link_jpeg_max_boundary);
   RUN_TEST(test_link_fixed_type_lengths);
   RUN_TEST(test_link_round_trip_all_types);
@@ -583,7 +576,6 @@ int main() {
   RUN_TEST(test_linkserver_pull_framing);
   RUN_TEST(test_linkserver_type_names);
   RUN_TEST(test_linkserver_qr_pin_rule);
-  RUN_TEST(test_linkserver_qr_frame_63_round_trip);
   RUN_TEST(test_linkserver_boot_epoch_resync_gate);
   RUN_TEST(test_link_ota_golden_encode);
   RUN_TEST(test_link_ota_golden_decode);

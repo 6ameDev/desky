@@ -43,7 +43,7 @@ void test_wifilink_assoc_step_wrap_safe();
 void test_wifilink_link_down_rule();
 void test_wifilink_frag_plan();
 void test_cli_link_and_snap_parse();
-void test_qr_payload_len_pins_link_contract();
+void test_qr_payload_len_pins_display_contract();
 void test_qr_geometry_fits_panel();
 void test_qr_module_msb_first_row_major();
 void test_qr_module_fail_closed();
@@ -158,7 +158,7 @@ int main() {
   RUN_TEST(test_wifilink_link_down_rule);
   RUN_TEST(test_wifilink_frag_plan);
   RUN_TEST(test_cli_link_and_snap_parse);
-  RUN_TEST(test_qr_payload_len_pins_link_contract);
+  RUN_TEST(test_qr_payload_len_pins_display_contract);
   RUN_TEST(test_qr_geometry_fits_panel);
   RUN_TEST(test_qr_module_msb_first_row_major);
   RUN_TEST(test_qr_module_fail_closed);

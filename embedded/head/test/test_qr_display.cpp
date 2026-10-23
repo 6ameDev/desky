@@ -33,11 +33,10 @@ bool headFinderOk(const uint8_t* qr63, int fx, int fy) {
 }
 }  // namespace
 
-void test_qr_payload_len_pins_link_contract() {
+void test_qr_payload_len_pins_display_contract() {
   TEST_ASSERT_EQUAL_size_t(63, qrdisplay::kQrLen);
-  TEST_ASSERT_EQUAL_size_t(linkcode::kQrBitmapLen, qrdisplay::kQrLen);
   TEST_ASSERT_TRUE(qrdisplay::isValidQrPayloadLen(63));
-  TEST_ASSERT_TRUE(qrdisplay::isValidQrPayloadLen(linkcode::kQrBitmapLen));
+  TEST_ASSERT_TRUE(qrdisplay::isValidQrPayloadLen(qrdisplay::kQrLen));
   TEST_ASSERT_FALSE(qrdisplay::isValidQrPayloadLen(62));
   TEST_ASSERT_FALSE(qrdisplay::isValidQrPayloadLen(64));
   TEST_ASSERT_FALSE(qrdisplay::isValidQrPayloadLen(0));

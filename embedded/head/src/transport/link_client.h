@@ -302,7 +302,6 @@ class LinkClient {
         break;
       case linkcode::kTypeHb:
       case linkcode::kTypeJpeg:
-      case linkcode::kTypeQrBitmap:
         // Wrong direction on this socket: throttled drop, counters only.
         dropFirst(firstDrop_, "drop link unexpected %s on udp (first of boot)", wifilink::typeName(f.type));
         LOG_EVERY_N(20, "LINK", "drop link unexpected %s on udp", wifilink::typeName(f.type));

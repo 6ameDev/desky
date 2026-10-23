@@ -169,46 +169,6 @@ void test_link_decode_rejects_bad_frag_and_unknown_type() {
   TEST_ASSERT_FALSE(link::decodeFrame(unknown, sizeof(unknown), f));
 }
 
-void test_link_qr_exact63_accept() {
-  uint8_t bitmap[link::kQrBitmapLen];
-  for (size_t i = 0; i < sizeof(bitmap); ++i) {
-    bitmap[i] = static_cast<uint8_t>(i);
-  }
-  uint8_t out[link::kMaxFrame] = {};
-  const size_t n = link::encodeFrame(link::kTypeQrBitmap, 7, bitmap, sizeof(bitmap), 0, 1, out, sizeof(out));
-  TEST_ASSERT_EQUAL_size_t(link::kOverhead + link::kQrBitmapLen, n);
-  link::Frame f;
-  TEST_ASSERT_TRUE(link::decodeFrame(out, n, f));
-  TEST_ASSERT_EQUAL_UINT8(link::kTypeQrBitmap, f.type);
-  TEST_ASSERT_EQUAL_UINT16(7, f.seq);
-  TEST_ASSERT_EQUAL_UINT16(link::kQrBitmapLen, f.payloadLen);
-  TEST_ASSERT_EQUAL_UINT8_ARRAY(bitmap, f.payload, sizeof(bitmap));
-}
-
-void test_link_qr_rejects_62_and_64() {
-  uint8_t bitmap[64];
-  for (size_t i = 0; i < sizeof(bitmap); ++i) {
-    bitmap[i] = static_cast<uint8_t>(i);
-  }
-  uint8_t out[link::kMaxFrame] = {};
-  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeQrBitmap, 1, bitmap, 62, 0, 1, out, sizeof(out)));
-  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeQrBitmap, 1, bitmap, 64, 0, 1, out, sizeof(out)));
-  // Hand-built 62B QR frame with a valid CRC must still fail the decode gate.
-  uint8_t short62[link::kOverhead + 62];
-  short62[0] = link::kMagic;
-  short62[1] = link::kTypeQrBitmap;
-  link::putU16BE(short62 + 2, 1);
-  short62[4] = 0;
-  short62[5] = 1;
-  link::putU16BE(short62 + 6, 62);
-  for (size_t i = 0; i < 62; ++i) {
-    short62[link::kHeaderSize + i] = bitmap[i];
-  }
-  link::putU16BE(short62 + link::kHeaderSize + 62, link::crc16Ccitt(short62, link::kHeaderSize + 62));
-  link::Frame f;
-  TEST_ASSERT_FALSE(link::decodeFrame(short62, sizeof(short62), f));
-}
-
 void test_link_jpeg_max_boundary() {
   uint8_t big[link::kMaxPayload];
   for (size_t i = 0; i < sizeof(big); ++i) {
@@ -253,8 +213,8 @@ void test_link_round_trip_all_types() {
     uint16_t len;
   };
   static const Case cases[] = {
-      {link::kTypeFace, 1}, {link::kTypeOled, 1}, {link::kTypeCamCtl, 1}, {link::kTypeQrBitmap, 63},
-      {link::kTypeJpeg, 7}, {link::kTypeHb, 10},  {link::kTypeHbAck, 5},  {link::kTypeAck, 2},
+      {link::kTypeFace, 1}, {link::kTypeOled, 1},  {link::kTypeCamCtl, 1}, {link::kTypeJpeg, 7},
+      {link::kTypeHb, 10},  {link::kTypeHbAck, 5}, {link::kTypeAck, 2},
   };
   for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); ++c) {
     uint8_t payload[63];
@@ -545,13 +505,14 @@ void test_link_phone_wire_headers_distinct() {
   TEST_ASSERT_EQUAL_UINT8(0x4C, link::kMagic);
   // Link type bytes are disjoint from the magic, so a resync scan cannot
   // mistake a type byte for a frame start.
-  static const uint8_t kTypes[] = {link::kTypeFace,     link::kTypeOled,     link::kTypeCamCtl, link::kTypeQrBitmap,
-                                   link::kTypePairShow, link::kTypePairDone, link::kTypeJpeg,   link::kTypeHb,
-                                   link::kTypeHbAck,    link::kTypeAck};
+  static const uint8_t kTypes[] = {link::kTypeFace,     link::kTypeOled,     link::kTypeCamCtl,
+                                   link::kTypePairShow, link::kTypePairDone, link::kTypeJpeg,
+                                   link::kTypeHb,       link::kTypeHbAck,    link::kTypeAck};
   for (size_t i = 0; i < sizeof(kTypes); ++i) {
     TEST_ASSERT_NOT_EQUAL(link::kMagic, kTypes[i]);
     TEST_ASSERT_TRUE(link::isKnownType(kTypes[i]));
   }
   TEST_ASSERT_FALSE(link::isKnownType(0x4C));
   TEST_ASSERT_FALSE(link::isKnownType(0xAA));
+  TEST_ASSERT_FALSE(link::isKnownType(0x04));  // retired QRBITMAP: stays unknown
 }

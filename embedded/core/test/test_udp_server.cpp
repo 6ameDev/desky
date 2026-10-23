@@ -865,35 +865,6 @@ void test_udp_alive_disconnect_frame_goldens() {
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0xFF)));
 }
 
-// QR pack bridge: udpstatus::packQrBitmap pins the same shared qr::packBitmap
-// the head uses to re-derive the pairing bitmap locally (main-loop
-// valid→pack bridge shape). Valid packs identically; closed window / null
-// never touches `out`.
-void test_udp_pack_qr_bitmap_bridge() {
-  const uint8_t code[6] = {'1', '2', '3', '4', '5', '6'};
-  uint8_t modules[qr::kModules];
-  TEST_ASSERT_TRUE(qr::encode6Digits(code, modules));
-  uint8_t viaHelper[qr::kPackedLen];
-  uint8_t viaDirect[qr::kPackedLen];
-  TEST_ASSERT_TRUE(udpstatus::packQrBitmap(true, modules, viaHelper));
-  qr::packBitmap(modules, viaDirect);
-  TEST_ASSERT_EQUAL_UINT8_ARRAY(viaDirect, viaHelper, qr::kPackedLen);
-  // Closed window fails closed and leaves `out` untouched.
-  for (size_t i = 0; i < qr::kPackedLen; ++i) {
-    viaHelper[i] = 0xA5;
-  }
-  TEST_ASSERT_FALSE(udpstatus::packQrBitmap(false, modules, viaHelper));
-  for (size_t i = 0; i < qr::kPackedLen; ++i) {
-    TEST_ASSERT_EQUAL_UINT8(0xA5, viaHelper[i]);
-  }
-  // Null modules / null out fail closed.
-  TEST_ASSERT_FALSE(udpstatus::packQrBitmap(true, nullptr, viaHelper));
-  TEST_ASSERT_FALSE(udpstatus::packQrBitmap(true, modules, nullptr));
-  for (size_t i = 0; i < qr::kPackedLen; ++i) {
-    TEST_ASSERT_EQUAL_UINT8(0xA5, viaHelper[i]);
-  }
-}
-
 // PAIR_OK framing (TX-only, no RX decode): v1 38B vs v1.1 39B share header
 // 0x51; the GCM ct/tag are ARDUINO-only (mbedTLS) so no crypto golden lives
 // here — the sizes + RX-drop + Kotlin/bench cross-vectors are the gate.

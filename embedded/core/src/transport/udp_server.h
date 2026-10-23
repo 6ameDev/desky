@@ -30,7 +30,6 @@
 #include <stdint.h>
 
 #include "common/udp_send.h"
-#include "link/qr_codec.h"
 #include "transport/connection_manager.h"
 #include "transport/udp_codec.h"
 
@@ -185,16 +184,6 @@ inline bool shouldRedeliver(bool valid, const uint8_t* storedCode, const uint8_t
     }
   }
   return (nowMs - pairMs) < kRedeliveryMs;
-}
-
-// QR pack bridge: valid window packs via qr::packBitmap; closed-window/null
-// never touches `out`.
-inline bool packQrBitmap(bool valid, const uint8_t* modules, uint8_t* out) {
-  if (!valid || modules == nullptr || out == nullptr) {
-    return false;
-  }
-  qr::packBitmap(modules, out);
-  return true;
 }
 
 }  // namespace udpstatus
