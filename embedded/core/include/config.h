@@ -114,6 +114,10 @@
 // the cached PAIR_OK instead of answering already_paired (covers the lost-
 // reply / client-retry race; RAM-only, never persisted).
 #define CFG_PAIR_REDELIVERY_MS 60000
+// Pair button (name, never raw GPIO): temporary BOOT on MCU_PAIR_BUTTON,
+// active-low with input pull-up. Swap the MCU constant to move buttons.
+#define CFG_PAIR_BUTTON_PIN MCU_PAIR_BUTTON
+#define CFG_PAIR_BUTTON_DEBOUNCE_MS 50
 
 // I2S audio (amp + 2x mics, shared BCLK/WS @16kHz LRCLK; GPIOs via the MCU
 // header, never hardcoded here).

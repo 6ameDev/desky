@@ -14,6 +14,7 @@
 #include "config.h"
 #include "hal/motor_driver.h"
 #include "hal/mpu6500_driver.h"
+#include "hal/pair_button.h"
 #include "hal/tcrt5000_driver.h"
 #include "hal/vl53l0x_driver.h"
 #include "services/cli_manager.h"
@@ -56,6 +57,7 @@ Mpu6500Driver g_mpu(g_i2c);
 Vl53l0xDriver g_tof(g_i2c);
 Tcrt5000Driver g_tcrtFwd(CFG_TCRT_FWD_PIN, CFG_TCRT_THRESHOLD, CFG_TCRT_HYSTERESIS, CFG_TCRT_ASSERT_HIGH);
 Tcrt5000Driver g_tcrtRev(CFG_TCRT_REV_PIN, CFG_TCRT_THRESHOLD, CFG_TCRT_HYSTERESIS, CFG_TCRT_ASSERT_HIGH);
+PairButton g_pairButton(CFG_PAIR_BUTTON_PIN, CFG_PAIR_BUTTON_DEBOUNCE_MS);
 }  // namespace
 
 void setup() {
@@ -80,6 +82,8 @@ void setup() {
   DESKY_ASSERT(tcrtFwdOk);
   const bool tcrtRevOk = g_tcrtRev.init();
   DESKY_ASSERT(tcrtRevOk);
+  const bool pairBtnOk = g_pairButton.init();
+  DESKY_ASSERT(pairBtnOk);
   const bool coordOk = g_coordinator.begin(&g_motion);
   DESKY_ASSERT(coordOk);
   const bool sensorOk = g_sensor.begin(&g_mpu, &g_tof, &g_tcrtFwd, &g_tcrtRev);
@@ -145,6 +149,12 @@ void loop() {
   // Minimal USB door: polled every loop; the stage waits silently, never
   // blocks driving.
   g_cli.poll();
+  // Physical pair button (short press, debounced in hal): the press edge
+  // will enter pair mode (fire-and-forget disconnect + clear + window).
+  // Detection only here so the button is bench-verifiable alone.
+  if (g_pairButton.poll()) {
+    LOG_I("PAIRBTN", "pair button pressed");
+  }
 #if !DESKY_NO_WIFI
   // Ability link pumps: the pairing window's PIN + valid-seconds and the
   // staged `otahead` URL each unicast once to the HB-pinned head. No head
