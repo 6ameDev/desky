@@ -410,9 +410,9 @@ class Coordinator {
       const bool stale = !hasCmd_ || (nowMs - lastCmdMs_ > kStaleMs);
 
       // Mode policy feed from existing signals only: the pairing session's
-      // window/paired reads, plus the stale bit above (same threshold as the
-      // failsafe, no new timing). OTA/manual events arrive via the notifiers;
-      // unfired, the mode rests on NORMAL.
+      // window/paired reads, plus the alive-fresh poll below (same window +
+      // predicate as the telemetry gate, no new timing). OTA/manual events
+      // arrive via the notifiers; unfired, the mode rests on NORMAL.
       if (pairing_ != nullptr) {
         if (pairing_->pairWindowOpen(nowMs)) {
           sysMode_ = sysmode::apply(sysMode_, sysmode::Event::kPairWindowOpened);
@@ -433,8 +433,15 @@ class Coordinator {
           onManualRelease();
         }
       }
-      if (stale) {
-        sysMode_ = sysmode::apply(sysMode_, sysmode::Event::kCommandStale);
+      // MANUAL exit on the alive clock: the session holds while the paired
+      // peer stays alive-fresh, independent of the drive clock. Command-stale
+      // only inhibits motion via motionInhibited below, never exits. A dropped
+      // peer (DISCONNECT/UNPAIR refresh-then-clear) reads stale here, so the
+      // goodbye lands back in NORMAL on the next tick.
+      if (pairing_ != nullptr) {
+        if (!pairing_->isAliveFresh(nowMs)) {
+          sysMode_ = sysmode::apply(sysMode_, sysmode::Event::kAliveStale);
+        }
       }
 
       // Drive gate seam: the mode policy decides whether stick intent may

@@ -4,9 +4,9 @@
 // Four mutually exclusive modes: NORMAL (autonomous), MANUAL (app driving),
 // PAIRING, OTA. apply() is the single explicit transition function over
 // events; the coordinator feeds it from existing signals (pair window
-// open/closed + paired reads, OTA notifiers, the stale bit it already
-// computes). Arduino-free pure logic (stdint only) so host tests include it
-// directly.
+// open/closed + paired reads, OTA notifiers, the alive-fresh poll it reads
+// through the pairing session seam). Arduino-free pure logic (stdint only)
+// so host tests include it directly.
 //
 // The comms failsafe is an overlay guard, not a mode: motionInhibited()
 // inhibits motion in every mode without changing it.
@@ -33,7 +33,7 @@ enum class Event : uint8_t {
   kOtaAborted,
   kManualTakeGranted,
   kManualReleaseGranted,
-  kCommandStale,
+  kAliveStale,
 };
 
 // Display side effect of the mode. The head keeps showing the pairing PIN
@@ -82,7 +82,7 @@ inline State apply(State s, Event e) {
         s.mode = Mode::kNormal;
       }
       return s;
-    case Event::kCommandStale:
+    case Event::kAliveStale:
       if (s.mode == Mode::kManual) {
         s.mode = Mode::kNormal;
       }
@@ -103,7 +103,8 @@ inline bool motionInhibited(Mode mode, bool commandStale) {
 // the motion layer. MANUAL-only: verified drive frames still verify, consume
 // the shared counter, and refresh the alive funnel in every mode, but stick
 // intent reaches motion only while the app holds the MANUAL session (entered
-// by an explicit MANUAL_TAKE, left by MANUAL_RELEASE or the stale auto-exit).
+// by an explicit MANUAL_TAKE, left by MANUAL_RELEASE, goodbye, or
+// alive-expiry).
 inline bool manualDriveAllowed(Mode mode, bool paired) { return mode == Mode::kManual && paired; }
 
 // Mode query the display layer reads: which overlay follows the active mode.

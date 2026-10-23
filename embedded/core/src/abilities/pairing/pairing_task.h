@@ -538,6 +538,15 @@ class PairingTask : public transport::IPairingSession {
     return pending;
   }
 
+  // Alive-fresh poll for the MANUAL exit rule: reads the transport-owned
+  // alive window through the pinned slot. False until attach lands.
+  bool isAliveFresh(uint32_t nowMs) const override {
+    if (conn_ == nullptr) {
+      return false;
+    }
+    return conn_->isAlive(nowMs);
+  }
+
   // Explicit unpair / 10s-hold factory reset hook: clears the NVS pair +
   // in-memory Core + key material. Also invalidates the PAIR_OK redelivery
   // cache (+zeroizes its secrets).
@@ -836,9 +845,6 @@ class PairingTask : public transport::IPairingSession {
   // tryConsume is the authoritative gate.
   void handleManualTake(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
                         transport::IUdpTransport& t) {
-    (void)rip;
-    (void)rport;
-    (void)nowMs;
     DESKY_ASSERT(buf != nullptr);
     if (buf == nullptr) {
       return;
@@ -864,12 +870,15 @@ class PairingTask : public transport::IPairingSession {
       return;
     }
     // Tag composition + atomic consume live in tryConsumeManualTake above.
-    const connection::Verified verified = tryConsumeManualTake(era, ctr, buf + 7);
+    connection::Verified verified = tryConsumeManualTake(era, ctr, buf + 7);
     if (!verified.valid()) {
       dropFirst(firstManualDrop_, "drop manual-take auth (first of boot)");
       LOG_EVERY_N(20, "UDP", "drop manual-take auth");
       return;
     }
+    // A verified take proves the owner alive exactly like drive: pin the
+    // peer + refresh the stamp before staging the coordinator flag.
+    t.markAlive(std::move(verified), rip, rport, nowMs, era);
     // Counter consumed (a replayed take can never stage twice). The
     // coordinator tick drains the flag into onManualTake.
     manualTakePending_ = true;
@@ -882,9 +891,6 @@ class PairingTask : public transport::IPairingSession {
   // into onManualRelease). Fail = silent drop.
   void handleManualRelease(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
                            transport::IUdpTransport& t) {
-    (void)rip;
-    (void)rport;
-    (void)nowMs;
     DESKY_ASSERT(buf != nullptr);
     if (buf == nullptr) {
       return;
