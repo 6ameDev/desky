@@ -10,6 +10,8 @@ void test_eyes_map_request_ids() {
   TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionSad, eyesmap::emotionForFace(FACE_SAD));
   TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionNormal, eyesmap::emotionForFace(FACE_BLINK));
   TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionSurprised, eyesmap::emotionForFace(FACE_ALERT));
+  TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionAwe, eyesmap::emotionForFace(FACE_CURIOUS));
+  TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionSurprised, eyesmap::emotionForFace(FACE_SURPRISED));
 }
 
 void test_eyes_map_ordinals_track_emotions() {
@@ -17,6 +19,7 @@ void test_eyes_map_ordinals_track_emotions() {
   TEST_ASSERT_EQUAL_UINT8(3, eyesmap::kEmotionHappy);
   TEST_ASSERT_EQUAL_UINT8(4, eyesmap::kEmotionSad);
   TEST_ASSERT_EQUAL_UINT8(8, eyesmap::kEmotionSurprised);
+  TEST_ASSERT_EQUAL_UINT8(17, eyesmap::kEmotionAwe);
 }
 
 void test_eyes_map_falls_back_to_normal() {

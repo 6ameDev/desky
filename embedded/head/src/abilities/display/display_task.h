@@ -39,6 +39,7 @@ static_assert(eyesmap::kEmotionHappy == static_cast<uint8_t>(eEmotions::Happy),
 static_assert(eyesmap::kEmotionSad == static_cast<uint8_t>(eEmotions::Sad), "eyes map must track vendored eEmotions");
 static_assert(eyesmap::kEmotionSurprised == static_cast<uint8_t>(eEmotions::Surprised),
               "eyes map must track vendored eEmotions");
+static_assert(eyesmap::kEmotionAwe == static_cast<uint8_t>(eEmotions::Awe), "eyes map must track vendored eEmotions");
 
 class DisplayRenderer : public IDisplayPort {
  public:
@@ -83,12 +84,17 @@ class DisplayRenderer : public IDisplayPort {
 
   bool present() const { return panel_.present(); }
 
-  // Stores (clamped), paints when live. Clears every live overlay.
+  // Stores (clamped), paints when live. Clears every live overlay. A lower id
+  // never displaces a higher one (release via the neutral family first).
   void showEyes(uint8_t id) {
     DisplayTransition t;
-    mgr_.showEyes(id, t);
+    const bool stored = mgr_.showEyes(id, t, millis());
     if (panel_.present() && enabled_) {
       drawEyes(mgr_.eyesId());
+    }
+    if (!stored) {
+      LOG_I("FACE", "face=%s held by %s (send boot first)", faceName(clampFace(static_cast<int>(id))),
+            faceName(mgr_.eyesId()));
     }
     if (t.clearedQr) {
       LOG_I("FACE", "qr cleared (face)");
@@ -225,6 +231,7 @@ class DisplayRenderer : public IDisplayPort {
   void failOta() {
     mgr_.failOta(millis());
     if (panel_.present() && enabled_) {
+      // Failure keeps the holding ALERT row: SURPRISED self-clears, which would drop an unacked failure signal.
       drawEyes(FACE_ALERT);
     }
     LOG_W("FACE", "ota failed (alert)");
@@ -302,6 +309,9 @@ class DisplayRenderer : public IDisplayPort {
         } else {
           self->wasPairActive_ = false;
           self->lastPairSec_ = kNoPairSec;
+          if (self->mgr_.exprTick(millis())) {
+            LOG_I("FACE", "play-once done (neutral)");
+          }
           if (self->mgr_.qrExpired(millis())) {
             self->clearQr("timeout");
           } else if (self->mgr_.qrActive()) {
@@ -324,6 +334,10 @@ class DisplayRenderer : public IDisplayPort {
     const eEmotions want = static_cast<eEmotions>(eyesmap::emotionForFace(clamped));
     if (face_.Behavior.CurrentEmotion != want) {
       face_.Behavior.GoToEmotion(want);
+      if (want == static_cast<eEmotions>(eyesmap::kEmotionAwe)) {
+        // Transition-only: per-frame LookAt would fight the 4s random-look timer (RandomLook stays on).
+        face_.Look.LookAt(0.15f, 0.0f);
+      }
     }
     auto& display = panel_.gfx();
     display.clearBuffer();

@@ -24,6 +24,9 @@ const uint8_t kFace02[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x0
 const uint8_t kFace03[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x03, 0x85, 0x2E};
 const uint8_t kFace04[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x04, 0xF5, 0xC9};
 const uint8_t kFace05[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x05, 0xE5, 0xE8};
+const uint8_t kFace06[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x06, 0xD5, 0x8B};
+const uint8_t kFace07[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x07, 0xC5, 0xAA};
+const uint8_t kFace08[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x08, 0x34, 0x45};
 const uint8_t kFace63[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x63, 0xE9, 0x88};
 const uint8_t kFaceFf[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0xFF, 0xAB, 0xBD};
 
@@ -69,17 +72,21 @@ void test_cmd_literals_camctl_wire_values() {
 void test_cmd_literals_face_ids_and_clamp() {
   PowerCommand cmd;
   linkcode::Frame f;
-  const uint8_t* frames[5] = {kFace00, kFace01, kFace02, kFace03, kFace04};
-  for (int32_t id = 0; id < 5; ++id) {
-    TEST_ASSERT_TRUE(decodeAndMap(frames[id], cmd, f));
+  struct Row {
+    const uint8_t* frame;
+    int32_t id;
+  };
+  const Row good[] = {{kFace00, 0}, {kFace01, 1}, {kFace02, 2}, {kFace03, 3}, {kFace04, 4}, {kFace06, 6}, {kFace07, 7}};
+  for (size_t i = 0; i < sizeof(good) / sizeof(good[0]); ++i) {
+    TEST_ASSERT_TRUE(decodeAndMap(good[i].frame, cmd, f));
     TEST_ASSERT_EQUAL_UINT8(0x01, f.type);
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::FACE), static_cast<uint8_t>(cmd.target));
-    TEST_ASSERT_EQUAL_INT32(id, cmd.arg);
-    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(id), headapply::resolveFace(cmd.arg));  // passthrough
+    TEST_ASSERT_EQUAL_INT32(good[i].id, cmd.arg);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(good[i].id), headapply::resolveFace(cmd.arg));  // passthrough
   }
   // Out-of-range ids still decode+map (passthrough), then clamp to BOOT (0).
-  const uint8_t* bad[3] = {kFace05, kFace63, kFaceFf};
-  for (size_t i = 0; i < 3; ++i) {
+  const uint8_t* bad[4] = {kFace05, kFace08, kFace63, kFaceFf};
+  for (size_t i = 0; i < 4; ++i) {
     TEST_ASSERT_TRUE(decodeAndMap(bad[i], cmd, f));
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::FACE), static_cast<uint8_t>(cmd.target));
     TEST_ASSERT_EQUAL_UINT8(0, headapply::resolveFace(cmd.arg));
@@ -136,6 +143,9 @@ void test_headapply_value_table() {
   TEST_ASSERT_EQUAL_UINT8(CAM_ON, headapply::resolveCam(7));  // nonzero gate, not ==1
   TEST_ASSERT_EQUAL_UINT8(4, headapply::resolveFace(4));
   TEST_ASSERT_EQUAL_UINT8(0, headapply::resolveFace(5));
+  TEST_ASSERT_EQUAL_UINT8(6, headapply::resolveFace(6));
+  TEST_ASSERT_EQUAL_UINT8(7, headapply::resolveFace(7));
+  TEST_ASSERT_EQUAL_UINT8(0, headapply::resolveFace(8));
 }
 
 // Shared codec vocabulary guards.
@@ -174,14 +184,18 @@ void test_cmd_literals_shared_codec_camctl() {
 }
 
 void test_cmd_literals_shared_codec_face() {
-  // Map-then-clamp: 0x00..0x04 survive, rest fall back to BOOT.
+  // Map-then-clamp: 0x00..0x04,0x06,0x07 survive, rest fall back to BOOT.
   uint8_t id = 0xFF;
-  for (uint8_t lit = 0x00; lit <= 0x04; ++lit) {
-    TEST_ASSERT_TRUE(linkcode::unpackFace(lit, id));
-    TEST_ASSERT_EQUAL_UINT8(lit, id);
+  const uint8_t good[] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x06, 0x07};
+  for (size_t i = 0; i < sizeof(good); ++i) {
+    TEST_ASSERT_TRUE(linkcode::unpackFace(good[i], id));
+    TEST_ASSERT_EQUAL_UINT8(good[i], id);
   }
   TEST_ASSERT_TRUE(linkcode::unpackFace(0x05, id));
   TEST_ASSERT_EQUAL_UINT8(0x05, id);
+  TEST_ASSERT_EQUAL_UINT8(0, headapply::resolveFace(id));
+  TEST_ASSERT_TRUE(linkcode::unpackFace(0x08, id));
+  TEST_ASSERT_EQUAL_UINT8(0x08, id);
   TEST_ASSERT_EQUAL_UINT8(0, headapply::resolveFace(id));
   TEST_ASSERT_TRUE(linkcode::unpackFace(0x63, id));
   TEST_ASSERT_EQUAL_UINT8(0x63, id);

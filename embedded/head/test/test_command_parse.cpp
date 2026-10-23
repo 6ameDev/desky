@@ -29,6 +29,14 @@ void test_cli_face_numeric_and_name() {
   TEST_ASSERT_EQUAL_INT32(3, cmd.arg);
   TEST_ASSERT_TRUE(headcmd::parseLine("face happy", cmd));
   TEST_ASSERT_EQUAL_INT32(FACE_HAPPY, cmd.arg);
+  TEST_ASSERT_TRUE(headcmd::parseLine("face curious", cmd));
+  TEST_ASSERT_EQUAL_INT32(FACE_CURIOUS, cmd.arg);
+  TEST_ASSERT_TRUE(headcmd::parseLine("face surprised", cmd));
+  TEST_ASSERT_EQUAL_INT32(FACE_SURPRISED, cmd.arg);
+  TEST_ASSERT_TRUE(headcmd::parseLine("face 6", cmd));
+  TEST_ASSERT_EQUAL_INT32(6, cmd.arg);
+  TEST_ASSERT_TRUE(headcmd::parseLine("face 7", cmd));
+  TEST_ASSERT_EQUAL_INT32(7, cmd.arg);
 }
 
 void test_cli_face_rejects() {
@@ -68,6 +76,10 @@ void test_link_face_numeric() {
   TEST_ASSERT_TRUE(linkstub::mapLine("FACE 2", cmd));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::FACE), static_cast<uint8_t>(cmd.target));
   TEST_ASSERT_EQUAL_INT32(2, cmd.arg);
+  TEST_ASSERT_TRUE(linkstub::mapLine("FACE 6", cmd));
+  TEST_ASSERT_EQUAL_INT32(FACE_CURIOUS, cmd.arg);
+  TEST_ASSERT_TRUE(linkstub::mapLine("FACE 7", cmd));
+  TEST_ASSERT_EQUAL_INT32(FACE_SURPRISED, cmd.arg);
   TEST_ASSERT_TRUE(linkstub::mapLine("FACE 9", cmd));
   TEST_ASSERT_EQUAL_INT32(9, cmd.arg);
   TEST_ASSERT_TRUE(linkstub::mapLine("FACE 1\r\n", cmd));

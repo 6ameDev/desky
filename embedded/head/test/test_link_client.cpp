@@ -41,6 +41,12 @@ void test_wifilink_map_face() {
   TEST_ASSERT_TRUE(wifilink::mapCmd(linkcode::kTypeFace, &id, 1, cmd));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::FACE), static_cast<uint8_t>(cmd.target));
   TEST_ASSERT_EQUAL_INT32(3, cmd.arg);
+  const uint8_t curious = FACE_CURIOUS;
+  TEST_ASSERT_TRUE(wifilink::mapCmd(linkcode::kTypeFace, &curious, 1, cmd));
+  TEST_ASSERT_EQUAL_INT32(FACE_CURIOUS, cmd.arg);
+  const uint8_t surprised = FACE_SURPRISED;
+  TEST_ASSERT_TRUE(wifilink::mapCmd(linkcode::kTypeFace, &surprised, 1, cmd));
+  TEST_ASSERT_EQUAL_INT32(FACE_SURPRISED, cmd.arg);
   TEST_ASSERT_FALSE(wifilink::mapCmd(linkcode::kTypeFace, &id, 2, cmd));
   TEST_ASSERT_FALSE(wifilink::mapCmd(linkcode::kTypeFace, nullptr, 1, cmd));
 }
