@@ -121,6 +121,13 @@ void test_tcrt_rail_inverted_asserts_below_threshold_minus_hyst();
 void test_tcrt_rail_inverted_clears_above_threshold_plus_hyst();
 void test_tcrt_rail_inverted_bench_bands();
 
+// Pair-button debounce tests, defined in test_pair_button.cpp.
+void test_pairbtn_press_fires_once_after_debounce();
+void test_pairbtn_bounce_inside_window_ignored();
+void test_pairbtn_release_never_fires_second_press_refires();
+void test_pairbtn_wrap_safe_timing();
+void test_pairbtn_cfg_defaults_match_header();
+
 // Sensor task edge + hold logic, defined in test_sensor_task.cpp.
 void test_sensor_rising_publishes_once();
 void test_sensor_held_levels_silent();
@@ -408,6 +415,11 @@ int main() {
   RUN_TEST(test_tcrt_rail_inverted_asserts_below_threshold_minus_hyst);
   RUN_TEST(test_tcrt_rail_inverted_clears_above_threshold_plus_hyst);
   RUN_TEST(test_tcrt_rail_inverted_bench_bands);
+  RUN_TEST(test_pairbtn_press_fires_once_after_debounce);
+  RUN_TEST(test_pairbtn_bounce_inside_window_ignored);
+  RUN_TEST(test_pairbtn_release_never_fires_second_press_refires);
+  RUN_TEST(test_pairbtn_wrap_safe_timing);
+  RUN_TEST(test_pairbtn_cfg_defaults_match_header);
   RUN_TEST(test_sensor_rising_publishes_once);
   RUN_TEST(test_sensor_held_levels_silent);
   RUN_TEST(test_sensor_falling_publishes_once);
