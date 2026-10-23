@@ -9,9 +9,8 @@
 #ifdef ARDUINO
 // ── Firmware: SSD1306 128x64 panel ──────────────────────────────────────────
 
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
 #include <Arduino.h>
+#include <U8g2lib.h>
 
 #include "common/i2c_manager.h"
 #include "common/iactuator.h"
@@ -25,7 +24,7 @@ class Ssd1306Display : public IActuator {
   static constexpr uint8_t kContrastOn = 0x80;
   static constexpr uint8_t kContrastDim = 0x10;
 
-  explicit Ssd1306Display(I2CManager& bus) : bus_(bus), display_(kWidth, kHeight, &bus.wire()) {}
+  explicit Ssd1306Display(I2CManager& bus) : bus_(bus), u8g2_(U8G2_R0, U8X8_PIN_NONE, CFG_I2C_SCL, CFG_I2C_SDA) {}
 
   // Probe-then-claim. Never asserts: absent OLED is expected. Always returns true.
   bool init() override {
@@ -49,11 +48,14 @@ class Ssd1306Display : public IActuator {
       present_ = false;
       return true;
     }
-    if (!display_.begin(SSD1306_SWITCHCAPVCC, found)) {
+    u8g2_.setI2CAddress(static_cast<uint8_t>(found << 1));
+    if (!u8g2_.begin()) {
       LOG_W("OLED", "begin failed at 0x%02X — display gated", found);
       present_ = false;
       return true;
     }
+    // u8g2::begin re-attaches Wire on the ctor pins: re-assert the manager-owned clock/timeout.
+    bus_.reinit();
     addr_ = found;
     present_ = true;
     enabled_ = true;
@@ -69,7 +71,7 @@ class Ssd1306Display : public IActuator {
       return;
     }
     enabled_ = enable;
-    display_.ssd1306_command(enable ? SSD1306_DISPLAYON : SSD1306_DISPLAYOFF);
+    u8g2_.setPowerSave(enable ? 0 : 1);
   }
 
   bool isEnabled() const override { return enabled_; }
@@ -79,29 +81,34 @@ class Ssd1306Display : public IActuator {
 
   void clear() {
     if (present_) {
-      display_.clearDisplay();
+      u8g2_.clearBuffer();
     }
   }
 
   void setContrast(uint8_t value) {
     if (present_) {
-      display_.ssd1306_command(SSD1306_SETCONTRAST);
-      display_.ssd1306_command(value);
+      u8g2_.setContrast(value);
     }
   }
 
+  // Full-frame push under the shared-bus mutex: skip the frame when busy, panel keeps last-good.
   void push() {
-    if (present_) {
-      display_.display();
+    if (!present_) {
+      return;
     }
+    if (!bus_.acquire()) {
+      return;
+    }
+    u8g2_.sendBuffer();
+    bus_.release();
   }
 
   // Draw target for the renderer (display_task.h), the only caller.
-  Adafruit_SSD1306& gfx() { return display_; }
+  U8G2& gfx() { return u8g2_; }
 
  private:
   I2CManager& bus_;
-  Adafruit_SSD1306 display_;
+  U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2_;
   bool present_ = false;
   uint8_t addr_ = 0;
   volatile bool enabled_ = false;

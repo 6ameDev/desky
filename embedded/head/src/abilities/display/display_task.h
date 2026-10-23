@@ -41,11 +41,11 @@ class DisplayRenderer : public IDisplayPort {
     }
     enabled_ = true;
     if (panel_.present()) {
-      panel_.gfx().setTextSize(1);
-      panel_.gfx().setTextColor(SSD1306_WHITE);
-      panel_.gfx().setCursor(0, 0);
-      panel_.gfx().print(F("desky-head"));
-      panel_.gfx().display();
+      auto& gfx = panel_.gfx();
+      gfx.setFont(u8g2_font_6x10_tf);
+      gfx.setFontPosTop();
+      gfx.drawStr(0, 0, "desky-head");
+      panel_.push();
       showEyes(FACE_BOOT);
       xTaskCreatePinnedToCore(&DisplayRenderer::renderTask, "display", CFG_DISPLAY_STACK_WORDS, this,
                               tskIDLE_PRIORITY + CFG_DISPLAY_PRIORITY_OFFSET, nullptr, CFG_DISPLAY_CORE);
@@ -303,38 +303,39 @@ class DisplayRenderer : public IDisplayPort {
       return;
     }
     auto& display = panel_.gfx();
-    display.clearDisplay();
+    display.clearBuffer();
+    display.setDrawColor(1);
     switch (id) {
       case FACE_HAPPY:
-        display.fillCircle(44, 24, 6, SSD1306_WHITE);
-        display.fillCircle(84, 24, 6, SSD1306_WHITE);
+        display.drawDisc(44, 24, 6);
+        display.drawDisc(84, 24, 6);
         arc(display, 64, 38, 12, 25, 155);
         break;
       case FACE_SAD:
-        display.fillCircle(44, 24, 4, SSD1306_WHITE);
-        display.fillCircle(84, 24, 4, SSD1306_WHITE);
+        display.drawDisc(44, 24, 4);
+        display.drawDisc(84, 24, 4);
         arc(display, 64, 58, 12, 205, 335);
         break;
       case FACE_BLINK:
-        display.drawLine(38, 24, 50, 24, SSD1306_WHITE);
-        display.drawLine(78, 24, 90, 24, SSD1306_WHITE);
-        display.drawLine(56, 48, 72, 48, SSD1306_WHITE);
+        display.drawLine(38, 24, 50, 24);
+        display.drawLine(78, 24, 90, 24);
+        display.drawLine(56, 48, 72, 48);
         break;
       case FACE_ALERT:
-        display.drawCircle(44, 24, 8, SSD1306_WHITE);
-        display.drawCircle(84, 24, 8, SSD1306_WHITE);
-        display.fillCircle(44, 24, 2, SSD1306_WHITE);
-        display.fillCircle(84, 24, 2, SSD1306_WHITE);
-        display.drawCircle(64, 48, 5, SSD1306_WHITE);
+        display.drawCircle(44, 24, 8);
+        display.drawCircle(84, 24, 8);
+        display.drawDisc(44, 24, 2);
+        display.drawDisc(84, 24, 2);
+        display.drawCircle(64, 48, 5);
         break;
       case FACE_BOOT:
       default:
-        display.fillRoundRect(36, 16, 16, 16, 3, SSD1306_WHITE);
-        display.fillRoundRect(76, 16, 16, 16, 3, SSD1306_WHITE);
-        display.drawLine(54, 48, 74, 48, SSD1306_WHITE);
+        display.drawRBox(36, 16, 16, 16, 3);
+        display.drawRBox(76, 16, 16, 16, 3);
+        display.drawLine(54, 48, 74, 48);
         break;
     }
-    display.display();
+    panel_.push();
   }
 
   // Fill bar, no text. Gated on present() like drawEyes.
@@ -343,13 +344,14 @@ class DisplayRenderer : public IDisplayPort {
       return;
     }
     auto& display = panel_.gfx();
-    display.clearDisplay();
-    display.drawRect(otadisplay::kBarX0, otadisplay::kBarY0, otadisplay::kBarW, otadisplay::kBarH, SSD1306_WHITE);
+    display.clearBuffer();
+    display.setDrawColor(1);
+    display.drawFrame(otadisplay::kBarX0, otadisplay::kBarY0, otadisplay::kBarW, otadisplay::kBarH);
     const int fill = otadisplay::fillW(mgr_.otaPct());
     if (fill > 0) {
-      display.fillRect(otadisplay::kBarX0 + 2, otadisplay::kBarY0 + 2, fill, otadisplay::kBarH - 4, SSD1306_WHITE);
+      display.drawBox(otadisplay::kBarX0 + 2, otadisplay::kBarY0 + 2, fill, otadisplay::kBarH - 4);
     }
-    display.display();
+    panel_.push();
   }
 
   // Dark modules as 2px squares + PIN while a pairing show is live.
@@ -359,12 +361,13 @@ class DisplayRenderer : public IDisplayPort {
     }
     auto& display = panel_.gfx();
     const uint8_t* qrBuf = mgr_.qrBuf();
-    display.clearDisplay();
+    display.clearBuffer();
+    display.setDrawColor(1);
     for (int y = 0; y < qrdisplay::kModules; ++y) {
       for (int x = 0; x < qrdisplay::kModules; ++x) {
         if (qrdisplay::moduleAt(qrBuf, x, y) != 0) {
-          display.fillRect(qrdisplay::kX0 + x * qrdisplay::kScale, qrdisplay::kY0 + y * qrdisplay::kScale,
-                           qrdisplay::kScale, qrdisplay::kScale, SSD1306_WHITE);
+          display.drawBox(qrdisplay::kX0 + x * qrdisplay::kScale, qrdisplay::kY0 + y * qrdisplay::kScale,
+                          qrdisplay::kScale, qrdisplay::kScale);
         }
       }
     }
@@ -377,22 +380,20 @@ class DisplayRenderer : public IDisplayPort {
       pin[pairdisplay::kPinLen] = '\0';
       char countdown[pairdisplay::kCountdownBuf] = {};
       pairdisplay::formatCountdown(mgr_.remainingSecs(millis()), countdown, sizeof(countdown));
-      display.setTextSize(1);
-      display.setTextColor(SSD1306_WHITE);
-      display.setCursor(qrdisplay::kPinX, qrdisplay::kCodeY);
-      display.print(F("CODE"));
-      display.setCursor(qrdisplay::kPinX, qrdisplay::kPinY);
-      display.print(pin);
-      display.setCursor(qrdisplay::kPinX, qrdisplay::kCountdownY);
-      display.print(countdown);
+      // 6x10 fixed font: 6px advances keep the codec column asserts; Top-pos keeps the cursor-top rows.
+      display.setFont(u8g2_font_6x10_tf);
+      display.setFontPosTop();
+      display.drawStr(qrdisplay::kPinX, qrdisplay::kCodeY, "CODE");
+      display.drawStr(qrdisplay::kPinX, qrdisplay::kPinY, pin);
+      display.drawStr(qrdisplay::kPinX, qrdisplay::kCountdownY, countdown);
     }
-    display.display();
+    panel_.push();
   }
 
-  static void arc(Adafruit_SSD1306& display, int cx, int cy, int r, int a0, int a1) {
+  static void arc(U8G2& display, int cx, int cy, int r, int a0, int a1) {
     for (int a = a0; a <= a1; a += 5) {
       const float rad = static_cast<float>(a) * 3.14159265f / 180.0f;
-      display.drawPixel(cx + static_cast<int>(r * cosf(rad)), cy + static_cast<int>(r * sinf(rad)), SSD1306_WHITE);
+      display.drawPixel(cx + static_cast<int>(r * cosf(rad)), cy + static_cast<int>(r * sinf(rad)));
     }
   }
 
