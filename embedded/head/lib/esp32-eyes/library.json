@@ -1,0 +1,7 @@
+{
+  "name": "esp32-eyes",
+  "version": "0.0.0",
+  "description": "Vendored eye-animation stack (firmware only)",
+  "frameworks": ["arduino"],
+  "platforms": ["espressif32"]
+}

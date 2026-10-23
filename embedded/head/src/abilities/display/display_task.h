@@ -6,9 +6,11 @@
 // ── Firmware: display renderer ─────────────────────────────────────────────────
 
 #include <Arduino.h>
-#include <math.h>
 
+#include "FaceEmotions.hpp"
 #include "abilities/display/display_manager.h"
+// eyes: vendored playfultechnology/esp32-eyes @ 2738dbf; Face draws into the panel U8G2, random emotion off.
+#include "Face.h"
 #include "common/logger.h"
 #include "config.h"
 #include "hal/ssd1306_display.h"
@@ -30,9 +32,18 @@
 #define CFG_DISPLAY_CORE 0
 #endif
 
+static_assert(eyesmap::kEmotionNormal == static_cast<uint8_t>(eEmotions::Normal),
+              "eyes map must track vendored eEmotions");
+static_assert(eyesmap::kEmotionHappy == static_cast<uint8_t>(eEmotions::Happy),
+              "eyes map must track vendored eEmotions");
+static_assert(eyesmap::kEmotionSad == static_cast<uint8_t>(eEmotions::Sad), "eyes map must track vendored eEmotions");
+static_assert(eyesmap::kEmotionSurprised == static_cast<uint8_t>(eEmotions::Surprised),
+              "eyes map must track vendored eEmotions");
+
 class DisplayRenderer : public IDisplayPort {
  public:
-  explicit DisplayRenderer(Ssd1306Display& panel) : panel_(panel) {}
+  explicit DisplayRenderer(Ssd1306Display& panel)
+      : panel_(panel), face_(Ssd1306Display::kWidth, Ssd1306Display::kHeight, kEyeSize) {}
 
   // Absent OLED never asserts; paints banner + boot face, starts the render task.
   bool init() override {
@@ -41,6 +52,13 @@ class DisplayRenderer : public IDisplayPort {
     }
     enabled_ = true;
     if (panel_.present()) {
+      eyesU8g2 = &panel_.gfx();
+      // Expression manager decides; auto-blink + random look stay on (pairing/OTA own the screen when live).
+      face_.RandomBehavior = false;
+      face_.RandomBlink = true;
+      face_.RandomLook = true;
+      face_.Expression.GoTo_Normal();
+      face_.Behavior.CurrentEmotion = eEmotions::Normal;
       auto& gfx = panel_.gfx();
       gfx.setFont(u8g2_font_6x10_tf);
       gfx.setFontPosTop();
@@ -299,42 +317,18 @@ class DisplayRenderer : public IDisplayPort {
   }
 
   void drawEyes(uint8_t id) {
-    if (!panel_.present()) {
+    if (!panel_.present() || eyesU8g2 == nullptr) {
       return;
+    }
+    const uint8_t clamped = clampFace(static_cast<int>(id));
+    const eEmotions want = static_cast<eEmotions>(eyesmap::emotionForFace(clamped));
+    if (face_.Behavior.CurrentEmotion != want) {
+      face_.Behavior.GoToEmotion(want);
     }
     auto& display = panel_.gfx();
     display.clearBuffer();
     display.setDrawColor(1);
-    switch (id) {
-      case FACE_HAPPY:
-        display.drawDisc(44, 24, 6);
-        display.drawDisc(84, 24, 6);
-        arc(display, 64, 38, 12, 25, 155);
-        break;
-      case FACE_SAD:
-        display.drawDisc(44, 24, 4);
-        display.drawDisc(84, 24, 4);
-        arc(display, 64, 58, 12, 205, 335);
-        break;
-      case FACE_BLINK:
-        display.drawLine(38, 24, 50, 24);
-        display.drawLine(78, 24, 90, 24);
-        display.drawLine(56, 48, 72, 48);
-        break;
-      case FACE_ALERT:
-        display.drawCircle(44, 24, 8);
-        display.drawCircle(84, 24, 8);
-        display.drawDisc(44, 24, 2);
-        display.drawDisc(84, 24, 2);
-        display.drawCircle(64, 48, 5);
-        break;
-      case FACE_BOOT:
-      default:
-        display.drawRBox(36, 16, 16, 16, 3);
-        display.drawRBox(76, 16, 16, 16, 3);
-        display.drawLine(54, 48, 74, 48);
-        break;
-    }
+    face_.Update();
     panel_.push();
   }
 
@@ -390,16 +384,11 @@ class DisplayRenderer : public IDisplayPort {
     panel_.push();
   }
 
-  static void arc(U8G2& display, int cx, int cy, int r, int a0, int a1) {
-    for (int a = a0; a <= a1; a += 5) {
-      const float rad = static_cast<float>(a) * 3.14159265f / 180.0f;
-      display.drawPixel(cx + static_cast<int>(r * cosf(rad)), cy + static_cast<int>(r * sinf(rad)));
-    }
-  }
-
   Ssd1306Display& panel_;
   DisplayManager mgr_;
+  Face face_;
   volatile bool enabled_ = false;
+  static constexpr uint16_t kEyeSize = 40;
   static constexpr uint32_t kNoPairSec = 0xFFFFFFFFu;
   uint32_t lastPairSec_ = kNoPairSec;
   bool wasPairActive_ = false;

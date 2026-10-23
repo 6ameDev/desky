@@ -102,6 +102,9 @@ void onStubCommand(void* ctx, const PowerCommand& cmd) {
 }
 }  // namespace
 
+// Single-U8G2 binding for the vendored eyes stack (declared in lib/esp32-eyes/Common.h).
+U8G2* eyesU8g2 = nullptr;
+
 void setup() {
   Serial.begin(CFG_CLI_BAUD);
   Logger::begin();
