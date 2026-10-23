@@ -6,7 +6,7 @@ import androidx.room3.RoomDatabase
 import androidx.room3.RoomDatabaseConstructor
 
 /**
- * Room database (T5 data layer, version 5).
+ * Room database (T5 data layer, version 6).
  *
  * v1 -> v2 was an additive auto-migration (nullable `pskHex` on
  * `paired_device`). v2 -> v3 drops that column and adds `lastCounter`
@@ -23,6 +23,9 @@ import androidx.room3.RoomDatabaseConstructor
  * flag before then. Real `Migration` + firmware NVS preserve-or-expire path
  * tracked in #16 (both wipe today).
  *
+ * v5 -> v6 adds `lastRobotCounter` (default 0 — the receive-domain
+ * watermark for per-link counter domains, same wipe-freely precedent).
+ *
  * [DeskyDatabaseConstructor] is hand-declared here as `expect` (per the
  * official Room KMP setup); each per-target KSP run generates the matching
  * `actual` plus the platform `*_Impl`. Schema JSON is exported per the
@@ -30,7 +33,7 @@ import androidx.room3.RoomDatabaseConstructor
  */
 @Database(
     entities = [PairedDeviceEntity::class, RobotConfigEntity::class],
-    version = 5,
+    version = 6,
 )
 @ConstructedBy(DeskyDatabaseConstructor::class)
 abstract class DeskyDatabase : RoomDatabase() {

@@ -24,6 +24,10 @@ class ConfigStore {
   static constexpr const char* kPskKey = "psk";
   static constexpr const char* kCounterKey = "bctr";
   static constexpr const char* kPairedKey = "paired";
+  // Robot->app send-domain counter (toAppCounter_, per-link peer session;
+  // single owner today so one key; additive key — no version bump, absent
+  // reads back 0).
+  static constexpr const char* kToAppCounterKey = "tapp";
   // Tier-1 pair-refresh era (u16, additive key — no version bump: pairs
   // written before the refresh feature read back era 0).
   static constexpr const char* kEraKey = "pera";
@@ -77,13 +81,15 @@ class ConfigStore {
     const size_t pairedWritten = prefs.putUChar(kPairedKey, 1);
     // Fresh pair starts era 0 (single owner: a new pair evicts the old era).
     const size_t eraWritten = prefs.putUShort(kEraKey, 0);
+    // Fresh pair resets the robot->app send domain to its baseline.
+    const size_t tappWritten = prefs.putUInt(kToAppCounterKey, 0);
     prefs.end();
     if (written != kPskLen) {
       LOG_E("CONFIG", "psk write short (%u)", (unsigned)written);
       return false;
     }
     // All writes must succeed — a half-persisted pair is worse than none.
-    if (counterWritten == 0 || pairedWritten == 0 || eraWritten == 0) {
+    if (counterWritten == 0 || pairedWritten == 0 || eraWritten == 0 || tappWritten == 0) {
       LOG_E("CONFIG", "pair counter/flag write failed (%u/%u)", (unsigned)counterWritten, (unsigned)pairedWritten);
       return false;
     }
@@ -91,8 +97,9 @@ class ConfigStore {
     return true;
   }
 
-  // Persists the drive counter alone (a reboot resyncs without replaying old
-  // packets). Cheap enough for every N packets; not per-packet (flash wear).
+  // Persists the app->robot receive-domain counter alone (a reboot resyncs
+  // without replaying old packets). Cheap enough for every N packets; not
+  // per-packet (flash wear).
   // NOTE: counter-only saves never touch the era key.
   static bool saveCounter(uint32_t counter) {
     Preferences prefs;
@@ -104,6 +111,23 @@ class ConfigStore {
     prefs.end();
     if (written == 0) {
       LOG_E("CONFIG", "counter write failed");
+      return false;
+    }
+    return true;
+  }
+
+  // Persists the robot->app send-domain counter alone (evictions are rare;
+  // direct save, no wear concern). Session-scoped with PSK+era.
+  static bool saveToAppCounter(uint32_t counter) {
+    Preferences prefs;
+    if (!prefs.begin(kNamespace, false)) {
+      LOG_E("CONFIG", "nvs open failed (saveToAppCounter)");
+      return false;
+    }
+    const size_t written = prefs.putUInt(kToAppCounterKey, counter);
+    prefs.end();
+    if (written == 0) {
+      LOG_E("CONFIG", "to-app counter write failed");
       return false;
     }
     return true;
@@ -136,6 +160,18 @@ class ConfigStore {
     paired = prefs.getUChar(kPairedKey, 0) != 0;
     prefs.end();
     return paired;
+  }
+
+  // Robot->app send-domain read (additive: pairs written before the
+  // per-link split read back 0, the pair baseline).
+  static uint32_t loadToAppCounter() {
+    Preferences prefs;
+    if (!prefs.begin(kNamespace, true)) {
+      return 0;
+    }
+    const uint32_t ctr = prefs.isKey(kToAppCounterKey) ? prefs.getUInt(kToAppCounterKey, 0) : 0;
+    prefs.end();
+    return ctr;
   }
 
   // Tier-1 pair-refresh era accessors (additive: a pair written before the
@@ -171,12 +207,14 @@ class ConfigStore {
     const size_t eraWritten = prefs.putUShort(kEraKey, era);
     const size_t counterWritten = prefs.putUInt(kCounterKey, counter);
     const size_t pairedWritten = prefs.putUChar(kPairedKey, 1);
+    // Rotation resets the robot->app send domain to its baseline.
+    const size_t tappWritten = prefs.putUInt(kToAppCounterKey, 0);
     prefs.end();
     if (written != kPskLen) {
       LOG_E("CONFIG", "pair-refresh psk write short (%u)", (unsigned)written);
       return false;
     }
-    if (eraWritten == 0 || counterWritten == 0 || pairedWritten == 0) {
+    if (eraWritten == 0 || counterWritten == 0 || pairedWritten == 0 || tappWritten == 0) {
       LOG_E("CONFIG", "pair-refresh era/counter/flag write failed");
       return false;
     }
@@ -198,6 +236,7 @@ class ConfigStore {
     prefs.remove(kCounterKey);
     prefs.remove(kPairedKey);
     prefs.remove(kEraKey);
+    prefs.remove(kToAppCounterKey);
     prefs.end();
     LOG_I("CONFIG", "pair cleared");
     return true;

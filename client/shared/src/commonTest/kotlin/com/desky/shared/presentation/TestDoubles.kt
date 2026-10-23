@@ -67,7 +67,16 @@ class FakeDeviceRepository(initial: PairedDevice? = null) : DeviceRepository {
     override suspend fun updatePairRefresh(deviceId: String, counter: UInt, era: UShort) {
         pairRefreshSaves += Triple(deviceId, counter, era)
         val current = flow.value
-        if (current?.id == deviceId) flow.value = current.copy(lastCounter = counter, era = era)
+        if (current?.id == deviceId) flow.value = current.copy(lastCounter = counter, era = era, lastRobotCounter = 0u)
+    }
+
+    /** Every (deviceId, counter) persisted via [updateRobotCounter], in order. */
+    val robotCounterSaves = mutableListOf<Pair<String, UInt>>()
+
+    override suspend fun updateRobotCounter(deviceId: String, counter: UInt) {
+        robotCounterSaves += deviceId to counter
+        val current = flow.value
+        if (current?.id == deviceId) flow.value = current.copy(lastRobotCounter = counter)
     }
 
     fun emit(device: PairedDevice?) {

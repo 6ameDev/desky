@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.first
  * Symmetric forget: when a paired device with a vault PSK exists, the app
  * sends `UNPAIR` (`[0xAD | counterBE4 | tag6 | XOR]`,
  * `tag = first6(HMAC-SHA256(psk16, "UNPAIR" || counterBE4))`,
- * `counter` allocated from the shared [DriveCounter] — the live in-memory
+ * `counter` allocated from the shared [ToRobotCounter] — the live in-memory
  * sequence, never Room's stale persisted watermark) up to 3x
  * fire-and-forget at the stored device endpoint — the firmware never
  * replies, so there is nothing to wait for. Every send error is swallowed
@@ -30,7 +30,8 @@ class ForgetDeviceUseCase(
     private val secretStore: PairSecretStore,
     private val udp: UdpSocketManager,
     private val getPairPsk: GetPairPskUseCase,
-    private val driveCounter: DriveCounter,
+    private val toRobotCounter: ToRobotCounter,
+    private val fromRobotCounter: FromRobotCounter,
 ) {
     suspend operator fun invoke(): Outcome<Unit> {
         return try {
@@ -40,6 +41,10 @@ class ForgetDeviceUseCase(
             }
             deviceRepo.clear()
             if (current != null) secretStore.clear(current.id)
+            // The peer is gone: the receive domain returns to the 0
+            // baseline (the send holder keeps its live era — the control
+            // ViewModel's unpair branch owns that reset).
+            fromRobotCounter.reset()
             Outcome.Success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -54,25 +59,25 @@ class ForgetDeviceUseCase(
      * swallowed so the local forget in [invoke] always runs. Cancellation
      * is never swallowed.
      *
-     * The counter comes from the shared [DriveCounter] (live sequence),
+     * The counter comes from the shared [ToRobotCounter] (live sequence),
      * never `device.lastCounter` (the stale Room watermark): after any
      * unpersisted drive frames the watermark lags the robot, and the robot
-     * drops the `UNPAIR` as a replay. A best-effort [DriveCounter.flush]
+     * drops the `UNPAIR` as a replay. A best-effort [ToRobotCounter.flush]
      * runs first so the watermark is fresh even when all sends fail (flush
      * errors swallowed — graceful degradation preserved).
      */
     private suspend fun sendUnpairBestEffort(device: PairedDevice) {
         val pskHex = getPairPsk() ?: return
         try {
-            driveCounter.ensure(device.id, device.lastCounter, device.persistEvery)
+            toRobotCounter.ensure(device.id, device.lastCounter, device.persistEvery)
             try {
-                driveCounter.flush()
+                toRobotCounter.flush()
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
                 // Swallowed: forget proceeds regardless.
             }
-            val counter = driveCounter.next() ?: return
+            val counter = toRobotCounter.next() ?: return
             val unpair = encodeUnpair(hexToBytes(pskHex), counter)
             repeat(MAX_UNPAIR_SENDS) {
                 try {

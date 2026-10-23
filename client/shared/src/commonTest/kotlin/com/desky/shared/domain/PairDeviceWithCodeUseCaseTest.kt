@@ -93,8 +93,9 @@ class PairDeviceWithCodeUseCaseTest {
         deviceRepo: DeviceRepository,
         udp: FakePairingUdp,
         vault: FakePairSecretStore = FakePairSecretStore(),
+        fromRobot: FromRobotCounter = FromRobotCounter(deviceRepo),
         attemptTimeoutsMs: List<Long> = DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS,
-    ) = PairDeviceWithCodeUseCase(deviceRepo, udp, vault, attemptTimeoutsMs)
+    ) = PairDeviceWithCodeUseCase(deviceRepo, udp, vault, fromRobot, attemptTimeoutsMs)
 
     /** Starts pairing and pumps until the initial PAIR_REQ is on the wire. */
     private fun TestScope.startPairing(
@@ -326,16 +327,16 @@ class PairDeviceWithCodeUseCaseTest {
         val udp = FakePairingUdp()
         val vault = FakePairSecretStore()
         assertFailsWith<IllegalArgumentException> {
-            PairDeviceWithCodeUseCase(repo(), udp, vault, emptyList())
+            PairDeviceWithCodeUseCase(repo(), udp, vault, FromRobotCounter(repo()), emptyList())
         }
         assertFailsWith<IllegalArgumentException> {
-            PairDeviceWithCodeUseCase(repo(), udp, vault, listOf(10, 20, 30, 40, 50, 60))
+            PairDeviceWithCodeUseCase(repo(), udp, vault, FromRobotCounter(repo()), listOf(10, 20, 30, 40, 50, 60))
         }
         assertFailsWith<IllegalArgumentException> {
-            PairDeviceWithCodeUseCase(repo(), udp, vault, listOf(10, 0))
+            PairDeviceWithCodeUseCase(repo(), udp, vault, FromRobotCounter(repo()), listOf(10, 0))
         }
         assertFailsWith<IllegalArgumentException> {
-            PairDeviceWithCodeUseCase(repo(), udp, vault, listOf(-5))
+            PairDeviceWithCodeUseCase(repo(), udp, vault, FromRobotCounter(repo()), listOf(-5))
         }
     }
 

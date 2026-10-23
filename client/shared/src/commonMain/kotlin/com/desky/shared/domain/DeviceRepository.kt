@@ -25,7 +25,15 @@ interface DeviceRepository {
      * Persist a Tier-1 pair-refresh rotation for [deviceId]: the new [era] + the
      * pair-baseline [counter] (0 — the first post-pair-refresh drive uses 1).
      * Called once per confirmed `PAIR_REFRESH_ACK`; keeps the row (the vault PSK
-     * update is a separate call).
+     * update is a separate call). Also resets the receive-domain watermark to
+     * 0 (the robot restarts its own send sequence with the new era).
      */
     suspend fun updatePairRefresh(deviceId: String, counter: UInt, era: UShort)
+
+    /**
+     * Persist an accepted robot-originated counter for [deviceId] (receive
+     * domain — called on every verified robot frame; evictions are rare, so
+     * direct persist, no cadence). A fresh pairing resets it to 0 via [save].
+     */
+    suspend fun updateRobotCounter(deviceId: String, counter: UInt)
 }

@@ -173,14 +173,16 @@ inline void pairRefreshAckTagMsg(uint16_t era, uint8_t out16[kPairRefreshAckMsgL
 // Wire (see shared/protocol/README.md):
 //   ALIVE      App -> Robot, 14B [0x55 | eraBE2 | counterBE4 | tag6 | XOR]
 //     tag = first6(HMAC-SHA256(psk, "ALIVE" || eraBE2 || counterBE4))
-//     era = CURRENT paired era.
+//     era = CURRENT paired era. Counter is the app's toRobotCounter; the
+//     robot verifies against its fromAppCounter.
 //   DISCONNECT Both, 14B [0x56 | eraBE2 | counterBE4 | tag6 | XOR]
 //     tag = first6(HMAC-SHA256(psk, "DISCONNECT" || eraBE2 || counterBE4)).
-// App->Robot is the goodbye that keeps the pair; Robot->App is the single
-// pair-button eviction that clears it. Same layout, fire-and-forget.
-// Both ride the shared strictly-increasing counter: a valid frame consumes
-// lastCounter_ exactly like drive. Era must equal the stored era; old-key
-// frames die via HMAC with no layout change.
+// App->Robot is the goodbye that keeps the pair (app's toRobotCounter);
+// Robot->App is the pair-button eviction that clears it (robot's
+// toAppCounter: starts at 1 per pair, strictly increasing, session-scoped
+// with PSK+era; the app verifies against its fromRobotCounter). Same
+// layout, fire-and-forget. Rule: every authenticated link holds
+// from{Peer}/to{Peer} counter pairs scoped to that peer's session.
 // Headers 0x55/0x56 are claimed in transport/udp_codec.h (frozen table) —
 // never reuse 0xAA/0xAC/0xBB/0x50/0x51/0x52/0x53/0x54/0xAD.
 constexpr uint8_t kAliveHeader = udp::kAliveHeader;
@@ -191,6 +193,19 @@ constexpr size_t kAliveTagLen = 6;
 constexpr size_t kAliveMsgLen = 11;  // "ALIVE"(5) || eraBE2 || counterBE4
 constexpr size_t kDisconnectTagLen = 6;
 constexpr size_t kDisconnectMsgLen = 16;  // "DISCONNECT"(10) || eraBE2 || counterBE4
+
+// Robot->app send-domain step: strictly increasing, 0 never goes on the
+// wire (a wrapped step uses 1). Pure so host tests pin it.
+inline uint32_t nextToAppCounter(uint32_t cur) {
+  const uint32_t next = cur + 1;
+  return (next == 0) ? 1 : next;
+}
+
+// Pair-button eviction burst: first frame at press, then this many resends
+// of the byte-identical frame spaced by the gap below (non-blocking pump).
+constexpr uint8_t kEvictBurstSends = 3;
+constexpr uint8_t kEvictBurstResends = kEvictBurstSends - 1;
+constexpr uint32_t kEvictBurstGapMs = 50;
 
 // ALIVE tag message (11B, host-testable): "ALIVE" ASCII || eraBE2 ||
 // counterBE4.

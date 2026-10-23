@@ -38,4 +38,8 @@ class RoomDeviceRepository(
     override suspend fun updatePairRefresh(deviceId: String, counter: UInt, era: UShort) {
         dao.updatePairRefresh(deviceId, counter.toLong(), era.toInt())
     }
+
+    override suspend fun updateRobotCounter(deviceId: String, counter: UInt) {
+        dao.updateRobotCounter(deviceId, counter.toLong())
+    }
 }

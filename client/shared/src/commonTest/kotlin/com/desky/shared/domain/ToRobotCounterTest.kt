@@ -8,17 +8,17 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-class DriveCounterTest {
+class ToRobotCounterTest {
 
     @Test
     fun nextWithoutEraReturnsNull() = runTest {
-        assertNull(DriveCounter(FakeDeviceRepository()).next())
-        assertNull(DriveCounter(FakeDeviceRepository()).current())
+        assertNull(ToRobotCounter(FakeDeviceRepository()).next())
+        assertNull(ToRobotCounter(FakeDeviceRepository()).current())
     }
 
     @Test
     fun allocatesMonotonicallyFromStarting() = runTest {
-        val holder = DriveCounter(FakeDeviceRepository())
+        val holder = ToRobotCounter(FakeDeviceRepository())
         holder.ensure("desky-1", 100u)
 
         assertEquals(101u, holder.next())
@@ -29,7 +29,7 @@ class DriveCounterTest {
 
     @Test
     fun ensureIsNoOpForCurrentEra() = runTest {
-        val holder = DriveCounter(FakeDeviceRepository())
+        val holder = ToRobotCounter(FakeDeviceRepository())
         holder.ensure("desky-1", 0u)
         assertEquals(1u, holder.next())
         assertEquals(2u, holder.next())
@@ -41,7 +41,7 @@ class DriveCounterTest {
 
     @Test
     fun eraSwitchResetsSequence() = runTest {
-        val holder = DriveCounter(FakeDeviceRepository())
+        val holder = ToRobotCounter(FakeDeviceRepository())
         holder.ensure("desky-a", 0u)
         assertEquals(1u, holder.next())
         assertEquals(2u, holder.next())
@@ -54,7 +54,7 @@ class DriveCounterTest {
     @Test
     fun persistsEvery128thAllocation() = runTest {
         val repo = FakeDeviceRepository()
-        val holder = DriveCounter(repo)
+        val holder = ToRobotCounter(repo)
         holder.ensure("desky-1", 0u)
 
         repeat(127) { holder.next() }
@@ -71,7 +71,7 @@ class DriveCounterTest {
     @Test
     fun persistsAtNegotiatedCadence() = runTest {
         val repo = FakeDeviceRepository()
-        val holder = DriveCounter(repo)
+        val holder = ToRobotCounter(repo)
         holder.ensure("desky-1", 0u, persistEvery = 16)
         assertEquals(16, holder.persistEvery())
 
@@ -88,7 +88,7 @@ class DriveCounterTest {
 
     @Test
     fun cadenceAcceptedOnceAtPairOnly() = runTest {
-        val holder = DriveCounter(FakeDeviceRepository())
+        val holder = ToRobotCounter(FakeDeviceRepository())
         holder.ensure("desky-1", 0u, persistEvery = 16)
         assertEquals(1u, holder.next())
         // Same era re-seeded (e.g. a Room row read mid-session): starting
@@ -101,13 +101,13 @@ class DriveCounterTest {
     @Test
     fun cadenceGuardFallsBackTo128() = runTest {
         for (bad in listOf(0, 1, 7, 1025, -1)) {
-            val holder = DriveCounter(FakeDeviceRepository())
+            val holder = ToRobotCounter(FakeDeviceRepository())
             holder.ensure("desky-1", 0u, persistEvery = bad)
             assertEquals(128, holder.persistEvery(), "persistEvery=$bad")
         }
         // Boundary values pass through.
         for (good in listOf(8, 64, 1024)) {
-            val holder = DriveCounter(FakeDeviceRepository())
+            val holder = ToRobotCounter(FakeDeviceRepository())
             holder.ensure("desky-1", 0u, persistEvery = good)
             assertEquals(good, holder.persistEvery(), "persistEvery=$good")
         }
@@ -115,7 +115,7 @@ class DriveCounterTest {
 
     @Test
     fun eraSwitchAdoptsNewCadence() = runTest {
-        val holder = DriveCounter(FakeDeviceRepository())
+        val holder = ToRobotCounter(FakeDeviceRepository())
         holder.ensure("desky-a", 0u, persistEvery = 16)
         assertEquals(16, holder.persistEvery())
 
@@ -127,11 +127,11 @@ class DriveCounterTest {
     @Test
     fun flushPersistsDirtyOnly() = runTest {
         // No era: no-op, nothing persisted.
-        val empty = DriveCounter(FakeDeviceRepository())
+        val empty = ToRobotCounter(FakeDeviceRepository())
         empty.flush()
         // Clean era (no allocs yet): no-op.
         val repo = FakeDeviceRepository()
-        val holder = DriveCounter(repo)
+        val holder = ToRobotCounter(repo)
         holder.ensure("desky-1", 0u)
         holder.flush()
         assertEquals(emptyList(), repo.counterSaves)
@@ -152,7 +152,7 @@ class DriveCounterTest {
 
     @Test
     fun resetClearsEra() = runTest {
-        val holder = DriveCounter(FakeDeviceRepository())
+        val holder = ToRobotCounter(FakeDeviceRepository())
         holder.ensure("desky-1", 0u, persistEvery = 16)
         assertEquals(1u, holder.next())
 
@@ -168,27 +168,27 @@ class DriveCounterTest {
 
     /**
      * Tier-2 exhaustion gate: allocation up to gate-1 succeeds, the gate
-     * value itself fails closed (null + [DriveCounter.isExhausted] latched,
+     * value itself fails closed (null + [ToRobotCounter.isExhausted] latched,
      * never allocating 0 or the wrap-adjacent half-range-ambiguous region),
-     * and [DriveCounter.flush] still persists the last good counter.
+     * and [ToRobotCounter.flush] still persists the last good counter.
      */
     @Test
     fun exhaustionGateFailsClosed() = runTest {
         val repo = FakeDeviceRepository()
-        val holder = DriveCounter(repo)
-        holder.ensure("desky-1", DriveCounter.EXHAUSTION_GATE - 2u)
+        val holder = ToRobotCounter(repo)
+        holder.ensure("desky-1", ToRobotCounter.EXHAUSTION_GATE - 2u)
 
-        assertEquals(DriveCounter.EXHAUSTION_GATE - 1u, holder.next())
+        assertEquals(ToRobotCounter.EXHAUSTION_GATE - 1u, holder.next())
         assertFalse(holder.isExhausted())
 
         assertNull(holder.next(), "gate value is never allocated")
         assertTrue(holder.isExhausted())
         assertNull(holder.next(), "latch sticks: no allocation after exhaustion")
-        assertEquals(DriveCounter.EXHAUSTION_GATE - 1u, holder.current())
+        assertEquals(ToRobotCounter.EXHAUSTION_GATE - 1u, holder.current())
 
         holder.flush()
         assertEquals(
-            listOf("desky-1" to (DriveCounter.EXHAUSTION_GATE - 1u)),
+            listOf("desky-1" to (ToRobotCounter.EXHAUSTION_GATE - 1u)),
             repo.counterSaves,
             "flush persists the last good counter, not the gate",
         )
@@ -200,7 +200,7 @@ class DriveCounterTest {
 
     @Test
     fun wrapFailsClosed() = runTest {
-        val holder = DriveCounter(FakeDeviceRepository())
+        val holder = ToRobotCounter(FakeDeviceRepository())
         holder.ensure("desky-1", UInt.MAX_VALUE)
 
         assertNull(holder.next(), "0 is never valid on the wire")
@@ -209,13 +209,13 @@ class DriveCounterTest {
 
     /**
      * Tier-1 pair-refresh era: adopted once on a fresh era (Room row's era), never
-     * rewound mid-session; [DriveCounter.completePairRefresh] rotates to the next
+     * rewound mid-session; [ToRobotCounter.completePairRefresh] rotates to the next
      * era with the counter back at the pair baseline (next wire packet is
-     * 1); [DriveCounter.reset] clears back to 0.
+     * 1); [ToRobotCounter.reset] clears back to 0.
      */
     @Test
     fun eraAdoptedOnceThenRotated() = runTest {
-        val holder = DriveCounter(FakeDeviceRepository())
+        val holder = ToRobotCounter(FakeDeviceRepository())
         holder.ensure("desky-1", 50u, era = 7u)
         assertEquals(7u, holder.currentEra())
 
@@ -234,7 +234,7 @@ class DriveCounterTest {
 
     @Test
     fun eraSwitchAdoptsNewEra() = runTest {
-        val holder = DriveCounter(FakeDeviceRepository())
+        val holder = ToRobotCounter(FakeDeviceRepository())
         holder.ensure("desky-a", 0u, era = 3u)
         assertEquals(1u, holder.next())
 
@@ -245,9 +245,9 @@ class DriveCounterTest {
 
     @Test
     fun completePairRefreshClearsExhaustionLatch() = runTest {
-        val holder = DriveCounter(FakeDeviceRepository())
-        holder.ensure("desky-1", DriveCounter.EXHAUSTION_GATE - 2u)
-        assertEquals(DriveCounter.EXHAUSTION_GATE - 1u, holder.next())
+        val holder = ToRobotCounter(FakeDeviceRepository())
+        holder.ensure("desky-1", ToRobotCounter.EXHAUSTION_GATE - 2u)
+        assertEquals(ToRobotCounter.EXHAUSTION_GATE - 1u, holder.next())
         assertNull(holder.next(), "gate value is never allocated")
         assertTrue(holder.isExhausted())
 
@@ -258,7 +258,7 @@ class DriveCounterTest {
 
     @Test
     fun resetClearsEraToZero() = runTest {
-        val holder = DriveCounter(FakeDeviceRepository())
+        val holder = ToRobotCounter(FakeDeviceRepository())
         holder.ensure("desky-1", 0u, era = 5u)
         assertEquals(1u, holder.next())
 
@@ -270,21 +270,21 @@ class DriveCounterTest {
     }
 
     /**
-     * Proactive trigger: [DriveCounter.needsPairRefresh] is false far from the
+     * Proactive trigger: [ToRobotCounter.needsPairRefresh] is false far from the
      * gate and true once `lastSent` reaches `GATE - PAIR_REFRESH_MARGIN` — the
      * silent rotation window (no user action; Tier-2 repair copy owns the
      * gate itself).
      */
     @Test
     fun needsPairRefreshFiresAtMargin() = runTest {
-        val holder = DriveCounter(FakeDeviceRepository())
+        val holder = ToRobotCounter(FakeDeviceRepository())
         assertFalse(holder.needsPairRefresh(), "no era yet: no trigger")
 
         holder.ensure("desky-1", 0u)
         assertFalse(holder.needsPairRefresh(), "fresh pair: no trigger")
 
-        val near = DriveCounter(FakeDeviceRepository())
-        near.ensure("desky-1", DriveCounter.EXHAUSTION_GATE - DriveCounter.PAIR_REFRESH_MARGIN - 2u)
+        val near = ToRobotCounter(FakeDeviceRepository())
+        near.ensure("desky-1", ToRobotCounter.EXHAUSTION_GATE - ToRobotCounter.PAIR_REFRESH_MARGIN - 2u)
         assertFalse(near.needsPairRefresh(), "one frame short of the margin: no trigger")
         near.next()
         assertFalse(near.needsPairRefresh(), "margin edge not yet reached")
@@ -300,7 +300,7 @@ class DriveCounterTest {
     fun writeAheadUsesLivePersistEvery() = runTest {
         for (cadence in listOf(8, 16, 64, 128, 1024)) {
             val repo = FakeDeviceRepository()
-            val holder = DriveCounter(repo)
+            val holder = ToRobotCounter(repo)
             holder.ensure("desky-1", 0u, persistEvery = cadence)
             repeat(cadence - 1) { holder.next() }
             assertEquals(cadence.toUInt(), holder.next(), "cadence=$cadence")
@@ -321,7 +321,7 @@ class DriveCounterTest {
     fun killSimRestartHasZeroDrops() = runTest {
         for (cadence in listOf(16, 128, 1024)) {
             val repo = FakeDeviceRepository()
-            val holder = DriveCounter(repo)
+            val holder = ToRobotCounter(repo)
             holder.ensure("desky-1", 0u, persistEvery = cadence)
             // Drive past the first cadence persist plus a few unpersisted frames.
             repeat(cadence + 5) { holder.next() }
@@ -330,7 +330,7 @@ class DriveCounterTest {
             assertTrue(disk >= robotLastSeen, "cadence=$cadence: disk leads live")
 
             // Simulate an unclean kill: fresh holder re-adopts the disk watermark.
-            val restarted = DriveCounter(repo)
+            val restarted = ToRobotCounter(repo)
             restarted.ensure("desky-1", disk)
             val resumed = restarted.next()
             assertEquals(disk + 1u, resumed, "cadence=$cadence: restart allocates disk+1")
@@ -348,9 +348,9 @@ class DriveCounterTest {
     fun writeAheadClampsAtGate() = runTest {
         for (cadence in listOf(16, 1024)) {
             val repo = FakeDeviceRepository()
-            val holder = DriveCounter(repo)
+            val holder = ToRobotCounter(repo)
             // Seed so the first cadence persist lands past the gate.
-            val gateMinusOne = DriveCounter.EXHAUSTION_GATE - 1u
+            val gateMinusOne = ToRobotCounter.EXHAUSTION_GATE - 1u
             val start = gateMinusOne - cadence.toUInt() - 5u
             holder.ensure("desky-1", start, persistEvery = cadence)
             repeat(cadence - 1) { holder.next() }
@@ -380,7 +380,7 @@ class DriveCounterTest {
     @Test
     fun flushAfterWriteAheadPersistsExact() = runTest {
         val repo = FakeDeviceRepository()
-        val holder = DriveCounter(repo)
+        val holder = ToRobotCounter(repo)
         holder.ensure("desky-1", 0u, persistEvery = 16)
         repeat(16) { holder.next() }
         assertEquals(listOf("desky-1" to 32u), repo.counterSaves, "write-ahead first")

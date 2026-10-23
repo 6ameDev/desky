@@ -136,20 +136,20 @@ suspend fun aesGcmDecrypt(
 /**
  * Minimal guard for the negotiated counter-persist cadence (v1.1): N in
  * 8..1024 passes, anything else (0..7 incl. div-zero 0, absurd values)
- * falls back to [DriveCounter.COUNTER_PERSIST_EVERY]. Not an allowlist —
+ * falls back to [ToRobotCounter.COUNTER_PERSIST_EVERY]. Not an allowlist —
  * just enough to kill 0/div-zero + absurd values. Accepted once at pair
  * only (see [PairDeviceWithCodeUseCase]); mirrors firmware
  * `pairing::sanitizePersistEvery` (whose u8 wire holds the 8..255 subset —
  * 256..1024 are reserved for a future u16 field and map to 128 on wire).
  */
 fun sanitizePersistEvery(n: Int): Int =
-    if (n in 8..1024) n else DriveCounter.COUNTER_PERSIST_EVERY
+    if (n in 8..1024) n else ToRobotCounter.COUNTER_PERSIST_EVERY
 
 /**
  * Split unwrapped `PAIR_OK` plaintext into `(psk16, persistEvery)`: 17
  * bytes (v1.1) carry the trailing interval byte (sanitized via
  * [sanitizePersistEvery]); 16 bytes (v1 frame from an old robot) default
- * to [DriveCounter.COUNTER_PERSIST_EVERY].
+ * to [ToRobotCounter.COUNTER_PERSIST_EVERY].
  */
 fun unwrapPairPlaintext(plain: ByteArray): Pair<ByteArray, Int> {
     require(plain.size == 16 || plain.size == 17) {
@@ -158,7 +158,7 @@ fun unwrapPairPlaintext(plain: ByteArray): Pair<ByteArray, Int> {
     return if (plain.size == 17) {
         plain.copyOfRange(0, 16) to sanitizePersistEvery(plain[16].toInt() and 0xFF)
     } else {
-        plain to DriveCounter.COUNTER_PERSIST_EVERY
+        plain to ToRobotCounter.COUNTER_PERSIST_EVERY
     }
 }
 
@@ -171,7 +171,7 @@ fun unwrapPairPlaintext(plain: ByteArray): Pair<ByteArray, Int> {
  * only the era needs sync + confirm (`PAIR_REFRESH_REQ`/`PAIR_REFRESH_ACK`). Mirrors TLS
  * `KeyUpdate` / IPsec pair-refresh: the epoch (`era`, u16 wrap mod 65536) is the
  * key id, the counter resets to the pair baseline (0 persisted, first drive
- * uses 1) so the session resumes gapless before [DriveCounter.EXHAUSTION_GATE].
+ * uses 1) so the session resumes gapless before [ToRobotCounter.EXHAUSTION_GATE].
  *
  * @param oldPsk 16-byte current pair PSK.
  * @param nextEra requested new era (current era + 1, u16 wrap).
@@ -204,7 +204,7 @@ val PAIR_REFRESH_SALT: ByteArray = "desky-pair-refresh-v1".encodeToByteArray()
  * @param oldPsk 16-byte current pair PSK (the request authenticates under
  *   the OLD key; the ACK authenticates under the new one).
  * @param nextEra requested new era (current era + 1).
- * @param counter fresh drive counter (allocated from [DriveCounter], so the
+ * @param counter fresh drive counter (allocated from [ToRobotCounter], so the
  *   robot's `isFreshCounter` accepts it).
  * @return 6-byte tag.
  */
@@ -267,7 +267,7 @@ suspend fun unpairTag(psk: ByteArray, counter: UInt): ByteArray {
  * followed by the 2-byte big-endian CURRENT era and the 4-byte big-endian
  * counter — must match firmware `pairing::aliveTagMsg`. The era here is
  * the stored era (a pair-refresh moves it); the counter is allocated from the
- * shared [DriveCounter], so a valid `ALIVE` consumes `lastCounter_` exactly
+ * shared [ToRobotCounter], so a valid `ALIVE` consumes `lastCounter_` exactly
  * like drive.
  *
  * @param psk 16-byte pair PSK.

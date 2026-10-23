@@ -35,7 +35,7 @@ data class PairedDeviceEntity(
     val alias: String,
     /**
      * Counter-persist cadence negotiated once at pair (v1.1 `PAIR_OK`
-     * interval byte; v4 column, default 128 = [DriveCounter.COUNTER_PERSIST_EVERY]).
+     * interval byte; v4 column, default 128 = [ToRobotCounter.COUNTER_PERSIST_EVERY]).
      * The drive session reads it back on restart so the negotiated cadence
      * survives app kills (producers sanitize 8..1024 else 128 before save).
      */
@@ -50,6 +50,15 @@ data class PairedDeviceEntity(
      * survives app kills.
      */
     val era: Int = 0,
+    /**
+     * Receive-domain watermark (v6 column, default 0 = fresh-pair
+     * baseline): the last robot-originated counter accepted. Stored as
+     * [Long] like [lastCounter] (SQLite INTEGER is 64-bit; the domain
+     * mapping narrows to `UInt`). Reset to 0 on every pair success and
+     * refresh switch alongside the send baseline; evictions persist here
+     * on accept (rare frames — direct persist, no cadence).
+     */
+    val lastRobotCounter: Long = 0L,
 )
 
 @Entity(tableName = "robot_config")
@@ -74,6 +83,7 @@ fun PairedDeviceEntity.toDomain(): PairedDevice =
         alias = alias,
         persistEvery = persistEvery,
         era = era.toUShort(),
+        lastRobotCounter = lastRobotCounter.toUInt(),
     )
 
 /** Domain -> entity. */
@@ -87,6 +97,7 @@ fun PairedDevice.toEntity(): PairedDeviceEntity =
         alias = alias,
         persistEvery = persistEvery,
         era = era.toInt(),
+        lastRobotCounter = lastRobotCounter.toLong(),
     )
 
 /** Entity -> domain. */

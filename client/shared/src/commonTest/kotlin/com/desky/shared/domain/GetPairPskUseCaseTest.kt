@@ -63,7 +63,7 @@ class GetPairPskUseCaseTest {
         val vault = FakePairSecretStore().apply { seed(DEVICE_ID, PSK_HEX) }
         val udp = FakeUdpSocketManager()
 
-        val result = ForgetDeviceUseCase(repo, vault, udp, GetPairPskUseCase(vault, repo), DriveCounter(repo))()
+        val result = ForgetDeviceUseCase(repo, vault, udp, GetPairPskUseCase(vault, repo), ToRobotCounter(repo), FromRobotCounter(repo))()
 
         assertIs<Outcome.Success<Unit>>(result)
         assertNull(vault.loadPsk(DEVICE_ID))
@@ -77,7 +77,7 @@ class GetPairPskUseCaseTest {
         val repo = FakeDeviceRepository(null)
         val udp = FakeUdpSocketManager()
 
-        val result = ForgetDeviceUseCase(repo, vault, udp, GetPairPskUseCase(vault, repo), DriveCounter(repo))()
+        val result = ForgetDeviceUseCase(repo, vault, udp, GetPairPskUseCase(vault, repo), ToRobotCounter(repo), FromRobotCounter(repo))()
 
         assertIs<Outcome.Success<Unit>>(result)
         assertEquals(0, vault.clearCalls)

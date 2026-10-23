@@ -6,8 +6,9 @@ import com.desky.shared.data.createUdpSocketManager
 import com.desky.shared.data.db.DeskyDatabase
 import com.desky.shared.domain.PairSecretStore
 import com.desky.shared.domain.DeviceRepository
-import com.desky.shared.domain.DriveCounter
+import com.desky.shared.domain.ToRobotCounter
 import com.desky.shared.domain.EmergencyStopUseCase
+import com.desky.shared.domain.FromRobotCounter
 import com.desky.shared.domain.ForgetDeviceUseCase
 import com.desky.shared.domain.GetPairPskUseCase
 import com.desky.shared.domain.ObserveDeviceConfigUseCase
@@ -60,20 +61,21 @@ fun dataModule(
     socketBinder?.let { binder -> single<UdpSocketBinder> { binder } }
 }
 
-/** Domain-layer module: all use cases as factories + the shared drive counter. */
+/** Domain-layer module: all use cases as factories + the shared counter holders. */
 val domainModule: Module = module {
-    single { DriveCounter(get()) }
-    factory { PairDeviceWithCodeUseCase(get(), get(), get()) }
+    single { ToRobotCounter(get()) }
+    single { FromRobotCounter(get()) }
+    factory { PairDeviceWithCodeUseCase(get(), get(), get(), get()) }
     factory { GetPairPskUseCase(get(), get()) }
     factory { SendSignedControlUseCase(get()) }
     factory { ObserveTelemetryUseCase(get()) }
     factory { EmergencyStopUseCase(get()) }
     factory { SaveDeviceConfigUseCase(get()) }
     factory { ObserveDeviceConfigUseCase(get()) }
-    factory { ForgetDeviceUseCase(get(), get(), get(), get(), get()) }
-    factory { PairRefreshUseCase(get(), get(), get(), get(), get()) }
+    factory { ForgetDeviceUseCase(get(), get(), get(), get(), get(), get()) }
+    factory { PairRefreshUseCase(get(), get(), get(), get(), get(), get()) }
     factory { AliveUseCase(get()) }
-    factory { ObserveRemoteDisconnectUseCase(get(), get(), get(), get(), get()) }
+    factory { ObserveRemoteDisconnectUseCase(get(), get(), get(), get(), get(), get()) }
 }
 
 /**
@@ -87,7 +89,7 @@ val presentationModule: Module = module {
     // binding, the ALIVE/DISCONNECT knock stays inert without an AliveUseCase
     // binding, and the AP-rejoin knock stays inert without a UdpSocketBinder
     // binding (JVM/iOS — getOrNull, tests, legacy graphs).
-    viewModel { RobotControlViewModel(get(), get(), get(), get(), get(), get(), get(), pairRefreshUC = getOrNull<PairRefreshUseCase>(), aliveUC = getOrNull<AliveUseCase>(), socketBinder = getOrNull<UdpSocketBinder>(), forgetUC = get(), remoteDisconnectUC = getOrNull<ObserveRemoteDisconnectUseCase>()) }
+    viewModel { RobotControlViewModel(get(), get(), get(), get(), get(), get(), get(), get(), pairRefreshUC = getOrNull<PairRefreshUseCase>(), aliveUC = getOrNull<AliveUseCase>(), socketBinder = getOrNull<UdpSocketBinder>(), forgetUC = get(), remoteDisconnectUC = getOrNull<ObserveRemoteDisconnectUseCase>()) }
     viewModel { SettingsViewModel(get(), get(), get()) }
     viewModel { SessionGateViewModel(get()) }
 }

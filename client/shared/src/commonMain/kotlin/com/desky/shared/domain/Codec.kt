@@ -26,7 +26,7 @@ const val PAIR_OK_SIZE = 38
  * covers `psk16 || persist_u8` (see `shared/protocol/README.md` §v1.1
  * addendum). [PAIR_OK_SIZE] stays the v1 (38B, ct 16B) size: the app
  * accepts BOTH — a v1 robot has no interval byte and the app defaults to
- * [DriveCounter.COUNTER_PERSIST_EVERY].
+ * [ToRobotCounter.COUNTER_PERSIST_EVERY].
  */
 const val PAIR_OK_SIZE_V11 = 39
 const val PAIR_ERR_SIZE = 4
@@ -280,7 +280,7 @@ object PairingPacketCodec {
      * v1 (38B, ct 16B) and v1.1 (39B, ct 17B) frames; on success the
      * `Triple` is `(server_nonce 4B, ct 16/17B, gcm_tag 16B)` — split the
      * decrypted plaintext with `unwrapPairPlaintext` (v1 defaults the
-     * interval to [DriveCounter.COUNTER_PERSIST_EVERY]).
+     * interval to [ToRobotCounter.COUNTER_PERSIST_EVERY]).
      */
     fun decodePairOk(bytes: ByteArray): Triple<ByteArray, ByteArray, ByteArray>? {
         if (bytes.size != PAIR_OK_SIZE && bytes.size != PAIR_OK_SIZE_V11) return null
@@ -399,7 +399,7 @@ fun decodePairRefreshAck(bytes: ByteArray): Pair<UShort, ByteArray>? {
  *
  * @param psk 16-byte pair PSK.
  * @param era CURRENT paired era (stored era; a pair-refresh moves it).
- * @param counter next drive counter from the shared [DriveCounter]
+ * @param counter next drive counter from the shared [ToRobotCounter]
  *   (strictly increasing like every other signed frame).
  */
 suspend fun encodeAlive(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
@@ -437,7 +437,7 @@ suspend fun encodeAlive(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
  *
  * @param psk 16-byte pair PSK.
  * @param era CURRENT paired era.
- * @param counter next drive counter from the shared [DriveCounter].
+ * @param counter next drive counter from the shared [ToRobotCounter].
  */
 suspend fun encodeDisconnect(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
     require(psk.size == 16) { "encodeDisconnect: psk must be 16 bytes" }

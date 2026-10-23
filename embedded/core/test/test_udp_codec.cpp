@@ -248,6 +248,9 @@ void test_alive_tag_msg_golden();
 void test_disconnect_tag_msg_golden();
 void test_pair_core_pair_lifecycle();
 void test_pair_wire_reasons_frozen();
+void test_toapp_counter_increments_from_baseline();
+void test_toapp_counter_skips_zero_on_wrap();
+void test_evict_burst_shape();
 // Wire mirror gate (defined in test_udp_server.cpp).
 void test_udp_mirror_freeze();
 void test_udp_pair_req_frame_golden();
@@ -530,6 +533,9 @@ int main() {
   RUN_TEST(test_disconnect_tag_msg_golden);
   RUN_TEST(test_pair_core_pair_lifecycle);
   RUN_TEST(test_pair_wire_reasons_frozen);
+  RUN_TEST(test_toapp_counter_increments_from_baseline);
+  RUN_TEST(test_toapp_counter_skips_zero_on_wrap);
+  RUN_TEST(test_evict_burst_shape);
   RUN_TEST(test_udp_mirror_freeze);
   RUN_TEST(test_udp_pair_req_frame_golden);
   RUN_TEST(test_udp_pair_err_frame_golden);

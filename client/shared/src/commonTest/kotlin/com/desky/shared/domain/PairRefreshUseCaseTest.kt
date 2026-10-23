@@ -6,6 +6,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -13,6 +14,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 private const val OLD_PSK_HEX = "00112233445566778899aabbccddeeff"
@@ -65,9 +67,10 @@ class PairRefreshUseCaseTest {
         repo: FakeDeviceRepository,
         vault: FakePairSecretStore,
         udp: FakePairRefreshUdp,
-        holder: DriveCounter,
+        holder: ToRobotCounter,
+        fromRobot: FromRobotCounter = FromRobotCounter(repo),
         attemptTimeoutsMs: List<Long> = DEFAULT_PAIR_REFRESH_ATTEMPT_TIMEOUTS_MS,
-    ) = PairRefreshUseCase(repo, vault, udp, GetPairPskUseCase(vault, repo), holder, attemptTimeoutsMs)
+    ) = PairRefreshUseCase(repo, vault, udp, GetPairPskUseCase(vault, repo), holder, fromRobot, attemptTimeoutsMs)
 
     @Test
     fun ackSuccessRotatesEraPskAndCounter() = runTest {
@@ -75,8 +78,10 @@ class PairRefreshUseCaseTest {
         val repo = FakeDeviceRepository(device)
         val vault = FakePairSecretStore().also { it.seed(device.id, OLD_PSK_HEX) }
         val udp = FakePairRefreshUdp()
-        val holder = DriveCounter(repo)
-        val deferred = async { useCase(repo, vault, udp, holder)() }
+        val holder = ToRobotCounter(repo)
+        val fromRobot = FromRobotCounter(repo)
+        fromRobot.ensure(device.id, 41u)
+        val deferred = async { useCase(repo, vault, udp, holder, fromRobot)() }
         runCurrent()
 
         // One PAIR_REFRESH_REQ: era 1 (0 + 1), counter 100 (99 + 1) under the old key.
@@ -98,6 +103,10 @@ class PairRefreshUseCaseTest {
         // Holder reset to the new era at baseline: gapless resume at 1.
         assertEquals(1u, holder.currentEra())
         assertEquals(1u, holder.next())
+        // Receive domain reset to the 0 baseline (the robot restarts its
+        // own send sequence with the new era); Room persists the same.
+        assertNull(fromRobot.current())
+        assertEquals(0u, repo.observePaired().first()?.lastRobotCounter)
     }
 
     @Test
@@ -106,7 +115,7 @@ class PairRefreshUseCaseTest {
         val repo = FakeDeviceRepository(device)
         val vault = FakePairSecretStore().also { it.seed(device.id, OLD_PSK_HEX) }
         val udp = FakePairRefreshUdp()
-        val holder = DriveCounter(repo)
+        val holder = ToRobotCounter(repo)
         val deferred = async { useCase(repo, vault, udp, holder, attemptTimeoutsMs = listOf(50, 50, 50))() }
         runCurrent()
 
@@ -131,7 +140,7 @@ class PairRefreshUseCaseTest {
         val repo = FakeDeviceRepository(device)
         val vault = FakePairSecretStore().also { it.seed(device.id, OLD_PSK_HEX) }
         val udp = FakePairRefreshUdp()
-        val holder = DriveCounter(repo)
+        val holder = ToRobotCounter(repo)
         val deferred = async { useCase(repo, vault, udp, holder, attemptTimeoutsMs = listOf(50, 1000))() }
         runCurrent()
 
@@ -151,7 +160,7 @@ class PairRefreshUseCaseTest {
         val repo = FakeDeviceRepository(device)
         val vault = FakePairSecretStore().also { it.seed(device.id, OLD_PSK_HEX) }
         val udp = FakePairRefreshUdp()
-        val holder = DriveCounter(repo)
+        val holder = ToRobotCounter(repo)
         val deferred = async { useCase(repo, vault, udp, holder)() }
         runCurrent()
 
@@ -182,7 +191,7 @@ class PairRefreshUseCaseTest {
         val repo = FakeDeviceRepository(device)
         val vault = FakePairSecretStore().also { it.seed(device.id, OLD_PSK_HEX) }
         val udp = FakePairRefreshUdp()
-        val holder = DriveCounter(repo)
+        val holder = ToRobotCounter(repo)
         val deferred = async { useCase(repo, vault, udp, holder, attemptTimeoutsMs = listOf(50, 50))() }
         runCurrent()
 
@@ -203,7 +212,7 @@ class PairRefreshUseCaseTest {
         val emptyRepo = FakeDeviceRepository(null)
         val emptyUdp = FakePairRefreshUdp()
         val emptyVault = FakePairSecretStore()
-        val emptyHolder = DriveCounter(emptyRepo)
+        val emptyHolder = ToRobotCounter(emptyRepo)
         val unpaired = async { useCase(emptyRepo, emptyVault, emptyUdp, emptyHolder)() }
         runCurrent()
         assertIs<Outcome.Failure>(unpaired.await())
@@ -214,7 +223,7 @@ class PairRefreshUseCaseTest {
         val keylessRepo = FakeDeviceRepository(device)
         val keylessUdp = FakePairRefreshUdp()
         val keylessVault = FakePairSecretStore()
-        val keylessHolder = DriveCounter(keylessRepo)
+        val keylessHolder = ToRobotCounter(keylessRepo)
         val keyless = async { useCase(keylessRepo, keylessVault, keylessUdp, keylessHolder)() }
         runCurrent()
         assertIs<Outcome.Failure>(keyless.await())

@@ -92,8 +92,9 @@ class ForgetDeviceUseCaseTest {
         repo: FakeDeviceRepository,
         vault: FakePairSecretStore,
         udp: FakeUdpSocketManager,
-        holder: DriveCounter = DriveCounter(repo),
-    ) = ForgetDeviceUseCase(repo, vault, udp, GetPairPskUseCase(vault, repo), holder)
+        holder: ToRobotCounter = ToRobotCounter(repo),
+        fromRobot: FromRobotCounter = FromRobotCounter(repo),
+    ) = ForgetDeviceUseCase(repo, vault, udp, GetPairPskUseCase(vault, repo), holder, fromRobot)
 
     @Test
     fun clearSucceeds() = runTest {
@@ -103,7 +104,7 @@ class ForgetDeviceUseCaseTest {
         val vault = FakePairSecretStore().apply { seed(device.id, "aa") }
         val udp = FakeUdpSocketManager()
 
-        val result = ForgetDeviceUseCase(deviceRepo, vault, udp, GetPairPskUseCase(vault, deviceRepo), DriveCounter(deviceRepo))()
+        val result = ForgetDeviceUseCase(deviceRepo, vault, udp, GetPairPskUseCase(vault, deviceRepo), ToRobotCounter(deviceRepo), FromRobotCounter(deviceRepo))()
 
         assertIs<Outcome.Success<Unit>>(result)
         verifySuspend { deviceRepo.clear() }
@@ -121,7 +122,7 @@ class ForgetDeviceUseCaseTest {
         val vault = FakePairSecretStore()
         val udp = FakeUdpSocketManager()
 
-        val result = ForgetDeviceUseCase(deviceRepo, vault, udp, GetPairPskUseCase(vault, deviceRepo), DriveCounter(deviceRepo))()
+        val result = ForgetDeviceUseCase(deviceRepo, vault, udp, GetPairPskUseCase(vault, deviceRepo), ToRobotCounter(deviceRepo), FromRobotCounter(deviceRepo))()
 
         val failure = assertIs<Outcome.Failure>(result)
         assertTrue(failure.reason.isNotBlank())
@@ -160,7 +161,7 @@ class ForgetDeviceUseCaseTest {
         val vault = FakePairSecretStore().apply { seed(paired.id, pskHex) }
         val udp = FakeUdpSocketManager()
         // Ten drive sends since the last persist: live is 15, watermark 5.
-        val holder = DriveCounter(repo)
+        val holder = ToRobotCounter(repo)
         holder.ensure(paired.id, paired.lastCounter)
         repeat(10) { holder.next() }
 

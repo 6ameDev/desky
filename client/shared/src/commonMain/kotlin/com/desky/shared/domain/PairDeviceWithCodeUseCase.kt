@@ -50,6 +50,7 @@ class PairDeviceWithCodeUseCase(
     private val deviceRepo: DeviceRepository,
     private val udp: UdpSocketManager,
     private val secretStore: PairSecretStore,
+    private val fromRobotCounter: FromRobotCounter,
     private val attemptTimeoutsMs: List<Long> = DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS,
 ) {
     init {
@@ -167,6 +168,10 @@ class PairDeviceWithCodeUseCase(
             // key is lost.)
             secretStore.savePsk(device.id, psk.toHex())
             deviceRepo.save(device)
+            // Fresh pair: the robot restarts its own send sequence at 1, so
+            // the receive domain returns to the 0 baseline (the peer id is
+            // stable across pairs — only an explicit reset does this).
+            fromRobotCounter.reset()
             Outcome.Success(device)
         } catch (e: CancellationException) {
             throw e

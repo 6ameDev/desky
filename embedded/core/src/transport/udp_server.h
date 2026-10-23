@@ -599,7 +599,7 @@ class UdpServer : public transport::IUdpTransport {
     // Layout: mode=1 thr=2 str=3 flags=4 ctr=5..8 tag=9..14 xor=15.
     const uint32_t ctr = (static_cast<uint32_t>(buf[5]) << 24) | (static_cast<uint32_t>(buf[6]) << 16) |
                          (static_cast<uint32_t>(buf[7]) << 8) | static_cast<uint32_t>(buf[8]);
-    if (!isFreshCounter(pairing_->lastCounter(), ctr)) {
+    if (!isFreshCounter(pairing_->fromAppCounter(), ctr)) {
       dropFirst(firstDriveDrop_, "drop drive replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
       LOG_EVERY_N(20, "UDP", "drop drive replay ctr=%lu", static_cast<unsigned long>(ctr));
       return;
@@ -659,7 +659,7 @@ class UdpServer : public transport::IUdpTransport {
     }
     const uint32_t ctr = (static_cast<uint32_t>(buf[3]) << 24) | (static_cast<uint32_t>(buf[4]) << 16) |
                          (static_cast<uint32_t>(buf[5]) << 8) | static_cast<uint32_t>(buf[6]);
-    if (!isFreshCounter(pairing_->lastCounter(), ctr)) {
+    if (!isFreshCounter(pairing_->fromAppCounter(), ctr)) {
       dropFirst(firstAliveDrop_, "drop alive replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
       LOG_EVERY_N(20, "UDP", "drop alive replay ctr=%lu", static_cast<unsigned long>(ctr));
       return;
@@ -704,7 +704,7 @@ class UdpServer : public transport::IUdpTransport {
     }
     const uint32_t ctr = (static_cast<uint32_t>(buf[3]) << 24) | (static_cast<uint32_t>(buf[4]) << 16) |
                          (static_cast<uint32_t>(buf[5]) << 8) | static_cast<uint32_t>(buf[6]);
-    if (!isFreshCounter(pairing_->lastCounter(), ctr)) {
+    if (!isFreshCounter(pairing_->fromAppCounter(), ctr)) {
       dropFirst(firstDisconnectDrop_, "drop disconnect replay ctr=%lu (first of boot)",
                 static_cast<unsigned long>(ctr));
       LOG_EVERY_N(20, "UDP", "drop disconnect replay ctr=%lu", static_cast<unsigned long>(ctr));

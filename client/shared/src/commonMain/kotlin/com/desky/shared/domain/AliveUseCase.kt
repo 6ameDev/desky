@@ -11,7 +11,7 @@ import kotlinx.coroutines.CancellationException
  *   to the paired robot's address. Fire-and-forget: the robot never
  *   replies — steady telemetry is the ACK. The caller (the control
  *   ViewModel's send loop) owns the counter exactly like the drive path:
- *   allocated from the shared [DriveCounter] via its session helper, so
+ *   allocated from the shared [ToRobotCounter] via its session helper, so
  *   `ALIVE` + `DRIVE` + `PAIR_REFRESH_REQ` share one strictly increasing
  *   sequence (a valid `ALIVE` consumes `lastCounter_` exactly like drive).
  * - [sendDisconnect] sends one `DISCONNECT` (`[0x56 | eraBE2 | counterBE4

@@ -8,10 +8,11 @@ import com.desky.shared.domain.DEFAULT_UDP_PORT
 import com.desky.shared.domain.DISCONNECT_HEADER
 import com.desky.shared.domain.DRIVE_HEADER
 import com.desky.shared.domain.DRIVE_SIZE
-import com.desky.shared.domain.DriveCounter
+import com.desky.shared.domain.ToRobotCounter
 import com.desky.shared.domain.ESTOP_FLAG
 import com.desky.shared.domain.EmergencyStopUseCase
 import com.desky.shared.domain.ForgetDeviceUseCase
+import com.desky.shared.domain.FromRobotCounter
 import com.desky.shared.domain.GetPairPskUseCase
 import com.desky.shared.domain.UNPAIR_HEADER
 import com.desky.shared.domain.encodeAlive
@@ -47,14 +48,15 @@ class RobotControlViewModelTest {
         udp: FakeUdpSocketManager = FakeUdpSocketManager(),
         vault: FakePairSecretStore = FakePairSecretStore().apply { seed(testDevice().id, PSK_HEX) },
         tickMs: Long = 20,
-        holder: DriveCounter = DriveCounter(repo),
+        holder: ToRobotCounter = ToRobotCounter(repo),
+        fromRobot: FromRobotCounter = FromRobotCounter(repo),
         useAlive: Boolean = false,
         binder: FakeUdpSocketBinder = FakeUdpSocketBinder(),
         wireForget: Boolean = false,
     ): Quad {
         val sendSigned = SendSignedControlUseCase(udp)
         val getPsk = GetPairPskUseCase(vault, repo)
-        val forgetUC = if (wireForget) ForgetDeviceUseCase(repo, vault, udp, getPsk, holder) else null
+        val forgetUC = if (wireForget) ForgetDeviceUseCase(repo, vault, udp, getPsk, holder, fromRobot) else null
         val viewModel = RobotControlViewModel(
             sendSigned,
             ObserveTelemetryUseCase(udp),
@@ -63,12 +65,13 @@ class RobotControlViewModelTest {
             getPsk,
             udp,
             holder,
+            fromRobot,
             tickMs,
             aliveUC = if (useAlive) AliveUseCase(udp) else null,
             socketBinder = binder,
             forgetUC = forgetUC,
         )
-        return Quad(viewModel, repo, udp, vault, holder, binder)
+        return Quad(viewModel, repo, udp, vault, holder, fromRobot, binder)
     }
 
     /**
@@ -94,7 +97,8 @@ class RobotControlViewModelTest {
         val repo: FakeDeviceRepository,
         val udp: FakeUdpSocketManager,
         val vault: FakePairSecretStore,
-        val holder: DriveCounter,
+        val holder: ToRobotCounter,
+        val fromRobot: FromRobotCounter = FromRobotCounter(repo),
         val binder: FakeUdpSocketBinder = FakeUdpSocketBinder(),
     )
 
@@ -318,7 +322,7 @@ class RobotControlViewModelTest {
      */
     @Test
     fun sessionExpiredSurfacesRepair() = runVmTest { main ->
-        val device = testDevice().copy(lastCounter = DriveCounter.EXHAUSTION_GATE - 1u)
+        val device = testDevice().copy(lastCounter = ToRobotCounter.EXHAUSTION_GATE - 1u)
         val (viewModel, repo, udp, vault) = setup(
             repo = FakeDeviceRepository(device),
             vault = FakePairSecretStore().apply { seed(device.id, PSK_HEX) },
@@ -642,7 +646,7 @@ class RobotControlViewModelTest {
         assertEquals(listOf(deviceId to 256u), repo.counterSaves)
 
         // Forget WITHOUT further persists: the holder still holds 150 live.
-        val forget = ForgetDeviceUseCase(repo, vault, udp, GetPairPskUseCase(vault, repo), holder)
+        val forget = ForgetDeviceUseCase(repo, vault, udp, GetPairPskUseCase(vault, repo), holder, FromRobotCounter(repo))
         val result = forget()
 
         assertIs<Outcome.Success<Unit>>(result, "forget result: $result")
@@ -1179,7 +1183,7 @@ class RobotControlViewModelTest {
      */
     @Test
     fun rejoinFiresImmediateAlive() = runVmTest { main ->
-        val (_, _, udp, _, _, binder) = setup(tickMs = 20, useAlive = true)
+        val (_, _, udp, _, _, _, binder) = setup(tickMs = 20, useAlive = true)
         main.runCurrent()
         // t=0: ALIVE(1) + drive(2) on the first paired tick.
         assertEquals(2, udp.sent.size)

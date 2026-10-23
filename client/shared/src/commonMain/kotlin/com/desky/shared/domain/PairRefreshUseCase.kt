@@ -18,9 +18,9 @@ val DEFAULT_PAIR_REFRESH_ATTEMPT_TIMEOUTS_MS: List<Long> = listOf(1000, 1000, 10
  * `tag = first6(HMAC(oldPsk, "PAIRREFRESH" || era || counter))`), waits for
  * `PAIR_REFRESH_ACK` (`[0x54 | eraBE2 | tag6 | XOR]`,
  * `tag = first6(HMAC(newPsk, "PAIRREFRESHACK" || era))`), then persists the vault
- * PSK + Room era/counter and resets the shared [DriveCounter] to the new
+ * PSK + Room era/counter and resets the shared [ToRobotCounter] to the new
  * era — so the next drive uses counter 1 under the new key, well before
- * [DriveCounter.EXHAUSTION_GATE].
+ * [ToRobotCounter.EXHAUSTION_GATE].
  *
  * Silent: no UI surface on success (callers log at debug only); on failure
  * the caller falls back to the Tier-2 repair copy ("session expired —
@@ -44,7 +44,8 @@ class PairRefreshUseCase(
     private val secretStore: PairSecretStore,
     private val udp: UdpSocketManager,
     private val getPairPsk: GetPairPskUseCase,
-    private val driveCounter: DriveCounter,
+    private val toRobotCounter: ToRobotCounter,
+    private val fromRobotCounter: FromRobotCounter,
     private val attemptTimeoutsMs: List<Long> = DEFAULT_PAIR_REFRESH_ATTEMPT_TIMEOUTS_MS,
 ) {
     init {
@@ -75,8 +76,8 @@ class PairRefreshUseCase(
                 return Outcome.Failure("PairRefresh failed: undecodable pair key", e)
             }
             if (oldPsk.size != 16) return Outcome.Failure("PairRefresh failed: undecodable pair key")
-            driveCounter.ensure(device.id, device.lastCounter, device.persistEvery, device.era)
-            val counter = driveCounter.next() ?: return Outcome.Failure("PairRefresh failed: counter exhausted")
+            toRobotCounter.ensure(device.id, device.lastCounter, device.persistEvery, device.era)
+            val counter = toRobotCounter.next() ?: return Outcome.Failure("PairRefresh failed: counter exhausted")
             val nextEra: UShort = ((device.era.toInt() + 1) and 0xFFFF).toUShort()
             val nextPsk = pairRefreshPsk(oldPsk, nextEra)
             val req = encodePairRefreshReq(oldPsk, nextEra, counter)
@@ -102,7 +103,11 @@ class PairRefreshUseCase(
             // PSK cache refresh is the caller's (see maybePairRefresh TODO).
             secretStore.savePsk(device.id, nextPsk.toHex())
             deviceRepo.updatePairRefresh(device.id, 0u, nextEra)
-            driveCounter.completePairRefresh(nextEra)
+            toRobotCounter.completePairRefresh(nextEra)
+            // The robot restarts its own send sequence with the new era:
+            // the receive domain returns to the 0 baseline (Room's
+            // updatePairRefresh persists the same reset).
+            fromRobotCounter.reset()
             Outcome.Success(nextEra)
         } catch (e: CancellationException) {
             throw e
