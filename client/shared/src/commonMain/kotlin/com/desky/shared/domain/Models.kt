@@ -41,6 +41,9 @@ data class ControlCommand(
 /**
  * Robot -> App sensor snapshot. Pitch/roll are degrees (the decidegree/10
  * fixed-point conversion lives in the codec); [distanceMm] is millimetres.
+ * [manual] is the telemetry `statusFlags` bit-4 report: true while the
+ * robot holds MANUAL mode (the app's drive loop only transmits while this
+ * is reported — drive frames outside MANUAL are ignored robot-side).
  */
 data class Telemetry(
     val pitchDeg: Float,
@@ -49,6 +52,7 @@ data class Telemetry(
     val cliff: Boolean,
     val driving: Boolean,
     val mode: RobotMode,
+    val manual: Boolean = false,
 ) {
     init {
         require(distanceMm in 0..65535) { "distanceMm out of range: $distanceMm" }

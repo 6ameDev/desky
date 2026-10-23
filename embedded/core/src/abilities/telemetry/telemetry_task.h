@@ -101,6 +101,7 @@ class TelemetryTask {
     tsnap.mode = static_cast<uint8_t>(snap.mode);
     tsnap.cliff = snap.cliffDetected;
     tsnap.driving = driving;
+    tsnap.manual = snap.manual;
     tsnap.pitchDeg = pitchDeg;
     tsnap.rollDeg = rollDeg;
     tsnap.distMm = distMm;

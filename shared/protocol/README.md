@@ -45,7 +45,7 @@ Decode rejects wrong header, wrong length, or bad checksum.
 | 1..2  | pitch       | int16 big-endian, decidegrees (deg = raw/10) |
 | 3..4  | roll        | int16 big-endian, decidegrees               |
 | 5..6  | distanceMm  | uint16 big-endian, millimetres              |
-| 7     | statusFlags | bit0 = cliff, bit1 = driving, bits2-3 = mode (0 MANUAL, 1 AUTONOMOUS, 2 LOW_POWER, 3 EMERGENCY), bits4-7 reserved 0 |
+| 7     | statusFlags | bit0 = cliff, bit1 = driving, bits2-3 = mode (0 MANUAL, 1 AUTONOMOUS, 2 LOW_POWER, 3 EMERGENCY), bit4 = MANUAL session active (sysmode MANUAL held via MANUAL_TAKE), bits5-7 reserved 0 |
 | 8     | checksum    | XOR of bytes 0..7                           |
 
 Decode rejects wrong header, wrong length, or bad checksum.
@@ -78,9 +78,11 @@ Frozen wire table (M9 three-way mirror gate — normative source is
 | `0x54` | 10   | PAIR_REFRESH_ACK  | Robot->App |
 | `0x55` | 14   | ALIVE      | App->Robot |
 | `0x56` | 14   | DISCONNECT | Both (same layout; App->Robot goodbye, Robot->App pair-button eviction) |
+| `0x57` | 14   | MANUAL_TAKE | App->Robot |
+| `0x58` | 14   | MANUAL_RELEASE | App->Robot |
 
 Reserved: headers `0xAA`/`0xBB`/`0x50`/`0x51`/`0x52`/`0xAC`/`0xAD`/`0x53`/
-`0x54`/`0x55`/`0x56` are claimed — never reuse or renumber a header, never
+`0x54`/`0x55`/`0x56`/`0x57`/`0x58` are claimed — never reuse or renumber a header, never
 change a size, never repurpose a reserved byte. New messages claim a fresh
 header (Phase-2 `SET_RATE` must pick other values).
 
@@ -197,7 +199,39 @@ pair-refresh rotation.
   app verifies against its fromRobotCounter and on pass clears its vault
   + Room row. No retry beyond the burst either direction.
   Headers `0x55`/`0x56` are claimed here — never reuse
-  `0xAA`/`0xAC`/`0xBB`/`0x50`/`0x51`/`0x52`/`0x53`/`0x54`/`0xAD`.
+  `0xAA`/`0xAC`/`0xBB`/`0x50`/`0x51`/`0x52`/`0x53`/`0x54`/`0xAD`/`0x57`/`0x58`.
+- `MANUAL_TAKE` App -> Robot, 14 bytes (explicit drive-session take):
+  `[0x57 | eraBE2 | counterBE4 | tag 6B | XOR]`
+  with `tag = first6(HMAC-SHA256(psk, "MANUALTAKE"||eraBE2||counterBE4))` —
+  the 16B message is the 10 ASCII bytes of `"MANUALTAKE"` + the 2B big-endian
+  CURRENT era + the 4B big-endian counter (fresh per `isFreshCounter`,
+  allocated from the app's toRobotCounter — a valid TAKE consumes the
+  robot's fromAppCounter exactly like drive, so a replayed TAKE can never
+  fire twice).
+- `MANUAL_RELEASE` App -> Robot, 14 bytes (explicit drive-session release):
+  `[0x58 | eraBE2 | counterBE4 | tag 6B | XOR]`
+  with `tag = first6(HMAC-SHA256(psk, "MANUALRELEASE"||eraBE2||counterBE4))`
+  — the 19B message is the 13 ASCII bytes of `"MANUALRELEASE"` + eraBE2 +
+  counterBE4. Same verify order and consume-on-accept domain as the take.
+
+MANUAL session (explicit take/release, stale auto-exit): pairing proves
+ownership, but motion needs a held drive session on top. The app enters it
+with `MANUAL_TAKE` (verify order mirrors UNPAIR/DISCONNECT: len -> header
+-> XOR -> paired? -> era equals the stored era -> counter wrap-aware
+strictly greater -> HMAC constant-time; fail = silent drop) and leaves it
+with `MANUAL_RELEASE` (same verify). Pass on TAKE moves sysmode
+NORMAL -> MANUAL; pass on RELEASE moves MANUAL -> NORMAL. The comms
+failsafe doubles as the session timeout: a stale tick (no verified drive
+within `kStaleMs`, 500ms) in MANUAL returns to NORMAL and motion stops —
+no separate session timer. Drive packets outside MANUAL are ignored for
+motion (no stick intent reaches the motion layer) but still verify/consume
+normally: counters advance and the alive funnel runs, so an app already
+streaming drive keeps the command clock fresh and a trailing TAKE latches
+cleanly into motion. Telemetry `statusFlags` bit 4 (`0x10`) mirrors the
+session: 1 while sysmode MANUAL is held, 0 otherwise (bits 5-7 stay
+reserved). The app should stream drive before or alongside the session —
+a TAKE with no drive flowing enters MANUAL for a single tick before the
+stale exit returns it to NORMAL.
 
 Robot alive rule (firmware `UdpServer::markAlive` funnel): every VALID
 paired packet — ALIVE, DRIVE, PAIR_REFRESH_REQ — pins the telemetry unicast
@@ -312,3 +346,12 @@ disc_msg=`444953434f4e4e454354000100000064`
 (`"DISCONNECT"||eraBE2(0001)||ctrBE4(00000064)`),
 disc_tag=`ca90ca039040`,
 `DISCONNECT`=`56000100000064ca90ca03904070` (14B).
+Manual take/release test vector (same psk as above, era=`1`, counter=`100`):
+take_msg=`4d414e55414c54414b45000100000064`
+(`"MANUALTAKE"||eraBE2(0001)||ctrBE4(00000064)`),
+take_tag=`1ee989586f8e`,
+`MANUAL_TAKE`=`570001000000641ee989586f8ef5` (14B),
+rel_msg=`4d414e55414c52454c45415345000100000064`
+(`"MANUALRELEASE"||eraBE2(0001)||ctrBE4(00000064)`),
+rel_tag=`e2ce426715b5`,
+`MANUAL_RELEASE`=`58000100000064e2ce426715b594` (14B).

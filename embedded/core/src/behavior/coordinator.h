@@ -422,15 +422,26 @@ class Coordinator {
           sysMode_ = sysmode::apply(sysMode_, sysmode::Event::kPairWindowClosed);
         }
       }
+      // MANUAL session poll: verified MANUAL_TAKE/RELEASE frames stage
+      // consume-on-read flags in the pairing ability; drain them here into
+      // the mode-policy notifiers (each staged frame fires at most once).
+      if (pairing_ != nullptr) {
+        if (pairing_->takeManualTake()) {
+          onManualTake();
+        }
+        if (pairing_->takeManualRelease()) {
+          onManualRelease();
+        }
+      }
       if (stale) {
         sysMode_ = sysmode::apply(sysMode_, sysmode::Event::kCommandStale);
       }
 
       // Drive gate seam: the mode policy decides whether stick intent may
-      // reach the motion layer. Permissive while the session verifies (the
-      // transport publishes verified frames only), so motion matches the
-      // ungated arbitrator exactly. Null pairing_ (before attach) allows for
-      // the same reason.
+      // reach the motion layer. MANUAL-only: verified drive still updates
+      // the command clock + telemetry observation in every mode, but intent
+      // reaches motion solely while the MANUAL session is held. Null
+      // pairing_ (before attach) allows, as before.
       const bool driveAllowed = sysmode::manualDriveAllowed(sysMode_.mode, pairing_ == nullptr || pairing_->isPaired());
       const bool inhibited = sysmode::motionInhibited(sysMode_.mode, stale);
 
@@ -480,6 +491,7 @@ class Coordinator {
       snap_.mode = mode_;
       snap_.activeBehavior = active_;
       snap_.cliffDetected = !gndFwd_;  // raw fwd flag: wire untouched
+      snap_.manual = (sysMode_.mode == sysmode::Mode::kManual);
       snap_.gndFwd = gndFwd_;
       snap_.gndRev = gndRev_;
       xSemaphoreGive(mutex_);

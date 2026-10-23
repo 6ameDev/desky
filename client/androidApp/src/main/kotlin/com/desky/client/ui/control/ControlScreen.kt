@@ -79,6 +79,8 @@ fun ControlScreen(
         onStick = vm::onStick,
         onEmergencyStop = vm::onEmergencyStop,
         onReleaseEmergency = vm::onReleaseEmergency,
+        onTakeManual = vm::onTakeManual,
+        onReleaseManual = vm::onReleaseManual,
         onOpenSettings = onOpenSettings,
     )
 }
@@ -91,6 +93,8 @@ fun ControlContent(
     onEmergencyStop: () -> Unit,
     onReleaseEmergency: () -> Unit,
     onOpenSettings: () -> Unit,
+    onTakeManual: () -> Unit = {},
+    onReleaseManual: () -> Unit = {},
 ) {
     Scaffold(
         topBar = {
@@ -118,7 +122,16 @@ fun ControlContent(
             // ~500 ms stale-command failsafe is already stopping it, and the
             // ALIVE knock underneath re-enables on the first telemetry.
             val controlsEnabled = state.connectivity != Connectivity.Disconnected
-            JoystickPad(onStick = onStick, enabled = controlsEnabled)
+            // Manual entry: paired no longer implies drivable — the drive
+            // loop only sends while the robot reports MANUAL (take/release
+            // below); the joystick stays inert until the hold is reported.
+            val manualControls = controlsEnabled && state.manualMode
+            if (state.manualMode) {
+                OutlinedButton(onClick = onReleaseManual, enabled = manualControls) { Text("Release Manual") }
+            } else {
+                Button(onClick = onTakeManual, enabled = controlsEnabled) { Text("Take Manual") }
+            }
+            JoystickPad(onStick = onStick, enabled = manualControls)
             if (state.eStopped) {
                 OutlinedButton(onClick = onReleaseEmergency, enabled = controlsEnabled) { Text("Release E-STOP") }
             } else {
@@ -143,6 +156,7 @@ private fun TelemetryBar(state: RobotControlUiState) {
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Text("Link: ${state.connectivity}  Mode: ${state.mode}")
+        Text(if (state.manualMode) "Manual: active" else "Manual: inactive")
         if (telemetry != null) {
             Text("Distance: ${telemetry.distanceMm} mm")
             Text("Pitch: ${telemetry.pitchDeg}°  Roll: ${telemetry.rollDeg}°")

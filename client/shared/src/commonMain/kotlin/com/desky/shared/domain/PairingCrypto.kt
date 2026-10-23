@@ -315,6 +315,56 @@ suspend fun disconnectTag(psk: ByteArray, era: UShort, counter: UInt): ByteArray
 }
 
 /**
+ * `MANUAL_TAKE` auth tag: `first6(HMAC-SHA256(psk16, "MANUALTAKE" ||
+ * eraBE2 || counterBE4))`. The 16-byte message is the 10 ASCII bytes of
+ * `"MANUALTAKE"` followed by the 2-byte big-endian CURRENT era and the
+ * 4-byte big-endian counter — must match the firmware `MANUAL_TAKE` frame
+ * exactly. Entry is deliberate: the app sends it once per user action.
+ *
+ * @param psk 16-byte pair PSK.
+ * @param era current paired era.
+ * @param counter next drive counter (strictly increasing, never 0).
+ * @return 6-byte tag.
+ */
+suspend fun manualTakeTag(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
+    require(psk.size == 16) { "manualTakeTag: psk must be 16 bytes" }
+    val msg = "MANUALTAKE".encodeToByteArray() + byteArrayOf(
+        ((era.toInt() shr 8) and 0xFF).toByte(),
+        (era.toInt() and 0xFF).toByte(),
+        (counter shr 24).toByte(),
+        (counter shr 16).toByte(),
+        (counter shr 8).toByte(),
+        counter.toByte(),
+    )
+    return hmacSha256(psk, msg).copyOfRange(0, 6)
+}
+
+/**
+ * `MANUAL_RELEASE` auth tag: `first6(HMAC-SHA256(psk16, "MANUALRELEASE" ||
+ * eraBE2 || counterBE4))`. The 19-byte message is the 13 ASCII bytes of
+ * `"MANUALRELEASE"` followed by the 2-byte big-endian CURRENT era and the
+ * 4-byte big-endian counter — must match the firmware `MANUAL_RELEASE`
+ * frame exactly.
+ *
+ * @param psk 16-byte pair PSK.
+ * @param era current paired era.
+ * @param counter next drive counter (strictly increasing, never 0).
+ * @return 6-byte tag.
+ */
+suspend fun manualReleaseTag(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
+    require(psk.size == 16) { "manualReleaseTag: psk must be 16 bytes" }
+    val msg = "MANUALRELEASE".encodeToByteArray() + byteArrayOf(
+        ((era.toInt() shr 8) and 0xFF).toByte(),
+        (era.toInt() and 0xFF).toByte(),
+        (counter shr 24).toByte(),
+        (counter shr 16).toByte(),
+        (counter shr 8).toByte(),
+        counter.toByte(),
+    )
+    return hmacSha256(psk, msg).copyOfRange(0, 6)
+}
+
+/**
  * Fresh 4-byte `client_nonce` from the platform CSPRNG
  * (`cryptography-random`: JVM `SecureRandom`, Apple `CCRandomGenerateBytes`,
  * Linux `getrandom` — exposed via the `kotlin.random.Random` API, never

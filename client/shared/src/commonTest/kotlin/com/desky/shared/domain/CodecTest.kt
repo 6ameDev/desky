@@ -104,20 +104,37 @@ class StatusFlagsTest {
         for (mode in RobotMode.entries) {
             for (cliff in listOf(false, true)) {
                 for (driving in listOf(false, true)) {
-                    val flags = packStatusFlags(cliff, driving, mode)
-                    assertEquals(cliff, statusCliff(flags), "$mode cliff=$cliff driving=$driving")
-                    assertEquals(driving, statusDriving(flags), "$mode cliff=$cliff driving=$driving")
-                    assertEquals(mode, statusMode(flags), "$mode cliff=$cliff driving=$driving")
-                    // Reserved bits 4-7 stay zero.
-                    assertEquals(0, flags and 0xF0, "$mode cliff=$cliff driving=$driving")
-                    // Exact bit layout: bit0=cliff, bit1=driving, bits2-3=mode.
-                    val expected = (if (cliff) 1 else 0) or
-                        ((if (driving) 1 else 0) shl 1) or
-                        (mode.toBits() shl 2)
-                    assertEquals(expected, flags)
+                    for (manual in listOf(false, true)) {
+                        val flags = packStatusFlags(cliff, driving, mode, manual)
+                        assertEquals(cliff, statusCliff(flags), "$mode cliff=$cliff driving=$driving manual=$manual")
+                        assertEquals(driving, statusDriving(flags), "$mode cliff=$cliff driving=$driving manual=$manual")
+                        assertEquals(mode, statusMode(flags), "$mode cliff=$cliff driving=$driving manual=$manual")
+                        assertEquals(manual, statusManual(flags), "$mode cliff=$cliff driving=$driving manual=$manual")
+                        // Reserved bits 5-7 stay zero.
+                        assertEquals(0, flags and 0xE0, "$mode cliff=$cliff driving=$driving manual=$manual")
+                        // Exact bit layout: bit0=cliff, bit1=driving, bits2-3=mode, bit4=manual.
+                        val expected = (if (cliff) 1 else 0) or
+                            ((if (driving) 1 else 0) shl 1) or
+                            (mode.toBits() shl 2) or
+                            ((if (manual) 1 else 0) shl MANUAL_BIT)
+                        assertEquals(expected, flags)
+                    }
                 }
             }
         }
+    }
+
+    @Test
+    fun manualDefaultsOffForLegacyCallers() {
+        // The default keeps every pre-manual call site (bench fixtures, old
+        // robots) encoding bit 4 clear.
+        for (mode in RobotMode.entries) {
+            val flags = packStatusFlags(cliff = false, driving = false, mode = mode)
+            assertEquals(false, statusManual(flags), "$mode")
+            assertEquals(0, flags and (1 shl MANUAL_BIT), "$mode")
+        }
+        assertEquals(4, MANUAL_BIT)
+        assertEquals(0x10, 1 shl MANUAL_BIT)
     }
 }
 
@@ -246,6 +263,8 @@ class TelemetryPacketTest {
             Telemetry(-90f, -180f, 65535, true, false, RobotMode.LOW_POWER),
             Telemetry(180f, 90f, 65535, false, true, RobotMode.AUTONOMOUS),
             Telemetry(0.05f, -0.05f, 1, false, false, RobotMode.MANUAL),
+            Telemetry(1f, 2f, 3, false, true, RobotMode.MANUAL, manual = true),
+            Telemetry(-4f, 7f, 42, true, false, RobotMode.AUTONOMOUS, manual = true),
         )
         for (t in cases) {
             val back = assertNotNull(TelemetryPacketCodec.decode(TelemetryPacketCodec.encode(t)), "$t")
@@ -256,7 +275,23 @@ class TelemetryPacketTest {
             assertEquals(t.cliff, back.cliff, "$t")
             assertEquals(t.driving, back.driving, "$t")
             assertEquals(t.mode, back.mode, "$t")
+            assertEquals(t.manual, back.manual, "$t")
         }
+    }
+
+    @Test
+    fun manualBitLandsOnWireBit4() {
+        // MANUAL hold, no cliff, no driving, MANUAL mode -> 0b10000.
+        val t = Telemetry(0f, 0f, 0, cliff = false, driving = false, mode = RobotMode.MANUAL, manual = true)
+        val pkt = TelemetryPacketCodec.encode(t)
+        assertEquals(0x10, pkt[7].unsigned())
+        val back = assertNotNull(TelemetryPacketCodec.decode(pkt))
+        assertEquals(true, back.manual)
+        // Bit clear decodes false (old robots never set it).
+        val off = Telemetry(0f, 0f, 0, cliff = false, driving = false, mode = RobotMode.MANUAL)
+        val offPkt = TelemetryPacketCodec.encode(off)
+        assertEquals(0x00, offPkt[7].unsigned())
+        assertEquals(false, assertNotNull(TelemetryPacketCodec.decode(offPkt)).manual)
     }
 
     @Test

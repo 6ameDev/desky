@@ -173,6 +173,7 @@ void test_coord_stale_udp_failsafe_stop();
 void test_coord_drive_passes_throttle_raw();
 void test_coord_centered_stick_releases_drive();
 void test_coord_mismatched_done_does_not_clear();
+void test_coord_denied_gate_holds_stop();
 
 // System mode policy, defined in test_mode_manager.cpp.
 void test_mode_starts_normal();
@@ -193,13 +194,14 @@ void test_mode_command_stale_outside_manual_never_changes_mode();
 void test_mode_pair_window_blocked_during_ota();
 void test_mode_failsafe_inhibits_in_every_mode();
 void test_mode_failsafe_clear_when_fresh_in_every_mode();
-void test_mode_drive_allowed_when_paired_in_every_mode();
+void test_mode_drive_allowed_manual_only_when_paired();
 void test_mode_drive_denied_when_unpaired_in_every_mode();
 void test_mode_display_follows_mode();
 void test_mode_pair_window_signal_tracks_core();
 
 // UDP server helpers (statusFlags bitmap + edges), defined in test_udp_server.cpp.
 void test_status_flags_pack_bits();
+void test_status_flags_manual_bit();
 void test_status_flags_unpack_round_trip();
 void test_pack_command_center_edges();
 void test_telemetry_round_trip_with_flags_set();
@@ -225,6 +227,9 @@ void test_udp_pair_refresh_wire_constants();
 void test_udp_classify_pair_refresh();
 void test_udp_alive_disconnect_wire_constants();
 void test_udp_classify_alive_disconnect();
+void test_udp_manual_wire_constants();
+void test_udp_classify_manual();
+void test_udp_legacy_never_drives();
 void test_udp_claimed_headers_distinct();
 void test_udp_alive_fresh_inside_window();
 void test_udp_alive_stale_past_window();
@@ -248,6 +253,7 @@ void test_telemetry_publish_sends_when_due();
 void test_telemetry_publish_silent_without_gate();
 void test_telemetry_publish_holds_cadence();
 void test_telemetry_publish_edge_forces_early();
+void test_telemetry_encode_snapshot_manual_bit();
 
 // I2S audio DSP + meter policy, defined in test_audio.cpp.
 void test_audio_dual_mono32_top_justified();
@@ -275,6 +281,9 @@ void test_pair_wire_reasons_frozen();
 void test_toapp_counter_increments_from_baseline();
 void test_toapp_counter_skips_zero_on_wrap();
 void test_evict_burst_shape();
+void test_manual_wire_consts();
+void test_manual_take_tag_msg_golden();
+void test_manual_release_tag_msg_golden();
 // Wire mirror gate (defined in test_udp_server.cpp).
 void test_udp_mirror_freeze();
 void test_udp_pair_req_frame_golden();
@@ -284,6 +293,7 @@ void test_udp_drive_frame_golden();
 void test_udp_unpair_frame_golden();
 void test_udp_pair_refresh_frame_goldens();
 void test_udp_alive_disconnect_frame_goldens();
+void test_udp_manual_frame_goldens();
 void test_udp_pair_ok_framing();
 
 // QR pairing bitmap, defined in test_qr_pairing.cpp.
@@ -489,6 +499,7 @@ int main() {
   RUN_TEST(test_coord_drive_passes_throttle_raw);
   RUN_TEST(test_coord_centered_stick_releases_drive);
   RUN_TEST(test_coord_mismatched_done_does_not_clear);
+  RUN_TEST(test_coord_denied_gate_holds_stop);
   RUN_TEST(test_mode_starts_normal);
   RUN_TEST(test_mode_pair_window_open_enters_pairing);
   RUN_TEST(test_mode_paired_exits_pairing_to_normal);
@@ -507,11 +518,12 @@ int main() {
   RUN_TEST(test_mode_pair_window_blocked_during_ota);
   RUN_TEST(test_mode_failsafe_inhibits_in_every_mode);
   RUN_TEST(test_mode_failsafe_clear_when_fresh_in_every_mode);
-  RUN_TEST(test_mode_drive_allowed_when_paired_in_every_mode);
+  RUN_TEST(test_mode_drive_allowed_manual_only_when_paired);
   RUN_TEST(test_mode_drive_denied_when_unpaired_in_every_mode);
   RUN_TEST(test_mode_display_follows_mode);
   RUN_TEST(test_mode_pair_window_signal_tracks_core);
   RUN_TEST(test_status_flags_pack_bits);
+  RUN_TEST(test_status_flags_manual_bit);
   RUN_TEST(test_status_flags_unpack_round_trip);
   RUN_TEST(test_pack_command_center_edges);
   RUN_TEST(test_telemetry_round_trip_with_flags_set);
@@ -536,6 +548,9 @@ int main() {
   RUN_TEST(test_udp_classify_pair_refresh);
   RUN_TEST(test_udp_alive_disconnect_wire_constants);
   RUN_TEST(test_udp_classify_alive_disconnect);
+  RUN_TEST(test_udp_manual_wire_constants);
+  RUN_TEST(test_udp_classify_manual);
+  RUN_TEST(test_udp_legacy_never_drives);
   RUN_TEST(test_udp_claimed_headers_distinct);
   RUN_TEST(test_udp_alive_fresh_inside_window);
   RUN_TEST(test_udp_alive_stale_past_window);
@@ -559,6 +574,7 @@ int main() {
   RUN_TEST(test_telemetry_publish_silent_without_gate);
   RUN_TEST(test_telemetry_publish_holds_cadence);
   RUN_TEST(test_telemetry_publish_edge_forces_early);
+  RUN_TEST(test_telemetry_encode_snapshot_manual_bit);
   RUN_TEST(test_audio_dual_mono32_top_justified);
   RUN_TEST(test_audio_chime_shape_and_decay);
   RUN_TEST(test_audio_int24_unpack_top24_in_32);
@@ -582,6 +598,9 @@ int main() {
   RUN_TEST(test_toapp_counter_increments_from_baseline);
   RUN_TEST(test_toapp_counter_skips_zero_on_wrap);
   RUN_TEST(test_evict_burst_shape);
+  RUN_TEST(test_manual_wire_consts);
+  RUN_TEST(test_manual_take_tag_msg_golden);
+  RUN_TEST(test_manual_release_tag_msg_golden);
   RUN_TEST(test_udp_mirror_freeze);
   RUN_TEST(test_udp_pair_req_frame_golden);
   RUN_TEST(test_udp_pair_err_frame_golden);
@@ -590,6 +609,7 @@ int main() {
   RUN_TEST(test_udp_unpair_frame_golden);
   RUN_TEST(test_udp_pair_refresh_frame_goldens);
   RUN_TEST(test_udp_alive_disconnect_frame_goldens);
+  RUN_TEST(test_udp_manual_frame_goldens);
   RUN_TEST(test_udp_pair_ok_framing);
   RUN_TEST(test_qr_size_is_21);
   RUN_TEST(test_qr_golden_encodes);

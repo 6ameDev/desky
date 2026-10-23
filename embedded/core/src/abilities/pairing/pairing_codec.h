@@ -250,6 +250,76 @@ inline void disconnectTagMsg(uint16_t era, uint32_t counter, uint8_t out16[kDisc
   out16[15] = static_cast<uint8_t>(counter & 0xFFu);
 }
 
+// ── MANUAL session (explicit take/release, stale auto-exit) ─────────────
+// Wire (see shared/protocol/README.md):
+//   MANUAL_TAKE    App -> Robot, 14B [0x57 | eraBE2 | counterBE4 | tag6 | XOR]
+//     tag = first6(HMAC-SHA256(psk, "MANUALTAKE" || eraBE2 || counterBE4))
+//     era = CURRENT paired era. Counter is the app's toRobotCounter; the
+//     robot verifies against its fromAppCounter and consumes it on accept
+//     exactly like drive/alive.
+//   MANUAL_RELEASE App -> Robot, 14B [0x58 | eraBE2 | counterBE4 | tag6 | XOR]
+//     tag = first6(HMAC-SHA256(psk, "MANUALRELEASE" || eraBE2 || counterBE4)).
+// Headers 0x57/0x58 are claimed in transport/udp_codec.h (frozen table) —
+// never reuse 0xAA/0xAC/0xBB/0x50/0x51/0x52/0x53/0x54/0x55/0x56/0xAD.
+constexpr uint8_t kManualTakeHeader = udp::kManualTakeHeader;
+constexpr size_t kManualTakeSize = udp::kManualTakeSize;
+constexpr uint8_t kManualReleaseHeader = udp::kManualReleaseHeader;
+constexpr size_t kManualReleaseSize = udp::kManualReleaseSize;
+constexpr size_t kManualTagLen = 6;
+constexpr size_t kManualTakeMsgLen = 16;     // "MANUALTAKE"(10) || eraBE2 || counterBE4
+constexpr size_t kManualReleaseMsgLen = 19;  // "MANUALRELEASE"(13) || eraBE2 || counterBE4
+
+// MANUAL_TAKE tag message (16B, host-testable): "MANUALTAKE" ASCII ||
+// eraBE2 || counterBE4.
+inline void manualTakeTagMsg(uint16_t era, uint32_t counter, uint8_t out16[kManualTakeMsgLen]) {
+  if (out16 == nullptr) {
+    return;
+  }
+  out16[0] = 'M';
+  out16[1] = 'A';
+  out16[2] = 'N';
+  out16[3] = 'U';
+  out16[4] = 'A';
+  out16[5] = 'L';
+  out16[6] = 'T';
+  out16[7] = 'A';
+  out16[8] = 'K';
+  out16[9] = 'E';
+  out16[10] = static_cast<uint8_t>((era >> 8) & 0xFFu);
+  out16[11] = static_cast<uint8_t>(era & 0xFFu);
+  out16[12] = static_cast<uint8_t>((counter >> 24) & 0xFFu);
+  out16[13] = static_cast<uint8_t>((counter >> 16) & 0xFFu);
+  out16[14] = static_cast<uint8_t>((counter >> 8) & 0xFFu);
+  out16[15] = static_cast<uint8_t>(counter & 0xFFu);
+}
+
+// MANUAL_RELEASE tag message (19B, host-testable): "MANUALRELEASE" ASCII ||
+// eraBE2 || counterBE4.
+inline void manualReleaseTagMsg(uint16_t era, uint32_t counter, uint8_t out19[kManualReleaseMsgLen]) {
+  if (out19 == nullptr) {
+    return;
+  }
+  out19[0] = 'M';
+  out19[1] = 'A';
+  out19[2] = 'N';
+  out19[3] = 'U';
+  out19[4] = 'A';
+  out19[5] = 'L';
+  out19[6] = 'R';
+  out19[7] = 'E';
+  out19[8] = 'L';
+  out19[9] = 'E';
+  out19[10] = 'A';
+  out19[11] = 'S';
+  out19[12] = 'E';
+  out19[13] = static_cast<uint8_t>((era >> 8) & 0xFFu);
+  out19[14] = static_cast<uint8_t>(era & 0xFFu);
+  out19[15] = static_cast<uint8_t>((counter >> 24) & 0xFFu);
+  out19[16] = static_cast<uint8_t>((counter >> 16) & 0xFFu);
+  out19[17] = static_cast<uint8_t>((counter >> 8) & 0xFFu);
+  out19[18] = static_cast<uint8_t>(counter & 0xFFu);
+}
+
 // Wire reasons (PAIR_ERR reason byte). kOk is transport-internal (PAIR_OK);
 // it never appears on the wire. Reasons 0-3 are frozen (never renumber);
 // kInternal (4 = internal_retry_fresh) covers burn-failure after tryCode kOk

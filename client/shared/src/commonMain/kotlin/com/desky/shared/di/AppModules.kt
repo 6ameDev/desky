@@ -19,7 +19,9 @@ import com.desky.shared.domain.AliveUseCase
 import com.desky.shared.domain.PairRefreshUseCase
 import com.desky.shared.domain.SaveDeviceConfigUseCase
 import com.desky.shared.domain.SendSignedControlUseCase
+import com.desky.shared.domain.ReleaseManualUseCase
 import com.desky.shared.domain.SettingsRepository
+import com.desky.shared.domain.TakeManualUseCase
 import com.desky.shared.domain.UdpSocketBinder
 import com.desky.shared.domain.UdpSocketManager
 import com.desky.shared.presentation.PairingViewModel
@@ -75,6 +77,8 @@ val domainModule: Module = module {
     factory { ForgetDeviceUseCase(get(), get(), get(), get(), get(), get()) }
     factory { PairRefreshUseCase(get(), get(), get(), get(), get(), get()) }
     factory { AliveUseCase(get()) }
+    factory { TakeManualUseCase(get()) }
+    factory { ReleaseManualUseCase(get()) }
     factory { ObserveRemoteDisconnectUseCase(get(), get(), get(), get(), get(), get()) }
 }
 
@@ -89,7 +93,7 @@ val presentationModule: Module = module {
     // binding, the ALIVE/DISCONNECT knock stays inert without an AliveUseCase
     // binding, and the AP-rejoin knock stays inert without a UdpSocketBinder
     // binding (JVM/iOS — getOrNull, tests, legacy graphs).
-    viewModel { RobotControlViewModel(get(), get(), get(), get(), get(), get(), get(), get(), pairRefreshUC = getOrNull<PairRefreshUseCase>(), aliveUC = getOrNull<AliveUseCase>(), socketBinder = getOrNull<UdpSocketBinder>(), forgetUC = get(), remoteDisconnectUC = getOrNull<ObserveRemoteDisconnectUseCase>()) }
+    viewModel { RobotControlViewModel(get(), get(), get(), get(), get(), get(), get(), get(), pairRefreshUC = getOrNull<PairRefreshUseCase>(), aliveUC = getOrNull<AliveUseCase>(), socketBinder = getOrNull<UdpSocketBinder>(), forgetUC = get(), remoteDisconnectUC = getOrNull<ObserveRemoteDisconnectUseCase>(), takeManualUC = getOrNull<TakeManualUseCase>(), releaseManualUC = getOrNull<ReleaseManualUseCase>()) }
     viewModel { SettingsViewModel(get(), get(), get()) }
     viewModel { SessionGateViewModel(get()) }
 }

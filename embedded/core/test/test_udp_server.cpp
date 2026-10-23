@@ -51,6 +51,10 @@ static_assert(pairing::kPairRefreshAckSize == 10, "PAIR_REFRESH_ACK is 10B (pair
 static_assert(udpstatus::kPairRefreshAckSize == pairing::kPairRefreshAckSize, "pair-refresh ACK size single truth");
 static_assert(udpstatus::kAliveSize == 14, "ALIVE is 14B");
 static_assert(udpstatus::kDisconnectSize == 14, "DISCONNECT is 14B");
+static_assert(udpstatus::kManualTakeHeader == 0x57, "MANUAL_TAKE header is 0x57");
+static_assert(udpstatus::kManualTakeSize == 14, "MANUAL_TAKE is 14B");
+static_assert(udpstatus::kManualReleaseHeader == 0x58, "MANUAL_RELEASE header is 0x58");
+static_assert(udpstatus::kManualReleaseSize == 14, "MANUAL_RELEASE is 14B");
 static_assert(pairing::kAliveSize == 14, "ALIVE is 14B (pairing owner)");
 static_assert(pairing::kDisconnectSize == 14, "DISCONNECT is 14B (pairing owner)");
 static_assert(udpstatus::kDriveSize == 16, "DRIVE is 16B");
@@ -70,6 +74,13 @@ static_assert(udpstatus::kUnpairHeader != udpstatus::kDisconnectHeader, "claimed
 static_assert(udpstatus::kPairRefreshReqHeader != udpstatus::kAliveHeader, "claimed headers distinct");
 static_assert(udpstatus::kPairRefreshReqHeader != udpstatus::kDisconnectHeader, "claimed headers distinct");
 static_assert(udpstatus::kAliveHeader != udpstatus::kDisconnectHeader, "claimed headers distinct");
+static_assert(udpstatus::kManualTakeHeader != udpstatus::kManualReleaseHeader, "claimed headers distinct");
+static_assert(udpstatus::kManualTakeHeader != udpstatus::kAliveHeader, "claimed headers distinct");
+static_assert(udpstatus::kManualTakeHeader != udpstatus::kDisconnectHeader, "claimed headers distinct");
+static_assert(udpstatus::kManualReleaseHeader != udpstatus::kAliveHeader, "claimed headers distinct");
+static_assert(udpstatus::kManualReleaseHeader != udpstatus::kDisconnectHeader, "claimed headers distinct");
+static_assert(udpstatus::kManualTakeHeader != udpstatus::kUnpairHeader, "claimed headers distinct");
+static_assert(udpstatus::kManualReleaseHeader != udpstatus::kUnpairHeader, "claimed headers distinct");
 // Token discipline (platform split 1.1, token #1): move-only, never copied.
 static_assert(!std::is_copy_constructible<connection::Verified>::value, "Verified is move-only");
 static_assert(!std::is_copy_assignable<connection::Verified>::value, "Verified is move-only");
@@ -87,9 +98,28 @@ void test_status_flags_pack_bits() {
   TEST_ASSERT_EQUAL_UINT8(0x08, udpstatus::packStatus(false, false, 2));
   TEST_ASSERT_EQUAL_UINT8(0x0F, udpstatus::packStatus(true, true, 3));
   TEST_ASSERT_EQUAL_UINT8(0x00, udpstatus::packStatus(false, false, 0));
-  // Reserved bits 4-7 stay 0 for every mode.
+  // Reserved bits 5-7 stay 0 for every mode (bit 4 is the MANUAL session bit).
   for (uint8_t mode = 0; mode < 4; ++mode) {
-    TEST_ASSERT_EQUAL_UINT8(0, udpstatus::packStatus(true, true, mode) & 0xF0);
+    TEST_ASSERT_EQUAL_UINT8(0, udpstatus::packStatus(true, true, mode) & 0xE0);
+    TEST_ASSERT_EQUAL_UINT8(0, udpstatus::packStatus(true, true, mode, true) & 0xE0);
+  }
+}
+
+void test_status_flags_manual_bit() {
+  // Bit 4 mirrors the MANUAL drive session: 0 without, 0x10 with.
+  TEST_ASSERT_EQUAL_UINT8(0x00, udpstatus::packStatus(false, false, 0, false));
+  TEST_ASSERT_EQUAL_UINT8(0x10, udpstatus::packStatus(false, false, 0, true));
+  TEST_ASSERT_EQUAL_UINT8(0x1F, udpstatus::packStatus(true, true, 3, true));
+  TEST_ASSERT_EQUAL_UINT8(0x0F, udpstatus::packStatus(true, true, 3, false));
+  TEST_ASSERT_FALSE(udpstatus::statusManual(udpstatus::packStatus(false, false, 0, false)));
+  TEST_ASSERT_TRUE(udpstatus::statusManual(udpstatus::packStatus(false, false, 0, true)));
+  // The session bit is orthogonal to cliff/driving/mode.
+  for (uint8_t mode = 0; mode < 4; ++mode) {
+    const uint8_t flags = udpstatus::packStatus(true, true, mode, true);
+    TEST_ASSERT_TRUE(udpstatus::statusCliff(flags));
+    TEST_ASSERT_TRUE(udpstatus::statusDriving(flags));
+    TEST_ASSERT_EQUAL_UINT8(mode, udpstatus::statusMode(flags));
+    TEST_ASSERT_TRUE(udpstatus::statusManual(flags));
   }
 }
 
@@ -365,13 +395,52 @@ void test_udp_claimed_headers_distinct() {
                              udpstatus::kUnpairHeader,
                              udpstatus::kPairRefreshReqHeader,
                              udpstatus::kAliveHeader,
-                             udpstatus::kDisconnectHeader};
+                             udpstatus::kDisconnectHeader,
+                             udpstatus::kManualTakeHeader,
+                             udpstatus::kManualReleaseHeader};
   for (size_t i = 0; i < sizeof(headers); ++i) {
     for (size_t j = i + 1; j < sizeof(headers); ++j) {
       TEST_ASSERT_TRUE(headers[i] != headers[j]);
     }
     TEST_ASSERT_TRUE(udp::kTelemetryHeader != headers[i]);
   }
+}
+
+// MANUAL session demux: 0x57/0x58 claim fresh 14B shapes. The HMAC tags are
+// ARDUINO-only (mbedTLS); the cross-side goldens live in
+// shared/protocol/README.md (take_tag=1ee989586f8e,
+// release_tag=e2ce426715b5 for era=1, counter=100 under the shared psk).
+void test_udp_manual_wire_constants() {
+  TEST_ASSERT_EQUAL_UINT8(0x57, udpstatus::kManualTakeHeader);
+  TEST_ASSERT_TRUE(udpstatus::kManualTakeSize == 14);
+  TEST_ASSERT_EQUAL_UINT8(0x58, udpstatus::kManualReleaseHeader);
+  TEST_ASSERT_TRUE(udpstatus::kManualReleaseSize == 14);
+}
+
+void test_udp_classify_manual() {
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kManualTake), rxKindInt(udpstatus::classifyRx(14, 0x57)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kManualRelease), rxKindInt(udpstatus::classifyRx(14, 0x58)));
+  // Neighbouring sizes/headers still drop. (0x53/0x55/0x56 at 14B are the
+  // valid PAIR_REFRESH_REQ/ALIVE/DISCONNECT shapes, so they are absent here.)
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(13, 0x57)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(15, 0x57)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(13, 0x58)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(15, 0x58)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0xAD)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0xAC)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0xFF)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(12, 0x57)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(12, 0x58)));
+}
+
+// Legacy pre-pair frames pin the telemetry peer only and never reach the
+// drive publisher: the demux must keep the 6B/0xAA shape on its own kind,
+// distinct from every verified-drive kind.
+void test_udp_legacy_never_drives() {
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kLegacy), rxKindInt(udpstatus::classifyRx(6, 0xAA)));
+  TEST_ASSERT_TRUE(rxKindInt(udpstatus::RxKind::kLegacy) != rxKindInt(udpstatus::RxKind::kDrive));
+  TEST_ASSERT_TRUE(rxKindInt(udpstatus::RxKind::kLegacy) != rxKindInt(udpstatus::RxKind::kManualTake));
+  TEST_ASSERT_TRUE(rxKindInt(udpstatus::RxKind::kLegacy) != rxKindInt(udpstatus::RxKind::kManualRelease));
 }
 
 void test_udp_alive_fresh_inside_window() {
@@ -675,6 +744,10 @@ void test_udp_mirror_freeze() {
   TEST_ASSERT_EQUAL(14, static_cast<int>(udpstatus::kAliveSize));
   TEST_ASSERT_EQUAL_UINT8(0x56, udpstatus::kDisconnectHeader);
   TEST_ASSERT_EQUAL(14, static_cast<int>(udpstatus::kDisconnectSize));
+  TEST_ASSERT_EQUAL_UINT8(0x57, udpstatus::kManualTakeHeader);
+  TEST_ASSERT_EQUAL(14, static_cast<int>(udpstatus::kManualTakeSize));
+  TEST_ASSERT_EQUAL_UINT8(0x58, udpstatus::kManualReleaseHeader);
+  TEST_ASSERT_EQUAL(14, static_cast<int>(udpstatus::kManualReleaseSize));
   // TX-only sizes never collide with an RX shape (PAIR_OK 38/39, PAIR_ERR 4,
   // PAIR_REFRESH_ACK 10): the RX demux must drop them on any length.
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(38, 0x51)));
@@ -863,6 +936,61 @@ void test_udp_alive_disconnect_frame_goldens() {
   badDisc[13] ^= 0xFF;
   TEST_ASSERT_FALSE(mirrorXorOk(badDisc, sizeof(badDisc)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0xFF)));
+}
+
+// MANUAL_TAKE 14B + MANUAL_RELEASE 14B (README manual vectors: era 1,
+// counter 100, psk 0011..eeff). Era/counter extraction mirrors
+// handleManualTake/handleManualRelease.
+void test_udp_manual_frame_goldens() {
+  const uint8_t take[14] = {0x57, 0x00, 0x01, 0x00, 0x00, 0x00, 0x64, 0x1E, 0xE9, 0x89, 0x58, 0x6F, 0x8E, 0xF5};
+  TEST_ASSERT_TRUE(mirrorXorOk(take, sizeof(take)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kManualTake), rxKindInt(udpstatus::classifyRx(sizeof(take), take[0])));
+  const uint8_t rel[14] = {0x58, 0x00, 0x01, 0x00, 0x00, 0x00, 0x64, 0xE2, 0xCE, 0x42, 0x67, 0x15, 0xB5, 0x94};
+  TEST_ASSERT_TRUE(mirrorXorOk(rel, sizeof(rel)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kManualRelease),
+                    rxKindInt(udpstatus::classifyRx(sizeof(rel), rel[0])));
+  const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(take[1]) << 8) | static_cast<uint16_t>(take[2]));
+  TEST_ASSERT_EQUAL_UINT16(1, era);
+  const uint32_t ctr = (static_cast<uint32_t>(take[3]) << 24) | (static_cast<uint32_t>(take[4]) << 16) |
+                       (static_cast<uint32_t>(take[5]) << 8) | static_cast<uint32_t>(take[6]);
+  TEST_ASSERT_EQUAL_UINT32(100, ctr);
+  // Reject: truncated, bad CRC on either frame, unknown ID at 14B.
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(13, 0x57)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(13, 0x58)));
+  uint8_t badTake[14];
+  for (size_t i = 0; i < sizeof(badTake); ++i) {
+    badTake[i] = take[i];
+  }
+  badTake[7] ^= 0xFF;
+  TEST_ASSERT_FALSE(mirrorXorOk(badTake, sizeof(badTake)));
+  uint8_t badRel[14];
+  for (size_t i = 0; i < sizeof(badRel); ++i) {
+    badRel[i] = rel[i];
+  }
+  badRel[13] ^= 0xFF;
+  TEST_ASSERT_FALSE(mirrorXorOk(badRel, sizeof(badRel)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0xFF)));
+}
+
+// Telemetry MANUAL session bit: a snapshot with the session held encodes
+// bit 4, and the bit rides the wire through encode/decode untouched.
+void test_telemetry_encode_snapshot_manual_bit() {
+  telemetry::Snapshot s;
+  s.mode = 0;
+  udp::TelemetryPacket pkt;
+  telemetry::encodeSnapshot(s, pkt);
+  TEST_ASSERT_EQUAL_UINT8(0x00, pkt.statusFlags);
+  s.manual = true;
+  telemetry::encodeSnapshot(s, pkt);
+  TEST_ASSERT_EQUAL_UINT8(0x10, pkt.statusFlags);
+  TEST_ASSERT_TRUE(udpstatus::statusManual(pkt.statusFlags));
+  uint8_t buf[udp::kTelemetrySize] = {};
+  TEST_ASSERT_TRUE(udp::encodeTelemetry(pkt, buf));
+  udp::TelemetryPacket dst;
+  TEST_ASSERT_TRUE(udp::decodeTelemetry(buf, sizeof(buf), dst));
+  TEST_ASSERT_EQUAL_UINT8(0x10, dst.statusFlags);
+  TEST_ASSERT_TRUE(udpstatus::statusManual(dst.statusFlags));
+  TEST_ASSERT_EQUAL_UINT8(0, udpstatus::statusMode(dst.statusFlags));
 }
 
 // PAIR_OK framing (TX-only, no RX decode): v1 38B vs v1.1 39B share header

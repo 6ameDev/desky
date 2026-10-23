@@ -268,5 +268,53 @@ void test_evict_burst_shape() {
   TEST_ASSERT_EQUAL_UINT32(50, pairing::kEvictBurstGapMs);
 }
 
+// MANUAL session (explicit take/release): domain constants pin the claimed
+// headers/sizes (0x57/0x58 — never any earlier header) and the tag-message
+// lengths. HMAC tags are ARDUINO-only (mbedTLS) and pinned as cross-side
+// vectors in shared/protocol/README.md (take_tag=1ee989586f8e,
+// release_tag=e2ce426715b5 for era=1, counter=100 under the shared psk) —
+// these host tests pin the message layouts both sides must agree on.
+void test_manual_wire_consts() {
+  TEST_ASSERT_EQUAL_UINT8(0x57, pairing::kManualTakeHeader);
+  TEST_ASSERT_EQUAL(14, static_cast<int>(pairing::kManualTakeSize));
+  TEST_ASSERT_EQUAL_UINT8(0x58, pairing::kManualReleaseHeader);
+  TEST_ASSERT_EQUAL(14, static_cast<int>(pairing::kManualReleaseSize));
+  TEST_ASSERT_EQUAL(6, static_cast<int>(pairing::kManualTagLen));
+  TEST_ASSERT_EQUAL(16, static_cast<int>(pairing::kManualTakeMsgLen));
+  TEST_ASSERT_EQUAL(19, static_cast<int>(pairing::kManualReleaseMsgLen));
+}
+
+void test_manual_take_tag_msg_golden() {
+  uint8_t msg[pairing::kManualTakeMsgLen];
+  pairing::manualTakeTagMsg(1u, 100u, msg);
+  // "MANUALTAKE" || eraBE2(0001) || counterBE4(00000064).
+  const uint8_t expected[16] = {0x4D, 0x41, 0x4E, 0x55, 0x41, 0x4C, 0x54, 0x41,
+                                0x4B, 0x45, 0x00, 0x01, 0x00, 0x00, 0x00, 0x64};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, msg, sizeof(expected));
+  // Era/counter lay out big-endian.
+  pairing::manualTakeTagMsg(0x0102u, 0x01020304u, msg);
+  const uint8_t be[16] = {0x4D, 0x41, 0x4E, 0x55, 0x41, 0x4C, 0x54, 0x41,
+                          0x4B, 0x45, 0x01, 0x02, 0x01, 0x02, 0x03, 0x04};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(be, msg, sizeof(be));
+  // Null-safe (no crash on null out).
+  pairing::manualTakeTagMsg(1u, 1u, nullptr);
+}
+
+void test_manual_release_tag_msg_golden() {
+  uint8_t msg[pairing::kManualReleaseMsgLen];
+  pairing::manualReleaseTagMsg(1u, 100u, msg);
+  // "MANUALRELEASE" || eraBE2(0001) || counterBE4(00000064).
+  const uint8_t expected[19] = {0x4D, 0x41, 0x4E, 0x55, 0x41, 0x4C, 0x52, 0x45, 0x4C, 0x45,
+                                0x41, 0x53, 0x45, 0x00, 0x01, 0x00, 0x00, 0x00, 0x64};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, msg, sizeof(expected));
+  // Era/counter lay out big-endian.
+  pairing::manualReleaseTagMsg(0x0102u, 0x01020304u, msg);
+  const uint8_t be[19] = {0x4D, 0x41, 0x4E, 0x55, 0x41, 0x4C, 0x52, 0x45, 0x4C, 0x45,
+                          0x41, 0x53, 0x45, 0x01, 0x02, 0x01, 0x02, 0x03, 0x04};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(be, msg, sizeof(be));
+  // Null-safe (no crash on null out).
+  pairing::manualReleaseTagMsg(1u, 1u, nullptr);
+}
+
 // Runner lives in test_udp_codec.cpp (single main for the native-test
 // binary): the pairing tests are declared extern there.

@@ -46,13 +46,15 @@ namespace udpstatus {
 //   bit 0    = cliff (1 = hazard latched)
 //   bit 1    = driving (1 = last commanded v/omega nonzero and fresh)
 //   bits 2-3 = mode (0 MANUAL, 1 AUTONOMOUS, 2 LOW_POWER, 3 EMERGENCY)
-//   bits 4-7 = reserved, always 0.
+//   bit 4    = MANUAL session active (1 = sysmode MANUAL: app holds the drive session)
+//   bits 5-7 = reserved, always 0.
 constexpr uint8_t kCliffBit = 0;
 constexpr uint8_t kDrivingBit = 1;
 constexpr uint8_t kModeShift = 2;
 constexpr uint8_t kModeMask = 0x03;
+constexpr uint8_t kManualBit = 4;
 
-inline uint8_t packStatus(bool cliff, bool driving, uint8_t mode) {
+inline uint8_t packStatus(bool cliff, bool driving, uint8_t mode, bool manual = false) {
   uint8_t flags = 0;
   if (cliff) {
     flags |= static_cast<uint8_t>(1u << kCliffBit);
@@ -61,6 +63,9 @@ inline uint8_t packStatus(bool cliff, bool driving, uint8_t mode) {
     flags |= static_cast<uint8_t>(1u << kDrivingBit);
   }
   flags |= static_cast<uint8_t>((mode & kModeMask) << kModeShift);
+  if (manual) {
+    flags |= static_cast<uint8_t>(1u << kManualBit);
+  }
   return flags;
 }
 
@@ -69,6 +74,8 @@ inline bool statusCliff(uint8_t flags) { return (flags & (1u << kCliffBit)) != 0
 inline bool statusDriving(uint8_t flags) { return (flags & (1u << kDrivingBit)) != 0; }
 
 inline uint8_t statusMode(uint8_t flags) { return static_cast<uint8_t>((flags >> kModeShift) & kModeMask); }
+
+inline bool statusManual(uint8_t flags) { return (flags & (1u << kManualBit)) != 0; }
 
 // Degrees -> decidegrees (0.1 deg), clamped to int16 for the wire.
 inline int16_t degToDecideg(float deg) {
@@ -109,6 +116,12 @@ constexpr uint8_t kAliveHeader = udp::kAliveHeader;
 constexpr size_t kAliveSize = udp::kAliveSize;
 constexpr uint8_t kDisconnectHeader = udp::kDisconnectHeader;
 constexpr size_t kDisconnectSize = udp::kDisconnectSize;
+// MANUAL session: MANUAL_TAKE 14B, MANUAL_RELEASE 14B (explicit
+// take/release; the coordinator polls the ability-side pending flags).
+constexpr uint8_t kManualTakeHeader = udp::kManualTakeHeader;
+constexpr size_t kManualTakeSize = udp::kManualTakeSize;
+constexpr uint8_t kManualReleaseHeader = udp::kManualReleaseHeader;
+constexpr size_t kManualReleaseSize = udp::kManualReleaseSize;
 // Robot alive freshness window: a paired peer counts as alive while its last
 // valid packet is within kAliveMs. DISCONNECT/UNPAIR clear the net peer
 // immediately, so the window only matters for silent loss.
@@ -116,7 +129,18 @@ constexpr uint32_t kAliveMs = 5000;
 constexpr uint32_t kRedeliveryMs = CFG_PAIR_REDELIVERY_MS;
 
 // RX demux: classifyRx maps (len, header) -> kind; anything else is kDrop.
-enum class RxKind : uint8_t { kLegacy, kDrive, kPairReq, kUnpair, kPairRefreshReq, kAlive, kDisconnect, kDrop };
+enum class RxKind : uint8_t {
+  kLegacy,
+  kDrive,
+  kPairReq,
+  kUnpair,
+  kPairRefreshReq,
+  kAlive,
+  kDisconnect,
+  kManualTake,
+  kManualRelease,
+  kDrop
+};
 
 inline RxKind classifyRx(size_t len, uint8_t header) {
   if (len == 6 && header == 0xAA) {
@@ -139,6 +163,12 @@ inline RxKind classifyRx(size_t len, uint8_t header) {
   }
   if (len == kDisconnectSize && header == kDisconnectHeader) {
     return RxKind::kDisconnect;
+  }
+  if (len == kManualTakeSize && header == kManualTakeHeader) {
+    return RxKind::kManualTake;
+  }
+  if (len == kManualReleaseSize && header == kManualReleaseHeader) {
+    return RxKind::kManualRelease;
   }
   return RxKind::kDrop;
 }
@@ -539,6 +569,8 @@ class UdpServer : public transport::IUdpTransport {
           case udpstatus::RxKind::kPairReq:
           case udpstatus::RxKind::kUnpair:
           case udpstatus::RxKind::kPairRefreshReq:
+          case udpstatus::RxKind::kManualTake:
+          case udpstatus::RxKind::kManualRelease:
             // Pair-family dispatch owned by the pairing ability. Null-safe
             // for the begin/attachPairing setup micro-window.
             if (pairing_ != nullptr) {

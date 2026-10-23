@@ -22,6 +22,9 @@ struct Snapshot {
   uint8_t mode = 0;
   bool cliff = false;
   bool driving = false;
+  // MANUAL drive session active (sysmode MANUAL). Sets statusFlags bit 4;
+  // defaults false so pre-session snapshots encode exactly as before.
+  bool manual = false;
   float pitchDeg = 0.0f;
   float rollDeg = 0.0f;
   uint16_t distMm = 0;
@@ -32,7 +35,7 @@ inline void encodeSnapshot(const Snapshot& s, udp::TelemetryPacket& pkt) {
   pkt.pitch = udpstatus::degToDecideg(s.pitchDeg);
   pkt.roll = udpstatus::degToDecideg(s.rollDeg);
   pkt.distanceMm = s.distMm;
-  pkt.statusFlags = udpstatus::packStatus(s.cliff, s.driving, s.mode);
+  pkt.statusFlags = udpstatus::packStatus(s.cliff, s.driving, s.mode, s.manual);
 }
 
 }  // namespace telemetry

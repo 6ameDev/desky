@@ -347,5 +347,21 @@ void test_coord_mismatched_done_does_not_clear() {
   TEST_ASSERT_TRUE(out.holdMotion);
 }
 
+void test_coord_denied_gate_holds_stop() {
+  // The coordinator's MANUAL-only drive gate feeds hasCommand=false outside
+  // the session: a fresh nonzero stick with no session held must stop, even
+  // with no stale and no latch (P4 idle, same shape as the stale failsafe).
+  coordinator::ArbitrateInput in = manualDrive(0.5f, 0.0f);
+  in.activeBehavior = BEHAVIOR_DRIVE_FORWARD;
+  in.hasCommand = false;
+  in.freshCommand = true;
+  in.udpStale = false;
+  const coordinator::ArbitrateOutput out = coordinator::arbitrate(in);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, out.v);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, out.omega);
+  TEST_ASSERT_EQUAL_UINT32(BEHAVIOR_NONE, out.nextBehavior);
+  TEST_ASSERT_FALSE(out.holdMotion);
+}
+
 // Runner lives in test_udp_codec.cpp (single main for the native-test
 // binary): the coordinator tests are declared extern there.

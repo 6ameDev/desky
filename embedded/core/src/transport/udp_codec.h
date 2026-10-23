@@ -25,6 +25,8 @@
 //   0x56 / 14  DISCONNECT  Both        [hdr|eraBE2|ctrBE4|tag6|XOR]
 //     (same layout; App->Robot goodbye keeps the pair, Robot->App
 //     pair-button eviction clears it; fire-and-forget, burst of 3)
+//   0x57 / 14  MANUAL_TAKE    App->Robot [hdr|eraBE2|ctrBE4|tag6|XOR]
+//   0x58 / 14  MANUAL_RELEASE App->Robot [hdr|eraBE2|ctrBE4|tag6|XOR]
 // Per-link counter domains: the app->robot stream rides the app's
 // toRobotCounter (robot verifies against fromAppCounter); the robot->app
 // eviction rides the robot's toAppCounter (app verifies against
@@ -71,6 +73,8 @@ constexpr size_t kTelemetrySize = 9;
 //     App->Robot goodbye keeps the pair, Robot->App eviction clears it;
 //     per-link domains: app->robot rides toRobotCounter, robot->app rides
 //     toAppCounter)
+//   MANUAL_TAKE    App->Robot 14B [0x57|eraBE2|ctrBE4|tag6|XOR]
+//   MANUAL_RELEASE App->Robot 14B [0x58|eraBE2|ctrBE4|tag6|XOR]
 // pairing_codec.h and the udpstatus top half of udp_server.h alias these;
 // never re-literalize them elsewhere.
 constexpr uint8_t kPairReqHeader = 0x50;
@@ -88,6 +92,16 @@ constexpr uint8_t kAliveHeader = 0x55;
 constexpr size_t kAliveSize = 14;
 constexpr uint8_t kDisconnectHeader = 0x56;
 constexpr size_t kDisconnectSize = 14;
+// MANUAL session vocabulary (explicit take/release; stale auto-exits):
+//   MANUAL_TAKE    App->Robot 14B [0x57|eraBE2|ctrBE4|tag6|XOR]
+//   MANUAL_RELEASE App->Robot 14B [0x58|eraBE2|ctrBE4|tag6|XOR]
+// Tag builders live in abilities/pairing/pairing_codec.h; the demux rows
+// live in the udpstatus top half of udp_server.h. Never re-literalize
+// these elsewhere.
+constexpr uint8_t kManualTakeHeader = 0x57;
+constexpr size_t kManualTakeSize = 14;
+constexpr uint8_t kManualReleaseHeader = 0x58;
+constexpr size_t kManualReleaseSize = 14;
 
 inline uint8_t checksum(const uint8_t* data, size_t len) {
   uint8_t sum = 0;
