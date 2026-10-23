@@ -295,11 +295,9 @@ class PairingTask : public transport::IPairingSession {
     return true;
   }
 
-  // Physical pair-button entry: evicts the current owner with one
-  // authenticated fire-and-forget DISCONNECT, then clears and re-opens the
-  // window. Counter 0 never goes on the wire, so a wrapped next-counter
-  // uses 1. No peer pinned -> the send is skipped, the clear still runs.
-  bool enterPairModeFromButton(transport::IUdpTransport& t, uint32_t nowMs) {
+  // Evicts the owner with an authenticated DISCONNECT, then clears and
+  // re-opens the window. No peer pinned -> the send is skipped.
+  bool enterPairMode(transport::IUdpTransport& t, uint32_t nowMs) {
     (void)nowMs;
     const bool wasPaired = paired_;
     const uint16_t wasEra = era_;

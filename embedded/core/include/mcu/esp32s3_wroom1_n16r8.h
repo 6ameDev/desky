@@ -41,9 +41,6 @@
 #define MCU_SERVO_ARM 41   // Arm servo PWM (JR plug, 5V star + GND)
 #define MCU_SERVO_HEAD 42  // Head-tilt servo PWM (JR plug, 5V star + GND)
 
-// Pair button (TEMPORARY): S3 BOOT button on GPIO0, active-low with input
-// pull-up. All code refers to the pairButton name; a future button swap is
-// this one constant. HIGH at reset so boot/strapping is unaffected.
 #define MCU_PAIR_BUTTON 0
 
 // I2C device addresses on shared Wire bus
