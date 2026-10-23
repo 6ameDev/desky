@@ -215,3 +215,30 @@ inline void hide(Progress& p) {
 }
 
 }  // namespace otadisplay
+
+// Eyes request map: V1 FACE_* ids -> vendored eyes eEmotions ordinals.
+// Pure + host-tested; the firmware render binding static_asserts these
+// against eEmotions. Blink is an action, not a preset, so FACE_BLINK lands
+// on neutral eyes while the blink assistant pulses.
+namespace eyesmap {
+constexpr uint8_t kEmotionNormal = 0;
+constexpr uint8_t kEmotionHappy = 3;
+constexpr uint8_t kEmotionSad = 4;
+constexpr uint8_t kEmotionSurprised = 8;
+
+inline uint8_t emotionForFace(uint8_t faceId) {
+  switch (faceId) {
+    case FACE_HAPPY:
+      return kEmotionHappy;
+    case FACE_SAD:
+      return kEmotionSad;
+    case FACE_ALERT:
+      return kEmotionSurprised;
+    case FACE_BOOT:
+    case FACE_BLINK:
+    default:
+      return kEmotionNormal;
+  }
+}
+
+}  // namespace eyesmap

@@ -121,6 +121,10 @@ void test_ota_state_verify_fail_and_abort();
 void test_ota_state_rejects_bad_events();
 void test_cli_ota_verb();
 
+void test_eyes_map_request_ids();
+void test_eyes_map_ordinals_track_emotions();
+void test_eyes_map_falls_back_to_normal();
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_face_names_match_ids);
@@ -227,5 +231,8 @@ int main() {
   RUN_TEST(test_ota_state_verify_fail_and_abort);
   RUN_TEST(test_ota_state_rejects_bad_events);
   RUN_TEST(test_cli_ota_verb);
+  RUN_TEST(test_eyes_map_request_ids);
+  RUN_TEST(test_eyes_map_ordinals_track_emotions);
+  RUN_TEST(test_eyes_map_falls_back_to_normal);
   return UNITY_END();
 }
