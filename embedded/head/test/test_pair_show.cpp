@@ -6,7 +6,7 @@
 #include <string.h>
 #include <unity.h>
 
-#include "../src/abilities/face/face_codec.h"          // qrdisplay:: + pairdisplay::
+#include "../src/abilities/display/display_codec.h"    // qrdisplay:: + pairdisplay::
 #include "../src/abilities/pairing/pairing_codec.h"    // pairinglink:: gates
 #include "../src/abilities/pairing/pairing_manager.h"  // PairingManager
 #include "../src/transport/link_codec.h"               // linkcode:: alias + wifilink::
@@ -210,7 +210,7 @@ void test_pairdisplay_countdown_format() {
     TEST_ASSERT_TRUE(pairdisplay::formatCountdown(rows[i].secs, buf, sizeof(buf)));
     TEST_ASSERT_EQUAL_STRING(rows[i].want, buf);
     char via[pairdisplay::kCountdownBuf] = {};
-    TEST_ASSERT_TRUE(FaceOverlayManager::formatCountdown(rows[i].secs, via, sizeof(via)));
+    TEST_ASSERT_TRUE(DisplayManager::formatCountdown(rows[i].secs, via, sizeof(via)));
     TEST_ASSERT_EQUAL_STRING(rows[i].want, via);
   }
   char buf[pairdisplay::kCountdownBuf] = {};
@@ -235,8 +235,8 @@ void test_pairdisplay_remaining_secs() {
   TEST_ASSERT_EQUAL_UINT32(2, pairdisplay::remainingSecs(0xFFFFFF01u, wrapDeadline));
   TEST_ASSERT_EQUAL_UINT32(0, pairdisplay::remainingSecs(wrapDeadline, wrapDeadline));
 
-  FaceOverlayManager face;
-  FaceTransition t;
+  DisplayManager face;
+  DisplayTransition t;
   const uint8_t pin[6] = {'1', '2', '3', '4', '5', '6'};
   TEST_ASSERT_EQUAL_UINT32(0, face.remainingSecs(1000));
   TEST_ASSERT_TRUE(face.showPairing(pin, 300, 1000, t));
@@ -249,8 +249,8 @@ void test_pairdisplay_remaining_secs() {
 }
 
 void test_pair_manager_second_gate() {
-  FaceOverlayManager face;
-  FaceTransition t;
+  DisplayManager face;
+  DisplayTransition t;
   const uint8_t pin[6] = {'1', '2', '3', '4', '5', '6'};
   uint32_t last = 0xFFFFFFFFu;
   TEST_ASSERT_FALSE(face.pairSecondTicked(1000, last));
@@ -290,7 +290,7 @@ void test_pairshow_pin_to_bitmap_equivalence() {
 
 void test_pairing_manager_bad_pin_noop() {
   // Fail-closed: a null/bad PIN changes no overlay state.
-  FaceOverlayManager face;
+  DisplayManager face;
   PairingManager mgr;
   mgr.attach(&face);
   const uint8_t bad[6] = {'1', '2', '3', '4', '5', 'x'};
@@ -303,7 +303,7 @@ void test_pairing_manager_bad_pin_noop() {
 }
 
 void test_pairing_manager_show_rearms_deadline() {
-  FaceOverlayManager face;
+  DisplayManager face;
   PairingManager mgr;
   mgr.attach(&face);
   const uint8_t pin[6] = {'1', '2', '3', '4', '5', '6'};
@@ -321,7 +321,7 @@ void test_pairing_manager_show_rearms_deadline() {
 
 void test_pairing_manager_clear_when_idle_noop() {
   // Clear with nothing up is a no-op.
-  FaceOverlayManager face;
+  DisplayManager face;
   PairingManager mgr;
   mgr.attach(&face);
   TEST_ASSERT_FALSE(mgr.clear());
@@ -329,7 +329,7 @@ void test_pairing_manager_clear_when_idle_noop() {
 }
 
 void test_pairing_manager_show_clear_roundtrip() {
-  FaceOverlayManager face;
+  DisplayManager face;
   PairingManager mgr;
   mgr.attach(&face);
   const uint8_t pin[6] = {'1', '2', '3', '4', '5', '6'};

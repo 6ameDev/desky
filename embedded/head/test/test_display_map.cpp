@@ -2,8 +2,8 @@
 
 #include <unity.h>
 
-#include "../src/abilities/face/face_codec.h"
-#include "../src/abilities/face/face_task.h"
+#include "../src/abilities/display/display_codec.h"
+#include "../src/abilities/display/display_task.h"
 
 void test_face_names_match_ids() {
   TEST_ASSERT_EQUAL_STRING("boot", faceName(FACE_BOOT));

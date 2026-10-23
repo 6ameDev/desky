@@ -1,45 +1,45 @@
 #pragma once
-// Face overlay state machine (Arduino-free, host-testable). Single home of
+// Display overlay state machine (Arduino-free, host-testable). Single home of
 // the overlay + deadline state: at most one live overlay at a time.
 
-#include "abilities/face/face_codec.h"
+#include "abilities/display/display_codec.h"
 #include "head_context.h"
 #include "link/qr_codec.h"
 
-#ifndef CFG_FACE_QR_TIMEOUT_MS
-#define CFG_FACE_QR_TIMEOUT_MS 120000
+#ifndef CFG_DISPLAY_QR_TIMEOUT_MS
+#define CFG_DISPLAY_QR_TIMEOUT_MS 120000
 #endif
-#ifndef CFG_FACE_OTA_TIMEOUT_MS
-#define CFG_FACE_OTA_TIMEOUT_MS 120000
+#ifndef CFG_DISPLAY_OTA_TIMEOUT_MS
+#define CFG_DISPLAY_OTA_TIMEOUT_MS 120000
 #endif
 
 // Which live overlays a transition cleared (so the binding logs + repaints).
-struct FaceTransition {
+struct DisplayTransition {
   bool clearedQr = false;
   bool clearedPair = false;
   bool clearedOta = false;
 };
 
 // Live paint mode for the render binding.
-enum class FaceLiveMode : uint8_t { kFace, kQr, kOtaBar, kOtaAlert };
+enum class DisplayLiveMode : uint8_t { kEyes, kQr, kOtaBar, kOtaAlert };
 
-class FaceOverlayManager {
+class DisplayManager {
  public:
   // Stores (clamped) + clears every live overlay.
-  void showFace(uint8_t id, FaceTransition& t) {
+  void showEyes(uint8_t id, DisplayTransition& t) {
     t.clearedQr = qrActive_;
     t.clearedPair = pairActive_;
     t.clearedOta = ota_.active;
     qrActive_ = false;
     pairActive_ = false;
     otadisplay::hide(ota_);
-    faceId_ = clampFace(static_cast<int>(id));
+    eyesId_ = clampFace(static_cast<int>(id));
   }
 
-  uint8_t faceId() const { return faceId_; }
+  uint8_t eyesId() const { return eyesId_; }
 
   // Stages the 63B bitmap until a FACE command or timeout. False on null.
-  bool showQr(const uint8_t* qr63, uint32_t nowMs, FaceTransition& t) {
+  bool showQr(const uint8_t* qr63, uint32_t nowMs, DisplayTransition& t) {
     if (qr63 == nullptr) {
       return false;
     }
@@ -60,7 +60,7 @@ class FaceOverlayManager {
   }
 
   // Demo pattern (border + X, not a scannable QR): exercises show/clear with no link.
-  void showQrDemo(uint32_t nowMs, FaceTransition& t) {
+  void showQrDemo(uint32_t nowMs, DisplayTransition& t) {
     uint8_t demo[qrdisplay::kQrLen] = {};
     for (int y = 0; y < qrdisplay::kModules; ++y) {
       for (int x = 0; x < qrdisplay::kModules; ++x) {
@@ -75,7 +75,7 @@ class FaceOverlayManager {
   }
 
   // Clears the QR show mode (also clears a live pairing show). False when idle.
-  bool clearQr(FaceTransition& t) {
+  bool clearQr(DisplayTransition& t) {
     t.clearedQr = qrActive_;
     t.clearedPair = pairActive_;
     if (!qrActive_ && !pairActive_) {
@@ -90,7 +90,7 @@ class FaceOverlayManager {
 
   // Renders the authoritative PIN until PAIRDONE, a FACE command, or the
   // valid-seconds deadline. Fail-closed on null/bad PIN.
-  bool showPairing(const uint8_t pin6[pairdisplay::kPinLen], uint16_t validSecs, uint32_t nowMs, FaceTransition& t) {
+  bool showPairing(const uint8_t pin6[pairdisplay::kPinLen], uint16_t validSecs, uint32_t nowMs, DisplayTransition& t) {
     if (!pairdisplay::isValidPin(pin6)) {
       return false;
     }
@@ -120,7 +120,7 @@ class FaceOverlayManager {
   }
 
   // Clears the pairing show mode (also clears a live demo QR). False when idle.
-  bool clearPairing(FaceTransition& t) {
+  bool clearPairing(DisplayTransition& t) {
     t.clearedPair = pairActive_;
     t.clearedQr = qrActive_;
     if (!pairActive_ && !qrActive_) {
@@ -159,7 +159,7 @@ class FaceOverlayManager {
   }
 
   // Arms/refreshes the OTA fill bar.
-  void showOta(uint8_t pct, uint32_t nowMs, FaceTransition& t) {
+  void showOta(uint8_t pct, uint32_t nowMs, DisplayTransition& t) {
     t.clearedQr = qrActive_;
     t.clearedPair = pairActive_;
     if (qrActive_) {
@@ -199,23 +199,23 @@ class FaceOverlayManager {
     return true;
   }
 
-  FaceLiveMode liveMode() const {
+  DisplayLiveMode liveMode() const {
     if (ota_.active) {
-      return ota_.failed ? FaceLiveMode::kOtaAlert : FaceLiveMode::kOtaBar;
+      return ota_.failed ? DisplayLiveMode::kOtaAlert : DisplayLiveMode::kOtaBar;
     }
     if (qrActive_ || pairActive_) {
-      return FaceLiveMode::kQr;
+      return DisplayLiveMode::kQr;
     }
-    return FaceLiveMode::kFace;
+    return DisplayLiveMode::kEyes;
   }
 
   // Wrap-safe expiry predicates for the render task.
   bool qrExpired(uint32_t nowMs) const {
-    return qrActive_ && (nowMs - qrShownMs_ >= static_cast<uint32_t>(CFG_FACE_QR_TIMEOUT_MS));
+    return qrActive_ && (nowMs - qrShownMs_ >= static_cast<uint32_t>(CFG_DISPLAY_QR_TIMEOUT_MS));
   }
   bool pairExpired(uint32_t nowMs) const { return pairActive_ && pairdisplay::isExpired(nowMs, pairDeadlineMs_); }
   bool otaExpired(uint32_t nowMs) const {
-    return ota_.active && (nowMs - otaMs_ >= static_cast<uint32_t>(CFG_FACE_OTA_TIMEOUT_MS));
+    return ota_.active && (nowMs - otaMs_ >= static_cast<uint32_t>(CFG_DISPLAY_OTA_TIMEOUT_MS));
   }
 
   void setDim(bool dim) { dim_ = dim; }
@@ -225,7 +225,7 @@ class FaceOverlayManager {
   const uint8_t* pairPin() const { return pairPin_; }
 
  private:
-  uint8_t faceId_ = FACE_BOOT;
+  uint8_t eyesId_ = FACE_BOOT;
   bool qrActive_ = false;
   uint8_t qrBuf_[qrdisplay::kQrLen] = {};
   uint32_t qrShownMs_ = 0;

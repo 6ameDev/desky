@@ -1,5 +1,5 @@
 #pragma once
-// Face ability codec: pure display contracts (Arduino-free, host-tested).
+// Display ability codec: pure display contracts (Arduino-free, host-tested).
 
 #include <stddef.h>
 #include <stdint.h>

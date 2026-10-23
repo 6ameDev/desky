@@ -41,20 +41,20 @@
 #define CFG_CLI_BAUD 115200
 #define CFG_CLI_LINE_LEN 64
 
-// Face display render cadence
-#define CFG_FACE_FPS 25
-#define CFG_FACE_FPS_DIM 5
+// Display render cadence
+#define CFG_DISPLAY_FPS 25
+#define CFG_DISPLAY_FPS_DIM 5
 
 // QR show mode: stays until a FACE command or this timeout.
-#define CFG_FACE_QR_TIMEOUT_MS 120000
+#define CFG_DISPLAY_QR_TIMEOUT_MS 120000
 
 // OTA progress mode: clears on any FACE command or this timeout.
-#define CFG_FACE_OTA_TIMEOUT_MS 120000
+#define CFG_DISPLAY_OTA_TIMEOUT_MS 120000
 
-// Face render task (offset form keeps this header FreeRTOS-free for host builds).
-#define CFG_FACE_STACK_WORDS 4096
-#define CFG_FACE_PRIORITY_OFFSET 2
-#define CFG_FACE_CORE 0
+// Display render task (offset form keeps this header FreeRTOS-free for host builds).
+#define CFG_DISPLAY_STACK_WORDS 4096
+#define CFG_DISPLAY_PRIORITY_OFFSET 2
+#define CFG_DISPLAY_CORE 0
 
 // Camera: QVGA JPEG stills, grab-and-drop at the poll rate.
 #define CFG_CAMERA_POLL_MS 500
