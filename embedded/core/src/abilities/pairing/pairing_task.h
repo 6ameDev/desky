@@ -295,6 +295,68 @@ class PairingTask : public transport::IPairingSession {
     return true;
   }
 
+  // Physical pair-button entry: evicts the current owner with one
+  // authenticated fire-and-forget DISCONNECT, then clears and re-opens the
+  // window. Counter 0 never goes on the wire, so a wrapped next-counter
+  // uses 1. No peer pinned -> the send is skipped, the clear still runs.
+  bool enterPairModeFromButton(transport::IUdpTransport& t, uint32_t nowMs) {
+    (void)nowMs;
+    const bool wasPaired = paired_;
+    const uint16_t wasEra = era_;
+    const uint32_t wasCounter = lastCounter_;
+    uint8_t wasPsk[16];
+    for (size_t i = 0; i < sizeof(wasPsk); ++i) {
+      wasPsk[i] = psk_[i];
+    }
+    IPAddress wasIp;
+    uint16_t wasPort = 0;
+    bool havePeer = false;
+    if (peerIp_ != nullptr && peerPort_ != nullptr) {
+      wasIp = *peerIp_;
+      wasPort = *peerPort_;
+      const uint32_t peerU32 = connection::ipToU32(wasIp[0], wasIp[1], wasIp[2], wasIp[3]);
+      havePeer = (conn_ != nullptr && conn_->havePeer()) || peerU32 != 0 || wasPort != 0;
+    }
+    if (wasPaired && havePeer) {
+      uint32_t ctr = wasCounter + 1;
+      if (ctr == 0) {
+        ctr = 1;
+      }
+      uint8_t msg[pairing::kDisconnectMsgLen];
+      pairing::disconnectTagMsg(wasEra, ctr, msg);
+      uint8_t mac[32];
+      const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+      int rc = -1;
+      if (md != nullptr) {
+        rc = mbedtls_md_hmac(md, wasPsk, sizeof(wasPsk), msg, sizeof(msg), mac);
+      }
+      mbedtls_platform_zeroize(msg, sizeof(msg));
+      if (rc == 0) {
+        uint8_t out[pairing::kDisconnectSize];
+        out[0] = pairing::kDisconnectHeader;
+        out[1] = static_cast<uint8_t>((wasEra >> 8) & 0xFFu);
+        out[2] = static_cast<uint8_t>(wasEra & 0xFFu);
+        out[3] = static_cast<uint8_t>((ctr >> 24) & 0xFFu);
+        out[4] = static_cast<uint8_t>((ctr >> 16) & 0xFFu);
+        out[5] = static_cast<uint8_t>((ctr >> 8) & 0xFFu);
+        out[6] = static_cast<uint8_t>(ctr & 0xFFu);
+        for (size_t i = 0; i < pairing::kDisconnectTagLen; ++i) {
+          out[7 + i] = mac[i];
+        }
+        uint8_t xorSum = 0;
+        for (size_t i = 0; i + 1 < sizeof(out); ++i) {
+          xorSum ^= out[i];
+        }
+        out[sizeof(out) - 1] = xorSum;
+        t.sendDisconnect(wasIp, wasPort, out, sizeof(out));
+      }
+      mbedtls_platform_zeroize(mac, sizeof(mac));
+    }
+    mbedtls_platform_zeroize(wasPsk, sizeof(wasPsk));
+    clearPair();
+    return openPairingWindow();
+  }
+
   // PIN link pump: ability-side policy half of the head display path. Called
   // from the main loop: while a pairing window is open, composes the 8B
   // PairShow payload and hands it to the transport's pinned-peer sendUnicast

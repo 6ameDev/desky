@@ -150,10 +150,16 @@ void loop() {
   // blocks driving.
   g_cli.poll();
   // Physical pair button (short press, debounced in hal): the press edge
-  // will enter pair mode (fire-and-forget disconnect + clear + window).
-  // Detection only here so the button is bench-verifiable alone.
+  // evicts the owner with one authenticated DISCONNECT, then clears and
+  // re-opens the pairing window. Bench builds have no pairing session
+  // attached, so the edge only logs there.
   if (g_pairButton.poll()) {
+#if DESKY_NO_WIFI
     LOG_I("PAIRBTN", "pair button pressed");
+#else
+    const bool opened = g_pairing.enterPairModeFromButton(g_udp, millis());
+    LOG_I("PAIRBTN", "pair button pressed window=%u", opened ? 1u : 0u);
+#endif
   }
 #if !DESKY_NO_WIFI
   // Ability link pumps: the pairing window's PIN + valid-seconds and the
