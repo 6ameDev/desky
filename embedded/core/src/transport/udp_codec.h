@@ -22,7 +22,9 @@
 //   0x53 / 14  PAIR_REFRESH_REQ App->Robot [hdr|eraBE2|ctrBE4|tag6|XOR]
 //   0x54 / 10  PAIR_REFRESH_ACK Robot->App [hdr|eraBE2|tag6|XOR]
 //   0x55 / 14  ALIVE       App->Robot  [hdr|eraBE2|ctrBE4|tag6|XOR]
-//   0x56 / 14  DISCONNECT  App->Robot  [hdr|eraBE2|ctrBE4|tag6|XOR]
+//   0x56 / 14  DISCONNECT  Both        [hdr|eraBE2|ctrBE4|tag6|XOR]
+//     (same layout; App->Robot goodbye keeps the pair, Robot->App
+//     pair-button eviction clears it; fire-and-forget, no retry)
 // Reserved: claimed headers are never reused or renumbered, sizes never
 // change, reserved bytes never repurposed — new messages claim a fresh
 // header. Deliberate stdint-only duplication: this table is mirrored (not
@@ -61,7 +63,8 @@ constexpr size_t kTelemetrySize = 9;
 //   PAIR_REFRESH_REQ  App->Robot 14B [0x53|eraBE2|ctrBE4|tag6|XOR]
 //   PAIR_REFRESH_ACK  Robot->App 10B [0x54|eraBE2|tag6|XOR]
 //   ALIVE      App->Robot 14B [0x55|eraBE2|ctrBE4|tag6|XOR]
-//   DISCONNECT App->Robot 14B [0x56|eraBE2|ctrBE4|tag6|XOR]
+//   DISCONNECT Both 14B [0x56|eraBE2|ctrBE4|tag6|XOR] (same layout;
+//     App->Robot goodbye keeps the pair, Robot->App eviction clears it)
 // pairing_codec.h and the udpstatus top half of udp_server.h alias these;
 // never re-literalize them elsewhere.
 constexpr uint8_t kPairReqHeader = 0x50;
