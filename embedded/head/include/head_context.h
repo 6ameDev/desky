@@ -14,7 +14,9 @@ enum FaceId : uint8_t {
   FACE_ALERT = 4,
   // Entered ONLY via showQr(); never via a FACE id.
   FACE_QR = 5,
-  FACE_COUNT = 6,
+  FACE_CURIOUS = 6,
+  FACE_SURPRISED = 7,
+  FACE_COUNT = 8,
 };
 
 inline const char* faceName(uint8_t id) {
@@ -31,6 +33,10 @@ inline const char* faceName(uint8_t id) {
       return "alert";
     case FACE_QR:
       return "qr";
+    case FACE_CURIOUS:
+      return "curious";
+    case FACE_SURPRISED:
+      return "surprised";
     default:
       return "unknown";
   }
@@ -55,6 +61,12 @@ inline uint8_t faceIdFromName(const char* name) {
   }
   if (strcmp(name, "alert") == 0) {
     return FACE_ALERT;
+  }
+  if (strcmp(name, "curious") == 0) {
+    return FACE_CURIOUS;
+  }
+  if (strcmp(name, "surprised") == 0) {
+    return FACE_SURPRISED;
   }
   return 0xFF;
 }

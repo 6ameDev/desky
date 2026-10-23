@@ -263,7 +263,8 @@ class CliManager {
 
   void printHelp() {
     LOG_I("CLI",
-          "cmds: cam on|off | face <boot|happy|sad|blink|alert|0-4> | oled on|dim|off | status | link | snap | ota "
+          "cmds: cam on|off | face <boot|happy|sad|blink|alert|curious|surprised|0-7> | oled on|dim|off | status | "
+          "link | snap | ota "
           "<url> | qr | qr clear | help");
   }
 

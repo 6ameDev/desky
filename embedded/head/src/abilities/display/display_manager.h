@@ -25,18 +25,36 @@ enum class DisplayLiveMode : uint8_t { kEyes, kQr, kOtaBar, kOtaAlert };
 
 class DisplayManager {
  public:
-  // Stores (clamped) + clears every live overlay.
-  void showEyes(uint8_t id, DisplayTransition& t) {
+  // Stores (clamped) + clears every live overlay. Neutral-family ids always
+  // release; higher priorities preempt, equal refresh, lower never displace.
+  // True when the request took effect.
+  bool showEyes(uint8_t id, DisplayTransition& t, uint32_t nowMs) {
     t.clearedQr = qrActive_;
     t.clearedPair = pairActive_;
     t.clearedOta = ota_.active;
     qrActive_ = false;
     pairActive_ = false;
     otadisplay::hide(ota_);
-    eyesId_ = clampFace(static_cast<int>(id));
+    const uint8_t c = clampFace(static_cast<int>(id));
+    if (c != FACE_BOOT && c != FACE_BLINK && exprprio::priorityFor(c) < exprprio::priorityFor(eyesId_)) {
+      return false;
+    }
+    eyesId_ = c;
+    exprSinceMs_ = nowMs;
+    return true;
   }
 
   uint8_t eyesId() const { return eyesId_; }
+
+  // Play-once expiry pump (wrap-safe): true once when an id fell back to neutral.
+  bool exprTick(uint32_t nowMs) {
+    if (!exprprio::isPlayOnce(eyesId_) || (nowMs - exprSinceMs_) < exprprio::holdMsFor(eyesId_)) {
+      return false;
+    }
+    eyesId_ = FACE_BOOT;
+    exprSinceMs_ = nowMs;
+    return true;
+  }
 
   // Stages the 63B bitmap until a FACE command or timeout. False on null.
   bool showQr(const uint8_t* qr63, uint32_t nowMs, DisplayTransition& t) {
@@ -226,6 +244,7 @@ class DisplayManager {
 
  private:
   uint8_t eyesId_ = FACE_BOOT;
+  uint32_t exprSinceMs_ = 0;
   bool qrActive_ = false;
   uint8_t qrBuf_[qrdisplay::kQrLen] = {};
   uint32_t qrShownMs_ = 0;

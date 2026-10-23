@@ -125,6 +125,18 @@ void test_eyes_map_request_ids();
 void test_eyes_map_ordinals_track_emotions();
 void test_eyes_map_falls_back_to_normal();
 
+void test_expr_priority_order();
+void test_expr_play_once_shape();
+void test_expr_higher_preempts_lower();
+void test_expr_lower_never_displaces_higher();
+void test_expr_neutral_releases_from_any();
+void test_expr_yields_neutral_not_previous_mood();
+void test_expr_play_once_auto_release();
+void test_expr_play_once_retrigger_extends_hold();
+void test_expr_hold_wraps_and_persists();
+void test_expr_gated_request_still_clears_overlays();
+void test_expr_trigger_paths_cover_all_five();
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_face_names_match_ids);
@@ -234,5 +246,16 @@ int main() {
   RUN_TEST(test_eyes_map_request_ids);
   RUN_TEST(test_eyes_map_ordinals_track_emotions);
   RUN_TEST(test_eyes_map_falls_back_to_normal);
+  RUN_TEST(test_expr_priority_order);
+  RUN_TEST(test_expr_play_once_shape);
+  RUN_TEST(test_expr_higher_preempts_lower);
+  RUN_TEST(test_expr_lower_never_displaces_higher);
+  RUN_TEST(test_expr_neutral_releases_from_any);
+  RUN_TEST(test_expr_yields_neutral_not_previous_mood);
+  RUN_TEST(test_expr_play_once_auto_release);
+  RUN_TEST(test_expr_play_once_retrigger_extends_hold);
+  RUN_TEST(test_expr_hold_wraps_and_persists);
+  RUN_TEST(test_expr_gated_request_still_clears_overlays);
+  RUN_TEST(test_expr_trigger_paths_cover_all_five);
   return UNITY_END();
 }

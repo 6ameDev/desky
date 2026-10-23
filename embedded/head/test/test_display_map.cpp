@@ -11,6 +11,8 @@ void test_face_names_match_ids() {
   TEST_ASSERT_EQUAL_STRING("sad", faceName(FACE_SAD));
   TEST_ASSERT_EQUAL_STRING("blink", faceName(FACE_BLINK));
   TEST_ASSERT_EQUAL_STRING("alert", faceName(FACE_ALERT));
+  TEST_ASSERT_EQUAL_STRING("curious", faceName(FACE_CURIOUS));
+  TEST_ASSERT_EQUAL_STRING("surprised", faceName(FACE_SURPRISED));
 }
 
 void test_face_name_unknown_id() { TEST_ASSERT_EQUAL_STRING("unknown", faceName(9)); }
@@ -21,6 +23,8 @@ void test_face_id_from_name_all() {
   TEST_ASSERT_EQUAL_UINT8(FACE_SAD, faceIdFromName("sad"));
   TEST_ASSERT_EQUAL_UINT8(FACE_BLINK, faceIdFromName("blink"));
   TEST_ASSERT_EQUAL_UINT8(FACE_ALERT, faceIdFromName("alert"));
+  TEST_ASSERT_EQUAL_UINT8(FACE_CURIOUS, faceIdFromName("curious"));
+  TEST_ASSERT_EQUAL_UINT8(FACE_SURPRISED, faceIdFromName("surprised"));
 }
 
 void test_face_id_from_name_rejects() {
@@ -31,8 +35,9 @@ void test_face_id_from_name_rejects() {
 }
 
 void test_face_clamp_valid_passthrough() {
-  for (int i = 0; i < static_cast<int>(FACE_QR); ++i) {
-    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(i), clampFace(i));
+  const uint8_t valid[] = {FACE_BOOT, FACE_HAPPY, FACE_SAD, FACE_BLINK, FACE_ALERT, FACE_CURIOUS, FACE_SURPRISED};
+  for (size_t i = 0; i < sizeof(valid); ++i) {
+    TEST_ASSERT_EQUAL_UINT8(valid[i], clampFace(valid[i]));
   }
 }
 

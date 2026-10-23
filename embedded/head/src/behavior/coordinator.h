@@ -36,18 +36,20 @@ class HeadCoordinator {
         break;
       case CmdTarget::FACE: {
         const uint8_t id = headapply::resolveFace(cmd.arg);
-        if (power_ != nullptr) {
-          power_->setEyesId(id);
-        }
         if (display_ != nullptr) {
           display_->showEyes(id);
         }
-        if (power_ != nullptr && power_->oledState() == OLED_OFF) {
-          LOG_I("PWR", "face=%s stored (display off, paints on next on)", faceName(id));
-        } else {
-          LOG_I("PWR", "face=%s", faceName(id));
+        // Status mirrors the gated id: a lower request never displaces a higher expression.
+        const uint8_t active = (display_ != nullptr) ? display_->eyesId() : id;
+        if (power_ != nullptr) {
+          power_->setEyesId(active);
         }
-        EventBus::publish(HEAD_EVENT_FACE_CHANGED, static_cast<uint32_t>(id));
+        if (power_ != nullptr && power_->oledState() == OLED_OFF) {
+          LOG_I("PWR", "face=%s stored (display off, paints on next on)", faceName(active));
+        } else {
+          LOG_I("PWR", "face=%s", faceName(active));
+        }
+        EventBus::publish(HEAD_EVENT_FACE_CHANGED, static_cast<uint32_t>(active));
         break;
       }
       case CmdTarget::QR:
