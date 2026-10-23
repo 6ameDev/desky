@@ -26,7 +26,6 @@ void test_wifilink_type_names() {
   TEST_ASSERT_EQUAL_STRING("FACE", wifilink::typeName(linkcode::kTypeFace));
   TEST_ASSERT_EQUAL_STRING("OLED", wifilink::typeName(linkcode::kTypeOled));
   TEST_ASSERT_EQUAL_STRING("CAMCTL", wifilink::typeName(linkcode::kTypeCamCtl));
-  TEST_ASSERT_EQUAL_STRING("QRBITMAP", wifilink::typeName(linkcode::kTypeQrBitmap));
   TEST_ASSERT_EQUAL_STRING("PAIRSHOW", wifilink::typeName(linkcode::kTypePairShow));
   TEST_ASSERT_EQUAL_STRING("PAIRDONE", wifilink::typeName(linkcode::kTypePairDone));
   TEST_ASSERT_EQUAL_STRING("JPEG", wifilink::typeName(linkcode::kTypeJpeg));
@@ -76,7 +75,7 @@ void test_wifilink_map_cam() {
 void test_wifilink_map_rejects_non_commands() {
   PowerCommand cmd;
   const uint8_t one = 0;
-  TEST_ASSERT_FALSE(wifilink::mapCmd(linkcode::kTypeQrBitmap, &one, 1, cmd));
+  TEST_ASSERT_FALSE(wifilink::mapCmd(0x04, &one, 1, cmd));  // retired QRBITMAP: stays unmapped
   TEST_ASSERT_FALSE(wifilink::mapCmd(linkcode::kTypePairShow, &one, 1, cmd));
   TEST_ASSERT_FALSE(wifilink::mapCmd(linkcode::kTypePairDone, &one, 1, cmd));
   TEST_ASSERT_FALSE(wifilink::mapCmd(linkcode::kTypeJpeg, &one, 1, cmd));

@@ -52,27 +52,10 @@ void test_linkserver_qr_pin_rule() {
   TEST_ASSERT_FALSE(linkserver::pinOnVerdict(V::kStale));     // replays never move the peer
 }
 
-void test_linkserver_qr_frame_63_round_trip() {
-  uint8_t qr[linkcode::kQrBitmapLen];
-  for (size_t i = 0; i < sizeof(qr); ++i) {
-    qr[i] = static_cast<uint8_t>(i * 3u + 1u);
-  }
-  uint8_t out[linkcode::kOverhead + linkcode::kQrBitmapLen];
-  const size_t n = linkcode::encodeFrame(linkcode::kTypeQrBitmap, 7, qr, sizeof(qr), 0, 1, out, sizeof(out));
-  TEST_ASSERT_EQUAL_size_t(linkcode::kOverhead + linkcode::kQrBitmapLen, n);  // one 73B frame
-  linkcode::Frame f;
-  TEST_ASSERT_TRUE(linkcode::decodeFrame(out, n, f));
-  TEST_ASSERT_EQUAL_UINT8(linkcode::kTypeQrBitmap, f.type);
-  TEST_ASSERT_EQUAL_UINT16(7, f.seq);
-  TEST_ASSERT_EQUAL_UINT16(linkcode::kQrBitmapLen, f.payloadLen);
-  TEST_ASSERT_EQUAL_UINT8_ARRAY(qr, f.payload, linkcode::kQrBitmapLen);
-}
-
 void test_linkserver_type_names() {
   TEST_ASSERT_EQUAL_STRING("FACE", linkserver::typeName(linkcode::kTypeFace));
   TEST_ASSERT_EQUAL_STRING("OLED", linkserver::typeName(linkcode::kTypeOled));
   TEST_ASSERT_EQUAL_STRING("CAMCTL", linkserver::typeName(linkcode::kTypeCamCtl));
-  TEST_ASSERT_EQUAL_STRING("QRBITMAP", linkserver::typeName(linkcode::kTypeQrBitmap));
   TEST_ASSERT_EQUAL_STRING("PAIRSHOW", linkserver::typeName(linkcode::kTypePairShow));
   TEST_ASSERT_EQUAL_STRING("PAIRDONE", linkserver::typeName(linkcode::kTypePairDone));
   TEST_ASSERT_EQUAL_STRING("JPEG", linkserver::typeName(linkcode::kTypeJpeg));

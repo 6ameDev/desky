@@ -18,10 +18,10 @@ constexpr size_t kMaxFrame = kOverhead + kMaxPayload;
 
 // ── Frame types ─────────────────────────────────────────────────────────────
 // BUMP RULE (additive only): a new type takes the next free value. Never renumber, never change lengths.
-constexpr uint8_t kTypeFace = 0x01;      // core->head, 1B face id u8.
-constexpr uint8_t kTypeOled = 0x02;      // core->head, 1B mode 0=ON 1=DIM 2=OFF.
-constexpr uint8_t kTypeCamCtl = 0x03;    // core->head, 1B 0=off 1=on.
-constexpr uint8_t kTypeQrBitmap = 0x04;  // RESERVED frozen: never reuse, still 63B.
+constexpr uint8_t kTypeFace = 0x01;    // core->head, 1B face id u8.
+constexpr uint8_t kTypeOled = 0x02;    // core->head, 1B mode 0=ON 1=DIM 2=OFF.
+constexpr uint8_t kTypeCamCtl = 0x03;  // core->head, 1B 0=off 1=on.
+// 0x04 QRBITMAP retired (never sent on the wire): do not reuse.
 constexpr uint8_t kTypeOta = 0x05;       // core->head, 1..128B OTA pull URL bytes, no NUL.
 constexpr uint8_t kTypePairShow = 0x06;  // core->head, 8B: 6 ASCII digits + valid-seconds u16BE.
 constexpr uint8_t kTypePairDone = 0x07;  // core->head, empty: presence is the signal.
@@ -34,7 +34,6 @@ constexpr uint8_t kTypeAck = 0x22;       // either, 2B acked seq u16BE.
 constexpr size_t kFaceLen = 1;
 constexpr size_t kOledLen = 1;
 constexpr size_t kCamCtlLen = 1;
-constexpr size_t kQrBitmapLen = 63;
 // URL grammar lives in ota_manifest.h; length only here.
 constexpr size_t kOtaUrlMinLen = 1;
 constexpr size_t kOtaUrlMaxLen = 128;
@@ -98,7 +97,6 @@ inline bool isKnownType(uint8_t type) {
     case kTypeFace:
     case kTypeOled:
     case kTypeCamCtl:
-    case kTypeQrBitmap:
     case kTypeOta:
     case kTypePairShow:
     case kTypePairDone:
@@ -118,8 +116,6 @@ inline bool isValidPayloadLen(uint8_t type, uint16_t len) {
     case kTypeOled:
     case kTypeCamCtl:
       return len == 1;
-    case kTypeQrBitmap:
-      return len == kQrBitmapLen;
     case kTypeOta:
       return len >= kOtaUrlMinLen && len <= kOtaUrlMaxLen;
     case kTypePairShow:

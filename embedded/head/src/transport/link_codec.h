@@ -49,8 +49,6 @@ inline const char* typeName(uint8_t type) {
       return "OLED";
     case linkcode::kTypeCamCtl:
       return "CAMCTL";
-    case linkcode::kTypeQrBitmap:
-      return "QRBITMAP";
     case linkcode::kTypePairShow:
       return "PAIRSHOW";
     case linkcode::kTypePairDone:

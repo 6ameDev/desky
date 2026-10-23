@@ -31,7 +31,7 @@ contract, then CRC. Unknown types are rejected (frozen contract).
 | `0x01` | FACE     | core->head  | Face id `u8` (1B; clamped downstream, not here)    |
 | `0x02` | OLED     | core->head  | Mode `u8` (1B): 0=ON 1=DIM 2=OFF                   |
 | `0x03` | CAMCTL   | core->head  | Camera `u8` (1B): 0=off 1=on                      |
-| `0x04` | QRBITMAP | — (reserved, never sent) | V1 21x21 packed rows, MSB-first (exactly 63B; frozen, never reused) |
+| `0x04` | — | RETIRED (was QRBITMAP, never sent; do not reuse) | — |
 | `0x05` | OTA      | core->head  | OTA pull URL bytes, no NUL (1..128B)               |
 | `0x06` | PAIRSHOW | core->head  | 6 ASCII digits + valid-seconds `u16BE` (8B)        |
 | `0x07` | PAIRDONE | core->head  | Empty (0B; the frame presence is the signal)       |

@@ -140,8 +140,6 @@ inline const char* typeName(uint8_t type) {
       return "OLED";
     case linkcode::kTypeCamCtl:
       return "CAMCTL";
-    case linkcode::kTypeQrBitmap:
-      return "QRBITMAP";
     case linkcode::kTypePairShow:
       return "PAIRSHOW";
     case linkcode::kTypePairDone:
@@ -481,7 +479,6 @@ class LinkServer {
       case linkcode::kTypeOta:
       case linkcode::kTypePairShow:
       case linkcode::kTypePairDone:
-      case linkcode::kTypeQrBitmap:
         // Core->head direction on the UDP socket: never valid inbound here.
         // Silent drop, throttled.
         dropFirst(firstUnexpectedDrop_, "drop link unexpected %s on udp (first of boot)", linkserver::typeName(f.type));

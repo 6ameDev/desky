@@ -10,14 +10,10 @@
 #include <unity.h>
 
 #include "../src/abilities/pairing/pairing_codec.h"
-#include "link/link_codec.h"
 
-// Compile-time wire-length pin (P1b): the QR encoder's packed length and
-// the frozen link codec's QRBITMAP length are one contract. The firmware
-// spells the codec via the linkcode:: alias (linkwrap__ in link_server.h,
-// POSIX ::link collision); host tests use the canonical link:: spelling.
-static_assert(qr::kPackedLen == static_cast<int>(link::kQrBitmapLen),
-              "qr::kPackedLen must equal link::kQrBitmapLen (63B QRBITMAP)");
+// Compile-time display-size pin: the QR encoder's packed length is the 63B
+// head display contract (qrdisplay::kQrLen). No bitmap rides the link wire.
+static_assert(qr::kPackedLen == 63, "qr::kPackedLen must stay 63B (head display contract)");
 
 namespace {
 
