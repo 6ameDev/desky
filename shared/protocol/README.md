@@ -214,24 +214,27 @@ pair-refresh rotation.
   — the 19B message is the 13 ASCII bytes of `"MANUALRELEASE"` + eraBE2 +
   counterBE4. Same verify order and consume-on-accept domain as the take.
 
-MANUAL session (explicit take/release, stale auto-exit): pairing proves
+MANUAL session (explicit take/release, alive-expiry, goodbye): pairing proves
 ownership, but motion needs a held drive session on top. The app enters it
 with `MANUAL_TAKE` (verify order mirrors UNPAIR/DISCONNECT: len -> header
 -> XOR -> paired? -> era equals the stored era -> counter wrap-aware
 strictly greater -> HMAC constant-time; fail = silent drop) and leaves it
 with `MANUAL_RELEASE` (same verify). Pass on TAKE moves sysmode
-NORMAL -> MANUAL; pass on RELEASE moves MANUAL -> NORMAL. The comms
-failsafe doubles as the session timeout: a stale tick (no verified drive
-within `kStaleMs`, 500ms) in MANUAL returns to NORMAL and motion stops —
-no separate session timer. Drive packets outside MANUAL are ignored for
+NORMAL -> MANUAL; pass on RELEASE moves MANUAL -> NORMAL. The session runs
+on the alive clock, not the drive clock: an idle phone holds MANUAL with
+motion stopped (command-stale still inhibits motion in every mode via the
+failsafe overlay, without exiting), and MANUAL returns to NORMAL on
+`MANUAL_RELEASE`, on the `DISCONNECT` goodbye (refresh-then-clear drops the
+peer, which reads alive-stale on the next tick), on alive-stale (no valid
+paired packet within `kAliveMs`, 5s), on `UNPAIR`, or on OTA/pairing
+preemption. Drive packets outside MANUAL are ignored for
 motion (no stick intent reaches the motion layer) but still verify/consume
 normally: counters advance and the alive funnel runs, so an app already
 streaming drive keeps the command clock fresh and a trailing TAKE latches
 cleanly into motion. Telemetry `statusFlags` bit 4 (`0x10`) mirrors the
 session: 1 while sysmode MANUAL is held, 0 otherwise (bits 5-7 stay
-reserved). The app should stream drive before or alongside the session —
-a TAKE with no drive flowing enters MANUAL for a single tick before the
-stale exit returns it to NORMAL.
+reserved). The app keeps `ALIVE` (or drive) flowing to hold the session —
+drive itself may start after the take.
 
 Robot alive rule (firmware `UdpServer::markAlive` funnel): every VALID
 paired packet — ALIVE, DRIVE, PAIR_REFRESH_REQ — pins the telemetry unicast

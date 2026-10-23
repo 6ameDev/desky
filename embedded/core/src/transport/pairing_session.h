@@ -82,6 +82,10 @@ class IPairingSession {
   // state change on any failure.
   virtual connection::Verified tryConsumeAlive(uint16_t wireEra, uint32_t ctr, const uint8_t* tag) = 0;
   virtual connection::Verified tryConsumeDisconnect(uint16_t wireEra, uint32_t ctr, const uint8_t* tag) = 0;
+  // Alive-fresh poll for the MANUAL exit rule: true while the transport-owned
+  // peer slot reads alive at nowMs (same window the telemetry gate uses).
+  // False until attach lands.
+  virtual bool isAliveFresh(uint32_t nowMs) const = 0;
   // Pair-family RX entry (transport -> ability): the header -> handler map
   // lives in the ability.
   virtual void handlePairFrame(uint8_t header, const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,

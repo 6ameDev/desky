@@ -12,8 +12,12 @@
 
 #include <unity.h>
 
+#include <utility>
+
 #include "../src/abilities/pairing/pairing_manager.h"
 #include "../src/behavior/mode_manager.h"
+#include "../src/transport/connection_manager.h"
+#include "../src/transport/udp_server.h"
 
 namespace {
 
@@ -79,8 +83,38 @@ void test_mode_manual_release_granted_exits_manual_to_normal() {
   TEST_ASSERT_EQUAL_INT(static_cast<int>(sysmode::Mode::kNormal), static_cast<int>(out.mode));
 }
 
-void test_mode_command_stale_exits_manual_to_normal() {
-  const sysmode::State out = sysmode::apply(inMode(sysmode::Mode::kManual), sysmode::Event::kCommandStale);
+void test_mode_alive_stale_exits_manual_to_normal() {
+  const sysmode::State out = sysmode::apply(inMode(sysmode::Mode::kManual), sysmode::Event::kAliveStale);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(sysmode::Mode::kNormal), static_cast<int>(out.mode));
+}
+
+void test_mode_manual_holds_without_drive_while_alive() {
+  sysmode::State held = sysmode::apply(sysmode::State(), sysmode::Event::kManualTakeGranted);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(sysmode::Mode::kManual), static_cast<int>(held.mode));
+  held = sysmode::apply(held, sysmode::Event::kPaired);
+  held = sysmode::apply(held, sysmode::Event::kPairWindowClosed);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(sysmode::Mode::kManual), static_cast<int>(held.mode));
+  TEST_ASSERT_TRUE(sysmode::motionInhibited(held.mode, true));
+}
+
+void test_mode_manual_drive_allowed_but_inhibited_when_command_stale() {
+  TEST_ASSERT_TRUE(sysmode::manualDriveAllowed(sysmode::Mode::kManual, true));
+  TEST_ASSERT_TRUE(sysmode::motionInhibited(sysmode::Mode::kManual, true));
+}
+
+void test_mode_goodbye_exits_manual_to_normal() {
+  connection::ConnectionManager conn(udpstatus::kAliveMs);
+  connection::Verified verified = connection::AuthVerifier::verify(connection::Checks{true, true, true, true}, 7, 1);
+  TEST_ASSERT_TRUE(verified.valid());
+  connection::Pinned pinned = conn.markAlive(std::move(verified), 0xC0A80402u, 1000);
+  TEST_ASSERT_TRUE(pinned.valid());
+  TEST_ASSERT_TRUE(conn.isAlive(1000));
+  sysmode::State held = sysmode::apply(sysmode::State(), sysmode::Event::kManualTakeGranted);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(sysmode::Mode::kManual), static_cast<int>(held.mode));
+  connection::Verified bye = connection::AuthVerifier::verify(connection::Checks{true, true, true, true}, 8, 1);
+  conn.refreshThenClear(std::move(bye), 2000);
+  TEST_ASSERT_FALSE(conn.isAlive(2000));
+  const sysmode::State out = sysmode::apply(held, sysmode::Event::kAliveStale);
   TEST_ASSERT_EQUAL_INT(static_cast<int>(sysmode::Mode::kNormal), static_cast<int>(out.mode));
 }
 
@@ -126,11 +160,12 @@ void test_mode_manual_release_outside_manual_is_noop() {
   }
 }
 
-void test_mode_command_stale_outside_manual_never_changes_mode() {
-  // The overlay inhibits motion without changing the mode in any other mode.
+void test_mode_alive_stale_outside_manual_never_changes_mode() {
+  // The failsafe overlay inhibits motion without changing the mode; only the
+  // MANUAL session exits on the alive clock.
   const sysmode::Mode held[] = {sysmode::Mode::kNormal, sysmode::Mode::kPairing, sysmode::Mode::kOta};
   for (size_t i = 0; i < 3; ++i) {
-    const sysmode::State out = sysmode::apply(inMode(held[i]), sysmode::Event::kCommandStale);
+    const sysmode::State out = sysmode::apply(inMode(held[i]), sysmode::Event::kAliveStale);
     TEST_ASSERT_EQUAL_INT(static_cast<int>(held[i]), static_cast<int>(out.mode));
   }
 }
