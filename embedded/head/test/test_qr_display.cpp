@@ -6,7 +6,7 @@
 
 #include "../../core/src/abilities/pairing/pairing_codec.h"
 #include "../include/config.h"
-#include "../src/abilities/face/face_codec.h"
+#include "../src/abilities/display/display_codec.h"
 #include "../src/services/cli_manager.h"
 #include "../src/transport/link_codec.h"
 
@@ -141,7 +141,7 @@ void test_cli_qr_and_qr_clear() {
 
 void test_qr_pairing_window_order_head() {
   // QR show (120s) clears well before the core pairing window (300s).
-  TEST_ASSERT_EQUAL_UINT32(120000, static_cast<uint32_t>(CFG_FACE_QR_TIMEOUT_MS));
+  TEST_ASSERT_EQUAL_UINT32(120000, static_cast<uint32_t>(CFG_DISPLAY_QR_TIMEOUT_MS));
   TEST_ASSERT_EQUAL_UINT32(300000, pairing::kWindowMs);
-  TEST_ASSERT_TRUE(static_cast<uint32_t>(CFG_FACE_QR_TIMEOUT_MS) < pairing::kWindowMs);
+  TEST_ASSERT_TRUE(static_cast<uint32_t>(CFG_DISPLAY_QR_TIMEOUT_MS) < pairing::kWindowMs);
 }

@@ -40,16 +40,16 @@ inline uint8_t resolveFace(int32_t arg) { return clampFace(arg); }
 
 class PowerManager {
  public:
-  PowerManager() : cam_(nullptr), disp_(nullptr), camState_(CAM_ON), oledState_(OLED_ON), faceId_(FACE_BOOT) {}
+  PowerManager() : cam_(nullptr), disp_(nullptr), camState_(CAM_ON), oledState_(OLED_ON), eyesId_(FACE_BOOT) {}
 
   void begin(CameraDriver* cam, IDisplayPort* disp) {
     cam_ = cam;
     disp_ = disp;
     bootPowerState(HEAD_BOOT_LEAN, camState_, oledState_);
-    faceId_ = FACE_BOOT;
+    eyesId_ = FACE_BOOT;
     applyToDrivers();
     LOG_I("PWR", "boot lean=%d cam=%s oled=%s face=%s", HEAD_BOOT_LEAN, camStateName(camState_),
-          oledStateName(oledState_), faceName(faceId_));
+          oledStateName(oledState_), faceName(eyesId_));
   }
 
   // Rails entry: CAM/OLED only. Anything else is guarded, never silent.
@@ -96,15 +96,15 @@ class PowerManager {
     const uint32_t dropped = (cam_ != nullptr) ? cam_->dropped() : 0;
     const size_t lastBytes = (cam_ != nullptr) ? cam_->lastSizeBytes() : 0;
     LOG_I("PWR", "cam=%s oled=%s face=%s frames=%lu drops=%lu last=%uB fps=%lum", camStateName(camState_),
-          oledStateName(oledState_), faceName(faceId_), (unsigned long)frames, (unsigned long)dropped,
+          oledStateName(oledState_), faceName(eyesId_), (unsigned long)frames, (unsigned long)dropped,
           (unsigned)lastBytes, (unsigned long)((cam_ != nullptr) ? cam_->fpsMilli() : 0));
   }
 
   CameraState camState() const { return camState_; }
   DisplayState oledState() const { return oledState_; }
-  uint8_t faceId() const { return faceId_; }
+  uint8_t eyesId() const { return eyesId_; }
 
-  void setFaceId(uint8_t id) { faceId_ = id; }
+  void setEyesId(uint8_t id) { eyesId_ = id; }
 
  private:
   void applyToDrivers() {
@@ -124,7 +124,7 @@ class PowerManager {
   IDisplayPort* disp_;
   CameraState camState_;
   DisplayState oledState_;
-  uint8_t faceId_;
+  uint8_t eyesId_;
 };
 
 #endif  // ARDUINO

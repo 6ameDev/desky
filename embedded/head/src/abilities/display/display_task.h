@@ -1,38 +1,38 @@
 #pragma once
-// Face render binding (firmware only): RTOS task gluing the overlay state
+// Display render binding (firmware only): RTOS task gluing the overlay state
 // machine to the panel. OFF gates everything; setDim() selects the DIM row.
 
 #ifdef ARDUINO
-// ── Firmware: face renderer ─────────────────────────────────────────────────
+// ── Firmware: display renderer ─────────────────────────────────────────────────
 
 #include <Arduino.h>
 #include <math.h>
 
-#include "abilities/face/face_manager.h"
+#include "abilities/display/display_manager.h"
 #include "common/logger.h"
 #include "config.h"
 #include "hal/ssd1306_display.h"
 #include "services/display_port.h"
 
-#ifndef CFG_FACE_FPS
-#define CFG_FACE_FPS 25
+#ifndef CFG_DISPLAY_FPS
+#define CFG_DISPLAY_FPS 25
 #endif
-#ifndef CFG_FACE_FPS_DIM
-#define CFG_FACE_FPS_DIM 5
+#ifndef CFG_DISPLAY_FPS_DIM
+#define CFG_DISPLAY_FPS_DIM 5
 #endif
-#ifndef CFG_FACE_STACK_WORDS
-#define CFG_FACE_STACK_WORDS 4096
+#ifndef CFG_DISPLAY_STACK_WORDS
+#define CFG_DISPLAY_STACK_WORDS 4096
 #endif
-#ifndef CFG_FACE_PRIORITY_OFFSET
-#define CFG_FACE_PRIORITY_OFFSET 2
+#ifndef CFG_DISPLAY_PRIORITY_OFFSET
+#define CFG_DISPLAY_PRIORITY_OFFSET 2
 #endif
-#ifndef CFG_FACE_CORE
-#define CFG_FACE_CORE 0
+#ifndef CFG_DISPLAY_CORE
+#define CFG_DISPLAY_CORE 0
 #endif
 
-class FaceRenderer : public IDisplayPort {
+class DisplayRenderer : public IDisplayPort {
  public:
-  explicit FaceRenderer(Ssd1306Display& panel) : panel_(panel) {}
+  explicit DisplayRenderer(Ssd1306Display& panel) : panel_(panel) {}
 
   // Absent OLED never asserts; paints banner + boot face, starts the render task.
   bool init() override {
@@ -46,9 +46,9 @@ class FaceRenderer : public IDisplayPort {
       panel_.gfx().setCursor(0, 0);
       panel_.gfx().print(F("desky-head"));
       panel_.gfx().display();
-      showFace(FACE_BOOT);
-      xTaskCreatePinnedToCore(&FaceRenderer::renderTask, "face", CFG_FACE_STACK_WORDS, this,
-                              tskIDLE_PRIORITY + CFG_FACE_PRIORITY_OFFSET, nullptr, CFG_FACE_CORE);
+      showEyes(FACE_BOOT);
+      xTaskCreatePinnedToCore(&DisplayRenderer::renderTask, "display", CFG_DISPLAY_STACK_WORDS, this,
+                              tskIDLE_PRIORITY + CFG_DISPLAY_PRIORITY_OFFSET, nullptr, CFG_DISPLAY_CORE);
     }
     return true;
   }
@@ -66,11 +66,11 @@ class FaceRenderer : public IDisplayPort {
   bool present() const { return panel_.present(); }
 
   // Stores (clamped), paints when live. Clears every live overlay.
-  void showFace(uint8_t id) {
-    FaceTransition t;
-    mgr_.showFace(id, t);
+  void showEyes(uint8_t id) {
+    DisplayTransition t;
+    mgr_.showEyes(id, t);
     if (panel_.present() && enabled_) {
-      drawFace(mgr_.faceId());
+      drawEyes(mgr_.eyesId());
     }
     if (t.clearedQr) {
       LOG_I("FACE", "qr cleared (face)");
@@ -83,11 +83,11 @@ class FaceRenderer : public IDisplayPort {
     }
   }
 
-  uint8_t faceId() const { return mgr_.faceId(); }
+  uint8_t eyesId() const { return mgr_.eyesId(); }
 
   // Renders the 63B staging buffer until a FACE command or timeout.
   void showQr(const uint8_t qr63[qrdisplay::kQrLen]) {
-    FaceTransition t;
+    DisplayTransition t;
     if (!mgr_.showQr(qr63, millis(), t)) {
       return;
     }
@@ -105,7 +105,7 @@ class FaceRenderer : public IDisplayPort {
 
   // Demo pattern (not a scannable QR): exercises show/clear with no link.
   void showQrDemo() {
-    FaceTransition t;
+    DisplayTransition t;
     mgr_.showQrDemo(millis(), t);
     if (t.clearedOta) {
       LOG_I("FACE", "ota cleared (qr)");
@@ -121,12 +121,12 @@ class FaceRenderer : public IDisplayPort {
 
   // Clears QR + pairing show modes. No-op when idle; repaints when live.
   void clearQr(const char* why = "cli") {
-    FaceTransition t;
+    DisplayTransition t;
     if (!mgr_.clearQr(t)) {
       return;
     }
     if (panel_.present() && enabled_) {
-      drawFace(mgr_.faceId());
+      drawEyes(mgr_.eyesId());
     }
     if (t.clearedPair && !t.clearedQr) {
       LOG_I("FACE", "pairing cleared (%s)", why != nullptr ? why : "cli");
@@ -140,7 +140,7 @@ class FaceRenderer : public IDisplayPort {
   // Renders the authoritative PIN until PAIRDONE, a FACE command, or the
   // valid-seconds deadline. Fail-closed on null/bad PIN.
   void showPairing(const uint8_t pin6[pairdisplay::kPinLen], uint16_t validSecs) {
-    FaceTransition t;
+    DisplayTransition t;
     if (!mgr_.showPairing(pin6, validSecs, millis(), t)) {
       return;
     }
@@ -160,12 +160,12 @@ class FaceRenderer : public IDisplayPort {
 
   // Clears pairing + demo QR modes. No-op when idle; repaints when live.
   void clearPairing(const char* why = "cli") {
-    FaceTransition t;
+    DisplayTransition t;
     if (!mgr_.clearPairing(t)) {
       return;
     }
     if (panel_.present() && enabled_) {
-      drawFace(mgr_.faceId());
+      drawEyes(mgr_.eyesId());
     }
     wasPairActive_ = false;
     lastPairSec_ = kNoPairSec;
@@ -175,12 +175,12 @@ class FaceRenderer : public IDisplayPort {
   bool pairActive() const { return mgr_.pairActive(); }
 
   // Single overlay home: the pairing policy attaches to this same instance.
-  FaceOverlayManager& overlays() { return mgr_; }
-  const FaceOverlayManager& overlays() const { return mgr_; }
+  DisplayManager& overlays() { return mgr_; }
+  const DisplayManager& overlays() const { return mgr_; }
 
   // Minimal bar, no text. Updater drives this (show/fail/hide).
   void showOta(uint8_t pct) {
-    FaceTransition t;
+    DisplayTransition t;
     mgr_.showOta(pct, millis(), t);
     if (t.clearedQr) {
       LOG_I("FACE", "qr cleared (ota)");
@@ -199,7 +199,7 @@ class FaceRenderer : public IDisplayPort {
       return;
     }
     if (panel_.present() && enabled_) {
-      drawFace(mgr_.faceId());
+      drawEyes(mgr_.eyesId());
     }
     LOG_I("FACE", "ota done");
   }
@@ -207,7 +207,7 @@ class FaceRenderer : public IDisplayPort {
   void failOta() {
     mgr_.failOta(millis());
     if (panel_.present() && enabled_) {
-      drawFace(FACE_ALERT);
+      drawEyes(FACE_ALERT);
     }
     LOG_W("FACE", "ota failed (alert)");
   }
@@ -222,7 +222,7 @@ class FaceRenderer : public IDisplayPort {
       return;
     }
     if (panel_.present() && enabled_) {
-      drawFace(mgr_.faceId());
+      drawEyes(mgr_.eyesId());
     }
     LOG_I("FACE", "ota cleared (%s)", why != nullptr ? why : "cli");
   }
@@ -233,18 +233,18 @@ class FaceRenderer : public IDisplayPort {
       return;
     }
     switch (mgr_.liveMode()) {
-      case FaceLiveMode::kOtaAlert:
-        drawFace(FACE_ALERT);
+      case DisplayLiveMode::kOtaAlert:
+        drawEyes(FACE_ALERT);
         break;
-      case FaceLiveMode::kOtaBar:
+      case DisplayLiveMode::kOtaBar:
         drawOtaBar();
         break;
-      case FaceLiveMode::kQr:
+      case DisplayLiveMode::kQr:
         drawQr();
         break;
-      case FaceLiveMode::kFace:
+      case DisplayLiveMode::kEyes:
       default:
-        drawFace(mgr_.faceId());
+        drawEyes(mgr_.eyesId());
         break;
     }
   }
@@ -260,7 +260,7 @@ class FaceRenderer : public IDisplayPort {
 
  private:
   static void renderTask(void* arg) {
-    auto* self = static_cast<FaceRenderer*>(arg);
+    auto* self = static_cast<DisplayRenderer*>(arg);
     for (;;) {
       // Never WDT-subscribed: no feed needed.
       if (self->enabled_ && self->panel_.present()) {
@@ -268,7 +268,7 @@ class FaceRenderer : public IDisplayPort {
           self->clearOta("timeout");
         } else if (self->mgr_.otaActive()) {
           if (self->mgr_.otaFailed()) {
-            self->drawFace(FACE_ALERT);
+            self->drawEyes(FACE_ALERT);
           } else {
             self->drawOtaBar();
           }
@@ -289,16 +289,16 @@ class FaceRenderer : public IDisplayPort {
           } else if (self->mgr_.qrActive()) {
             self->drawQr();
           } else {
-            self->drawFace(self->mgr_.faceId());
+            self->drawEyes(self->mgr_.eyesId());
           }
         }
       }
-      const uint32_t periodMs = 1000u / (self->mgr_.isDim() ? CFG_FACE_FPS_DIM : CFG_FACE_FPS);
+      const uint32_t periodMs = 1000u / (self->mgr_.isDim() ? CFG_DISPLAY_FPS_DIM : CFG_DISPLAY_FPS);
       vTaskDelay(pdMS_TO_TICKS(periodMs));
     }
   }
 
-  void drawFace(uint8_t id) {
+  void drawEyes(uint8_t id) {
     if (!panel_.present()) {
       return;
     }
@@ -337,7 +337,7 @@ class FaceRenderer : public IDisplayPort {
     display.display();
   }
 
-  // Fill bar, no text. Gated on present() like drawFace.
+  // Fill bar, no text. Gated on present() like drawEyes.
   void drawOtaBar() {
     if (!panel_.present()) {
       return;
@@ -397,7 +397,7 @@ class FaceRenderer : public IDisplayPort {
   }
 
   Ssd1306Display& panel_;
-  FaceOverlayManager mgr_;
+  DisplayManager mgr_;
   volatile bool enabled_ = false;
   static constexpr uint32_t kNoPairSec = 0xFFFFFFFFu;
   uint32_t lastPairSec_ = kNoPairSec;

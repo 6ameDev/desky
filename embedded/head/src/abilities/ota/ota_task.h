@@ -12,7 +12,7 @@
 #include <WiFi.h>
 #include <WiFiClient.h>
 
-#include "abilities/face/face_task.h"
+#include "abilities/display/display_task.h"
 #include "abilities/ota/ota_codec.h"
 #include "abilities/ota/ota_manager.h"
 #include "common/fault_manager.h"
@@ -38,7 +38,7 @@
 class OtaUpdater {
  public:
   OtaUpdater()
-      : face_(nullptr),
+      : display_(nullptr),
         state_(ota::State::kIdle),
         total_(0),
         received_(0),
@@ -49,7 +49,7 @@ class OtaUpdater {
   }
 
   // Stored, never owned; null-safe. Updater drives the OLED bar through it.
-  void attachFace(FaceRenderer* face) { face_ = face; }
+  void attachDisplay(DisplayRenderer* display) { display_ = display; }
 
   // While active, loop() skips the camera grab (flash/cache contention).
   bool active() const { return state_ != ota::State::kIdle; }
@@ -169,7 +169,7 @@ class OtaUpdater {
     lastPct_ = 0;
     received_ = 0;
     otapolicy::applyEvent(state_, ota::Event::kStart);
-    faceShow(0);
+    displayShow(0);
     LOG_I("OTA", "fetch bytes=%u manifest=%d", static_cast<unsigned>(total_), manifestSet_ ? 1 : 0);
     return true;
   }
@@ -204,7 +204,7 @@ class OtaUpdater {
       otapolicy::applyEvent(state_, ota::Event::kChunk);
       uint32_t report = 0;
       if (otapolicy::progressDue(received_, total_, lastPct_, report)) {
-        faceShow(static_cast<uint8_t>(report));
+        displayShow(static_cast<uint8_t>(report));
         LOG_I("OTA", "progress bytes=%u/%u pct=%u", static_cast<unsigned>(received_), static_cast<unsigned>(total_),
               static_cast<unsigned>(lastPct_));
       }
@@ -230,7 +230,7 @@ class OtaUpdater {
 
   void finish() {
     otapolicy::applyEvent(state_, ota::Event::kStreamEnd);
-    faceShow(100);
+    displayShow(100);
 #if OTA_HAVE_SHA256
     uint8_t digest[32];
     mbedtls_sha256_finish(&sha_, digest);
@@ -242,7 +242,7 @@ class OtaUpdater {
       LOG_W("OTA", "manifest mismatch, discarded");
       Update.abort();
       otapolicy::applyEvent(state_, verdict);
-      faceFail();
+      displayFail();
       client_.stop();
       return;
     }
@@ -251,18 +251,18 @@ class OtaUpdater {
       LOG_I("OTA", "no manifest, size+magic only");
     }
     otapolicy::applyEvent(state_, ota::Event::kVerifyOk);
-    faceShow(100);
+    displayShow(100);
     const ota::Event commit = otapolicy::commitOutcome(Update.end(true));
     otapolicy::applyEvent(state_, commit);
     if (commit == ota::Event::kCommitOk) {
-      faceHide();
+      displayHide();
       LOG_I("OTA", "ok bytes=%u rebooting", static_cast<unsigned>(received_));
       client_.stop();
       delay(100);
       ESP.restart();
     } else {
       LOG_W("OTA", "commit fail");
-      faceFail();  // alert face, timeout back to the stored face
+      displayFail();  // alert face, timeout back to the stored face
       client_.stop();
     }
   }
@@ -270,7 +270,7 @@ class OtaUpdater {
   void fail() {
     Update.abort();
     otapolicy::applyEvent(state_, ota::Event::kAbort);
-    faceFail();  // alert face, timeout back to the stored face
+    displayFail();  // alert face, timeout back to the stored face
     client_.stop();
   }
 
@@ -367,25 +367,25 @@ class OtaUpdater {
     return true;
   }
 
-  void faceShow(uint8_t pct) {
-    if (face_ != nullptr) {
-      face_->showOta(pct);
+  void displayShow(uint8_t pct) {
+    if (display_ != nullptr) {
+      display_->showOta(pct);
     }
   }
 
-  void faceHide() {
-    if (face_ != nullptr) {
-      face_->hideOta();
+  void displayHide() {
+    if (display_ != nullptr) {
+      display_->hideOta();
     }
   }
 
-  void faceFail() {
-    if (face_ != nullptr) {
-      face_->failOta();
+  void displayFail() {
+    if (display_ != nullptr) {
+      display_->failOta();
     }
   }
 
-  FaceRenderer* face_;
+  DisplayRenderer* display_;
   ota::State state_;
   WiFiClient client_;
   uint32_t total_;

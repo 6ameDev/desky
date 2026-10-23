@@ -2,7 +2,7 @@
 // Display port (services-owned): narrow rail contract for the OLED face panel.
 //
 // PowerManager drives the display rail through this interface — never the
-// ability class. FaceRenderer (abilities/face) implements it. Covers exactly
+// ability class. DisplayRenderer (abilities/display) implements it. Covers exactly
 // the display-rail verbs PowerManager needs (present/setDim/repaint) plus the
 // IActuator power edge.
 

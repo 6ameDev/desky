@@ -1,6 +1,6 @@
 #pragma once
 // SSD1306 panel driver (behind IActuator), header-only HAL: probe, on/off,
-// clear, contrast, push, gfx accessor. No face vocabulary (see face_task.h).
+// clear, contrast, push, gfx accessor. No face vocabulary (see display_task.h).
 // OLED can never attach during USB runs: init() scans {0x3C, 0x3D} and a
 // "not found" result never blocks boot.
 
@@ -96,7 +96,7 @@ class Ssd1306Display : public IActuator {
     }
   }
 
-  // Draw target for the renderer (face_task.h), the only caller.
+  // Draw target for the renderer (display_task.h), the only caller.
   Adafruit_SSD1306& gfx() { return display_; }
 
  private:

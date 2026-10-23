@@ -6,9 +6,9 @@
 #include <unity.h>
 
 #include "../include/config.h"
-#include "../src/abilities/face/face_codec.h"  // otadisplay:: (Arduino-free)
-#include "../src/abilities/ota/ota_codec.h"    // ota::compareVersion (Arduino-free)
-#include "../src/transport/link_codec.h"       // linkcode:: alias + wifilink:: (canonical
+#include "../src/abilities/display/display_codec.h"  // otadisplay:: (Arduino-free)
+#include "../src/abilities/ota/ota_codec.h"          // ota::compareVersion (Arduino-free)
+#include "../src/transport/link_codec.h"             // linkcode:: alias + wifilink:: (canonical
 // linkcode:: spelling is pinned by core's test_link_codec.cpp goldens; head TUs
 // must use the alias — see the POSIX ::link note in link_codec.h)
 
@@ -151,7 +151,7 @@ void test_otadisplay_state_transitions() {
 
 void test_link_ota_version_vocabulary_and_gate() {
   const uint32_t running = static_cast<uint32_t>(HEAD_FW_VERSION);
-  TEST_ASSERT_EQUAL_UINT32(120000, static_cast<uint32_t>(CFG_FACE_OTA_TIMEOUT_MS));
+  TEST_ASSERT_EQUAL_UINT32(120000, static_cast<uint32_t>(CFG_DISPLAY_OTA_TIMEOUT_MS));
   // Macro-relative: one above running pulls, equal/older stands down.
   TEST_ASSERT_TRUE(otamanifest::shouldPull(2, 1));
   TEST_ASSERT_FALSE(otamanifest::shouldPull(1, 1));

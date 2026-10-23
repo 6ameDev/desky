@@ -8,7 +8,7 @@
 
 #include <Arduino.h>
 
-#include "abilities/face/face_task.h"
+#include "abilities/display/display_task.h"
 #include "common/logger.h"
 #include "head_context.h"
 #include "services/event_bus.h"
@@ -16,12 +16,12 @@
 
 class HeadCoordinator {
  public:
-  HeadCoordinator() : power_(nullptr), face_(nullptr) {}
+  HeadCoordinator() : power_(nullptr), display_(nullptr) {}
 
   // Stored, never owned. Call once in setup().
-  void begin(PowerManager* power, FaceRenderer* face) {
+  void begin(PowerManager* power, DisplayRenderer* display) {
     power_ = power;
-    face_ = face;
+    display_ = display;
   }
 
   // THE command table: every parsed line/frame from either door lands here.
@@ -37,10 +37,10 @@ class HeadCoordinator {
       case CmdTarget::FACE: {
         const uint8_t id = headapply::resolveFace(cmd.arg);
         if (power_ != nullptr) {
-          power_->setFaceId(id);
+          power_->setEyesId(id);
         }
-        if (face_ != nullptr) {
-          face_->showFace(id);
+        if (display_ != nullptr) {
+          display_->showEyes(id);
         }
         if (power_ != nullptr && power_->oledState() == OLED_OFF) {
           LOG_I("PWR", "face=%s stored (display off, paints on next on)", faceName(id));
@@ -51,13 +51,13 @@ class HeadCoordinator {
         break;
       }
       case CmdTarget::QR:
-        if (face_ == nullptr) {
+        if (display_ == nullptr) {
           break;
         }
         if (cmd.arg != 0) {
-          face_->showQrDemo();
+          display_->showQrDemo();
         } else {
-          face_->clearQr("cli");
+          display_->clearQr("cli");
         }
         break;
       case CmdTarget::STATUS:
@@ -73,14 +73,14 @@ class HeadCoordinator {
   }
 
   // Reporting only.
-  bool qrActive() const { return face_ != nullptr && face_->qrActive(); }
-  bool pairActive() const { return face_ != nullptr && face_->pairActive(); }
+  bool qrActive() const { return display_ != nullptr && display_->qrActive(); }
+  bool pairActive() const { return display_ != nullptr && display_->pairActive(); }
 
   void status() const { LOG_I("PWR", "qr=%s pair=%s", qrActive() ? "on" : "off", pairActive() ? "on" : "off"); }
 
  private:
   PowerManager* power_;
-  FaceRenderer* face_;
+  DisplayRenderer* display_;
 };
 
 #endif  // ARDUINO

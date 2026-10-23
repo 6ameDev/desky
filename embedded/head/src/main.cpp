@@ -1,6 +1,6 @@
 #include <Arduino.h>
 
-#include "abilities/face/face_task.h"
+#include "abilities/display/display_task.h"
 #include "abilities/ota/ota_task.h"
 #include "abilities/pairing/pairing_task.h"
 #include "behavior/coordinator.h"
@@ -37,7 +37,7 @@ namespace {
 I2CManager g_i2c;
 CameraDriver g_cam;
 Ssd1306Display g_panel(g_i2c);
-FaceRenderer g_display(g_panel);
+DisplayRenderer g_display(g_panel);
 PowerManager g_power;
 HeadCoordinator g_coordinator;
 PairingManager g_pairing;
@@ -143,7 +143,7 @@ void setup() {
   }
   g_cli.begin(&g_power);
   g_cli.attachSink(&g_cliSink);
-  g_ota.attachFace(&g_display);
+  g_ota.attachDisplay(&g_display);
   g_sub = EventBus::subscribe();
   g_lastCamMs = millis();
   g_lastAliveMs = millis();
@@ -175,7 +175,7 @@ void loop() {
   if (now - g_lastAliveMs >= 5000) {
     g_lastAliveMs = now;
     LOG_I("HEAD", "alive cam=%s oled=%s face=%s qr=%s pair=%s", camStateName(g_power.camState()),
-          oledStateName(g_power.oledState()), faceName(g_power.faceId()), g_coordinator.qrActive() ? "on" : "off",
+          oledStateName(g_power.oledState()), faceName(g_power.eyesId()), g_coordinator.qrActive() ? "on" : "off",
           g_coordinator.pairActive() ? "on" : "off");
     Diagnostics::logWatermarks("HEAD");
   }
