@@ -1,19 +1,34 @@
 # Expression Ability — Layered Build Plan
 
-The expression ability is the robot's multimodal output channel. Callers
-request an expression by id. The ability plays the bundle: face frames on
-the head display, an audio cue on the speaker, a motion primitive on the
-body, a head pose, an arm gesture, and a log line.
+The expression ability is the robot's expressive output channel. Callers
+request an expression by id. The ability plays the bundle: eye animation
+on the head display, and later an audio cue on the speaker, a motion
+primitive on the body, a head pose, an arm gesture, and a log line.
 
 Each layer executes on top of the previous one. Later work arrives as new
 table rows, never as rewrites.
 
+## As-built notes (modes-expressions branch)
+
+- The screen is owned by the display ability (abilities/display), which
+  arbitrates pairing, QR, OTA, and eyes slots. Expression state (request
+  ids, priority table, preemption) lives alongside it and will split into
+  abilities/expression/ when sound and motion fan-out land.
+- V1 is eyes-only. Audio cues, motion primitives, head poses, and arm
+  gestures are bundle fields reserved for V2 and V3, not yet played.
+- System modes are NORMAL, MANUAL, PAIRING, and OTA with the failsafe as
+  an overlay. The display follows the mode: pairing and OTA own the
+  screen while held, expressions own it otherwise. Manual driving needs
+  an explicit take action; paired no longer implies drivable.
+- The display stack is u8g2-only behind the hal driver interface. Eyes
+  render from a vendored parametric eye-animation library with random
+  emotion selection off and auto-blink plus random look on.
+
 ## Layer rules (apply to all versions)
 
-- The ability lives in abilities/expression/ with a codec, manager, and
-  task split. The codec holds ids, the bundle struct, and the tables.
-  The manager holds the active id, the priority table, and preemption
-  policy. The task plays bundles and is the only layer touching drivers.
+- Codec holds ids, the bundle struct, and the tables. The manager holds
+  the active id, the priority table, and preemption policy. The task
+  plays bundles and is the only layer touching drivers.
 - One active expression at a time with priority preemption. Blending is
   out of scope at every layer.
 - Every expression resolves back to neutral, the explicit baseline state.
@@ -21,46 +36,32 @@ table rows, never as rewrites.
   calls in tables or policies.
 - Every layer ships with its host tests and a bench proof before merge.
 
-## V1 — Foundation plus five entries
+## V1 — Foundation plus five entries (BUILT)
 
-Goal: five expressions playable by id on request.
-
-- Entries: neutral, happy, sad, curious, surprised. One per expressive
-  quadrant plus the baseline, proving the full range early.
-- Bundle fields: face frames, audio cue id, motion primitive id, head
-  pose, arm gesture, duration, and a hold versus play-once flag.
-  Surprised is the first play-once micro-reaction. The rest hold until
-  preempted.
-- Manager: active id tracking, priority table, preemption rule, neutral
-  fallback. Pure logic.
-- Task: bundle player fanning out to face, audio, and motion, owning
-  timing across loop ticks and reporting completion.
-- Triggers are scripted and manual only. This proves the request path
-  end to end with no autonomy involved.
-- Host tests pin the bundle table, the preemption order, and the
-  play-once versus hold rules.
+- Entries: neutral, happy, sad, curious, surprised, plus the holding
+  alert row kept for OTA failure. Request ids append without renumbering.
+- Surprised is the first play-once micro-reaction with a 1500ms hold.
+  The rest hold until preempted.
+- Triggers are the existing CLI verb and link frames. No autonomy.
+- Host tests pin the vocabulary, the table rows, the preemption order,
+  play-once release, and trigger paths for all five ids.
 - Bench proof: play all five, demo a high-priority interrupt over a low
-  one, confirm face, sound, and motion fire together.
-- Exit criteria: five expressions playable by id, preemption correct,
-  gates green.
+  one, confirm the yield back to neutral.
 
-## V2 — High-use entries
+## V2 — Sound, motion, and high-use entries
 
-Goal: cover the reactions safety and daily use need. Builds on V1.
-
-- New rows: angry (blocked, stalled, pushed), scared (sustained threat,
-  retreats), excited (pairing success, reconnects), confused
-  (unexpected sensor readings, blocked path).
-- No plumbing changes. Each row arrives with its bundle fields and its
-  priority slot.
+- Bundle fan-out grows to audio cues and motion primitives plus head and
+  arm poses. The expression state splits into abilities/expression/,
+  with the display ability keeping screen arbitration only.
+- New rows: angry, scared, excited, confused. Each row arrives with its
+  full bundle fields and its priority slot. Priority order across the
+  catalog locks here.
+- First behavior hookup: safety modules request entries by id through
+  the same path the CLI uses today.
 - Host tests extend the table and preemption pins. Bench proof plays
-  each new entry plus its interrupt behavior against a holding mood.
-- Exit criteria: nine expressions playable, preemption still correct,
-  gates green.
+  each new entry with its sound and motion together.
 
 ## V3 — Full catalog plus polish
-
-Goal: the complete expressive range. Builds on V2.
 
 - New rows: playful, triumphant, sleepy, content, determined.
 - Sleepy and content introduce the low-energy sustained moods for long
@@ -71,11 +72,9 @@ Goal: the complete expressive range. Builds on V2.
   (durations, interrupt windows).
 - Host tests cover new rows and intensity defaults. Bench proof walks
   the full catalog in one session.
-- Exit criteria: fourteen expressions playable, intensity supported,
-  gates green.
 
 ## Open questions
 
-- V1 entry list: neutral, happy, sad, curious, surprised — confirm.
-- Priority order across the full catalog — propose with V1, lock by V2.
+- Priority order across the full catalog locks in V2 — V1 order is
+  surprised, alert, sad, curious, happy, neutral.
 - Intensity in V3 or deferred further?
