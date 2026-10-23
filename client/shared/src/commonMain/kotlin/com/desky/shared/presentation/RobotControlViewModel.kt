@@ -11,6 +11,7 @@ import com.desky.shared.domain.EmergencyStopUseCase
 import com.desky.shared.domain.ForgetDeviceUseCase
 import com.desky.shared.domain.GetPairPskUseCase
 import com.desky.shared.domain.ObserveTelemetryUseCase
+import com.desky.shared.domain.ObserveRemoteDisconnectUseCase
 import com.desky.shared.domain.Outcome
 import com.desky.shared.domain.PairedDevice
 import com.desky.shared.domain.PairRefreshUseCase
@@ -231,6 +232,19 @@ class RobotControlViewModel(
      * forgets — only Unpaired/missing/exhausted converge.
      */
     private val forgetUC: ForgetDeviceUseCase? = null,
+    /**
+     * Core-originated `DISCONNECT` eviction (physical pair-button press):
+     * null in tests/legacy call sites (remote evictions inert — a cleared
+     * robot then relies on the existing telemetry-timeout/missing-PSK
+     * convergence); production DI passes the shared
+     * [ObserveRemoteDisconnectUseCase]. When present the VM collects its
+     * verified-eviction flow: the use case already ran the local forget
+     * (Room row + vault + counter reset, no reply), so the repo emits null
+     * and the existing unpair branch pauses the send loop + surfaces
+     * Unpaired while the session gate navigates to Pairing. Collection body
+     * is correlation logging only.
+     */
+    private val remoteDisconnectUC: ObserveRemoteDisconnectUseCase? = null,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(RobotControlUiState())
@@ -382,6 +396,17 @@ class RobotControlViewModel(
                 currentDevice.value = paired
                 if (paired == null) {
                     _state.update { it.copy(connectivity = Connectivity.Unpaired) }
+                }
+            }
+        }
+        // Core-originated eviction: the use case owns verify + local forget;
+        // this collector only logs the correlation marker (repo-null drives
+        // the pause/unpair/gate convergence above). Null (tests/legacy)
+        // collects nothing.
+        remoteDisconnectUC?.let { evictions ->
+            viewModelScope.launch {
+                evictions.observe().collect {
+                    logMarker("remoteDisconnectCleared")
                 }
             }
         }

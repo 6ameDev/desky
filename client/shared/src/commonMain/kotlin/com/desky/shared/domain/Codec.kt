@@ -426,7 +426,9 @@ suspend fun encodeAlive(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
  * runs refresh-then-clear (net peer dropped, pair KEPT — the next launch
  * rejoins instantly). The app sends it 2x on backgrounding (same
  * byte-identical repeat shape as `UNPAIR`'s 3x in [ForgetDeviceUseCase]).
- * No decode side exists by design.
+ * Decode side exists only for the reverse direction: the robot's physical
+ * pair button sends one `DISCONNECT` (same layout) as a pair eviction —
+ * see [decodeDisconnect].
  *
  * Top-level (not an `object` member) per the SKIE constraint documented in
  * `client/ARCHITECTURE.md` (same reason as [encodeSigned]/[encodeUnpair]).
@@ -450,6 +452,27 @@ suspend fun encodeDisconnect(psk: ByteArray, era: UShort, counter: UInt): ByteAr
     disconnectTag(psk, era, counter).copyInto(out, destinationOffset = 7)
     out[DISCONNECT_SIZE - 1] = xorChecksum(out, DISCONNECT_SIZE - 1)
     return out
+}
+
+/**
+ * Decode a core-originated `DISCONNECT` eviction frame: null on wrong
+ * header, wrong length, or bad checksum. On success the `Triple` is
+ * `(era, counter, tag6)` — the caller must still verify the era against
+ * the stored era, the counter for wrap-aware freshness, and the tag with
+ * [disconnectTag] under the vault PSK (constant-time) before trusting it.
+ * See `shared/protocol/README.md` §"ALIVE + DISCONNECT + robot alive rule".
+ */
+fun decodeDisconnect(bytes: ByteArray): Triple<UShort, UInt, ByteArray>? {
+    if (bytes.size != DISCONNECT_SIZE) return null
+    if ((bytes[0].toInt() and 0xFF) != DISCONNECT_HEADER) return null
+    if (xorChecksum(bytes, DISCONNECT_SIZE - 1) != bytes[DISCONNECT_SIZE - 1]) return null
+    val era = (((bytes[1].toInt() and 0xFF) shl 8) or (bytes[2].toInt() and 0xFF)).toUShort()
+    val counter = (((bytes[3].toUInt() and 0xFFu) shl 24) or
+        ((bytes[4].toUInt() and 0xFFu) shl 16) or
+        ((bytes[5].toUInt() and 0xFFu) shl 8) or
+        (bytes[6].toUInt() and 0xFFu))
+    val tag = bytes.copyOfRange(7, 7 + 6)
+    return Triple(era, counter, tag)
 }
 /**
  * Telemetry packet codec: Robot -> App, 9 bytes

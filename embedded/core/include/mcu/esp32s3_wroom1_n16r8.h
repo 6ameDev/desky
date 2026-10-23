@@ -41,6 +41,8 @@
 #define MCU_SERVO_ARM 41   // Arm servo PWM (JR plug, 5V star + GND)
 #define MCU_SERVO_HEAD 42  // Head-tilt servo PWM (JR plug, 5V star + GND)
 
+#define MCU_PAIR_BUTTON 0
+
 // I2C device addresses on shared Wire bus
 #define MCU_ADDR_TOF 0x29
 #define MCU_ADDR_MPU_PRIMARY 0x68

@@ -9,8 +9,9 @@
 
 // QR show mode geometry + payload contract.
 // Symbol: 21x21 modules, 63B payload row-major MSB-first (3 packed bytes/row).
-// Render: 2px/module + 8px quiet zone per side -> 58px square at (3, 3);
-// the pairing PIN prints right of the block (x=66). Never shrink the quiet zone.
+// Render: 2px/module + 8px quiet zone per side -> 58px square at (4, 3);
+// the pairing column (CODE label, 6 digits, countdown) prints right of the
+// block (x=66, 6x8 font): rows y=10 / y=22 / y=38, each 8px tall.
 namespace qrdisplay {
 constexpr int kModules = 21;
 constexpr size_t kQrLen = 63;
@@ -19,27 +20,42 @@ constexpr int kQuietPx = 8;
 constexpr int kPanelW = 128;
 constexpr int kPanelH = 64;
 constexpr int kExtentPx = kModules * kScale + 2 * kQuietPx;
-constexpr int kX0 = 3;
+constexpr int kX0 = 4;
 constexpr int kY0 = (kPanelH - kExtentPx) / 2;
 
 constexpr int kPinX = 66;
-constexpr int kPinY = 28;
+constexpr int kCodeY = 10;
+constexpr int kPinY = 22;
+constexpr int kCountdownY = 38;
 constexpr int kPinCols = 6;
 constexpr int kPinCharW = 6;
 constexpr int kPinCharH = 8;
 constexpr int kPinW = kPinCols * kPinCharW;
 constexpr int kPinH = kPinCharH;
+constexpr int kCodeCols = 4;
+constexpr int kCodeW = kCodeCols * kPinCharW;
+constexpr int kCountdownMaxCols = 9;
+constexpr int kCountdownMaxW = kCountdownMaxCols * kPinCharW;
 
 static_assert(kX0 >= 0 && kY0 >= 0 && kX0 + kExtentPx <= kPanelW && kY0 + kExtentPx <= kPanelH,
               "qr block must fit the panel");
 static_assert(kPinX >= 0 && kPinY >= 0 && kPinX + kPinW <= kPanelW && kPinY + kPinH <= kPanelH,
               "pin line must fit the panel");
-static_assert(kPinX >= kX0 + kExtentPx, "pin line must sit right of the qr block");
+static_assert(kPinX + kCodeW <= kPanelW && kCodeY >= 0 && kCodeY + kPinCharH <= kPanelH,
+              "code label must fit the panel");
+static_assert(kPinX + kCountdownMaxW <= kPanelW && kCountdownY >= 0 && kCountdownY + kPinCharH <= kPanelH,
+              "countdown line must fit the panel");
+static_assert(kPinX >= kX0 + kExtentPx, "pair column must sit right of the qr block");
 
 inline bool fitsPanel() { return kX0 >= 0 && kY0 >= 0 && kX0 + kExtentPx <= kPanelW && kY0 + kExtentPx <= kPanelH; }
 
 inline bool fitsPinLine() {
   return kPinX >= 0 && kPinY >= 0 && kPinX + kPinW <= kPanelW && kPinY + kPinH <= kPanelH && kPinX >= kX0 + kExtentPx;
+}
+
+inline bool fitsPairColumn() {
+  return fitsPinLine() && kPinX + kCodeW <= kPanelW && kCodeY >= 0 && kCodeY + kPinCharH <= kPanelH &&
+         kPinX + kCountdownMaxW <= kPanelW && kCountdownY >= 0 && kCountdownY + kPinCharH <= kPanelH;
 }
 
 inline bool isValidQrPayloadLen(uint16_t len) { return len == kQrLen; }
@@ -60,6 +76,7 @@ inline uint8_t moduleAt(const uint8_t* qr63, int x, int y) {
 namespace pairdisplay {
 constexpr uint32_t kMsPerSec = 1000;
 constexpr size_t kPinLen = 6;
+constexpr size_t kCountdownBuf = 12;
 
 inline bool isValidPin(const uint8_t pin6[kPinLen]) {
   if (pin6 == nullptr) {
@@ -78,6 +95,59 @@ inline uint32_t deadlineFor(uint32_t nowMs, uint16_t validSecs) {
 }
 
 inline bool isExpired(uint32_t nowMs, uint32_t deadlineMs) { return static_cast<int32_t>(nowMs - deadlineMs) >= 0; }
+
+// Whole seconds left, rounded up so the first displayed second survives a
+// full second. Wrap-safe, clamped at zero once the deadline passes.
+inline uint32_t remainingSecs(uint32_t nowMs, uint32_t deadlineMs) {
+  const int32_t diff = static_cast<int32_t>(deadlineMs - nowMs);
+  if (diff <= 0) {
+    return 0;
+  }
+  return static_cast<uint32_t>(diff + static_cast<int32_t>(kMsPerSec - 1)) / kMsPerSec;
+}
+
+// "Mm SSs" with zero-padded seconds ("5m 00s", "0m 09s"). False on null/short buffer.
+inline bool formatCountdown(uint32_t totalSecs, char* out, size_t outLen) {
+  if (out == nullptr || outLen == 0) {
+    return false;
+  }
+  const uint32_t mins = totalSecs / 60u;
+  const uint32_t secs = totalSecs % 60u;
+  char mbuf[10];
+  size_t mlen = 0;
+  if (mins == 0) {
+    mbuf[0] = '0';
+    mlen = 1;
+  } else {
+    char rev[10];
+    size_t rlen = 0;
+    uint32_t m = mins;
+    while (m > 0 && rlen < sizeof(rev)) {
+      rev[rlen++] = static_cast<char>('0' + (m % 10u));
+      m /= 10u;
+    }
+    if (m != 0) {
+      return false;
+    }
+    mlen = rlen;
+    for (size_t i = 0; i < rlen; ++i) {
+      mbuf[i] = rev[rlen - 1 - i];
+    }
+  }
+  if (mlen + 6 > outLen) {
+    return false;
+  }
+  for (size_t i = 0; i < mlen; ++i) {
+    out[i] = mbuf[i];
+  }
+  out[mlen] = 'm';
+  out[mlen + 1] = ' ';
+  out[mlen + 2] = static_cast<char>('0' + (secs / 10u));
+  out[mlen + 3] = static_cast<char>('0' + (secs % 10u));
+  out[mlen + 4] = 's';
+  out[mlen + 5] = '\0';
+  return true;
+}
 
 struct State {
   bool active = false;

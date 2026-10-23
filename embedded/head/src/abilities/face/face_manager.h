@@ -133,6 +133,31 @@ class FaceOverlayManager {
 
   bool pairActive() const { return pairActive_; }
 
+  // Whole seconds left on the pairing show (0 when idle/expired).
+  uint32_t remainingSecs(uint32_t nowMs) const {
+    if (!pairActive_) {
+      return 0;
+    }
+    return pairdisplay::remainingSecs(nowMs, pairDeadlineMs_);
+  }
+
+  static bool formatCountdown(uint32_t totalSecs, char* out, size_t outLen) {
+    return pairdisplay::formatCountdown(totalSecs, out, outLen);
+  }
+
+  // 1Hz repaint gate: true once per displayed-second change (updates lastSec).
+  bool pairSecondTicked(uint32_t nowMs, uint32_t& lastSec) {
+    if (!pairActive_) {
+      return false;
+    }
+    const uint32_t s = pairdisplay::remainingSecs(nowMs, pairDeadlineMs_);
+    if (s == lastSec) {
+      return false;
+    }
+    lastSec = s;
+    return true;
+  }
+
   // Arms/refreshes the OTA fill bar.
   void showOta(uint8_t pct, uint32_t nowMs, FaceTransition& t) {
     t.clearedQr = qrActive_;

@@ -238,9 +238,9 @@ class PairingTask : public transport::IPairingSession {
   }
 
   // Pair-restore: paired -> DRIVE verifies against the stored PSK;
-  // unpaired -> opens a pairing window (the code LOG_I line is the display).
-  // ConfigStore::begin() already ran in setup(). The PAIR_OK redelivery cache
-  // stays invalid across reboot (RAM-only).
+  // unpaired -> stays idle with no window. Only the physical pair button
+  // opens a window. ConfigStore::begin() already ran in setup(). The PAIR_OK
+  // redelivery cache stays invalid across reboot (RAM-only).
   void restorePair() override {
     lastPair_.valid = false;
     uint8_t loadedPsk[16] = {};
@@ -259,9 +259,9 @@ class PairingTask : public transport::IPairingSession {
       paired_ = false;
       lastCounter_ = 0;
       era_ = 0;
-      if (!openPairingWindow()) {
-        LOG_W("UDP", "pair window open failed");
-      }
+      pendingValid_ = false;
+      pairShowSent_ = false;
+      LOG_I("UDP", "unpaired idle, press pair button to pair");
     }
     mbedtls_platform_zeroize(loadedPsk, sizeof(loadedPsk));
   }
@@ -293,6 +293,66 @@ class PairingTask : public transport::IPairingSession {
     pendingValid_ = true;
     pairShowSent_ = false;  // Fresh window re-arms the pump's once-per-window latch.
     return true;
+  }
+
+  // Evicts the owner with an authenticated DISCONNECT, then clears and
+  // re-opens the window. No peer pinned -> the send is skipped.
+  bool enterPairMode(transport::IUdpTransport& t, uint32_t nowMs) {
+    (void)nowMs;
+    const bool wasPaired = paired_;
+    const uint16_t wasEra = era_;
+    const uint32_t wasCounter = lastCounter_;
+    uint8_t wasPsk[16];
+    for (size_t i = 0; i < sizeof(wasPsk); ++i) {
+      wasPsk[i] = psk_[i];
+    }
+    IPAddress wasIp;
+    uint16_t wasPort = 0;
+    bool havePeer = false;
+    if (peerIp_ != nullptr && peerPort_ != nullptr) {
+      wasIp = *peerIp_;
+      wasPort = *peerPort_;
+      const uint32_t peerU32 = connection::ipToU32(wasIp[0], wasIp[1], wasIp[2], wasIp[3]);
+      havePeer = (conn_ != nullptr && conn_->havePeer()) || peerU32 != 0 || wasPort != 0;
+    }
+    if (wasPaired && havePeer) {
+      uint32_t ctr = wasCounter + 1;
+      if (ctr == 0) {
+        ctr = 1;
+      }
+      uint8_t msg[pairing::kDisconnectMsgLen];
+      pairing::disconnectTagMsg(wasEra, ctr, msg);
+      uint8_t mac[32];
+      const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+      int rc = -1;
+      if (md != nullptr) {
+        rc = mbedtls_md_hmac(md, wasPsk, sizeof(wasPsk), msg, sizeof(msg), mac);
+      }
+      mbedtls_platform_zeroize(msg, sizeof(msg));
+      if (rc == 0) {
+        uint8_t out[pairing::kDisconnectSize];
+        out[0] = pairing::kDisconnectHeader;
+        out[1] = static_cast<uint8_t>((wasEra >> 8) & 0xFFu);
+        out[2] = static_cast<uint8_t>(wasEra & 0xFFu);
+        out[3] = static_cast<uint8_t>((ctr >> 24) & 0xFFu);
+        out[4] = static_cast<uint8_t>((ctr >> 16) & 0xFFu);
+        out[5] = static_cast<uint8_t>((ctr >> 8) & 0xFFu);
+        out[6] = static_cast<uint8_t>(ctr & 0xFFu);
+        for (size_t i = 0; i < pairing::kDisconnectTagLen; ++i) {
+          out[7 + i] = mac[i];
+        }
+        uint8_t xorSum = 0;
+        for (size_t i = 0; i + 1 < sizeof(out); ++i) {
+          xorSum ^= out[i];
+        }
+        out[sizeof(out) - 1] = xorSum;
+        t.sendDisconnect(wasIp, wasPort, out, sizeof(out));
+      }
+      mbedtls_platform_zeroize(mac, sizeof(mac));
+    }
+    mbedtls_platform_zeroize(wasPsk, sizeof(wasPsk));
+    clearPair();
+    return openPairingWindow();
   }
 
   // PIN link pump: ability-side policy half of the head display path. Called
@@ -628,7 +688,8 @@ class PairingTask : public transport::IPairingSession {
   // UNPAIR layout [0xAD|ctrBE4|tag6|XOR] (len + header + XOR checked by the
   // caller). Symmetric forget: a signed fire-and-forget from the paired
   // owner. Fail = silent drop. Pass clears the NVS pair + Core + key material
-  // + redelivery cache and opens a fresh pairing window. No reply packet.
+  // + redelivery cache and stays idle; only the physical pair button opens
+  // the next window. No reply packet.
   void handleUnpair(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
                     transport::IUdpTransport& t) {
     (void)rip;
@@ -693,10 +754,7 @@ class PairingTask : public transport::IPairingSession {
     if (link_ != nullptr) {
       notifyPairingDone(*link_);  // Fire-and-forget; peerless = silent no-op.
     }
-    LOG_I("UDP", "unpair ok");
-    if (!openPairingWindow()) {
-      LOG_W("UDP", "pair window open failed (post-unpair)");
-    }
+    LOG_I("UDP", "unpair ok, idle");
   }
 
   // PAIR_REFRESH_REQ layout [0x53|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR

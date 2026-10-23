@@ -174,8 +174,10 @@ inline void pairRefreshAckTagMsg(uint16_t era, uint8_t out16[kPairRefreshAckMsgL
 //   ALIVE      App -> Robot, 14B [0x55 | eraBE2 | counterBE4 | tag6 | XOR]
 //     tag = first6(HMAC-SHA256(psk, "ALIVE" || eraBE2 || counterBE4))
 //     era = CURRENT paired era.
-//   DISCONNECT App -> Robot, 14B [0x56 | eraBE2 | counterBE4 | tag6 | XOR]
+//   DISCONNECT Both, 14B [0x56 | eraBE2 | counterBE4 | tag6 | XOR]
 //     tag = first6(HMAC-SHA256(psk, "DISCONNECT" || eraBE2 || counterBE4)).
+// App->Robot is the goodbye that keeps the pair; Robot->App is the single
+// pair-button eviction that clears it. Same layout, fire-and-forget.
 // Both ride the shared strictly-increasing counter: a valid frame consumes
 // lastCounter_ exactly like drive. Era must equal the stored era; old-key
 // frames die via HMAC with no layout change.

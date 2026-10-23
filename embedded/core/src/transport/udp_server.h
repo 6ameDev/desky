@@ -433,6 +433,15 @@ class UdpServer : public transport::IUdpTransport {
     }
   }
 
+  // Core-originated DISCONNECT 14B unicast (physical pair-button eviction,
+  // composed by PairingTask): fire-and-forget, no gate, no retry.
+  void sendDisconnect(const IPAddress& ip, uint16_t port, const uint8_t* frame, size_t len) override {
+    if (!udpsend::udpSendChecked(udp_, ip, port, frame, len)) {
+      ++txFail_;
+      LOG_W("UDP", "udp send fail what=%s len=%u", "disconnect", static_cast<unsigned>(len));
+    }
+  }
+
   // PAIR_OK 39B unicast: consumes the PairingReceipt by value — proves the
   // pair persisted BEFORE anything left the radio. Invalid receipt -> silent
   // no-op.

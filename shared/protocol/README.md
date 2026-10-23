@@ -77,7 +77,7 @@ Frozen wire table (M9 three-way mirror gate — normative source is
 | `0x53` | 14   | PAIR_REFRESH_REQ  | App->Robot |
 | `0x54` | 10   | PAIR_REFRESH_ACK  | Robot->App |
 | `0x55` | 14   | ALIVE      | App->Robot |
-| `0x56` | 14   | DISCONNECT | App->Robot |
+| `0x56` | 14   | DISCONNECT | Both (same layout; App->Robot goodbye, Robot->App pair-button eviction) |
 
 Reserved: headers `0xAA`/`0xBB`/`0x50`/`0x51`/`0x52`/`0xAC`/`0xAD`/`0x53`/
 `0x54`/`0x55`/`0x56` are claimed — never reuse or renumber a header, never
@@ -87,7 +87,8 @@ header (Phase-2 `SET_RATE` must pick other values).
 Two tiers, decoupled: Tier 1 ephemeral pairing code proves physical
 presence; Tier 2 persistent PSK proves ownership on every drive packet.
 Rotation of Tier 1 never evicts an existing pair. Single owner: a new
-pair evicts the old; re-pair only via 10s button hold (clears pair). <!-- TODO(PHYSICAL-TRIGGER): button-vs-power-cycle decision pending — implements the 10s-hold promise; see DECISION-ISSUE. -->
+pair evicts the old; re-pair only via short press of the physical pair
+button (clears pair, then opens a window).
 
 ### Pairing QR display contract (normative for firmware + app)
 
@@ -151,7 +152,7 @@ info="desky-pair-v1", L=16)`.
   len -> header -> XOR -> paired? -> counter fresh (`isFreshCounter`) ->
   HMAC constant-time. Fail = silent drop. Pass = symmetric forget: the
   robot clears the NVS pair + in-memory key + PAIR_OK redelivery cache and
-  opens a fresh pairing window, so a new phone can pair immediately.
+  stays idle; only the physical pair button opens the next window.
 - `PAIR_REFRESH_REQ` App -> Robot, 14 bytes (Tier-1 silent auto-pair-refresh):
   `[0x53 | eraBE2 | counterBE4 | tag 6B | XOR]`
   with `tag = first6(HMAC-SHA256(oldPsk, "PAIRREFRESH"||eraBE2||counterBE4))` —
@@ -171,14 +172,18 @@ info="desky-pair-v1", L=16)`.
   (fresh per `isFreshCounter`, allocated from the shared holder — a valid
   ALIVE consumes `lastCounter_` exactly like drive, so a replayed ALIVE
   can never refresh twice).
-- `DISCONNECT` App -> Robot, 14 bytes (graceful goodbye, fire-and-forget,
-  no reply):
+- `DISCONNECT` 14 bytes (graceful goodbye, fire-and-forget,
+  no reply), same layout both directions:
   `[0x56 | eraBE2 | counterBE4 | tag 6B | XOR]`
   with `tag = first6(HMAC-SHA256(psk, "DISCONNECT"||eraBE2||counterBE4))`
   — the 16B message is the 10 ASCII bytes of `"DISCONNECT"` + eraBE2 +
-  counterBE4. Verify order mirrors ALIVE. Pass runs refresh-then-clear
-  like UNPAIR (alive timestamp refreshed, net peer dropped) but the pair
-  is KEPT: the next launch rejoins instantly. Never drives.
+  counterBE4. App -> Robot: verify order mirrors ALIVE. Pass runs
+  refresh-then-clear like UNPAIR (alive timestamp refreshed, net peer
+  dropped) but the pair is KEPT: the next launch rejoins instantly.
+  Never drives. Robot -> App: the physical pair button sends exactly one
+  frame with counter last+1 (0 never goes on the wire) before clearing
+  its own pair and opening a window; the app verifies the same way and
+  on pass clears its vault + Room row. No retry either direction.
   Headers `0x55`/`0x56` are claimed here — never reuse
   `0xAA`/`0xAC`/`0xBB`/`0x50`/`0x51`/`0x52`/`0x53`/`0x54`/`0xAD`.
 
@@ -190,8 +195,7 @@ ALIVE keeps the robot alive exactly like 50Hz drive, and ALIVE never
 touches the drive effect (`lastV_`/`lastOmega_`/`lastRxMs_` stay
 drive-only). Fresh while within `kAliveMs` (5s). DISCONNECT/UNPAIR run
 refresh-then-clear (net gone: `havePeer_ = false`); UNPAIR additionally
-clears the NVS pair + key + redelivery cache and opens a fresh pairing
-window. Pre-pair ALIVE/DISCONNECT drop like pre-pair drive; old-key
+clears the NVS pair + key + redelivery cache and stays idle. Pre-pair ALIVE/DISCONNECT drop like pre-pair drive; old-key
 frames die via HMAC with no layout change. App-side ALIVE send is a
 separate task — the firmware handler ships first so the wire is stable.
 

@@ -176,20 +176,98 @@ void test_pairdisplay_deadline_expiry() {
 }
 
 void test_pairdisplay_pin_line_geometry() {
-  // Side-by-side layout: QR block left, PIN digits right; every rect fits.
-  TEST_ASSERT_EQUAL_INT(3, qrdisplay::kX0);
+  // Side-by-side layout: QR block left, pair column (CODE/digits/countdown) right.
+  TEST_ASSERT_EQUAL_INT(4, qrdisplay::kX0);
   TEST_ASSERT_EQUAL_INT(3, qrdisplay::kY0);
   TEST_ASSERT_EQUAL_INT(58, qrdisplay::kExtentPx);
   TEST_ASSERT_EQUAL_INT(8, qrdisplay::kQuietPx);
   TEST_ASSERT_TRUE(qrdisplay::fitsPanel());
   TEST_ASSERT_EQUAL_INT(66, qrdisplay::kPinX);
-  TEST_ASSERT_EQUAL_INT(28, qrdisplay::kPinY);
+  TEST_ASSERT_EQUAL_INT(10, qrdisplay::kCodeY);
+  TEST_ASSERT_EQUAL_INT(22, qrdisplay::kPinY);
+  TEST_ASSERT_EQUAL_INT(38, qrdisplay::kCountdownY);
   TEST_ASSERT_EQUAL_INT(36, qrdisplay::kPinW);
   TEST_ASSERT_EQUAL_INT(8, qrdisplay::kPinH);
+  TEST_ASSERT_EQUAL_INT(24, qrdisplay::kCodeW);
   TEST_ASSERT_TRUE(qrdisplay::fitsPinLine());
+  TEST_ASSERT_TRUE(qrdisplay::fitsPairColumn());
   TEST_ASSERT_TRUE(qrdisplay::kPinX + qrdisplay::kPinW <= qrdisplay::kPanelW);
   TEST_ASSERT_TRUE(qrdisplay::kPinY + qrdisplay::kPinH <= qrdisplay::kPanelH);
   TEST_ASSERT_TRUE(qrdisplay::kPinX >= qrdisplay::kX0 + qrdisplay::kExtentPx);
+}
+
+void test_pairdisplay_countdown_format() {
+  struct Row {
+    uint32_t secs;
+    const char* want;
+  };
+  const Row rows[] = {
+      {300, "5m 00s"}, {299, "4m 59s"}, {249, "4m 09s"}, {61, "1m 01s"}, {60, "1m 00s"},
+      {59, "0m 59s"},  {9, "0m 09s"},   {1, "0m 01s"},   {0, "0m 00s"},  {600, "10m 00s"},
+  };
+  for (size_t i = 0; i < sizeof(rows) / sizeof(rows[0]); ++i) {
+    char buf[pairdisplay::kCountdownBuf] = {};
+    TEST_ASSERT_TRUE(pairdisplay::formatCountdown(rows[i].secs, buf, sizeof(buf)));
+    TEST_ASSERT_EQUAL_STRING(rows[i].want, buf);
+    char via[pairdisplay::kCountdownBuf] = {};
+    TEST_ASSERT_TRUE(FaceOverlayManager::formatCountdown(rows[i].secs, via, sizeof(via)));
+    TEST_ASSERT_EQUAL_STRING(rows[i].want, via);
+  }
+  char buf[pairdisplay::kCountdownBuf] = {};
+  TEST_ASSERT_FALSE(pairdisplay::formatCountdown(9, nullptr, sizeof(buf)));
+  TEST_ASSERT_FALSE(pairdisplay::formatCountdown(9, buf, 0));
+  char tiny[4] = {};
+  TEST_ASSERT_FALSE(pairdisplay::formatCountdown(9, tiny, sizeof(tiny)));
+}
+
+void test_pairdisplay_remaining_secs() {
+  const uint32_t deadline = pairdisplay::deadlineFor(1000, 300);
+  TEST_ASSERT_EQUAL_UINT32(300, pairdisplay::remainingSecs(1000, deadline));
+  TEST_ASSERT_EQUAL_UINT32(300, pairdisplay::remainingSecs(1001, deadline));
+  TEST_ASSERT_EQUAL_UINT32(300, pairdisplay::remainingSecs(1999, deadline));
+  TEST_ASSERT_EQUAL_UINT32(299, pairdisplay::remainingSecs(2000, deadline));
+  TEST_ASSERT_EQUAL_UINT32(1, pairdisplay::remainingSecs(deadline - 1000, deadline));
+  TEST_ASSERT_EQUAL_UINT32(1, pairdisplay::remainingSecs(deadline - 1, deadline));
+  TEST_ASSERT_EQUAL_UINT32(0, pairdisplay::remainingSecs(deadline, deadline));
+  TEST_ASSERT_EQUAL_UINT32(0, pairdisplay::remainingSecs(deadline + 5000, deadline));
+  const uint32_t wrapDeadline = pairdisplay::deadlineFor(0xFFFFFF00u, 2);
+  TEST_ASSERT_EQUAL_UINT32(2, pairdisplay::remainingSecs(0xFFFFFF00u, wrapDeadline));
+  TEST_ASSERT_EQUAL_UINT32(2, pairdisplay::remainingSecs(0xFFFFFF01u, wrapDeadline));
+  TEST_ASSERT_EQUAL_UINT32(0, pairdisplay::remainingSecs(wrapDeadline, wrapDeadline));
+
+  FaceOverlayManager face;
+  FaceTransition t;
+  const uint8_t pin[6] = {'1', '2', '3', '4', '5', '6'};
+  TEST_ASSERT_EQUAL_UINT32(0, face.remainingSecs(1000));
+  TEST_ASSERT_TRUE(face.showPairing(pin, 300, 1000, t));
+  TEST_ASSERT_EQUAL_UINT32(300, face.remainingSecs(1000));
+  TEST_ASSERT_EQUAL_UINT32(299, face.remainingSecs(2000));
+  TEST_ASSERT_EQUAL_UINT32(0, face.remainingSecs(301000));
+  char text[pairdisplay::kCountdownBuf] = {};
+  TEST_ASSERT_TRUE(face.formatCountdown(face.remainingSecs(52500), text, sizeof(text)));
+  TEST_ASSERT_EQUAL_STRING("4m 09s", text);
+}
+
+void test_pair_manager_second_gate() {
+  FaceOverlayManager face;
+  FaceTransition t;
+  const uint8_t pin[6] = {'1', '2', '3', '4', '5', '6'};
+  uint32_t last = 0xFFFFFFFFu;
+  TEST_ASSERT_FALSE(face.pairSecondTicked(1000, last));
+  TEST_ASSERT_TRUE(face.showPairing(pin, 300, 1000, t));
+  TEST_ASSERT_TRUE(face.pairSecondTicked(1000, last));
+  TEST_ASSERT_EQUAL_UINT32(300, last);
+  TEST_ASSERT_FALSE(face.pairSecondTicked(1000, last));
+  TEST_ASSERT_FALSE(face.pairSecondTicked(1500, last));
+  TEST_ASSERT_FALSE(face.pairSecondTicked(1999, last));
+  TEST_ASSERT_TRUE(face.pairSecondTicked(2000, last));
+  TEST_ASSERT_EQUAL_UINT32(299, last);
+  TEST_ASSERT_TRUE(face.pairSecondTicked(301000, last));
+  TEST_ASSERT_EQUAL_UINT32(0, last);
+  TEST_ASSERT_FALSE(face.pairSecondTicked(302000, last));
+  TEST_ASSERT_TRUE(face.clearPairing(t));
+  TEST_ASSERT_FALSE(face.pairSecondTicked(303000, last));
+  TEST_ASSERT_EQUAL_UINT32(0, face.remainingSecs(303000));
 }
 
 void test_pairshow_pin_to_bitmap_equivalence() {
