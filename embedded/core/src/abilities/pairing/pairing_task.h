@@ -238,9 +238,9 @@ class PairingTask : public transport::IPairingSession {
   }
 
   // Pair-restore: paired -> DRIVE verifies against the stored PSK;
-  // unpaired -> opens a pairing window (the code LOG_I line is the display).
-  // ConfigStore::begin() already ran in setup(). The PAIR_OK redelivery cache
-  // stays invalid across reboot (RAM-only).
+  // unpaired -> stays idle with no window. Only the physical pair button
+  // opens a window. ConfigStore::begin() already ran in setup(). The PAIR_OK
+  // redelivery cache stays invalid across reboot (RAM-only).
   void restorePair() override {
     lastPair_.valid = false;
     uint8_t loadedPsk[16] = {};
@@ -259,9 +259,9 @@ class PairingTask : public transport::IPairingSession {
       paired_ = false;
       lastCounter_ = 0;
       era_ = 0;
-      if (!openPairingWindow()) {
-        LOG_W("UDP", "pair window open failed");
-      }
+      pendingValid_ = false;
+      pairShowSent_ = false;
+      LOG_I("UDP", "unpaired idle, press pair button to pair");
     }
     mbedtls_platform_zeroize(loadedPsk, sizeof(loadedPsk));
   }
@@ -628,7 +628,8 @@ class PairingTask : public transport::IPairingSession {
   // UNPAIR layout [0xAD|ctrBE4|tag6|XOR] (len + header + XOR checked by the
   // caller). Symmetric forget: a signed fire-and-forget from the paired
   // owner. Fail = silent drop. Pass clears the NVS pair + Core + key material
-  // + redelivery cache and opens a fresh pairing window. No reply packet.
+  // + redelivery cache and stays idle; only the physical pair button opens
+  // the next window. No reply packet.
   void handleUnpair(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
                     transport::IUdpTransport& t) {
     (void)rip;
@@ -693,10 +694,7 @@ class PairingTask : public transport::IPairingSession {
     if (link_ != nullptr) {
       notifyPairingDone(*link_);  // Fire-and-forget; peerless = silent no-op.
     }
-    LOG_I("UDP", "unpair ok");
-    if (!openPairingWindow()) {
-      LOG_W("UDP", "pair window open failed (post-unpair)");
-    }
+    LOG_I("UDP", "unpair ok, idle");
   }
 
   // PAIR_REFRESH_REQ layout [0x53|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR
