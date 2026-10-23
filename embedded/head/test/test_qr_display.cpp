@@ -47,7 +47,7 @@ void test_qr_geometry_fits_panel() {
   TEST_ASSERT_EQUAL_INT(2, qrdisplay::kScale);
   TEST_ASSERT_EQUAL_INT(8, qrdisplay::kQuietPx);
   TEST_ASSERT_EQUAL_INT(58, qrdisplay::kExtentPx);
-  TEST_ASSERT_EQUAL_INT(3, qrdisplay::kX0);
+  TEST_ASSERT_EQUAL_INT(4, qrdisplay::kX0);
   TEST_ASSERT_EQUAL_INT(3, qrdisplay::kY0);
   TEST_ASSERT_TRUE(qrdisplay::fitsPanel());
   TEST_ASSERT_TRUE(qrdisplay::kX0 + qrdisplay::kExtentPx <= qrdisplay::kPanelW);

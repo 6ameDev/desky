@@ -152,6 +152,8 @@ class FaceRenderer : public IDisplayPort {
     }
     if (panel_.present() && enabled_) {
       drawQr();
+      lastPairSec_ = mgr_.remainingSecs(millis());
+      wasPairActive_ = true;
     }
     LOG_I("FACE", "pairing shown valid=%us", static_cast<unsigned>(validSecs));
   }
@@ -165,6 +167,8 @@ class FaceRenderer : public IDisplayPort {
     if (panel_.present() && enabled_) {
       drawFace(mgr_.faceId());
     }
+    wasPairActive_ = false;
+    lastPairSec_ = kNoPairSec;
     LOG_I("FACE", "pairing cleared (%s)", why != nullptr ? why : "cli");
   }
 
@@ -271,13 +275,22 @@ class FaceRenderer : public IDisplayPort {
         } else if (self->mgr_.pairExpired(millis())) {
           self->clearPairing("timeout");
         } else if (self->mgr_.pairActive()) {
-          self->drawQr();
-        } else if (self->mgr_.qrExpired(millis())) {
-          self->clearQr("timeout");
-        } else if (self->mgr_.qrActive()) {
-          self->drawQr();
+          // Full-frame I2C push per repaint: hold the pair screen to ~1Hz.
+          const uint32_t nowMs = millis();
+          if (!self->wasPairActive_ || self->mgr_.pairSecondTicked(nowMs, self->lastPairSec_)) {
+            self->drawQr();
+          }
+          self->wasPairActive_ = true;
         } else {
-          self->drawFace(self->mgr_.faceId());
+          self->wasPairActive_ = false;
+          self->lastPairSec_ = kNoPairSec;
+          if (self->mgr_.qrExpired(millis())) {
+            self->clearQr("timeout");
+          } else if (self->mgr_.qrActive()) {
+            self->drawQr();
+          } else {
+            self->drawFace(self->mgr_.faceId());
+          }
         }
       }
       const uint32_t periodMs = 1000u / (self->mgr_.isDim() ? CFG_FACE_FPS_DIM : CFG_FACE_FPS);
@@ -362,10 +375,16 @@ class FaceRenderer : public IDisplayPort {
         pin[i] = static_cast<char>(pairPin[i]);
       }
       pin[pairdisplay::kPinLen] = '\0';
+      char countdown[pairdisplay::kCountdownBuf] = {};
+      pairdisplay::formatCountdown(mgr_.remainingSecs(millis()), countdown, sizeof(countdown));
       display.setTextSize(1);
       display.setTextColor(SSD1306_WHITE);
+      display.setCursor(qrdisplay::kPinX, qrdisplay::kCodeY);
+      display.print(F("CODE"));
       display.setCursor(qrdisplay::kPinX, qrdisplay::kPinY);
       display.print(pin);
+      display.setCursor(qrdisplay::kPinX, qrdisplay::kCountdownY);
+      display.print(countdown);
     }
     display.display();
   }
@@ -380,6 +399,9 @@ class FaceRenderer : public IDisplayPort {
   Ssd1306Display& panel_;
   FaceOverlayManager mgr_;
   volatile bool enabled_ = false;
+  static constexpr uint32_t kNoPairSec = 0xFFFFFFFFu;
+  uint32_t lastPairSec_ = kNoPairSec;
+  bool wasPairActive_ = false;
 };
 
 #endif  // ARDUINO
