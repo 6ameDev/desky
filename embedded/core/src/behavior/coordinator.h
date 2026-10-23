@@ -49,6 +49,7 @@
 
 #include <stdint.h>
 
+#include "behavior/mode_manager.h"
 #include "system_context.h"
 
 namespace coordinator {
@@ -325,6 +326,19 @@ class Coordinator {
     telem_ = telem;
   }
 
+  // Mode query the display layer reads: the active system mode (NORMAL by
+  // default, PAIRING while the pair window is open, OTA/MANUAL via their
+  // notifiers below). Motion is unaffected — the failsafe overlay inhibits
+  // without changing the mode.
+  sysmode::Mode sysMode() const { return sysMode_.mode; }
+
+  // Event feeds for signals the coordinator cannot poll: OTA staging and the
+  // app-driving actions call these (unfired while nothing drives them).
+  void onOtaStaged() { sysMode_ = sysmode::apply(sysMode_, sysmode::Event::kOtaStaged); }
+  void onOtaDone() { sysMode_ = sysmode::apply(sysMode_, sysmode::Event::kOtaDone); }
+  void onManualTake() { sysMode_ = sysmode::apply(sysMode_, sysmode::Event::kManualTakeGranted); }
+  void onManualRelease() { sysMode_ = sysmode::apply(sysMode_, sysmode::Event::kManualReleaseGranted); }
+
  private:
   static void taskEntry(void* arg) { static_cast<Coordinator*>(arg)->loop(); }
 
@@ -395,6 +409,31 @@ class Coordinator {
       // Unsigned subtraction: wrap-safe across millis() rollover.
       const bool stale = !hasCmd_ || (nowMs - lastCmdMs_ > kStaleMs);
 
+      // Mode policy feed from existing signals only: the pairing session's
+      // window/paired reads, plus the stale bit above (same threshold as the
+      // failsafe, no new timing). OTA/manual events arrive via the notifiers;
+      // unfired, the mode rests on NORMAL.
+      if (pairing_ != nullptr) {
+        if (pairing_->pairWindowOpen(nowMs)) {
+          sysMode_ = sysmode::apply(sysMode_, sysmode::Event::kPairWindowOpened);
+        } else if (pairing_->isPaired()) {
+          sysMode_ = sysmode::apply(sysMode_, sysmode::Event::kPaired);
+        } else {
+          sysMode_ = sysmode::apply(sysMode_, sysmode::Event::kPairWindowClosed);
+        }
+      }
+      if (stale) {
+        sysMode_ = sysmode::apply(sysMode_, sysmode::Event::kCommandStale);
+      }
+
+      // Drive gate seam: the mode policy decides whether stick intent may
+      // reach the motion layer. Permissive while the session verifies (the
+      // transport publishes verified frames only), so motion matches the
+      // ungated arbitrator exactly. Null pairing_ (before attach) allows for
+      // the same reason.
+      const bool driveAllowed = sysmode::manualDriveAllowed(sysMode_.mode, pairing_ == nullptr || pairing_->isPaired());
+      const bool inhibited = sysmode::motionInhibited(sysMode_.mode, stale);
+
       coordinator::ArbitrateInput in;
       in.mode = mode_;
       in.activeBehavior = active_;
@@ -404,7 +443,7 @@ class Coordinator {
       in.gndRev = gndRev_;
       in.cmdV = cmdV_;
       in.cmdOmega = cmdOmega_;
-      in.hasCommand = hasCmd_ && !stale;
+      in.hasCommand = hasCmd_ && !inhibited && driveAllowed;
       in.freshCommand = freshCommand;
       in.udpStale = stale;
       in.doneReceived = doneReceived;
@@ -459,6 +498,7 @@ class Coordinator {
   SemaphoreHandle_t mutex_;
   SystemState snap_;  // Shadow for snapshot(); written by task, read under mutex.
   SystemState::RobotMode mode_;
+  sysmode::State sysMode_;  // System mode policy (NORMAL default; PAIRING while the pair window is open).
   BehaviorId active_;
   bool emergencyLatched_;
   bool gndFwd_;

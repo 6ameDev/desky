@@ -117,6 +117,13 @@ class Core {
 
   bool isPaired() const { return paired_; }
 
+  // Open-window read for the mode policy: true while a window is live
+  // (unexpired, unburned, unpaired). A lockout still counts as open: the
+  // window outlives the retry budget.
+  bool windowOpen(uint32_t nowMs) const {
+    return windowOpen_ && !burned_ && !paired_ && ((nowMs - windowStartMs_) < kWindowMs);
+  }
+
   uint32_t tries() const { return tries_; }
 
   uint16_t era() const { return era_; }
