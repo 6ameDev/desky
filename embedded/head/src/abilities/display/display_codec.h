@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "head_context.h"
+#include "link/expression_catalog.h"
 #include "link/qr_codec.h"
 
 // QR show mode geometry + payload contract.
@@ -228,54 +229,11 @@ constexpr uint8_t kEmotionSurprised = 8;
 constexpr uint8_t kEmotionAwe = 17;
 
 inline uint8_t emotionForFace(uint8_t faceId) {
-  switch (faceId) {
-    case FACE_HAPPY:
-      return kEmotionHappy;
-    case FACE_SAD:
-      return kEmotionSad;
-    case FACE_ALERT:
-    case FACE_SURPRISED:
-      return kEmotionSurprised;
-    case FACE_CURIOUS:
-      return kEmotionAwe;
-    case FACE_BOOT:
-    case FACE_BLINK:
-    default:
-      return kEmotionNormal;
-  }
+  // Single source is the shared catalog; unknown ids fail closed to Normal.
+  // The library has no curious preset; CURIOUS rides the wide Awe preset
+  // (firmware adds the sideways glance).
+  const exprcat::Entry* e = exprcat::lookup(faceId);
+  return e == nullptr ? kEmotionNormal : e->eye;
 }
 
 }  // namespace eyesmap
-
-// Expression priority: one active id, higher preempts lower, equal refreshes,
-// lower never displaces higher (release via the neutral family first).
-// SURPRISED is play-once: it falls back to neutral after kSurprisedHoldMs
-// while holding ids persist. The library has no curious preset; CURIOUS rides
-// the wide Awe preset (firmware adds the sideways glance).
-namespace exprprio {
-constexpr uint32_t kSurprisedHoldMs = 1500;
-
-inline uint8_t priorityFor(uint8_t faceId) {
-  switch (faceId) {
-    case FACE_SURPRISED:
-      return 5;
-    case FACE_ALERT:
-      return 4;
-    case FACE_SAD:
-      return 3;
-    case FACE_CURIOUS:
-      return 2;
-    case FACE_HAPPY:
-      return 1;
-    case FACE_BOOT:
-    case FACE_BLINK:
-    default:
-      return 0;
-  }
-}
-
-inline bool isPlayOnce(uint8_t faceId) { return faceId == FACE_SURPRISED; }
-
-inline uint32_t holdMsFor(uint8_t faceId) { return isPlayOnce(faceId) ? kSurprisedHoldMs : 0; }
-
-}  // namespace exprprio

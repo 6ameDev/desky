@@ -122,10 +122,8 @@ constexpr uint8_t kManualTakeHeader = udp::kManualTakeHeader;
 constexpr size_t kManualTakeSize = udp::kManualTakeSize;
 constexpr uint8_t kManualReleaseHeader = udp::kManualReleaseHeader;
 constexpr size_t kManualReleaseSize = udp::kManualReleaseSize;
-// Expression picker: EXPR_LIST_REQ 14B + EXPR_TRIGGER 15B (explicit
-// list fetch + MANUAL-gated trigger; EXPR_LIST_RESP is TX-only).
-constexpr uint8_t kExprListReqHeader = udp::kExprListReqHeader;
-constexpr size_t kExprListReqSize = udp::kExprListReqSize;
+// Expression trigger: EXPR_TRIGGER 15B (MANUAL-gated trigger; 0x59/0x5A are
+// retired-reserved and demux to kDrop).
 constexpr uint8_t kExprTriggerHeader = udp::kExprTriggerHeader;
 constexpr size_t kExprTriggerSize = udp::kExprTriggerSize;
 // Robot alive freshness window: a paired peer counts as alive while its last
@@ -145,7 +143,6 @@ enum class RxKind : uint8_t {
   kDisconnect,
   kManualTake,
   kManualRelease,
-  kExprListReq,
   kExprTrigger,
   kDrop
 };
@@ -177,9 +174,6 @@ inline RxKind classifyRx(size_t len, uint8_t header) {
   }
   if (len == kManualReleaseSize && header == kManualReleaseHeader) {
     return RxKind::kManualRelease;
-  }
-  if (len == kExprListReqSize && header == kExprListReqHeader) {
-    return RxKind::kExprListReq;
   }
   if (len == kExprTriggerSize && header == kExprTriggerHeader) {
     return RxKind::kExprTrigger;
@@ -486,16 +480,6 @@ class UdpServer : public transport::IUdpTransport {
     }
   }
 
-  // EXPR_LIST_RESP variable-length unicast (composed by PairingTask from the
-  // shared catalog): single send to the requester, no retry (the app
-  // refetches on screen entry, so loss heals).
-  void sendExprList(const IPAddress& ip, uint16_t port, const uint8_t* frame, size_t len) override {
-    if (!udpsend::udpSendChecked(udp_, ip, port, frame, len)) {
-      ++txFail_;
-      LOG_W("UDP", "udp send fail what=%s len=%u", "expr_list", static_cast<unsigned>(len));
-    }
-  }
-
   // PAIR_OK 39B unicast: consumes the PairingReceipt by value — proves the
   // pair persisted BEFORE anything left the radio. Invalid receipt -> silent
   // no-op.
@@ -595,7 +579,6 @@ class UdpServer : public transport::IUdpTransport {
           case udpstatus::RxKind::kPairRefreshReq:
           case udpstatus::RxKind::kManualTake:
           case udpstatus::RxKind::kManualRelease:
-          case udpstatus::RxKind::kExprListReq:
           case udpstatus::RxKind::kExprTrigger:
             // Pair-family dispatch owned by the pairing ability. Null-safe
             // for the begin/attachPairing setup micro-window.

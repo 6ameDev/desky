@@ -80,14 +80,11 @@ class WireConstantsTest {
 
     @Test
     fun expressions() {
+        // 0x59/0x5A stay claimed retired-reserved (never reuse); 0x5B is live.
         assertEquals(0x59, EXPR_LIST_REQ_HEADER)
-        assertEquals(14, EXPR_LIST_REQ_SIZE)
         assertEquals(0x5A, EXPR_LIST_RESP_HEADER)
         assertEquals(0x5B, EXPR_TRIGGER_HEADER)
         assertEquals(15, EXPR_TRIGGER_SIZE)
-        assertEquals(1, EXPR_LIST_RESP_VERSION)
-        assertEquals(12, EXPR_LIST_MAX_COUNT)
-        assertEquals(10, EXPR_NAME_SIZE)
     }
 
     @Test

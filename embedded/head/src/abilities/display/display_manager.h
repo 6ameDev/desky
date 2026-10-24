@@ -51,7 +51,7 @@ class DisplayManager {
     pairActive_ = false;
     otadisplay::hide(ota_);
     const uint8_t c = clampFace(static_cast<int>(id));
-    if (c != FACE_BOOT && c != FACE_BLINK && exprprio::priorityFor(c) < exprprio::priorityFor(eyesId_)) {
+    if (c != FACE_BOOT && c != FACE_BLINK && exprcat::priorityFor(c) < exprcat::priorityFor(eyesId_)) {
       return false;
     }
     eyesId_ = c;
@@ -63,7 +63,7 @@ class DisplayManager {
 
   // Play-once expiry pump (wrap-safe): true once when an id fell back to neutral.
   bool exprTick(uint32_t nowMs) {
-    if (!exprprio::isPlayOnce(eyesId_) || (nowMs - exprSinceMs_) < exprprio::holdMsFor(eyesId_)) {
+    if (!exprcat::isPlayOnce(eyesId_) || (nowMs - exprSinceMs_) < exprcat::holdMsFor(eyesId_)) {
       return false;
     }
     eyesId_ = FACE_BOOT;

@@ -23,6 +23,12 @@ table rows, never as rewrites.
 - The display stack is u8g2-only behind the hal driver interface. Eyes
   render from a vendored parametric eye-animation library with random
   emotion selection off and auto-blink plus random look on.
+- Core owns the catalog and dispatches by id over the link; head maps to
+  presets with neutral fallback and keeps screen arbitration. The shared
+  table is the single source both sides read.
+- The app picker carries a hardcoded list mirroring the catalog and plays
+  through core MANUAL-gated triggers. The list-fetch round trip was tried,
+  raced, then retired; headers stay reserved.
 
 ## Layer rules (apply to all versions)
 
@@ -42,7 +48,8 @@ table rows, never as rewrites.
   alert row kept for OTA failure. Request ids append without renumbering.
 - Surprised is the first play-once micro-reaction with a 1500ms hold.
   The rest hold until preempted.
-- Triggers are the existing CLI verb and link frames. No autonomy.
+- Triggers are the existing CLI verb, link frames, core dispatch, and the
+  MANUAL-gated app picker. No autonomy.
 - Host tests pin the vocabulary, the table rows, the preemption order,
   play-once release, and trigger paths for all five ids.
 - Bench proof: play all five, demo a high-priority interrupt over a low
@@ -51,8 +58,9 @@ table rows, never as rewrites.
 ## V2 — Sound, motion, and high-use entries
 
 - Bundle fan-out grows to audio cues and motion primitives plus head and
-  arm poses. The expression state splits into abilities/expression/,
-  with the display ability keeping screen arbitration only.
+  arm poses. Core ability and dispatch already exist; the remaining split
+  is head-side at fan-out time, with the display ability keeping screen
+  arbitration only.
 - New rows: angry, scared, excited, confused. Each row arrives with its
   full bundle fields and its priority slot. Priority order across the
   catalog locks here.

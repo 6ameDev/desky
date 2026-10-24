@@ -106,30 +106,24 @@ const val MANUAL_RELEASE_HEADER = 0x58
 const val MANUAL_RELEASE_SIZE = 14
 
 /**
- * Expression catalog headers/sizes: `EXPR_LIST_REQ` 14 bytes
- * `[0x59 | eraBE2 | counterBE4 | tag6 | XOR]` (App -> Robot catalog
- * request, `tag = first6(HMAC-SHA256(psk, "EXPRLIST" || eraBE2 ||
- * counterBE4))`, one send per screen entry, no retry) and `EXPR_TRIGGER`
- * 15 bytes `[0x5B | id | eraBE2 | counterBE4 | tag6 | XOR]` (App -> Robot
- * play request, `tag = first6(HMAC-SHA256(psk, "EXPRTRIG" || id ||
- * eraBE2 || counterBE4))`, one send per tap, robot-gated on MANUAL, no
- * reply). Both ride the shared strictly-increasing counter (same holder
- * as `DRIVE` + `ALIVE` + `MANUAL_TAKE`). The robot answers a request with
- * `EXPR_LIST_RESP` (see [ExprListRespCodec]).
- * Headers `0x59`/`0x5B` are claimed here — never `0xAA`/`0xAC`/`0xBB`/
- * `0x50`/`0x51`/`0x52`/`0x53`/`0x54`/`0x55`/`0x56`/`0x57`/`0x58`/`0xAD`.
+ * Expression headers: `EXPR_TRIGGER` 0x5B is live (15 bytes
+ * `[0x5B | id | eraBE2 | counterBE4 | tag6 | XOR]`, App -> Robot play
+ * request, `tag = first6(HMAC-SHA256(psk, "EXPRTRIG" || id || eraBE2 ||
+ * counterBE4))`, one send per tap, robot-gated on MANUAL, no reply).
+ * `EXPR_LIST_REQ` 0x59 and `EXPR_LIST_RESP` 0x5A are RETIRED-reserved: the
+ * list round trip is gone (the picker is hardcoded app-side mirroring the
+ * shared catalog), but the headers stay claimed here — never reuse 0x59 /
+ * 0x5A for anything else. The trigger frame rides the shared
+ * strictly-increasing counter (same holder as `DRIVE` + `ALIVE` +
+ * `MANUAL_TAKE`).
+ * Headers `0x59`/`0x5A`/`0x5B` are claimed here — never `0xAA`/`0xAC`/
+ * `0xBB`/`0x50`/`0x51`/`0x52`/`0x53`/`0x54`/`0x55`/`0x56`/`0x57`/`0x58`/
+ * `0xAD`.
  */
 const val EXPR_LIST_REQ_HEADER = 0x59
-const val EXPR_LIST_REQ_SIZE = 14
 const val EXPR_LIST_RESP_HEADER = 0x5A
 const val EXPR_TRIGGER_HEADER = 0x5B
 const val EXPR_TRIGGER_SIZE = 15
-/** `EXPR_LIST_RESP` protocol version (the only version the app accepts). */
-const val EXPR_LIST_RESP_VERSION = 1
-/** `EXPR_LIST_RESP` entry-count bounds (0..12 entries per frame). */
-const val EXPR_LIST_MAX_COUNT = 12
-/** `EXPR_LIST_RESP` entry-name field width: blank-padded exactly 10 bytes. */
-const val EXPR_NAME_SIZE = 10
 
 /** Failsafe window: the robot stops ~500 ms after the last control datagram. */
 const val STALE_MS = 500
@@ -579,46 +573,13 @@ suspend fun encodeManualRelease(psk: ByteArray, era: UShort, counter: UInt): Byt
 }
 
 /**
- * `EXPR_LIST_REQ` catalog-request frame: App -> Robot, 14 bytes
- * `[0x59 | eraBE2 | counterBE4 | tag6 | XOR]`
- * (`tag = exprListTag(psk, era, counter)`).
- *
- * Fire-and-forget, one send per screen entry: the robot answers with
- * `EXPR_LIST_RESP` (see [ExprListRespCodec]) and a lost request heals on
- * the next screen entry (no retry — lifecycle refetch heals loss).
- *
- * Top-level (not an `object` member) per the SKIE constraint documented in
- * `client/ARCHITECTURE.md` (same reason as [encodeSigned]/[encodeUnpair]).
- *
- * Suspend: the tag needs the platform HMAC backend ([exprListTag]).
- *
- * @param psk 16-byte pair PSK.
- * @param era CURRENT paired era.
- * @param counter next drive counter from the shared [ToRobotCounter].
- */
-suspend fun encodeExprListReq(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
-    require(psk.size == 16) { "encodeExprListReq: psk must be 16 bytes" }
-    val out = ByteArray(EXPR_LIST_REQ_SIZE)
-    out[0] = EXPR_LIST_REQ_HEADER.toByte()
-    out[1] = ((era.toInt() shr 8) and 0xFF).toByte()
-    out[2] = (era.toInt() and 0xFF).toByte()
-    out[3] = (counter shr 24).toByte()
-    out[4] = (counter shr 16).toByte()
-    out[5] = (counter shr 8).toByte()
-    out[6] = counter.toByte()
-    exprListTag(psk, era, counter).copyInto(out, destinationOffset = 7)
-    out[EXPR_LIST_REQ_SIZE - 1] = xorChecksum(out, EXPR_LIST_REQ_SIZE - 1)
-    return out
-}
-
-/**
  * `EXPR_TRIGGER` play-request frame: App -> Robot, 15 bytes
  * `[0x5B | id | eraBE2 | counterBE4 | tag6 | XOR]`
  * (`tag = exprTriggerTag(psk, id, era, counter)`).
  *
  * Fire-and-forget, one send per tap: the robot gates on MANUAL and
  * replies nothing (a robot-side drop is silent by protocol). Callers
- * reject unknown ids client-side against the fetched catalog before
+ * reject unknown ids client-side against the static catalog before
  * sending (see `TriggerExpressionUseCase`).
  *
  * Top-level (not an `object` member) per the SKIE constraint documented in
@@ -646,75 +607,6 @@ suspend fun encodeExprTrigger(psk: ByteArray, id: Int, era: UShort, counter: UIn
     exprTriggerTag(psk, id, era, counter).copyInto(out, destinationOffset = 8)
     out[EXPR_TRIGGER_SIZE - 1] = xorChecksum(out, EXPR_TRIGGER_SIZE - 1)
     return out
-}
-
-/**
- * `EXPR_LIST_RESP` catalog frame: Robot -> App, variable
- * `[0x5A | ver | count | (id, flags, name[10]) x count | XOR]`, ver 1,
- * count 0..12, names blank-padded exactly 10 bytes each
- * (4 + 12 x count bytes total).
- *
- * Shape-only verify (null on wrong header, wrong length, bad checksum,
- * wrong version, out-of-bounds count, or a truncated/trailing-garbage
- * entry section): the layout carries no era, counter, or tag bytes, so no
- * HMAC/counter domain applies — the frame is matched to the outstanding
- * request by arrival within the fetch window (see
- * `FetchExpressionsUseCase`), never consumed into [FromRobotCounter].
- *
- * Pure byte math. `encode` is provided for tests/fakes; the robot is the
- * real producer on the wire (same split as [TelemetryPacketCodec]).
- */
-object ExprListRespCodec {
-    /** Throws [IllegalArgumentException] unless every entry id/flags fit a byte. */
-    fun encode(version: Int, entries: List<ExpressionEntry>): ByteArray {
-        require(version in 0..255) { "encodeExprListResp: version out of range: $version" }
-        require(entries.size <= EXPR_LIST_MAX_COUNT) {
-            "encodeExprListResp: count out of range: ${entries.size}"
-        }
-        val out = ByteArray(4 + entries.size * (2 + EXPR_NAME_SIZE))
-        out[0] = EXPR_LIST_RESP_HEADER.toByte()
-        out[1] = version.toByte()
-        out[2] = entries.size.toByte()
-        entries.forEachIndexed { i, entry ->
-            val at = 3 + i * (2 + EXPR_NAME_SIZE)
-            out[at] = entry.id.toByte()
-            out[at + 1] = entry.flags.toByte()
-            val nameBytes = entry.name.encodeToByteArray()
-            require(nameBytes.size <= EXPR_NAME_SIZE) {
-                "encodeExprListResp: name too long: ${entry.name}"
-            }
-            nameBytes.copyInto(out, destinationOffset = at + 2)
-            for (j in nameBytes.size until EXPR_NAME_SIZE) {
-                out[at + 2 + j] = 0x20
-            }
-        }
-        out[out.size - 1] = xorChecksum(out, out.size - 1)
-        return out
-    }
-
-    /**
-     * Null on wrong header, wrong length, bad checksum, wrong version,
-     * out-of-bounds count, or a truncated/trailing-garbage entry section
-     * (the size must equal exactly `4 + 12 x count`). On success the entry
-     * names are decoded trimmed of blank padding.
-     */
-    fun decode(bytes: ByteArray): List<ExpressionEntry>? {
-        if (bytes.size < 4) return null
-        if ((bytes[0].toInt() and 0xFF) != EXPR_LIST_RESP_HEADER) return null
-        if (xorChecksum(bytes, bytes.size - 1) != bytes[bytes.size - 1]) return null
-        if ((bytes[1].toInt() and 0xFF) != EXPR_LIST_RESP_VERSION) return null
-        val count = bytes[2].toInt() and 0xFF
-        if (count > EXPR_LIST_MAX_COUNT) return null
-        if (bytes.size != 4 + count * (2 + EXPR_NAME_SIZE)) return null
-        return List(count) { i ->
-            val at = 3 + i * (2 + EXPR_NAME_SIZE)
-            val id = bytes[at].toInt() and 0xFF
-            val flags = bytes[at + 1].toInt() and 0xFF
-            val name = bytes.copyOfRange(at + 2, at + 2 + EXPR_NAME_SIZE)
-                .decodeToString().trim { it == ' ' || it == '\u0000' }
-            ExpressionEntry(id, flags, name)
-        }
-    }
 }
 
 /**

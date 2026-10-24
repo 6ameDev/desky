@@ -1,24 +1,19 @@
 package com.desky.shared.presentation
 
 import com.desky.shared.domain.DEFAULT_UDP_PORT
-import com.desky.shared.domain.EXPR_LIST_REQ_HEADER
 import com.desky.shared.domain.EXPR_TRIGGER_HEADER
 import com.desky.shared.domain.EmergencyStopUseCase
-import com.desky.shared.domain.ExpressionEntry
-import com.desky.shared.domain.ExprListRespCodec
-import com.desky.shared.domain.FetchExpressionsUseCase
 import com.desky.shared.domain.FromRobotCounter
 import com.desky.shared.domain.GetPairPskUseCase
 import com.desky.shared.domain.ObserveTelemetryUseCase
-import com.desky.shared.domain.Outcome
 import com.desky.shared.domain.RobotMode
+import com.desky.shared.domain.STATIC_EXPRESSIONS
 import com.desky.shared.domain.SendSignedControlUseCase
 import com.desky.shared.domain.Telemetry
 import com.desky.shared.domain.TelemetryPacketCodec
 import com.desky.shared.domain.ToRobotCounter
 import com.desky.shared.domain.TriggerExpressionUseCase
 import com.desky.shared.domain.UdpDatagram
-import com.desky.shared.domain.hexToBytes
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -40,10 +35,7 @@ class ExpressionsViewModelTest {
         val holder: ToRobotCounter,
     )
 
-    private fun setup(
-        tickMs: Long = 20,
-        fetchTimeoutMs: Long = 200,
-    ): Setup {
+    private fun setup(tickMs: Long = 20): Setup {
         val repo = FakeDeviceRepository(testDevice())
         val udp = FakeUdpSocketManager()
         val vault = FakePairSecretStore().apply { seed(testDevice().id, PSK_HEX) }
@@ -61,7 +53,6 @@ class ExpressionsViewModelTest {
             fromRobot,
             tickMs,
             socketBinder = FakeUdpSocketBinder(),
-            fetchExpressionsUC = FetchExpressionsUseCase(udp, fetchTimeoutMs),
             triggerExpressionUC = TriggerExpressionUseCase(udp),
         )
         return Setup(vm, repo, udp, holder)
@@ -80,95 +71,23 @@ class ExpressionsViewModelTest {
         udp.inbound.emit(UdpDatagram(TelemetryPacketCodec.encode(packet), "192.168.4.1", DEFAULT_UDP_PORT))
     }
 
-    private fun reqs(udp: FakeUdpSocketManager) =
-        udp.sent.filter { (it.bytes[0].unsigned()) == EXPR_LIST_REQ_HEADER }
-
     private fun trigs(udp: FakeUdpSocketManager) =
         udp.sent.filter { (it.bytes[0].unsigned()) == EXPR_TRIGGER_HEADER }
 
-    private val catalog = listOf(
-        ExpressionEntry(id = 3, flags = 1, name = "Wave"),
-        ExpressionEntry(id = 7, flags = 0, name = "Nod"),
-    )
-
-    private suspend fun answerFetch(s: Setup) {
-        s.udp.inbound.emit(
-            UdpDatagram(
-                ExprListRespCodec.encode(1, catalog),
-                "192.168.4.1",
-                DEFAULT_UDP_PORT,
-            ),
+    @Test
+    fun pickerListsStaticCatalogSynchronously() = runVmTest { main ->
+        val s = setup()
+        // No fetch, no wait: the hardcoded catalog is in state from init.
+        assertEquals(STATIC_EXPRESSIONS, s.vm.state.value.expressions)
+        assertEquals(
+            listOf("boot", "happy", "sad", "blink", "alert", "curious", "surprised"),
+            s.vm.state.value.expressions.map { it.name },
         )
-    }
 
-    @Test
-    fun fetchOnEntryCachesCatalogWithSingleSend() = runVmTest { main ->
-        val s = setup()
-        main.runCurrent()
-        main.runCurrent()
-        assertEquals(1, reqs(s.udp).size, "one EXPR_LIST_REQ on screen entry")
-        assertEquals(14, reqs(s.udp)[0].bytes.size)
-        assertTrue(s.vm.state.value.expressionsLoading)
-
-        answerFetch(s)
-        main.runCurrent()
-        assertEquals(catalog, s.vm.state.value.expressions)
-        assertFalse(s.vm.state.value.expressionsLoading)
-        assertEquals(1, reqs(s.udp).size, "no retry while the entry fetch is answered")
-    }
-
-    @Test
-    fun cacheSurvivesTicksWithoutRefetch() = runVmTest { main ->
-        val s = setup()
-        main.runCurrent()
-        main.runCurrent()
-        answerFetch(s)
-        main.runCurrent()
-        assertEquals(catalog, s.vm.state.value.expressions)
-
-        // Many idle ticks: the lifecycle cache holds, no refetch fires.
         main.advanceTimeBy(2000)
         main.runCurrent()
-        assertEquals(catalog, s.vm.state.value.expressions)
-        assertEquals(1, reqs(s.udp).size, "cached for the lifecycle until return")
-    }
-
-    @Test
-    fun refetchOnReturn() = runVmTest { main ->
-        val s = setup()
-        main.runCurrent()
-        main.runCurrent()
-        answerFetch(s)
-        main.runCurrent()
-        assertEquals(1, reqs(s.udp).size)
-
-        // Leaving and returning to the screen refetches once (heals loss).
-        s.vm.onForeground()
-        main.advanceTimeBy(21)
-        main.runCurrent()
-        main.runCurrent()
-        assertEquals(2, reqs(s.udp).size, "return refetches exactly once")
-        assertTrue(s.vm.state.value.expressionsLoading)
-        answerFetch(s)
-        main.runCurrent()
-        assertEquals(catalog, s.vm.state.value.expressions)
-        assertFalse(s.vm.state.value.expressionsLoading)
-    }
-
-    @Test
-    fun failedFetchStaysSilentAndKeepsCache() = runVmTest { main ->
-        val s = setup(fetchTimeoutMs = 200)
-        main.runCurrent()
-        main.runCurrent()
-        assertEquals(1, reqs(s.udp).size)
-
-        // No answer: the wait times out silently — no error banner, no crash.
-        main.advanceTimeBy(500)
-        main.runCurrent()
-        assertTrue(s.vm.state.value.expressions.isEmpty())
-        assertFalse(s.vm.state.value.expressionsLoading)
-        assertNull(s.vm.state.value.error, "fetch loss never touches the error banner")
-        assertEquals(1, reqs(s.udp).size, "single send per entry, no retry")
+        assertEquals(STATIC_EXPRESSIONS, s.vm.state.value.expressions)
+        assertTrue(trigs(s.udp).isEmpty(), "listing never transmits")
     }
 
     @Test
@@ -179,9 +98,6 @@ class ExpressionsViewModelTest {
         promote(s.udp, manual = true)
         main.runCurrent()
         assertTrue(s.vm.state.value.manualMode)
-        answerFetch(s)
-        main.runCurrent()
-        assertEquals(catalog, s.vm.state.value.expressions)
 
         s.vm.onTriggerExpression(3)
         main.runCurrent()
@@ -206,9 +122,6 @@ class ExpressionsViewModelTest {
         main.runCurrent()
         assertEquals(Connectivity.Connected, s.vm.state.value.connectivity)
         assertFalse(s.vm.state.value.manualMode)
-        answerFetch(s)
-        main.runCurrent()
-        assertEquals(catalog, s.vm.state.value.expressions)
 
         s.vm.onTriggerExpression(3)
         main.runCurrent()
@@ -221,9 +134,6 @@ class ExpressionsViewModelTest {
         val s = setup()
         main.runCurrent()
         main.runCurrent()
-        answerFetch(s)
-        main.runCurrent()
-        assertEquals(catalog, s.vm.state.value.expressions)
         assertEquals(Connectivity.Disconnected, s.vm.state.value.connectivity)
 
         s.vm.onTriggerExpression(3)
@@ -239,8 +149,6 @@ class ExpressionsViewModelTest {
         main.runCurrent()
         promote(s.udp, manual = true)
         main.runCurrent()
-        answerFetch(s)
-        main.runCurrent()
 
         s.vm.onTriggerExpression(9)
         main.runCurrent()
@@ -250,28 +158,7 @@ class ExpressionsViewModelTest {
     }
 
     @Test
-    fun unpairThenRepairRefetchesFresh() = runVmTest { main ->
-        val device = testDevice()
-        val s = setup()
-        main.runCurrent()
-        main.runCurrent()
-        answerFetch(s)
-        main.runCurrent()
-        assertEquals(1, reqs(s.udp).size)
-
-        // Unpair pauses; a repair fetches the (possibly new) catalog again.
-        s.repo.emit(null)
-        main.advanceTimeBy(21)
-        main.runCurrent()
-        s.repo.emit(device)
-        main.advanceTimeBy(21)
-        main.runCurrent()
-        main.runCurrent()
-        assertEquals(2, reqs(s.udp).size, "repair refetches on the next session")
-    }
-
-    @Test
-    fun legacyGraphWithoutUseCasesLeavesPickerEmpty() = runVmTest { main ->
+    fun legacyGraphWithoutTriggerListsStaticButSendsNothing() = runVmTest { main ->
         val repo = FakeDeviceRepository(testDevice())
         val udp = FakeUdpSocketManager()
         val vault = FakePairSecretStore().apply { seed(testDevice().id, PSK_HEX) }
@@ -291,8 +178,7 @@ class ExpressionsViewModelTest {
         main.runCurrent()
         main.advanceTimeBy(500)
         main.runCurrent()
-        assertTrue(vm.state.value.expressions.isEmpty())
-        assertFalse(vm.state.value.expressionsLoading)
+        assertEquals(STATIC_EXPRESSIONS, vm.state.value.expressions)
         vm.onTriggerExpression(3)
         main.runCurrent()
         assertTrue(udp.sent.isEmpty())

@@ -11,24 +11,24 @@
 #include "../src/transport/link_stub.h"
 
 void test_expr_priority_order() {
-  TEST_ASSERT_GREATER_THAN_UINT8(exprprio::priorityFor(FACE_BOOT), exprprio::priorityFor(FACE_HAPPY));
-  TEST_ASSERT_GREATER_THAN_UINT8(exprprio::priorityFor(FACE_HAPPY), exprprio::priorityFor(FACE_CURIOUS));
-  TEST_ASSERT_GREATER_THAN_UINT8(exprprio::priorityFor(FACE_CURIOUS), exprprio::priorityFor(FACE_SAD));
-  TEST_ASSERT_GREATER_THAN_UINT8(exprprio::priorityFor(FACE_SAD), exprprio::priorityFor(FACE_ALERT));
-  TEST_ASSERT_GREATER_THAN_UINT8(exprprio::priorityFor(FACE_ALERT), exprprio::priorityFor(FACE_SURPRISED));
-  TEST_ASSERT_EQUAL_UINT8(0, exprprio::priorityFor(FACE_BOOT));
-  TEST_ASSERT_EQUAL_UINT8(0, exprprio::priorityFor(FACE_BLINK));
-  TEST_ASSERT_EQUAL_UINT8(0, exprprio::priorityFor(FACE_QR));
+  TEST_ASSERT_GREATER_THAN_UINT8(exprcat::priorityFor(FACE_BOOT), exprcat::priorityFor(FACE_HAPPY));
+  TEST_ASSERT_GREATER_THAN_UINT8(exprcat::priorityFor(FACE_HAPPY), exprcat::priorityFor(FACE_CURIOUS));
+  TEST_ASSERT_GREATER_THAN_UINT8(exprcat::priorityFor(FACE_CURIOUS), exprcat::priorityFor(FACE_SAD));
+  TEST_ASSERT_GREATER_THAN_UINT8(exprcat::priorityFor(FACE_SAD), exprcat::priorityFor(FACE_ALERT));
+  TEST_ASSERT_GREATER_THAN_UINT8(exprcat::priorityFor(FACE_ALERT), exprcat::priorityFor(FACE_SURPRISED));
+  TEST_ASSERT_EQUAL_UINT8(0, exprcat::priorityFor(FACE_BOOT));
+  TEST_ASSERT_EQUAL_UINT8(0, exprcat::priorityFor(FACE_BLINK));
+  TEST_ASSERT_EQUAL_UINT8(0, exprcat::priorityFor(FACE_QR));
 }
 
 void test_expr_play_once_shape() {
-  TEST_ASSERT_TRUE(exprprio::isPlayOnce(FACE_SURPRISED));
-  TEST_ASSERT_FALSE(exprprio::isPlayOnce(FACE_ALERT));
-  TEST_ASSERT_FALSE(exprprio::isPlayOnce(FACE_SAD));
-  TEST_ASSERT_FALSE(exprprio::isPlayOnce(FACE_BOOT));
-  TEST_ASSERT_EQUAL_UINT32(1500, exprprio::holdMsFor(FACE_SURPRISED));
-  TEST_ASSERT_EQUAL_UINT32(0, exprprio::holdMsFor(FACE_ALERT));
-  TEST_ASSERT_EQUAL_UINT32(0, exprprio::holdMsFor(FACE_HAPPY));
+  TEST_ASSERT_TRUE(exprcat::isPlayOnce(FACE_SURPRISED));
+  TEST_ASSERT_FALSE(exprcat::isPlayOnce(FACE_ALERT));
+  TEST_ASSERT_FALSE(exprcat::isPlayOnce(FACE_SAD));
+  TEST_ASSERT_FALSE(exprcat::isPlayOnce(FACE_BOOT));
+  TEST_ASSERT_EQUAL_UINT32(1500, exprcat::holdMsFor(FACE_SURPRISED));
+  TEST_ASSERT_EQUAL_UINT32(0, exprcat::holdMsFor(FACE_ALERT));
+  TEST_ASSERT_EQUAL_UINT32(0, exprcat::holdMsFor(FACE_HAPPY));
 }
 
 void test_expr_higher_preempts_lower() {
@@ -75,7 +75,7 @@ void test_expr_yields_neutral_not_previous_mood() {
   DisplayTransition t;
   TEST_ASSERT_TRUE(mgr.showEyes(FACE_HAPPY, t, 0));
   TEST_ASSERT_TRUE(mgr.showEyes(FACE_SURPRISED, t, 10));
-  TEST_ASSERT_TRUE(mgr.exprTick(10 + exprprio::kSurprisedHoldMs));
+  TEST_ASSERT_TRUE(mgr.exprTick(10 + exprcat::kSurprisedHoldMs));
   TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, mgr.eyesId());
   TEST_ASSERT_TRUE(mgr.showEyes(FACE_HAPPY, t, 2000));
   TEST_ASSERT_TRUE(mgr.showEyes(FACE_SAD, t, 2010));
@@ -87,22 +87,22 @@ void test_expr_play_once_auto_release() {
   DisplayManager mgr;
   DisplayTransition t;
   TEST_ASSERT_TRUE(mgr.showEyes(FACE_SURPRISED, t, 1000));
-  TEST_ASSERT_FALSE(mgr.exprTick(1000 + exprprio::kSurprisedHoldMs - 1));
+  TEST_ASSERT_FALSE(mgr.exprTick(1000 + exprcat::kSurprisedHoldMs - 1));
   TEST_ASSERT_EQUAL_UINT8(FACE_SURPRISED, mgr.eyesId());
-  TEST_ASSERT_TRUE(mgr.exprTick(1000 + exprprio::kSurprisedHoldMs));
+  TEST_ASSERT_TRUE(mgr.exprTick(1000 + exprcat::kSurprisedHoldMs));
   TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, mgr.eyesId());
-  TEST_ASSERT_FALSE(mgr.exprTick(1000 + exprprio::kSurprisedHoldMs + 1));
+  TEST_ASSERT_FALSE(mgr.exprTick(1000 + exprcat::kSurprisedHoldMs + 1));
 }
 
 void test_expr_play_once_retrigger_extends_hold() {
   DisplayManager mgr;
   DisplayTransition t;
   TEST_ASSERT_TRUE(mgr.showEyes(FACE_SURPRISED, t, 0));
-  TEST_ASSERT_FALSE(mgr.exprTick(exprprio::kSurprisedHoldMs - 100));
-  TEST_ASSERT_TRUE(mgr.showEyes(FACE_SURPRISED, t, exprprio::kSurprisedHoldMs - 100));
-  TEST_ASSERT_FALSE(mgr.exprTick(2 * exprprio::kSurprisedHoldMs - 101));
+  TEST_ASSERT_FALSE(mgr.exprTick(exprcat::kSurprisedHoldMs - 100));
+  TEST_ASSERT_TRUE(mgr.showEyes(FACE_SURPRISED, t, exprcat::kSurprisedHoldMs - 100));
+  TEST_ASSERT_FALSE(mgr.exprTick(2 * exprcat::kSurprisedHoldMs - 101));
   TEST_ASSERT_EQUAL_UINT8(FACE_SURPRISED, mgr.eyesId());
-  TEST_ASSERT_TRUE(mgr.exprTick(2 * exprprio::kSurprisedHoldMs - 100));
+  TEST_ASSERT_TRUE(mgr.exprTick(2 * exprcat::kSurprisedHoldMs - 100));
   TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, mgr.eyesId());
 }
 
@@ -111,7 +111,7 @@ void test_expr_hold_wraps_and_persists() {
   DisplayTransition t;
   TEST_ASSERT_TRUE(mgr.showEyes(FACE_SURPRISED, t, 0xFFFFFF00u));
   TEST_ASSERT_FALSE(mgr.exprTick(0xFFFFFF00u + 100));
-  TEST_ASSERT_TRUE(mgr.exprTick(0xFFFFFF00u + exprprio::kSurprisedHoldMs));
+  TEST_ASSERT_TRUE(mgr.exprTick(0xFFFFFF00u + exprcat::kSurprisedHoldMs));
   TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, mgr.eyesId());
   TEST_ASSERT_TRUE(mgr.showEyes(FACE_SAD, t, 5000));
   TEST_ASSERT_FALSE(mgr.exprTick(5000 + 100000));

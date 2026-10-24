@@ -35,7 +35,7 @@
 // OTA body-pump stall timeout.
 #define CFG_OTA_TIMEOUT_MS 15000
 // Running image version (monotonic u32, bump every release or the pull-gate stands down).
-#define HEAD_FW_VERSION 21
+#define HEAD_FW_VERSION 24
 
 // USB serial CLI
 #define CFG_CLI_BAUD 115200
