@@ -12,6 +12,9 @@
 
 #include "config.h"
 
+// Shared expression catalog ids (V2 kSound* vocabularies + NONE sentinels).
+#include "link/expression_catalog.h"
+
 // Fallbacks if config keys drift; in-project include/config.h always wins.
 #ifndef CFG_AUDIO_RATE_HZ
 #define CFG_AUDIO_RATE_HZ 16000
@@ -99,3 +102,45 @@ struct AudioLevel {
 };
 
 }  // namespace audiometer
+
+// Expression sound cues (namespace exprcue) — the single keyed table the
+// expression conductor plays from: cue id (catalog kSound*) to short note
+// sequences. Plain POD (no AudioManager::Note dependency); the conductor's
+// audio sink converts one beep() call per note. Every cue fits the 8-slot
+// note queue with room to spare. NONE/unknown ids yield no notes (silent).
+namespace exprcue {
+
+struct CueNote {
+  uint16_t freqHz = 0;  // 0 = rest (silence for durMs)
+  uint16_t durMs = 0;
+  uint16_t gapMs = 0;  // Trailing silence before the next note.
+};
+
+// Angry: low buzz. Scared: tremolo. Excited: ascending fanfare. Confused:
+// two-note wobble.
+constexpr CueNote kCueAngry[] = {{130, 140, 15}, {98, 220, 0}};
+constexpr CueNote kCueScared[] = {{880, 70, 20}, {880, 70, 20}, {660, 140, 0}};
+constexpr CueNote kCueExcited[] = {{523, 110, 15}, {659, 110, 15}, {784, 110, 15}, {1047, 220, 0}};
+constexpr CueNote kCueConfused[] = {{392, 150, 30}, {311, 220, 0}};
+
+struct Cue {
+  const CueNote* notes = nullptr;
+  uint8_t len = 0;
+};
+
+inline Cue cueFor(uint8_t soundId) {
+  switch (soundId) {
+    case exprcat::kSoundAngry:
+      return {kCueAngry, sizeof(kCueAngry) / sizeof(kCueAngry[0])};
+    case exprcat::kSoundScared:
+      return {kCueScared, sizeof(kCueScared) / sizeof(kCueScared[0])};
+    case exprcat::kSoundExcited:
+      return {kCueExcited, sizeof(kCueExcited) / sizeof(kCueExcited[0])};
+    case exprcat::kSoundConfused:
+      return {kCueConfused, sizeof(kCueConfused) / sizeof(kCueConfused[0])};
+    default:
+      return {nullptr, 0};
+  }
+}
+
+}  // namespace exprcue

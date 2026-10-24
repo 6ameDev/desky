@@ -9,13 +9,15 @@
 
 #include <stdint.h>
 
+#include "abilities/audio/audio_codec.h"
+#include "behavior/motion_primitives.h"
 #include "expression_manager.h"
 
 namespace expression {
 
 class Task {
  public:
-  Task() : manager_(), staged_(exprcat::kBoot), hasStaged_(false) {}
+  Task() : manager_(), staged_(exprcat::kBoot), hasStaged_(false), bundle_(exprcat::kBoot), hasBundle_(false) {}
 
   // Public request entry for behavior modules and the app-trigger path: true
   // when the request took effect (and staged for dispatch).
@@ -28,6 +30,8 @@ class Task {
     }
     staged_ = id;
     hasStaged_ = true;
+    bundle_ = id;
+    hasBundle_ = true;
     return true;
   }
 
@@ -38,6 +42,8 @@ class Task {
     }
     staged_ = manager_.active();
     hasStaged_ = true;
+    bundle_ = manager_.active();
+    hasBundle_ = true;
     return true;
   }
 
@@ -47,6 +53,11 @@ class Task {
   // Clears the dispatch latch after a successful link send; a failed send
   // keeps the latch so the pump retries the same id.
   void markDispatched() { hasStaged_ = false; }
+  bool hasBundle() const { return hasBundle_; }
+  uint8_t bundle() const { return bundle_; }
+  // Marks the staged bundle conducted; the link latch is independent, so a
+  // refused link send retries the face id without replaying sound/motion.
+  void markConducted() { hasBundle_ = false; }
 
   // Link pump: hands the staged id to the transport's dumb unicast exactly
   // once per stage; a refused send keeps the latch for retry. The caller
@@ -65,10 +76,43 @@ class Task {
     return true;
   }
 
+  // Bundle conductor: plays the staged row's audio cue + motion primitive
+  // exactly once per accepted request (or play-once yield). A newly staged
+  // bundle cancels in-flight parts first (audio queue-clear + motion stop),
+  // then starts the row's cue/primitive (NONE starts nothing). Duck-typed
+  // sinks (exactly like publishStaged): audio needs cancelAll() + beep(),
+  // motion needs stop() + startWiggle(). Rejected requests never stage, so
+  // they conduct nothing.
+  template <typename Audio, typename Motion>
+  bool conductBundle(Audio& audio, Motion& motion) {
+    if (!hasBundle_) {
+      return false;
+    }
+    hasBundle_ = false;
+    const exprcat::Entry* e = exprcat::lookup(bundle_);
+    audio.cancelAll();
+    motion.stop();
+    if (e == nullptr) {
+      return true;
+    }
+    // Neck/arm poses ride in the row but are not played in V2 (no servo HAL yet).
+    const exprcue::Cue cue = exprcue::cueFor(e->sound);
+    for (uint8_t i = 0; i < cue.len; ++i) {
+      audio.beep(cue.notes[i].freqHz, cue.notes[i].durMs, cue.notes[i].gapMs);
+    }
+    const motionprim::Primitive prim = motionprim::forId(e->motion);
+    if (!prim.still) {
+      motion.startWiggle(prim.durationMs, prim.rateHz, prim.amplitude);
+    }
+    return true;
+  }
+
  private:
   Manager manager_;
   uint8_t staged_;
   bool hasStaged_;
+  uint8_t bundle_;
+  bool hasBundle_;
 };
 
 }  // namespace expression
