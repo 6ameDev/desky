@@ -122,6 +122,7 @@ void test_cli_ota_verb();
 
 void test_eyes_map_request_ids();
 void test_eyes_map_ordinals_track_emotions();
+void test_eyes_map_v2_rows();
 void test_eyes_map_falls_back_to_normal();
 
 void test_exprcat_ids_mirror_face_vocabulary();
@@ -139,14 +140,12 @@ void test_exprcat_v2_eye_map();
 
 void test_expr_priority_order();
 void test_expr_play_once_shape();
-void test_expr_higher_preempts_lower();
-void test_expr_lower_never_displaces_higher();
-void test_expr_neutral_releases_from_any();
-void test_expr_yields_neutral_not_previous_mood();
-void test_expr_play_once_auto_release();
-void test_expr_play_once_retrigger_extends_hold();
-void test_expr_hold_wraps_and_persists();
-void test_expr_gated_request_still_clears_overlays();
+void test_expr_paint_stores_every_id();
+void test_expr_paint_unknown_clamps_boot();
+void test_expr_paint_held_pairing_rejects_zero_change();
+void test_expr_paint_held_ota_rejects_zero_change();
+void test_expr_paint_clears_qr_only();
+void test_expr_paint_applies_after_overlay_clears();
 void test_expr_trigger_paths_cover_all_five();
 
 // Core->head expression command (EXPR 0x08 gate + arbitration), defined in
@@ -156,6 +155,7 @@ void test_link_expr_golden_round_trip();
 void test_link_expr_unpack_fail_closed();
 void test_link_expr_maps_to_face_gate();
 void test_link_expr_unknown_maps_neutral();
+void test_link_expr_v2_ids_route_to_paint();
 void test_link_expr_gated_entry_routes_eyes();
 void test_link_expr_pairing_screen_survives_command();
 void test_link_expr_ota_screen_survives_command();
@@ -268,6 +268,7 @@ int main() {
   RUN_TEST(test_cli_ota_verb);
   RUN_TEST(test_eyes_map_request_ids);
   RUN_TEST(test_eyes_map_ordinals_track_emotions);
+  RUN_TEST(test_eyes_map_v2_rows);
   RUN_TEST(test_eyes_map_falls_back_to_normal);
   RUN_TEST(test_exprcat_ids_mirror_face_vocabulary);
   RUN_TEST(test_exprcat_count_and_order);
@@ -283,20 +284,19 @@ int main() {
   RUN_TEST(test_exprcat_v2_eye_map);
   RUN_TEST(test_expr_priority_order);
   RUN_TEST(test_expr_play_once_shape);
-  RUN_TEST(test_expr_higher_preempts_lower);
-  RUN_TEST(test_expr_lower_never_displaces_higher);
-  RUN_TEST(test_expr_neutral_releases_from_any);
-  RUN_TEST(test_expr_yields_neutral_not_previous_mood);
-  RUN_TEST(test_expr_play_once_auto_release);
-  RUN_TEST(test_expr_play_once_retrigger_extends_hold);
-  RUN_TEST(test_expr_hold_wraps_and_persists);
-  RUN_TEST(test_expr_gated_request_still_clears_overlays);
+  RUN_TEST(test_expr_paint_stores_every_id);
+  RUN_TEST(test_expr_paint_unknown_clamps_boot);
+  RUN_TEST(test_expr_paint_held_pairing_rejects_zero_change);
+  RUN_TEST(test_expr_paint_held_ota_rejects_zero_change);
+  RUN_TEST(test_expr_paint_clears_qr_only);
+  RUN_TEST(test_expr_paint_applies_after_overlay_clears);
   RUN_TEST(test_expr_trigger_paths_cover_all_five);
   RUN_TEST(test_link_expr_literal_contract);
   RUN_TEST(test_link_expr_golden_round_trip);
   RUN_TEST(test_link_expr_unpack_fail_closed);
   RUN_TEST(test_link_expr_maps_to_face_gate);
   RUN_TEST(test_link_expr_unknown_maps_neutral);
+  RUN_TEST(test_link_expr_v2_ids_route_to_paint);
   RUN_TEST(test_link_expr_gated_entry_routes_eyes);
   RUN_TEST(test_link_expr_pairing_screen_survives_command);
   RUN_TEST(test_link_expr_ota_screen_survives_command);

@@ -13,9 +13,13 @@ void test_face_names_match_ids() {
   TEST_ASSERT_EQUAL_STRING("alert", faceName(FACE_ALERT));
   TEST_ASSERT_EQUAL_STRING("curious", faceName(FACE_CURIOUS));
   TEST_ASSERT_EQUAL_STRING("surprised", faceName(FACE_SURPRISED));
+  TEST_ASSERT_EQUAL_STRING("angry", faceName(FACE_ANGRY));
+  TEST_ASSERT_EQUAL_STRING("scared", faceName(FACE_SCARED));
+  TEST_ASSERT_EQUAL_STRING("excited", faceName(FACE_EXCITED));
+  TEST_ASSERT_EQUAL_STRING("confused", faceName(FACE_CONFUSED));
 }
 
-void test_face_name_unknown_id() { TEST_ASSERT_EQUAL_STRING("unknown", faceName(9)); }
+void test_face_name_unknown_id() { TEST_ASSERT_EQUAL_STRING("unknown", faceName(static_cast<uint8_t>(FACE_COUNT))); }
 
 void test_face_id_from_name_all() {
   TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, faceIdFromName("boot"));
@@ -25,17 +29,22 @@ void test_face_id_from_name_all() {
   TEST_ASSERT_EQUAL_UINT8(FACE_ALERT, faceIdFromName("alert"));
   TEST_ASSERT_EQUAL_UINT8(FACE_CURIOUS, faceIdFromName("curious"));
   TEST_ASSERT_EQUAL_UINT8(FACE_SURPRISED, faceIdFromName("surprised"));
+  TEST_ASSERT_EQUAL_UINT8(FACE_ANGRY, faceIdFromName("angry"));
+  TEST_ASSERT_EQUAL_UINT8(FACE_SCARED, faceIdFromName("scared"));
+  TEST_ASSERT_EQUAL_UINT8(FACE_EXCITED, faceIdFromName("excited"));
+  TEST_ASSERT_EQUAL_UINT8(FACE_CONFUSED, faceIdFromName("confused"));
 }
 
 void test_face_id_from_name_rejects() {
   TEST_ASSERT_EQUAL_UINT8(0xFF, faceIdFromName("Happy"));  // lowercase dialect only
-  TEST_ASSERT_EQUAL_UINT8(0xFF, faceIdFromName("scared"));
+  TEST_ASSERT_EQUAL_UINT8(0xFF, faceIdFromName("sleepy"));
   TEST_ASSERT_EQUAL_UINT8(0xFF, faceIdFromName(""));
   TEST_ASSERT_EQUAL_UINT8(0xFF, faceIdFromName(nullptr));
 }
 
 void test_face_clamp_valid_passthrough() {
-  const uint8_t valid[] = {FACE_BOOT, FACE_HAPPY, FACE_SAD, FACE_BLINK, FACE_ALERT, FACE_CURIOUS, FACE_SURPRISED};
+  const uint8_t valid[] = {FACE_BOOT,      FACE_HAPPY, FACE_SAD,    FACE_BLINK,   FACE_ALERT,   FACE_CURIOUS,
+                           FACE_SURPRISED, FACE_ANGRY, FACE_SCARED, FACE_EXCITED, FACE_CONFUSED};
   for (size_t i = 0; i < sizeof(valid); ++i) {
     TEST_ASSERT_EQUAL_UINT8(valid[i], clampFace(valid[i]));
   }
@@ -45,6 +54,7 @@ void test_face_clamp_falls_back_to_boot() {
   TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, clampFace(-1));
   TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, clampFace(static_cast<int>(FACE_COUNT)));
   TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, clampFace(static_cast<int>(FACE_QR)));
+  TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, clampFace(13));
   TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, clampFace(99));
 }
 
