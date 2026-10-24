@@ -57,9 +57,9 @@ struct Entry {
   uint8_t priority;
   bool playOnce;
   uint32_t holdMs;
-  uint8_t eye;     // Opaque to core; head interprets.
-  uint8_t sound;   // kSoundNone when the row carries no audio cue.
-  uint8_t motion;  // kMotionNone when the row carries no motion primitive.
+  uint8_t eye;       // Opaque to core; head interprets.
+  uint8_t sound;     // kSoundNone when the row carries no audio cue.
+  uint8_t motion;    // kMotionNone when the row carries no motion primitive.
   uint8_t neckPose;  // kNeckNone when the row carries no neck pose.
   uint8_t armPose;   // kArmNone when the row carries no arm gesture.
 };
