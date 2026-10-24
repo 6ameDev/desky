@@ -121,7 +121,7 @@ void test_link_ota_length_gates_reject_0_and_129() {
 
 void test_link_ota_known_type_literal_set() {
   // New bump + frozen history: 0x01/0x02/0x03 + 0x05 (OTA) +
-  // 0x06 (PAIRSHOW) + 0x07 (PAIRDONE). 0x04 (retired QRBITMAP) stays
+  // 0x06 (PAIRSHOW) + 0x07 (PAIRDONE) + 0x08 (EXPR). 0x04 (retired QRBITMAP) stays
   // unknown: tombstoned, never reused.
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x01));
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x02));
@@ -130,12 +130,13 @@ void test_link_ota_known_type_literal_set() {
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x05));  // literal: the OTA bump
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x06));  // literal: the PAIRSHOW bump
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x07));  // literal: the PAIRDONE bump
+  TEST_ASSERT_TRUE(linkcode::isKnownType(0x08));  // literal: the EXPR bump
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x10));
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x20));
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x21));
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x22));
   TEST_ASSERT_FALSE(linkcode::isKnownType(0x00));
-  TEST_ASSERT_FALSE(linkcode::isKnownType(0x08));  // next free: still unknown
+  TEST_ASSERT_FALSE(linkcode::isKnownType(0x09));  // next free: still unknown
   TEST_ASSERT_FALSE(linkcode::isKnownType(0x0F));
   TEST_ASSERT_FALSE(linkcode::isKnownType(0x11));
   TEST_ASSERT_FALSE(linkcode::isKnownType(0x1F));
@@ -148,14 +149,14 @@ void test_link_ota_known_type_literal_set() {
   // Unknown types never encode (fail-closed at the producer seam).
   uint8_t out[linkcode::kMaxFrame] = {};
   const uint8_t one[1] = {0x00};
-  TEST_ASSERT_EQUAL_size_t(0, linkcode::encodeFrame(0x08, 1, one, 1, 0, 1, out, sizeof(out)));
+  TEST_ASSERT_EQUAL_size_t(0, linkcode::encodeFrame(0x09, 1, one, 1, 0, 1, out, sizeof(out)));
 }
 
 void test_link_ota_old_head_drops_as_unknown() {
   // Mixed fleet: the old head's frozen table rejects 0x05 while accepting
   // everything it shipped with — a pre-bump peer drops the OTA frame as
   // unknown (mechanism pinned: the live codec rejects the NEXT free type
-  // 0x08 the same way, valid CRC and all).
+  // 0x09 the same way, valid CRC and all).
   TEST_ASSERT_FALSE(oldIsKnownType(0x05));
   TEST_ASSERT_TRUE(oldIsKnownType(0x01));
   TEST_ASSERT_TRUE(oldIsKnownType(0x02));
@@ -167,9 +168,9 @@ void test_link_ota_old_head_drops_as_unknown() {
   TEST_ASSERT_TRUE(oldIsKnownType(0x22));
   uint8_t out[linkcode::kMaxFrame] = {};
   const uint8_t one[1] = {0x00};
-  const size_t n = linkcode::encodeFrame(0x08, 7, one, 1, 0, 1, out, sizeof(out));
+  const size_t n = linkcode::encodeFrame(0x09, 7, one, 1, 0, 1, out, sizeof(out));
   TEST_ASSERT_EQUAL_size_t(0, n);  // unknown types never even encode
-  uint8_t hand[linkcode::kOverhead + 1] = {0x4C, 0x08, 0x00, 0x07, 0x00, 0x01, 0x00, 0x01, 0x00};
+  uint8_t hand[linkcode::kOverhead + 1] = {0x4C, 0x09, 0x00, 0x07, 0x00, 0x01, 0x00, 0x01, 0x00};
   linkcode::putU16BE(hand + 9, linkcode::crc16Ccitt(hand, 9));
   linkcode::Frame f;
   TEST_ASSERT_FALSE(linkcode::decodeFrame(hand, sizeof(hand), f));  // valid CRC, unknown type

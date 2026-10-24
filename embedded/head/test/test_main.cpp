@@ -125,6 +125,17 @@ void test_eyes_map_request_ids();
 void test_eyes_map_ordinals_track_emotions();
 void test_eyes_map_falls_back_to_normal();
 
+void test_exprcat_ids_mirror_face_vocabulary();
+void test_exprcat_count_and_order();
+void test_exprcat_names();
+void test_exprcat_priorities();
+void test_exprcat_play_once_and_hold();
+void test_exprcat_eye_commands();
+void test_exprcat_placeholders_none();
+void test_exprcat_lookup_fail_closed();
+void test_exprcat_accessors_fail_closed();
+void test_exprcat_matches_head_tables();
+
 void test_expr_priority_order();
 void test_expr_play_once_shape();
 void test_expr_higher_preempts_lower();
@@ -136,6 +147,18 @@ void test_expr_play_once_retrigger_extends_hold();
 void test_expr_hold_wraps_and_persists();
 void test_expr_gated_request_still_clears_overlays();
 void test_expr_trigger_paths_cover_all_five();
+
+// Core->head expression command (EXPR 0x08 gate + arbitration), defined in
+// test_link_expr.cpp.
+void test_link_expr_literal_contract();
+void test_link_expr_golden_round_trip();
+void test_link_expr_unpack_fail_closed();
+void test_link_expr_maps_to_face_gate();
+void test_link_expr_unknown_maps_neutral();
+void test_link_expr_gated_entry_routes_eyes();
+void test_link_expr_pairing_screen_survives_command();
+void test_link_expr_ota_screen_survives_command();
+void test_link_expr_bench_path_intact();
 
 int main() {
   UNITY_BEGIN();
@@ -246,6 +269,16 @@ int main() {
   RUN_TEST(test_eyes_map_request_ids);
   RUN_TEST(test_eyes_map_ordinals_track_emotions);
   RUN_TEST(test_eyes_map_falls_back_to_normal);
+  RUN_TEST(test_exprcat_ids_mirror_face_vocabulary);
+  RUN_TEST(test_exprcat_count_and_order);
+  RUN_TEST(test_exprcat_names);
+  RUN_TEST(test_exprcat_priorities);
+  RUN_TEST(test_exprcat_play_once_and_hold);
+  RUN_TEST(test_exprcat_eye_commands);
+  RUN_TEST(test_exprcat_placeholders_none);
+  RUN_TEST(test_exprcat_lookup_fail_closed);
+  RUN_TEST(test_exprcat_accessors_fail_closed);
+  RUN_TEST(test_exprcat_matches_head_tables);
   RUN_TEST(test_expr_priority_order);
   RUN_TEST(test_expr_play_once_shape);
   RUN_TEST(test_expr_higher_preempts_lower);
@@ -257,5 +290,14 @@ int main() {
   RUN_TEST(test_expr_hold_wraps_and_persists);
   RUN_TEST(test_expr_gated_request_still_clears_overlays);
   RUN_TEST(test_expr_trigger_paths_cover_all_five);
+  RUN_TEST(test_link_expr_literal_contract);
+  RUN_TEST(test_link_expr_golden_round_trip);
+  RUN_TEST(test_link_expr_unpack_fail_closed);
+  RUN_TEST(test_link_expr_maps_to_face_gate);
+  RUN_TEST(test_link_expr_unknown_maps_neutral);
+  RUN_TEST(test_link_expr_gated_entry_routes_eyes);
+  RUN_TEST(test_link_expr_pairing_screen_survives_command);
+  RUN_TEST(test_link_expr_ota_screen_survives_command);
+  RUN_TEST(test_link_expr_bench_path_intact);
   return UNITY_END();
 }

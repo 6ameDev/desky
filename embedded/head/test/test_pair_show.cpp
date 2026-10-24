@@ -33,10 +33,12 @@ void test_pairshow_literal_contract() {
   TEST_ASSERT_EQUAL_UINT8(0x07, linkcode::kTypePairDone);
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x06));
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x07));
-  TEST_ASSERT_FALSE(linkcode::isKnownType(0x08));
+  TEST_ASSERT_TRUE(linkcode::isKnownType(0x08));
+  TEST_ASSERT_FALSE(linkcode::isKnownType(0x09));
   TEST_ASSERT_EQUAL_STRING("PAIRSHOW", wifilink::typeName(0x06));
   TEST_ASSERT_EQUAL_STRING("PAIRDONE", wifilink::typeName(0x07));
-  TEST_ASSERT_EQUAL_STRING("UNKNOWN", wifilink::typeName(0x08));
+  TEST_ASSERT_EQUAL_STRING("EXPR", wifilink::typeName(0x08));
+  TEST_ASSERT_EQUAL_STRING("UNKNOWN", wifilink::typeName(0x09));
   TEST_ASSERT_EQUAL_size_t(8, linkcode::kPairShowLen);
   TEST_ASSERT_EQUAL_size_t(0, linkcode::kPairDoneLen);
 

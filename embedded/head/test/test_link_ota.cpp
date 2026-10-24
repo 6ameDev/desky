@@ -95,14 +95,16 @@ void test_link_ota_duplicate_reack_and_stale_drop_cases() {
 void test_link_ota_old_head_drops_as_unknown() {
   TEST_ASSERT_FALSE(oldIsKnownType(0x05));
   TEST_ASSERT_TRUE(oldIsKnownType(0x04));
-  // Next free type (0x08) rejects with valid CRC.
+  // Next free type (0x09) rejects with valid CRC.
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x06));
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x07));
-  TEST_ASSERT_FALSE(linkcode::isKnownType(0x08));
+  TEST_ASSERT_TRUE(linkcode::isKnownType(0x08));
+  TEST_ASSERT_FALSE(linkcode::isKnownType(0x09));
   TEST_ASSERT_EQUAL_STRING("PAIRSHOW", wifilink::typeName(0x06));
   TEST_ASSERT_EQUAL_STRING("PAIRDONE", wifilink::typeName(0x07));
-  TEST_ASSERT_EQUAL_STRING("UNKNOWN", wifilink::typeName(0x08));
-  uint8_t hand[linkcode::kOverhead + 1] = {0x4C, 0x08, 0x00, 0x07, 0x00, 0x01, 0x00, 0x01, 0x00};
+  TEST_ASSERT_EQUAL_STRING("EXPR", wifilink::typeName(0x08));
+  TEST_ASSERT_EQUAL_STRING("UNKNOWN", wifilink::typeName(0x09));
+  uint8_t hand[linkcode::kOverhead + 1] = {0x4C, 0x09, 0x00, 0x07, 0x00, 0x01, 0x00, 0x01, 0x00};
   linkcode::putU16BE(hand + 9, linkcode::crc16Ccitt(hand, 9));
   linkcode::Frame f;
   TEST_ASSERT_FALSE(linkcode::decodeFrame(hand, sizeof(hand), f));

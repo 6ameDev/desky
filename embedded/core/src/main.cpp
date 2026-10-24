@@ -2,6 +2,7 @@
 #include <esp_system.h>
 
 #include "abilities/audio/audio_task.h"
+#include "abilities/expression/expression_task.h"
 #include "abilities/ota/ota_task.h"
 #include "abilities/pairing/pairing_task.h"
 #include "abilities/sensors/sensors_task.h"
@@ -43,8 +44,9 @@ pairing::PairingTask g_pairing;
 telemetry::TelemetryManager g_telem(UdpServer::kTelemetryMs, UdpServer::kStaleMs);
 TelemetryTask g_telemetry;
 LinkServer g_link;
-OtaStaging g_otaStage;  // Carrier head-image staging (POST /head.bin + GETs).
-CoreCli g_cli;          // Minimal USB door: `otahead <url> [version]` only.
+expression::Task g_expression;  // Core-owned face ids, unicast to head via the pump below.
+OtaStaging g_otaStage;          // Carrier head-image staging (POST /head.bin + GETs).
+CoreCli g_cli;                  // Minimal USB door: `otahead <url> [version]` only.
 // Binder adapter: the CLI parses + triggers through this sink; the ability
 // object stays owned here in main.cpp.
 struct CoreCliOta : ICliOtaSink {
@@ -159,12 +161,16 @@ void loop() {
   }
 #if !DESKY_NO_WIFI
   // Ability link pumps: the pairing window's PIN + valid-seconds and the
-  // staged `otahead` URL each unicast once to the HB-pinned head. No head
-  // linked -> the pumps wait silently. Duplicate protection is the link
-  // seq/ACK machinery.
+  // staged `otahead` URL each unicast once to the HB-pinned head. The staged
+  // expression id rides EXPR the same way (refused sends retry next loop).
+  // No head linked -> the pumps wait silently. Duplicate protection is the
+  // link seq/ACK machinery.
   g_pairing.publishPairShow(g_link);
   g_pairing.pumpEvictionBurst(g_udp, millis());
   g_otaStage.pumpOtaLink(g_link);
+  if (g_expression.publishStaged(g_link, linkcode::kTypeExpr)) {
+    LOG_I("LINK", "expr sent id=%u", static_cast<unsigned>(g_expression.staged()));
+  }
   // Telemetry consumer: snapshot + encode + publish at CFG_TELEMETRY_HZ
   // through the transport's dumb send (outer cadence inside poll —
   // non-blocking, silent off-cadence).

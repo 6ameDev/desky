@@ -6,6 +6,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "link/expression_catalog.h"
+
 namespace link {
 
 // ── Wire constants ──────────────────────────────────────────────────────────
@@ -25,6 +27,7 @@ constexpr uint8_t kTypeCamCtl = 0x03;  // core->head, 1B 0=off 1=on.
 constexpr uint8_t kTypeOta = 0x05;       // core->head, 1..128B OTA pull URL bytes, no NUL.
 constexpr uint8_t kTypePairShow = 0x06;  // core->head, 8B: 6 ASCII digits + valid-seconds u16BE.
 constexpr uint8_t kTypePairDone = 0x07;  // core->head, empty: presence is the signal.
+constexpr uint8_t kTypeExpr = 0x08;      // core->head, 1B expression id u8.
 constexpr uint8_t kTypeJpeg = 0x10;      // 0..1024B raw JPEG bytes.
 constexpr uint8_t kTypeHb = 0x20;        // head->core, 10B heartbeat + boot epoch.
 constexpr uint8_t kTypeHbAck = 0x21;     // core->head, 5B heartbeat ack.
@@ -41,6 +44,9 @@ constexpr size_t kHbLen = 10;  // rssi i8 | channel u8 | freeHeap u32BE | bootId
 // 6 ASCII digits ('0'..'9') + valid-seconds u16BE (0 = already-expired).
 constexpr size_t kPairShowLen = 8;
 constexpr size_t kPairDoneLen = 0;
+// Catalog ids only (QR excluded): unknown ids fail closed at unpack, the
+// head gate resolves them to neutral downstream.
+constexpr size_t kExprLen = 1;
 constexpr size_t kHbAckLen = 5;  // channel u8 | era/resync u32BE.
 constexpr size_t kAckLen = 2;    // acked seq u16BE.
 
@@ -100,6 +106,7 @@ inline bool isKnownType(uint8_t type) {
     case kTypeOta:
     case kTypePairShow:
     case kTypePairDone:
+    case kTypeExpr:
     case kTypeJpeg:
     case kTypeHb:
     case kTypeHbAck:
@@ -115,6 +122,7 @@ inline bool isValidPayloadLen(uint8_t type, uint16_t len) {
     case kTypeFace:
     case kTypeOled:
     case kTypeCamCtl:
+    case kTypeExpr:
       return len == 1;
     case kTypeOta:
       return len >= kOtaUrlMinLen && len <= kOtaUrlMaxLen;
@@ -382,6 +390,24 @@ inline bool unpackCamCtl(uint8_t wire, uint8_t& modeOut) {
 
 // FACE ids pass through; out-of-range clamps downstream.
 inline bool unpackFace(uint8_t wire, uint8_t& idOut) {
+  idOut = wire;
+  return true;
+}
+
+// EXPR ids validate against the shared catalog; unknown ids (including QR)
+// fail closed here and resolve to neutral at the head gate.
+inline bool packExpr(uint8_t id, uint8_t& wireOut) {
+  if (exprcat::lookup(id) == nullptr) {
+    return false;
+  }
+  wireOut = id;
+  return true;
+}
+
+inline bool unpackExpr(uint8_t wire, uint8_t& idOut) {
+  if (exprcat::lookup(wire) == nullptr) {
+    return false;
+  }
   idOut = wire;
   return true;
 }

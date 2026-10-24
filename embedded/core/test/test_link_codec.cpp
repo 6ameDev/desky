@@ -200,9 +200,12 @@ void test_link_fixed_type_lengths() {
   TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeHbAck, 1, payload, 4, 0, 1, out, sizeof(out)));
   TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeAck, 1, payload, 1, 0, 1, out, sizeof(out)));
   TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeAck, 1, payload, 3, 0, 1, out, sizeof(out)));
+  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeExpr, 1, payload, 0, 0, 1, out, sizeof(out)));
+  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeExpr, 1, payload, 2, 0, 1, out, sizeof(out)));
   // Valid singletons encode.
   TEST_ASSERT_EQUAL_size_t(11, link::encodeFrame(link::kTypeOled, 1, payload, 1, 0, 1, out, sizeof(out)));
   TEST_ASSERT_EQUAL_size_t(11, link::encodeFrame(link::kTypeCamCtl, 1, payload, 1, 0, 1, out, sizeof(out)));
+  TEST_ASSERT_EQUAL_size_t(11, link::encodeFrame(link::kTypeExpr, 1, payload, 1, 0, 1, out, sizeof(out)));
   TEST_ASSERT_EQUAL_size_t(15, link::encodeFrame(link::kTypeHbAck, 1, payload, 5, 0, 1, out, sizeof(out)));
   TEST_ASSERT_EQUAL_size_t(12, link::encodeFrame(link::kTypeAck, 1, payload, 2, 0, 1, out, sizeof(out)));
 }
@@ -213,8 +216,8 @@ void test_link_round_trip_all_types() {
     uint16_t len;
   };
   static const Case cases[] = {
-      {link::kTypeFace, 1}, {link::kTypeOled, 1},  {link::kTypeCamCtl, 1}, {link::kTypeJpeg, 7},
-      {link::kTypeHb, 10},  {link::kTypeHbAck, 5}, {link::kTypeAck, 2},
+      {link::kTypeFace, 1}, {link::kTypeOled, 1}, {link::kTypeCamCtl, 1}, {link::kTypeExpr, 1},
+      {link::kTypeJpeg, 7}, {link::kTypeHb, 10},  {link::kTypeHbAck, 5},  {link::kTypeAck, 2},
   };
   for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); ++c) {
     uint8_t payload[63];
@@ -489,12 +492,14 @@ void test_link_pairdone_empty_frame() {
   uint8_t wide[link::kOverhead + 1] = {0x4C, 0x07, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00};
   link::putU16BE(wide + 9, link::crc16Ccitt(wide, 9));
   TEST_ASSERT_FALSE(link::decodeFrame(wide, sizeof(wide), f));
-  // Both new types are known; the next free type stays unknown.
+  // All three new types are known; the next free type stays unknown.
   TEST_ASSERT_TRUE(link::isKnownType(link::kTypePairShow));
   TEST_ASSERT_TRUE(link::isKnownType(link::kTypePairDone));
+  TEST_ASSERT_TRUE(link::isKnownType(link::kTypeExpr));
   TEST_ASSERT_TRUE(link::isKnownType(0x06));
   TEST_ASSERT_TRUE(link::isKnownType(0x07));
-  TEST_ASSERT_FALSE(link::isKnownType(0x08));
+  TEST_ASSERT_TRUE(link::isKnownType(0x08));
+  TEST_ASSERT_FALSE(link::isKnownType(0x09));
 }
 void test_link_phone_wire_headers_distinct() {
   // None of the frozen phone-wire headers may ever equal the link magic.
@@ -505,9 +510,9 @@ void test_link_phone_wire_headers_distinct() {
   TEST_ASSERT_EQUAL_UINT8(0x4C, link::kMagic);
   // Link type bytes are disjoint from the magic, so a resync scan cannot
   // mistake a type byte for a frame start.
-  static const uint8_t kTypes[] = {link::kTypeFace,     link::kTypeOled,     link::kTypeCamCtl,
-                                   link::kTypePairShow, link::kTypePairDone, link::kTypeJpeg,
-                                   link::kTypeHb,       link::kTypeHbAck,    link::kTypeAck};
+  static const uint8_t kTypes[] = {link::kTypeFace,     link::kTypeOled, link::kTypeCamCtl, link::kTypePairShow,
+                                   link::kTypePairDone, link::kTypeExpr, link::kTypeJpeg,   link::kTypeHb,
+                                   link::kTypeHbAck,    link::kTypeAck};
   for (size_t i = 0; i < sizeof(kTypes); ++i) {
     TEST_ASSERT_NOT_EQUAL(link::kMagic, kTypes[i]);
     TEST_ASSERT_TRUE(link::isKnownType(kTypes[i]));
