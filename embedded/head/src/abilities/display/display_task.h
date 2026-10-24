@@ -91,11 +91,7 @@ class DisplayRenderer : public IDisplayPort {
 
   bool present() const { return panel_.present(); }
 
-  // Stores (clamped) + paints when live. Head holds no preemption policy:
-  // core sends the single winner; play-once expiry arrives as a neutral id
-  // over the link. A held pairing/OTA overlay rejects the request with zero
-  // state change and no repaint: overlays own the screen while held. A live
-  // QR show clears (the staging buffer yields to FACE, same as timeout).
+  // Single paint entry: held overlays reject with zero state change; a live QR show clears like the timeout path.
   void showEyes(uint8_t id) {
     DisplayTransition t;
     const bool stored = mgr_.paintFace(id, t);

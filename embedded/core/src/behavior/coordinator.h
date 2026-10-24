@@ -200,10 +200,7 @@ inline ArbitrateOutput arbitrate(const ArbitrateInput& in) {
   return out;
 }
 
-// Safety expression map: assert edges -> scared/angry, either clear edge ->
-// neutral (kBoot, which bypasses priority by manager design). Asserts win
-// when assert and clear land on the same tick. No I/O, no statics — the
-// firmware loop feeds one call per tick from its event drain.
+// Asserts win when assert and clear land on the same tick.
 inline bool safetyExpressionFor(bool groundEvent, bool obstacleEvent, uint8_t& idOut, bool groundClear = false,
                                 bool obstacleClear = false) {
   if (groundEvent) {
@@ -221,9 +218,7 @@ inline bool safetyExpressionFor(bool groundEvent, bool obstacleEvent, uint8_t& i
   return false;
 }
 
-// State-based safety annunciation: face = highest-priority active hazard.
-// Ground loss on either rail outranks a latched obstacle; no hazard yields
-// none. Pure levels in, no I/O — the firmware loop owns the levels.
+// Desired face: ground loss outranks a latched obstacle; none yields none.
 inline bool desiredSafetyFace(bool groundLost, bool obstacleLatched, uint8_t& idOut) {
   if (groundLost) {
     idOut = exprcat::kScared;
@@ -236,10 +231,7 @@ inline bool desiredSafetyFace(bool groundLost, bool obstacleLatched, uint8_t& id
   return false;
 }
 
-// Ownership claim over the safety face: which id safety holds, if any.
-// releaseFirst plans [kBoot, id]: the desired id sits below the showing face,
-// so the tick releases through neutral first (the staged latch overwrites
-// before any pump consumes it, so the wire sees one transition).
+// Step-down plan; latch semantics: see expression::Task::markConducted.
 struct SafetyDecision {
   bool request;
   uint8_t id;
@@ -248,11 +240,7 @@ struct SafetyDecision {
   bool releaseFirst;
 };
 
-// Next safety-face step for one drain tick that carried any safety edge.
-// Desired present always re-requests (restates the survivor on a sibling
-// clear, refreshes on re-assert), stepping down via neutral when the desired
-// id sits below the showing face. Desired absent releases neutral only while
-// the face still shows our hold; a stolen face just drops the claim.
+// Desired present re-requests (restates the survivor); absent releases only while the face is ours.
 inline SafetyDecision resolveSafetyEdge(bool desiredPresent, uint8_t desiredId, bool hasLast, uint8_t lastId,
                                         uint8_t activeId) {
   if (desiredPresent) {
@@ -396,9 +384,6 @@ class Coordinator {
     telem_ = telem;
   }
 
-  // Pins the setup-owned expression owner for the safety + MANUAL-gated
-  // app-trigger forwards below. Set once from main()/setup(); null-safe
-  // until then (a staged trigger is dropped).
   void attachExpression(expression::Task* expr) {
     DESKY_ASSERT(expr != nullptr);
     expr_ = expr;
@@ -449,8 +434,7 @@ class Coordinator {
             bool fwd = true;
             bool rev = true;
             unpackGround(ev.payload, fwd, rev);
-            // Entry edge: fresh 1→0 on either rail. Clear edge: any prior
-            // loss fully present again (both rails 1).
+            // Entry edge is a fresh 1→0 on either rail; clear edge needs both rails back to 1.
             const bool wasLoss = !gndFwd_ || !gndRev_;
             if ((gndFwd_ && !fwd) || (gndRev_ && !rev)) {
               groundEvent = true;
@@ -583,9 +567,7 @@ class Coordinator {
           // Claim only what safety actually holds: a rejected final request
           // leaves the previous claim intact, so a later clear still matches
           // the face.
-          // A planned step-down releases through neutral first; each accepted
-          // request overwrites the staged latch before any pump consumes it,
-          // so the wire sees one transition.
+          // Release-first step-down (latch semantics: see expression::Task::markConducted).
           if (safety.releaseFirst) {
             expr_->request(exprcat::kBoot, nowMs);
           }

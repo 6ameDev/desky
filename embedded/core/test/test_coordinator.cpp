@@ -487,7 +487,6 @@ void test_coord_safety_level_sequence_survives_sibling_clear() {
   bool hasHold = false;
   uint8_t holdId = 0;
   uint8_t requested = 0xFF;
-  // Obstacle asserts alone -> angry.
   uint8_t id = 0;
   TEST_ASSERT_TRUE(coordinator::desiredSafetyFace(false, true, id));
   coordinator::SafetyDecision d = coordinator::resolveSafetyEdge(true, id, hasHold, holdId, exprcat::kBoot);
@@ -496,7 +495,6 @@ void test_coord_safety_level_sequence_survives_sibling_clear() {
   hasHold = d.hasHold;
   holdId = d.holdId;
   requested = d.id;
-  // Ground asserts too -> scared wins, re-announced over angry.
   TEST_ASSERT_TRUE(coordinator::desiredSafetyFace(true, true, id));
   d = coordinator::resolveSafetyEdge(true, id, hasHold, holdId, requested);
   TEST_ASSERT_TRUE(d.request);
@@ -504,7 +502,6 @@ void test_coord_safety_level_sequence_survives_sibling_clear() {
   hasHold = d.hasHold;
   holdId = d.holdId;
   requested = d.id;
-  // Obstacle clears while ground still lost -> scared restated, never boot.
   TEST_ASSERT_TRUE(coordinator::desiredSafetyFace(true, false, id));
   d = coordinator::resolveSafetyEdge(true, id, hasHold, holdId, requested);
   TEST_ASSERT_TRUE(d.request);
@@ -512,7 +509,6 @@ void test_coord_safety_level_sequence_survives_sibling_clear() {
   hasHold = d.hasHold;
   holdId = d.holdId;
   requested = d.id;
-  // Ground clears with nothing left, face still ours -> boot releases.
   TEST_ASSERT_FALSE(coordinator::desiredSafetyFace(false, false, id));
   d = coordinator::resolveSafetyEdge(false, 0, hasHold, holdId, requested);
   TEST_ASSERT_TRUE(d.request);
@@ -521,7 +517,6 @@ void test_coord_safety_level_sequence_survives_sibling_clear() {
 }
 
 void test_coord_safety_stepdown_plans_release_first() {
-  // Scared showing (9), desired angry (8): the plan is [boot, angry].
   const coordinator::SafetyDecision d =
       coordinator::resolveSafetyEdge(true, exprcat::kAngry, true, exprcat::kScared, exprcat::kScared);
   TEST_ASSERT_TRUE(d.request);
@@ -532,7 +527,6 @@ void test_coord_safety_stepdown_plans_release_first() {
 }
 
 void test_coord_safety_stepup_needs_no_release() {
-  // Angry showing (8), desired scared (9): direct re-request.
   const coordinator::SafetyDecision d =
       coordinator::resolveSafetyEdge(true, exprcat::kScared, true, exprcat::kAngry, exprcat::kAngry);
   TEST_ASSERT_TRUE(d.request);
@@ -585,8 +579,6 @@ struct StepdownLink {
 }  // namespace
 
 void test_coord_safety_bench_stepdown_restates_survivor() {
-  // Bench sequence: obstacle->angry, cliff->scared, cliff-clear->angry
-  // restated via release-then-set, obstacle-clear->boot.
   expression::Task expr;
   StepdownLink link;
   bool hasHold = false;
@@ -607,7 +599,6 @@ void test_coord_safety_bench_stepdown_restates_survivor() {
   TEST_ASSERT_EQUAL_UINT8(exprcat::kAngry, expr.active());
   TEST_ASSERT_TRUE(hasHold);
   TEST_ASSERT_EQUAL_UINT8(exprcat::kAngry, holdId);
-  // The intermediate neutral never reaches the wire: one staged id, one send.
   TEST_ASSERT_TRUE(expr.hasStaged());
   TEST_ASSERT_EQUAL_UINT8(exprcat::kAngry, expr.staged());
   TEST_ASSERT_TRUE(expr.publishStaged(link, 0x08));

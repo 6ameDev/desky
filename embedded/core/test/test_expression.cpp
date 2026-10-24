@@ -4,11 +4,7 @@
 // Covers the codec id mirror + neutral predicate, the manager one-active
 // policy (priority order, preemption, lower-never-displaces, neutral release,
 // yield-to-neutral, play-once expiry/retrigger with fake millis, wrap
-// safety, fail-closed unknown ids), the task staged-dispatch latch, and the
-// bundle conductor (per-row cue+primitive mapping, NONE silent/still,
-// cancel-then-start on preemption/release/yield, retrigger restart, rejected
-// silence, link-retry no-replay) over fake audio/motion sinks plus the
-// Arduino-free cue/primitive tables.
+// safety, fail-closed unknown ids), and the task staged-dispatch latch.
 // Runner lives in test_udp_codec.cpp (single main).
 
 #include <unity.h>

@@ -25,12 +25,7 @@ enum class DisplayLiveMode : uint8_t { kEyes, kQr, kOtaBar, kOtaAlert };
 
 class DisplayManager {
  public:
-  // Single paint entry: the core->head EXPR link command and the local bench
-  // trigger (CLI `face`) converge here — one entry, two callers. Head holds
-  // no preemption policy; core owns it. A held pairing/OTA overlay rejects
-  // the request with zero state change; a live QR show clears (FACE wins
-  // over the staging buffer, same as the timeout path); otherwise the
-  // clamped id is stored for repaint. True when the request took effect.
+  // Single paint entry: held overlays reject with zero state change; a live QR show clears like the timeout path.
   bool paintFace(uint8_t id, DisplayTransition& t) {
     t.clearedQr = false;
     t.clearedPair = false;

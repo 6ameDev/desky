@@ -31,7 +31,6 @@ constexpr uint8_t kMotionNone = 0xFF;
 constexpr uint8_t kNeckNone = 0xFF;
 constexpr uint8_t kArmNone = 0xFF;
 
-// V2 media/pose vocabularies: small ids per new row; NONE stays 0xFF.
 constexpr uint8_t kSoundAngry = 0;
 constexpr uint8_t kSoundScared = 1;
 constexpr uint8_t kSoundExcited = 2;
@@ -57,11 +56,11 @@ struct Entry {
   uint8_t priority;
   bool playOnce;
   uint32_t holdMs;
-  uint8_t eye;       // Opaque to core; head interprets.
-  uint8_t sound;     // kSoundNone when the row carries no audio cue.
-  uint8_t motion;    // kMotionNone when the row carries no motion primitive.
-  uint8_t neckPose;  // kNeckNone when the row carries no neck pose.
-  uint8_t armPose;   // kArmNone when the row carries no arm gesture.
+  uint8_t eye;  // Opaque to core; head interprets.
+  uint8_t sound;
+  uint8_t motion;
+  uint8_t neckPose;
+  uint8_t armPose;
 };
 
 constexpr Entry kTable[] = {
