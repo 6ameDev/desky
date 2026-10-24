@@ -10,12 +10,33 @@ table rows, never as rewrites.
 
 ## As-built notes (modes-expressions branch)
 
-- The screen is owned by the display ability (abilities/display), which
-  arbitrates pairing, QR, OTA, and eyes slots. Expression state (request
-  ids, priority table, preemption) lives alongside it and will split into
-  abilities/expression/ when sound and motion fan-out land.
-- V1 is eyes-only. Audio cues, motion primitives, head poses, and arm
-  gestures are bundle fields reserved for V2 and V3, not yet played.
+- V2 is built on expressions-v2. New rows angry 8, scared 9, excited 10,
+  confused 11, additive only. Priority order locked across the catalog:
+  scared, angry, excited, confused above surprised, alert, sad, curious,
+  happy, neutral. Only surprised is play-once.
+- The core expression task conducts the full bundle per row: link id,
+  audio cue from the audio-owned cue table, motion primitive from the
+  pure primitive table, neck and arm poses reserved (no servo HAL).
+  Cancel-then-start on preemption, neutral release, and play-once yield.
+  Neck/arm fields are named to avoid confusion with the head firmware.
+- The head is a dumb peripheral: no head expression ability. Display
+  keeps screen arbitration and the last-commanded id only. A held
+  pairing/OTA overlay rejects with zero change; a live QR show clears;
+  otherwise it stores and paints. Core owns the single preemption
+  policy. The FACE vocabulary extends additively to 12 with the four
+  new names.
+- Safety hookup: ground-loss requests scared, obstacle assert requests
+  angry, through the existing task entry bypassing the MANUAL gate.
+  Ground full-clear and obstacle clear request boot, so the face
+  relaxes on all-clear. Safety evaluates before the app-trigger poll.
+  Obstacle threshold is CFG_OBSTACLE_MM 80 (assert below 70, clear
+  above 90, 10 hysteresis).
+- Bench gap: desky-bench has no expression trigger path (conductor and
+  attach live under the WiFi branch, USB door is otahead-only), so the
+  sound-plus-motion play-through needs hands or a desky-mode session.
+- V1 was eyes-only; its rows carry NONE for all media and pose fields.
+  Sound cues and motion primitives play from V2; neck and arm poses
+  stay reserved until servo HAL lands.
 - System modes are NORMAL, MANUAL, PAIRING, and OTA with the failsafe as
   an overlay. The display follows the mode: pairing and OTA own the
   screen while held, expressions own it otherwise. Manual driving needs
@@ -26,8 +47,8 @@ table rows, never as rewrites.
 - Core owns the catalog and dispatches by id over the link; head maps to
   presets with neutral fallback and keeps screen arbitration. The shared
   table is the single source both sides read.
-- The app picker carries a hardcoded list mirroring the catalog and plays
-  through core MANUAL-gated triggers. The list-fetch round trip is retired;
+- The app picker carries a hardcoded list mirroring the catalog (12 entries
+  from V2) and plays through core MANUAL-gated triggers. The list-fetch round trip is retired;
   headers stay reserved.
 
 ## Layer rules (apply to all versions)
