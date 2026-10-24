@@ -153,6 +153,23 @@ class AudioManager {
   // Non-blocking: queue the boot jingle (call after the BOOT banner lines).
   bool bootJingle() { return playTune(kBootJingle, sizeof(kBootJingle) / sizeof(kBootJingle[0])); }
 
+  // Task-safe bundle cancel: drops the queued notes and silences the
+  // in-flight note without EVENT_BEEP_DONE (cancellation is
+  // commander-caused, same precedent as motion maneuver preemption). The
+  // task honors the active-note half on its next loop pass.
+  void cancelAll() {
+    if (mutex_ == nullptr) {
+      return;
+    }
+    xSemaphoreTake(mutex_, portMAX_DELAY);
+    head_ = 0;
+    tail_ = 0;
+    count_ = 0;
+    busy_ = false;  // Drop the epoch: a cancelled queue drains silently.
+    cancelReq_ = true;
+    xSemaphoreGive(mutex_);
+  }
+
   // Non-blocking: stage raw int16 mono PCM for playout once the note
   // machinery is fully idle (notes always win over PCM). Truncates to the
   // buffer cap. Call from setup/task context, never ISR.
@@ -245,6 +262,18 @@ class AudioManager {
       uint32_t avail = kTxChunkFrames;
       uint32_t filled = 0;
       bool pcmDone = false;
+      xSemaphoreTake(mutex_, portMAX_DELAY);
+      const bool cancel = cancelReq_;
+      cancelReq_ = false;
+      xSemaphoreGive(mutex_);
+      if (cancel) {
+        // Task-owned registers: only this task touches them, so no lock.
+        noteActive_ = false;
+        noteLeft_ = 0;
+        notePos_ = 0;
+        noteTotal_ = 0;
+        gapLeft_ = 0;
+      }
       xSemaphoreTake(mutex_, portMAX_DELAY);
       // PCM yields to all note machinery (active note, gap, queued notes).
       bool pcm = pcmActive_ && !noteActive_ && gapLeft_ == 0 && count_ == 0;
@@ -387,7 +416,8 @@ class AudioManager {
   uint8_t head_;
   uint8_t tail_;
   uint8_t count_;
-  bool busy_;  // Set on enqueue, cleared on the drain edge (drives EVENT_BEEP_DONE).
+  bool busy_;               // Set on enqueue, cleared on the drain edge (drives EVENT_BEEP_DONE).
+  bool cancelReq_ = false;  // cancelAll() sets under mutex; the task silences the in-flight note.
   // Task-owned playback registers (no lock: only the task touches them).
   bool noteActive_;
   uint16_t noteFreqHz_;
