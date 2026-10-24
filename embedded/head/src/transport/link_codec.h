@@ -7,6 +7,10 @@
 
 #include "head_context.h"
 
+// The catalog lands at global scope first: link_codec.h pulls it too, and a
+// namespace-wrapped first inclusion would hide ::exprcat from other headers.
+#include "link/expression_catalog.h"
+
 // `link` collides with POSIX ::link() in Arduino TUs: included once here, aliased back.
 namespace linkwrap__ {
 #include "link/link_codec.h"

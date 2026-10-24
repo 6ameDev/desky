@@ -9,7 +9,8 @@ import com.desky.shared.domain.ESTOP_FLAG
 import com.desky.shared.domain.AliveUseCase
 import com.desky.shared.domain.EmergencyStopUseCase
 import com.desky.shared.domain.ExpressionEntry
-import com.desky.shared.domain.STATIC_EXPRESSIONS
+import com.desky.shared.domain.PICKER_EXPRESSIONS
+import com.desky.shared.domain.STATIC_EXPRESSION_IDS
 import com.desky.shared.domain.ForgetDeviceUseCase
 import com.desky.shared.domain.FromRobotCounter
 import com.desky.shared.domain.GetPairPskUseCase
@@ -128,13 +129,12 @@ data class RobotControlUiState(
      */
     val manualMode: Boolean = false,
     /**
-     * Expression picker: the hardcoded app-side catalog mirroring the
-     * shared firmware table ([STATIC_EXPRESSIONS]) — populated
-     * synchronously, never fetched, never empty. A tap sends one
-     * `EXPR_TRIGGER` while MANUAL is reported (see
-     * [onTriggerExpression]).
+     * Expression picker: the hardcoded picker subset mirroring the shared
+     * firmware table ([PICKER_EXPRESSIONS]) — populated synchronously,
+     * never fetched, never empty. A tap sends one `EXPR_TRIGGER` while
+     * MANUAL is reported (see [onTriggerExpression]).
      */
-    val expressions: List<ExpressionEntry> = STATIC_EXPRESSIONS,
+    val expressions: List<ExpressionEntry> = PICKER_EXPRESSIONS,
 )
 
 /**
@@ -208,7 +208,7 @@ data class RobotControlUiState(
  * `MANUAL_TAKE` per user action), [onReleaseManual] exits it (best-effort 2x
  * `MANUAL_RELEASE`); both converge via telemetry like every other mode edge.
  *
- * Expression picker: the hardcoded app-side catalog ([STATIC_EXPRESSIONS])
+ * Expression picker: the hardcoded picker subset ([PICKER_EXPRESSIONS])
  * is listed synchronously (never fetched, never empty) and
  * [onTriggerExpression] plays one entry per tap (one `EXPR_TRIGGER`,
  * MANUAL-gated like the sticks, silent robot-side).
@@ -310,7 +310,7 @@ class RobotControlViewModel(
      * tests/legacy call sites (trigger intents inert); production DI
      * passes the shared [TriggerExpressionUseCase]. [onTriggerExpression]
      * sends while MANUAL is reported; the picker lists
-     * [STATIC_EXPRESSIONS] synchronously.
+     * [PICKER_EXPRESSIONS] synchronously.
      */
     private val triggerExpressionUC: TriggerExpressionUseCase? = null,
 ) : ViewModel() {
@@ -1045,8 +1045,9 @@ class RobotControlViewModel(
      * Gated to the reported MANUAL hold (same language as the sticks: no
      * MANUAL report, no send) plus the [Connectivity.Disconnected] no-op
      * guard. Unknown ids are rejected silently client-side against the
-     * static catalog (the picker only lists static entries, so this
-     * fires only on a stale tap); a transport failure surfaces its reason
+     * full static catalog ([STATIC_EXPRESSION_IDS] — blink and alert left
+     * the picker but stay triggerable, so this fires only on a stale tap);
+     * a transport failure surfaces its reason
      * (the tap was an explicit user action). When no session is loaded yet
      * the frame is skipped silently except exhaustion, which surfaces the
      * repair copy like the immediate e-stop path.
@@ -1055,7 +1056,7 @@ class RobotControlViewModel(
         if (_state.value.connectivity == Connectivity.Disconnected) return
         if (!_state.value.manualMode) return
         val trigger = triggerExpressionUC ?: return
-        val knownIds = _state.value.expressions.map { it.id }.toSet()
+        val knownIds = STATIC_EXPRESSION_IDS
         if (id !in knownIds) return
         viewModelScope.launch {
             val paired = currentDevice.value ?: return@launch

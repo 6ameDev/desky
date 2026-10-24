@@ -133,22 +133,6 @@ class DisplayRenderer : public IDisplayPort {
     LOG_I("FACE", "qr shown len=%u", static_cast<unsigned>(qrdisplay::kQrLen));
   }
 
-  // Demo pattern (not a scannable QR): exercises show/clear with no link.
-  void showQrDemo() {
-    DisplayTransition t;
-    mgr_.showQrDemo(millis(), t);
-    if (t.clearedOta) {
-      LOG_I("FACE", "ota cleared (qr)");
-    }
-    if (t.clearedPair) {
-      LOG_I("FACE", "pairing cleared (qr)");
-    }
-    if (panel_.present() && enabled_) {
-      drawQr();
-    }
-    LOG_I("FACE", "qr shown len=%u", static_cast<unsigned>(qrdisplay::kQrLen));
-  }
-
   // Clears QR + pairing show modes. No-op when idle; repaints when live.
   void clearQr(const char* why = "cli") {
     DisplayTransition t;
@@ -188,7 +172,7 @@ class DisplayRenderer : public IDisplayPort {
     LOG_I("FACE", "pairing shown valid=%us", static_cast<unsigned>(validSecs));
   }
 
-  // Clears pairing + demo QR modes. No-op when idle; repaints when live.
+  // Clears pairing show mode. No-op when idle; repaints when live.
   void clearPairing(const char* why = "cli") {
     DisplayTransition t;
     if (!mgr_.clearPairing(t)) {

@@ -1,6 +1,6 @@
 #pragma once
 // Command coordinator (BEHAVIOR layer): the single dispatch point both doors
-// call. CAM/OLED route to PowerManager; FACE/QR to the renderer; the rest is
+// call. CAM/OLED route to PowerManager; FACE to the renderer; the rest is
 // answered at the doors. Stored pointers only; no sockets.
 
 #ifdef ARDUINO
@@ -52,16 +52,6 @@ class HeadCoordinator {
         EventBus::publish(HEAD_EVENT_FACE_CHANGED, static_cast<uint32_t>(active));
         break;
       }
-      case CmdTarget::QR:
-        if (display_ == nullptr) {
-          break;
-        }
-        if (cmd.arg != 0) {
-          display_->showQrDemo();
-        } else {
-          display_->clearQr("cli");
-        }
-        break;
       case CmdTarget::STATUS:
       case CmdTarget::HELP:
       case CmdTarget::LINK:

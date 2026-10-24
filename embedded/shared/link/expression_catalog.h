@@ -77,4 +77,8 @@ inline uint32_t holdMsFor(uint8_t id) {
   return e == nullptr ? 0 : e->holdMs;
 }
 
+// Neutral family: requests for these always release the active id, from any
+// state (both managers bypass the priority check for them).
+inline bool isNeutral(uint8_t id) { return id == kBoot || id == kBlink; }
+
 }  // namespace exprcat

@@ -1,5 +1,5 @@
-// QR show mode (no hardware): qrdisplay geometry/payload contract,
-// FACE_QR id rules, `qr` / `qr clear` CLI verbs.
+// QR show mode (no hardware): qrdisplay geometry/payload contract and the
+// FACE_QR id-5 reservation.
 
 #include <string.h>
 #include <unity.h>
@@ -7,7 +7,6 @@
 #include "../../core/src/abilities/pairing/pairing_codec.h"
 #include "../include/config.h"
 #include "../src/abilities/display/display_codec.h"
-#include "../src/services/cli_manager.h"
 #include "../src/transport/link_codec.h"
 
 // 63B "123456" packed golden (self-contained copy).
@@ -127,22 +126,6 @@ void test_qr_face_id_appended_not_renumbered() {
   TEST_ASSERT_EQUAL_UINT8(FACE_CURIOUS, clampFace(FACE_CURIOUS));
   TEST_ASSERT_EQUAL_UINT8(FACE_SURPRISED, clampFace(FACE_SURPRISED));
   TEST_ASSERT_EQUAL_UINT8(0xFF, faceIdFromName("qr"));
-}
-
-void test_cli_qr_and_qr_clear() {
-  PowerCommand cmd;
-  TEST_ASSERT_TRUE(headcmd::parseLine("qr", cmd));
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::QR), static_cast<uint8_t>(cmd.target));
-  TEST_ASSERT_EQUAL_INT32(1, cmd.arg);
-  TEST_ASSERT_TRUE(headcmd::parseLine("  qr  ", cmd));
-  TEST_ASSERT_EQUAL_INT32(1, cmd.arg);
-  TEST_ASSERT_TRUE(headcmd::parseLine("qr clear", cmd));
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::QR), static_cast<uint8_t>(cmd.target));
-  TEST_ASSERT_EQUAL_INT32(0, cmd.arg);
-  TEST_ASSERT_FALSE(headcmd::parseLine("qr foo", cmd));
-  TEST_ASSERT_FALSE(headcmd::parseLine("qr clear now", cmd));
-  TEST_ASSERT_FALSE(headcmd::parseLine("QR", cmd));
-  TEST_ASSERT_FALSE(headcmd::parseLine("qrx", cmd));
 }
 
 void test_qr_pairing_window_order_head() {

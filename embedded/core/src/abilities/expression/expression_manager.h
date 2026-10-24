@@ -24,7 +24,7 @@ class Manager {
     if (e == nullptr) {
       return false;
     }
-    if (!isNeutral(id) && e->priority < exprcat::priorityFor(active_)) {
+    if (!exprcat::isNeutral(id) && e->priority < exprcat::priorityFor(active_)) {
       return false;
     }
     active_ = id;

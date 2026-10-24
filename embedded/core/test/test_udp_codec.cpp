@@ -382,7 +382,7 @@ void test_exprcat_accessors_fail_closed();
 // Core expression owner (one-active preemption + staged dispatch), defined
 // in test_expression.cpp.
 void test_exprcodec_ids_mirror_catalog();
-void test_exprcodec_neutral_family();
+void test_exprcat_neutral_family();
 void test_exprmgr_starts_neutral();
 void test_exprmgr_priority_order();
 void test_exprmgr_higher_preempts_lower();
@@ -733,7 +733,7 @@ int main() {
   RUN_TEST(test_exprcat_lookup_fail_closed);
   RUN_TEST(test_exprcat_accessors_fail_closed);
   RUN_TEST(test_exprcodec_ids_mirror_catalog);
-  RUN_TEST(test_exprcodec_neutral_family);
+  RUN_TEST(test_exprcat_neutral_family);
   RUN_TEST(test_exprmgr_starts_neutral);
   RUN_TEST(test_exprmgr_priority_order);
   RUN_TEST(test_exprmgr_higher_preempts_lower);

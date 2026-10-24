@@ -24,16 +24,16 @@ void test_exprcodec_ids_mirror_catalog() {
   TEST_ASSERT_EQUAL_UINT8(exprcat::kCount, expression::kCount);
 }
 
-void test_exprcodec_neutral_family() {
-  TEST_ASSERT_TRUE(expression::isNeutral(expression::kBoot));
-  TEST_ASSERT_TRUE(expression::isNeutral(expression::kBlink));
-  TEST_ASSERT_FALSE(expression::isNeutral(expression::kHappy));
-  TEST_ASSERT_FALSE(expression::isNeutral(expression::kCurious));
-  TEST_ASSERT_FALSE(expression::isNeutral(expression::kSad));
-  TEST_ASSERT_FALSE(expression::isNeutral(expression::kAlert));
-  TEST_ASSERT_FALSE(expression::isNeutral(expression::kSurprised));
-  TEST_ASSERT_FALSE(expression::isNeutral(5));
-  TEST_ASSERT_FALSE(expression::isNeutral(0xFF));
+void test_exprcat_neutral_family() {
+  TEST_ASSERT_TRUE(exprcat::isNeutral(exprcat::kBoot));
+  TEST_ASSERT_TRUE(exprcat::isNeutral(exprcat::kBlink));
+  TEST_ASSERT_FALSE(exprcat::isNeutral(exprcat::kHappy));
+  TEST_ASSERT_FALSE(exprcat::isNeutral(exprcat::kCurious));
+  TEST_ASSERT_FALSE(exprcat::isNeutral(exprcat::kSad));
+  TEST_ASSERT_FALSE(exprcat::isNeutral(exprcat::kAlert));
+  TEST_ASSERT_FALSE(exprcat::isNeutral(exprcat::kSurprised));
+  TEST_ASSERT_FALSE(exprcat::isNeutral(5));
+  TEST_ASSERT_FALSE(exprcat::isNeutral(0xFF));
 }
 
 void test_exprmgr_starts_neutral() {

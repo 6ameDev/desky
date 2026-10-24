@@ -133,8 +133,8 @@ fun ControlContent(
             } else {
                 Button(onClick = onTakeManual, enabled = controlsEnabled) { Text("Take Manual") }
             }
-            // Expression picker: the hardcoded app-side catalog mirroring
-            // the shared firmware table (see STATIC_EXPRESSIONS in the
+            // Expression picker: the hardcoded picker subset mirroring
+            // the shared firmware table (see PICKER_EXPRESSIONS in the
             // shared domain). Taps send one EXPR_TRIGGER while MANUAL is
             // reported — the same gating language as the sticks above
             // (inert until the hold is reported).

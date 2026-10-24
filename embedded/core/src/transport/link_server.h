@@ -51,6 +51,10 @@
 
 #include "common/udp_send.h"
 
+// The catalog lands at global scope first: link_codec.h pulls it too, and a
+// namespace-wrapped first inclusion would hide ::exprcat from other headers.
+#include "link/expression_catalog.h"
+
 // The frozen codec namespace `link` collides with POSIX ::link() via the
 // WiFi/lwIP headers, so it is included once inside linkwrap__ and aliased to
 // linkcode:: on ALL platforms (host goldens still pin the `link::` spelling).

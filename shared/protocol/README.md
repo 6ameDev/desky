@@ -218,10 +218,7 @@ pair-refresh rotation.
   with `tag = first6(HMAC-SHA256(psk, "MANUALRELEASE"||eraBE2||counterBE4))`
   — the 19B message is the 13 ASCII bytes of `"MANUALRELEASE"` + eraBE2 +
   counterBE4. Same verify order and consume-on-accept domain as the take.
-- `0x59`/`0x5A` retired-reserved (were `EXPR_LIST_REQ`/`EXPR_LIST_RESP`,
-  list fetch): the picker list is hardcoded app-side mirroring the shared
-  expression catalog — no fetch crosses the wire. The reservation stands
-  forever; never reuse either header.
+- `0x59`/`0x5A` retired-reserved (see frozen table above).
 - `EXPR_TRIGGER` App -> Robot, 15 bytes (face request):
   `[0x5B | id | eraBE2 | counterBE4 | tag 6B | XOR]`
   with `tag = first6(HMAC-SHA256(psk, "EXPRTRIG"||id||eraBE2||counterBE4))`
@@ -257,9 +254,8 @@ second copy) — no fetch crosses the wire. A tap sends `EXPR_TRIGGER` (verify
 order mirrors the take path, then the MANUAL gate: the coordinator forwards
 the staged id to the expression owner only while sysmode MANUAL is held,
 else silent drop with no reply either way). Core preemption runs on accept
-and dispatch to head flows through the existing staged EXPR pump. Headers
-`0x59`/`0x5A` are retired-reserved and `0x5B` is claimed here — never reuse
-any earlier claimed header.
+and dispatch to head flows through the existing staged EXPR pump. Header
+`0x5B` is claimed here — never reuse any earlier claimed header.
 
 Robot alive rule (firmware `UdpServer::markAlive` funnel): every VALID
 paired packet — ALIVE, DRIVE, PAIR_REFRESH_REQ — pins the telemetry unicast

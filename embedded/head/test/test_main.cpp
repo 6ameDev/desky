@@ -50,7 +50,6 @@ void test_qr_module_fail_closed();
 void test_qr_e2e_encode_pack_display_identity();
 void test_qr_bug_signature_first63_unpacked_differs();
 void test_qr_face_id_appended_not_renumbered();
-void test_cli_qr_and_qr_clear();
 void test_qr_pairing_window_order_head();
 void test_empty_table_suppresses_nothing();
 void test_quirk_line_matches_with_sdk_prefix();
@@ -207,7 +206,6 @@ int main() {
   RUN_TEST(test_qr_e2e_encode_pack_display_identity);
   RUN_TEST(test_qr_bug_signature_first63_unpacked_differs);
   RUN_TEST(test_qr_face_id_appended_not_renumbered);
-  RUN_TEST(test_cli_qr_and_qr_clear);
   RUN_TEST(test_qr_pairing_window_order_head);
   RUN_TEST(test_empty_table_suppresses_nothing);
   RUN_TEST(test_quirk_line_matches_with_sdk_prefix);

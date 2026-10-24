@@ -9,12 +9,13 @@ import kotlinx.coroutines.CancellationException
  * lists these entries directly, and `EXPR_TRIGGER` (see
  * [TriggerExpressionUseCase]) carries the tapped id.
  *
- * Single source: the picker ([com.desky.shared.presentation.RobotControlUiState.expressions]),
- * trigger validation ([TriggerExpressionUseCase]), and the catalog pin test
- * all read this list. Mirror id + flags + name exactly; if the firmware
- * catalog grows, extend this list and the pin test together. Flags mirror
- * the retired `EXPR_LIST_RESP` entry-flags byte (bit 0 = play-once), so
- * only `surprised` carries flags 1.
+ * Single source: trigger validation ([TriggerExpressionUseCase]) and the
+ * catalog pin test read the full list; the picker
+ * ([com.desky.shared.presentation.RobotControlUiState.expressions]) reads
+ * [PICKER_EXPRESSIONS] below. Mirror id + flags + name exactly; if the
+ * firmware catalog grows, extend the full list and the pin test together.
+ * Flags mirror the retired `EXPR_LIST_RESP` entry-flags byte (bit 0 =
+ * play-once), so only `surprised` carries flags 1.
  */
 val STATIC_EXPRESSIONS: List<ExpressionEntry> = listOf(
     ExpressionEntry(id = 0, flags = 0, name = "boot"),
@@ -28,6 +29,19 @@ val STATIC_EXPRESSIONS: List<ExpressionEntry> = listOf(
 
 /** Id set of [STATIC_EXPRESSIONS]: the trigger allow-list. */
 val STATIC_EXPRESSION_IDS: Set<Int> = STATIC_EXPRESSIONS.map { it.id }.toSet()
+
+/**
+ * Picker subset of [STATIC_EXPRESSIONS]: blink and alert stay triggerable
+ * (validation reads the full allow-list) but leave the picker, which lists
+ * the four moods plus Neutral.
+ */
+val PICKER_EXPRESSIONS: List<ExpressionEntry> = listOf(
+    ExpressionEntry(id = 0, flags = 0, name = "Neutral"),
+    ExpressionEntry(id = 1, flags = 0, name = "happy"),
+    ExpressionEntry(id = 2, flags = 0, name = "sad"),
+    ExpressionEntry(id = 6, flags = 0, name = "curious"),
+    ExpressionEntry(id = 7, flags = 1, name = "surprised"),
+)
 
 /**
  * Expression play request: send one `EXPR_TRIGGER` (`[0x5B | id | eraBE2 |

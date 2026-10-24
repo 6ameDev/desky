@@ -51,7 +51,7 @@ class DisplayManager {
     pairActive_ = false;
     otadisplay::hide(ota_);
     const uint8_t c = clampFace(static_cast<int>(id));
-    if (c != FACE_BOOT && c != FACE_BLINK && exprcat::priorityFor(c) < exprcat::priorityFor(eyesId_)) {
+    if (!exprcat::isNeutral(c) && exprcat::priorityFor(c) < exprcat::priorityFor(eyesId_)) {
       return false;
     }
     eyesId_ = c;
@@ -90,21 +90,6 @@ class DisplayManager {
     qrActive_ = true;
     qrShownMs_ = nowMs;
     return true;
-  }
-
-  // Demo pattern (border + X, not a scannable QR): exercises show/clear with no link.
-  void showQrDemo(uint32_t nowMs, DisplayTransition& t) {
-    uint8_t demo[qrdisplay::kQrLen] = {};
-    for (int y = 0; y < qrdisplay::kModules; ++y) {
-      for (int x = 0; x < qrdisplay::kModules; ++x) {
-        const bool edge = (x < 2 || y < 2 || x >= qrdisplay::kModules - 2 || y >= qrdisplay::kModules - 2);
-        const bool cross = (x == y) || (x + y == qrdisplay::kModules - 2);
-        if (edge || cross) {
-          demo[static_cast<size_t>(y) * 3u + static_cast<size_t>(x >> 3)] |= static_cast<uint8_t>(1u << (7 - (x & 7)));
-        }
-      }
-    }
-    showQr(demo, nowMs, t);
   }
 
   // Clears the QR show mode (also clears a live pairing show). False when idle.
@@ -152,7 +137,7 @@ class DisplayManager {
     return true;
   }
 
-  // Clears the pairing show mode (also clears a live demo QR). False when idle.
+  // Clears the pairing show mode (also clears a live QR). False when idle.
   bool clearPairing(DisplayTransition& t) {
     t.clearedPair = pairActive_;
     t.clearedQr = qrActive_;

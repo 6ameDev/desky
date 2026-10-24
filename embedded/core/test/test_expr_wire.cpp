@@ -11,6 +11,7 @@
 
 #include "../src/abilities/expression/expression_codec.h"
 #include "../src/abilities/pairing/pairing_codec.h"
+#include "../src/behavior/mode_manager.h"
 
 void test_expr_wire_consts() {
   TEST_ASSERT_EQUAL_UINT8(0x5B, pairing::kExprTriggerHeader);
@@ -38,8 +39,8 @@ void test_expr_trigger_tag_msg_golden() {
 }
 
 void test_expr_trigger_gate_manual_only() {
-  TEST_ASSERT_TRUE(expression::triggerAllowed(sysmode::Mode::kManual));
-  TEST_ASSERT_FALSE(expression::triggerAllowed(sysmode::Mode::kNormal));
-  TEST_ASSERT_FALSE(expression::triggerAllowed(sysmode::Mode::kPairing));
-  TEST_ASSERT_FALSE(expression::triggerAllowed(sysmode::Mode::kOta));
+  TEST_ASSERT_TRUE(sysmode::exprTriggerAllowed(sysmode::Mode::kManual));
+  TEST_ASSERT_FALSE(sysmode::exprTriggerAllowed(sysmode::Mode::kNormal));
+  TEST_ASSERT_FALSE(sysmode::exprTriggerAllowed(sysmode::Mode::kPairing));
+  TEST_ASSERT_FALSE(sysmode::exprTriggerAllowed(sysmode::Mode::kOta));
 }

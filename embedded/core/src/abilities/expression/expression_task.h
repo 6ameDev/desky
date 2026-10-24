@@ -20,13 +20,9 @@ class Task {
   // Public request entry for behavior modules and the app-trigger path: true
   // when the request took effect (and staged for dispatch).
   bool request(uint8_t id, uint32_t nowMs) {
-    const exprcat::Entry* e = exprcat::lookup(id);
-    if (e == nullptr) {
+    if (exprcat::lookup(id) == nullptr) {
       return false;
     }
-    // Reserved media placeholders: dispatch carries the id only.
-    (void)e->sound;
-    (void)e->motion;
     if (!manager_.request(id, nowMs)) {
       return false;
     }
