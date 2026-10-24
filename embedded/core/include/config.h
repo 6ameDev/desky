@@ -48,7 +48,7 @@
 // Forward-facing ToF obstacle threshold in mm (no tilt compensation — the
 // beam points forward). The sensor task adds a +/-10mm hysteresis band and
 // publishes EVENT_OBSTACLE_DETECTED on the assert edge only.
-#define CFG_OBSTACLE_MM 150
+#define CFG_OBSTACLE_MM 80
 // DEPRECATED (ToF-as-cliff derivation is deleted; fusion reads the TCRT
 // rails). Kept so older references keep compiling until removal.
 #define CFG_CLIFF_MM 100

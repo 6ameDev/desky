@@ -44,7 +44,7 @@
 #define CFG_TCRT_TARGET_INTERVAL_MS 20
 #endif
 #ifndef CFG_OBSTACLE_MM
-#define CFG_OBSTACLE_MM 150
+#define CFG_OBSTACLE_MM 80
 #endif
 
 class SensorTask {
@@ -163,11 +163,18 @@ class SensorTask {
               tcrtRev_->rawCount(), tcrtRev_->groundPresent() ? 1u : 0u, distMm, pitchDeg, gndFwdNow ? 1u : 0u,
               gndRevNow ? 1u : 0u);
       }
-      // Obstacle assert edge (forward ToF only).
+      // Obstacle assert/clear edges (forward ToF only): the transition helper
+      // fires once per edge; the pre-call latch tells assert from clear.
       uint32_t obsPayload = 0;
+      const bool wasObstacle = lastObstacle_;
       if (sensortask::obstacleTransition(tofLive, distMm, lastObstacle_, obsPayload)) {
-        EventBus::publish(EVENT_OBSTACLE_DETECTED, obsPayload);
-        LOG_I("SENSOR", "OBSTACLE dist=%umm thr=%umm", obsPayload, static_cast<unsigned>(CFG_OBSTACLE_MM));
+        if (wasObstacle) {
+          EventBus::publish(EVENT_OBSTACLE_CLEARED, obsPayload);
+          LOG_I("SENSOR", "OBSTACLE cleared dist=%umm thr=%umm", obsPayload, static_cast<unsigned>(CFG_OBSTACLE_MM));
+        } else {
+          EventBus::publish(EVENT_OBSTACLE_DETECTED, obsPayload);
+          LOG_I("SENSOR", "OBSTACLE dist=%umm thr=%umm", obsPayload, static_cast<unsigned>(CFG_OBSTACLE_MM));
+        }
       }
 
       FaultManager::watchdogFeed();

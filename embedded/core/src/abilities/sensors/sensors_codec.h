@@ -148,7 +148,7 @@ constexpr int16_t kObstacleHystMm = 10;
 // Threshold fallback keeps this header compilable standalone (host g++
 // without -I include). In-project, include/config.h always wins.
 #ifndef CFG_OBSTACLE_MM
-#define CFG_OBSTACLE_MM 150
+#define CFG_OBSTACLE_MM 80
 #endif
 
 // ToF sample is usable only while powered and holding a real ranging.
@@ -196,11 +196,11 @@ inline bool groundTransition(bool liveTick, bool gndFwdNow, bool gndRevNow, bool
   return true;
 }
 
-// Edge-triggered obstacle assert: dead ticks never evaluate; a clear latch
-// fires ONCE when a live ToF reads below (CFG_OBSTACLE_MM - HYST) with
-// payload = distance mm. The latch silently re-arms above
-// (CFG_OBSTACLE_MM + HYST); held-obstacle ticks stay silent. The clear edge
-// never publishes.
+// Edge-triggered obstacle assert/clear: dead ticks never evaluate; a clear
+// latch fires ONCE when a live ToF reads below (CFG_OBSTACLE_MM - HYST) with
+// payload = distance mm. The latch re-arms with ONE clear publication when
+// the reading rises above (CFG_OBSTACLE_MM + HYST), payload = distance mm
+// at the clear edge. Held ticks on either side stay silent.
 inline bool obstacleTransition(bool liveTick, uint16_t distMm, bool& asserted, uint32_t& payloadOut) {
   if (!liveTick) {
     return false;
@@ -215,6 +215,8 @@ inline bool obstacleTransition(bool liveTick, uint16_t distMm, bool& asserted, u
   }
   if (asserted && d > far) {
     asserted = false;
+    payloadOut = distMm;
+    return true;
   }
   return false;
 }

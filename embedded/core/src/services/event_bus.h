@@ -44,6 +44,8 @@ inline const char* deskyEventName(EventType type) {
       return "BEHAVIOR_DONE";
     case EVENT_OBSTACLE_DETECTED:
       return "OBSTACLE_DETECTED";
+    case EVENT_OBSTACLE_CLEARED:
+      return "OBSTACLE_CLEARED";
     case EVENT_BEEP_DONE:
       return "BEEP_DONE";
     default:
