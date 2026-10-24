@@ -108,3 +108,24 @@ data class RobotConfig(
         require(speedLimit in 0f..1f) { "speedLimit out of range: $speedLimit" }
     }
 }
+
+/**
+ * One robot-owned expression catalog entry (from `EXPR_LIST_RESP`).
+ * [id] is the catalog id the `EXPR_TRIGGER` frame carries (0..255);
+ * [flags] is the opaque entry-flags byte (bit 0 = play-once);
+ * [name] is the display name (wire: blank-padded exactly 10 bytes,
+ * decoded trimmed).
+ */
+data class ExpressionEntry(
+    val id: Int,
+    val flags: Int,
+    val name: String,
+) {
+    init {
+        require(id in 0..255) { "expression id out of range: $id" }
+        require(flags in 0..255) { "expression flags out of range: $flags" }
+    }
+
+    /** True while the entry-flags play-once bit (bit 0) is set. */
+    val playOnce: Boolean get() = (flags and 0x01) != 0
+}

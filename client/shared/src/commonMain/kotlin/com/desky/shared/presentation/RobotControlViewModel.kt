@@ -8,6 +8,8 @@ import com.desky.shared.domain.ToRobotCounter
 import com.desky.shared.domain.ESTOP_FLAG
 import com.desky.shared.domain.AliveUseCase
 import com.desky.shared.domain.EmergencyStopUseCase
+import com.desky.shared.domain.ExpressionEntry
+import com.desky.shared.domain.FetchExpressionsUseCase
 import com.desky.shared.domain.ForgetDeviceUseCase
 import com.desky.shared.domain.FromRobotCounter
 import com.desky.shared.domain.GetPairPskUseCase
@@ -21,6 +23,7 @@ import com.desky.shared.domain.RobotMode
 import com.desky.shared.domain.SendSignedControlUseCase
 import com.desky.shared.domain.TakeManualUseCase
 import com.desky.shared.domain.Telemetry
+import com.desky.shared.domain.TriggerExpressionUseCase
 import com.desky.shared.domain.UdpSocketBinder
 import com.desky.shared.domain.UdpSocketManager
 import com.desky.shared.domain.hexToBytes
@@ -124,6 +127,16 @@ data class RobotControlUiState(
      * via telemetry).
      */
     val manualMode: Boolean = false,
+    /**
+     * Robot-owned expression catalog (fetched on screen entry via
+     * `EXPR_LIST_REQ`, cached for the ViewModel lifecycle, refetched on
+     * return — see [onForeground]). Empty until the first fetch lands; a
+     * tap sends one `EXPR_TRIGGER` while MANUAL is reported (see
+     * [onTriggerExpression]).
+     */
+    val expressions: List<ExpressionEntry> = emptyList(),
+    /** True while an expression-catalog fetch is in flight. */
+    val expressionsLoading: Boolean = false,
 )
 
 /**
@@ -196,6 +209,11 @@ data class RobotControlUiState(
  * the MANUAL report — flowing). [onTakeManual] enters MANUAL (one
  * `MANUAL_TAKE` per user action), [onReleaseManual] exits it (best-effort 2x
  * `MANUAL_RELEASE`); both converge via telemetry like every other mode edge.
+ *
+ * Expression picker: the send loop fetches the robot-owned catalog once
+ * per screen entry (one `EXPR_LIST_REQ`, lifecycle-cached in state,
+ * refetched on return) and [onTriggerExpression] plays one entry per tap
+ * (one `EXPR_TRIGGER`, MANUAL-gated like the sticks, silent robot-side).
  *
  * Lifecycle / ownership (no behavior change while driving):
  * - the telemetry + send loops are children of `viewModelScope` and stop
@@ -289,6 +307,16 @@ class RobotControlViewModel(
      */
     private val takeManualUC: TakeManualUseCase? = null,
     private val releaseManualUC: ReleaseManualUseCase? = null,
+    /**
+     * Expression catalog (fetch on screen entry, trigger per tap): null in
+     * tests/legacy call sites (the picker stays empty and trigger intents
+     * inert); production DI passes the shared [FetchExpressionsUseCase] +
+     * [TriggerExpressionUseCase]. [onTriggerExpression] sends one
+     * `EXPR_TRIGGER` per tap while MANUAL is reported; the fetch runs once
+     * per screen entry with the cache living in [_state].
+     */
+    private val fetchExpressionsUC: FetchExpressionsUseCase? = null,
+    private val triggerExpressionUC: TriggerExpressionUseCase? = null,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(RobotControlUiState())
@@ -380,6 +408,23 @@ class RobotControlViewModel(
      * suffices — see [ticksSinceTelemetry].
      */
     private var pairRefreshInFlight = false
+    /**
+     * Expression-catalog fetch gating for [maybeFetchExpressions]: while
+     * true the next paired send-loop tick launches one background fetch
+     * (single `EXPR_LIST_REQ`, no retry). Set on init (first session
+     * fetches on entry) and on every [onForeground] (returning to the
+     * screen refetches); cleared synchronously when the fetch launches so
+     * ticks never stack a second one. Runs on `viewModelScope` (Main), so
+     * plain vars suffice — see [ticksSinceTelemetry].
+     */
+    private var expressionsDue = true
+    /**
+     * Expression-catalog fetch in-flight guard: while true a fetch attempt
+     * is outstanding — the per-tick check skips re-firing until it
+     * completes (success caches into [_state], failure stays silent: the
+     * next screen entry heals).
+     */
+    private var expressionsFetchInFlight = false
     /**
      * Device id whose vault lookup already came back empty. The loop idles
      * for it (no per-tick vault reads — the vault is read at most once per
@@ -510,6 +555,10 @@ class RobotControlViewModel(
                             fromRobotCounter.reset()
                         }
                         pairRefreshInFlight = false
+                        // A re-pair advertises a fresh catalog: the next
+                        // session fetches on entry (the stale cache stays
+                        // visible until it lands).
+                        expressionsDue = true
                         ticksSinceTelemetry = 0
                         ticksSinceActivity = 0
                         ticksSinceIdleSend = 0
@@ -580,6 +629,12 @@ class RobotControlViewModel(
                             }
                         }
                     }
+                    // Expression catalog (own once-per-entry clock, before
+                    // the drive gate so the picker fills regardless of the
+                    // MANUAL hold): due ticks launch one background fetch —
+                    // never inline, the response wait must not stall the
+                    // 20 ms send loop or the robot's 500 ms failsafe trips.
+                    maybeFetchExpressions(dev)
                     val snapshot = _state.value
                     // Idle heartbeat: centered + e-stop-clear + no activity
                     // in the last IDLE_HEARTBEAT_MS idles to ~5 Hz; anything
@@ -790,6 +845,41 @@ class RobotControlViewModel(
         // Intentionally silent — no state/error change (a debug log lands
         // with the launch patch, where a log backend exists).
         pairRefreshInFlight = true
+    }
+
+    /**
+     * Expression-catalog fetch trigger (once per screen entry): called on
+     * every paired, non-backgrounded send-loop tick. When [expressionsDue]
+     * (set on init + every [onForeground]) and no fetch is in flight, one
+     * background fetch launches — allocate under the session mutex, send +
+     * await outside it (the up-to-[EXPR_LIST_TIMEOUT_MS] response wait must
+     * never stall the send loop). Success caches the catalog into [_state]
+     * for the ViewModel lifecycle; failure stays silent (no error banner —
+     * the next screen entry refetches and heals). Null [fetchExpressionsUC]
+     * (tests/legacy graphs) leaves the picker empty.
+     */
+    private fun maybeFetchExpressions(dev: PairedDevice) {
+        val fetch = fetchExpressionsUC ?: return
+        if (!expressionsDue || expressionsFetchInFlight) return
+        expressionsDue = false
+        expressionsFetchInFlight = true
+        _state.update { it.copy(expressionsLoading = true) }
+        viewModelScope.launch {
+            try {
+                // One allocation under the session mutex (same order as the
+                // loop tick: session-then-holder), sent outside it.
+                val prepared = sessionMutex.withLock { sessionCounterLocked(dev) } ?: return@launch
+                val (psk, counter) = prepared
+                when (val result = fetch(dev, psk, dev.era, counter)) {
+                    is Outcome.Success -> _state.update {
+                        it.copy(expressions = result.data, expressionsLoading = false)
+                    }
+                    is Outcome.Failure -> _state.update { it.copy(expressionsLoading = false) }
+                }
+            } finally {
+                expressionsFetchInFlight = false
+            }
+        }
     }
 
     private fun missingPsk(dev: PairedDevice): Outcome.Failure {
@@ -1012,6 +1102,49 @@ class RobotControlViewModel(
     }
 
     /**
+     * Plays one catalog expression: one signed `EXPR_TRIGGER` frame goes
+     * out immediately via [triggerExpressionUC] (sharing the session
+     * counter with the loop tick under [sessionMutex]). Exactly one frame
+     * per tap, never repeated — the robot gates on MANUAL and replies
+     * nothing, so a robot-side drop is silent by protocol.
+     *
+     * Gated to the reported MANUAL hold (same language as the sticks: no
+     * MANUAL report, no send) plus the [Connectivity.Disconnected] no-op
+     * guard. Unknown ids are rejected silently client-side against the
+     * fetched catalog (the picker only lists fetched entries, so this
+     * fires only on a stale tap); a transport failure surfaces its reason
+     * (the tap was an explicit user action). When no session is loaded yet
+     * the frame is skipped silently except exhaustion, which surfaces the
+     * repair copy like the immediate e-stop path.
+     */
+    fun onTriggerExpression(id: Int) {
+        if (_state.value.connectivity == Connectivity.Disconnected) return
+        if (!_state.value.manualMode) return
+        val trigger = triggerExpressionUC ?: return
+        val knownIds = _state.value.expressions.map { it.id }.toSet()
+        if (id !in knownIds) return
+        viewModelScope.launch {
+            val paired = currentDevice.value ?: return@launch
+            // Allocate under the session mutex, send outside it: an
+            // in-flight loop send never blocks this immediate frame's
+            // allocation (and vice versa).
+            val prepared = sessionMutex.withLock { sessionCounterLocked(paired) }
+            if (prepared == null) {
+                // Exhausted era: surface the repair copy here too (the loop
+                // tick would on its next pass); a missing PSK stays silent —
+                // the loop owns that copy.
+                if (toRobotCounter.isExhausted()) sessionExpired(paired)
+                return@launch
+            }
+            val (psk, next) = prepared
+            val result = trigger(paired, psk, paired.era, next, id, knownIds)
+            if (result is Outcome.Failure) {
+                _state.update { it.copy(error = result.reason) }
+            }
+        }
+    }
+
+    /**
      * Pause sending while the control screen is in the background (leaving
      * the room turns off the lights). The next send-loop tick skips
      * vault/counter/send and just delays; the session cache is kept, so
@@ -1077,11 +1210,14 @@ class RobotControlViewModel(
     /**
      * Resume sending after [onBackground]. Forces the `ALIVE` clock due so
      * the next send-loop tick knocks immediately (re-pinning the robot's
-     * unicast peer without waiting a full [ALIVE_INTERVAL_MS]).
+     * unicast peer without waiting a full [ALIVE_INTERVAL_MS]), and marks
+     * the expression catalog due so the same tick refetches it (returning
+     * to the screen heals a lost fetch or a stale picker).
      */
     fun onForeground() {
         backgroundPaused = false
         ticksSinceAlive = aliveTickEvery
+        expressionsDue = true
     }
 
     /**

@@ -108,6 +108,7 @@ void setup() {
   g_udp.attachPairing(&g_pairing);
   g_coordinator.attachPairing(&g_pairing);
   g_coordinator.attachTelemetry(&g_telem);
+  g_coordinator.attachExpression(&g_expression);
   const bool telemOk = g_telemetry.begin(&g_coordinator, &g_tof, &g_mpu, &g_telem, &g_udp);
   DESKY_ASSERT(telemOk);
   // Link endpoint (sockets only): never bricks driving — a bind or task

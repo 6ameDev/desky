@@ -365,6 +365,59 @@ suspend fun manualReleaseTag(psk: ByteArray, era: UShort, counter: UInt): ByteAr
 }
 
 /**
+ * `EXPR_LIST_REQ` auth tag: `first6(HMAC-SHA256(psk16, "EXPRLIST" ||
+ * eraBE2 || counterBE4))`. The 14-byte message is the 8 ASCII bytes of
+ * `"EXPRLIST"` followed by the 2-byte big-endian CURRENT era and the
+ * 4-byte big-endian counter — must match the firmware `EXPR_LIST_REQ`
+ * frame exactly.
+ *
+ * @param psk 16-byte pair PSK.
+ * @param era current paired era.
+ * @param counter next drive counter (strictly increasing, never 0).
+ * @return 6-byte tag.
+ */
+suspend fun exprListTag(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
+    require(psk.size == 16) { "exprListTag: psk must be 16 bytes" }
+    val msg = "EXPRLIST".encodeToByteArray() + byteArrayOf(
+        ((era.toInt() shr 8) and 0xFF).toByte(),
+        (era.toInt() and 0xFF).toByte(),
+        (counter shr 24).toByte(),
+        (counter shr 16).toByte(),
+        (counter shr 8).toByte(),
+        counter.toByte(),
+    )
+    return hmacSha256(psk, msg).copyOfRange(0, 6)
+}
+
+/**
+ * `EXPR_TRIGGER` auth tag: `first6(HMAC-SHA256(psk16, "EXPRTRIG" || id ||
+ * eraBE2 || counterBE4))`. The 15-byte message is the 8 ASCII bytes of
+ * `"EXPRTRIG"` followed by the 1-byte catalog id, the 2-byte big-endian
+ * CURRENT era, and the 4-byte big-endian counter — must match the
+ * firmware `EXPR_TRIGGER` frame exactly.
+ *
+ * @param psk 16-byte pair PSK.
+ * @param id catalog expression id (0..255).
+ * @param era current paired era.
+ * @param counter next drive counter (strictly increasing, never 0).
+ * @return 6-byte tag.
+ */
+suspend fun exprTriggerTag(psk: ByteArray, id: Int, era: UShort, counter: UInt): ByteArray {
+    require(psk.size == 16) { "exprTriggerTag: psk must be 16 bytes" }
+    require(id in 0..255) { "exprTriggerTag: id out of range: $id" }
+    val msg = "EXPRTRIG".encodeToByteArray() + byteArrayOf(
+        id.toByte(),
+        ((era.toInt() shr 8) and 0xFF).toByte(),
+        (era.toInt() and 0xFF).toByte(),
+        (counter shr 24).toByte(),
+        (counter shr 16).toByte(),
+        (counter shr 8).toByte(),
+        counter.toByte(),
+    )
+    return hmacSha256(psk, msg).copyOfRange(0, 6)
+}
+
+/**
  * Fresh 4-byte `client_nonce` from the platform CSPRNG
  * (`cryptography-random`: JVM `SecureRandom`, Apple `CCRandomGenerateBytes`,
  * Linux `getrandom` — exposed via the `kotlin.random.Random` API, never
