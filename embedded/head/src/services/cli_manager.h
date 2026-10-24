@@ -3,7 +3,7 @@
 // HeadCoordinator::dispatch(); STATUS/HELP/LINK/SNAP/OTA answered here.
 // Lowercase verbs only; no String/heap in the path.
 //   cam on|off | face <id|name> | oled on|dim|off | status | link | snap |
-//   ota <url> | qr | qr clear | help
+//   ota <url> | help
 
 #include "head_context.h"
 
@@ -132,20 +132,6 @@ inline bool parseLine(const char* line, PowerCommand& out) {
     out.arg = 0;
     return true;
   }
-  if (strncmp(p, "qr", 2) == 0 && (p[2] == ' ' || p[2] == '\t' || p[2] == '\0' || p[2] == '\r' || p[2] == '\n')) {
-    const char* rest = skipSpaces(p + 2);
-    if (*rest == '\0' || *rest == '\r' || *rest == '\n') {
-      out.target = CmdTarget::QR;
-      out.arg = 1;
-      return true;
-    }
-    if (wordIs(rest, "clear", 5)) {
-      out.target = CmdTarget::QR;
-      out.arg = 0;
-      return true;
-    }
-    return false;
-  }
   if (wordIs(p, "status", 6)) {
     out.target = CmdTarget::STATUS;
     out.arg = 0;
@@ -171,7 +157,7 @@ struct ICliSink {
   virtual void onLinkStatus() = 0;   // link door status line
   virtual void onSnap() = 0;         // link still trigger
   virtual void onOta(const char* args) = 0;
-  virtual void onCoord(const PowerCommand& cmd) = 0;  // CAM/FACE/OLED/QR dispatch
+  virtual void onCoord(const PowerCommand& cmd) = 0;  // CAM/FACE/OLED dispatch
 };
 
 #ifdef ARDUINO
@@ -265,7 +251,7 @@ class CliManager {
     LOG_I("CLI",
           "cmds: cam on|off | face <boot|happy|sad|blink|alert|curious|surprised|0-7> | oled on|dim|off | status | "
           "link | snap | ota "
-          "<url> | qr | qr clear | help");
+          "<url> | help");
   }
 
   PowerManager* power_;

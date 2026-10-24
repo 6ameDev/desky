@@ -865,54 +865,70 @@ class PairingTask : public transport::IPairingSession {
     LOG_I("UDP", "unpair ok, idle");
   }
 
-  // MANUAL_TAKE layout [0x57|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR
-  // checked by the caller). Explicit drive-session take under the paired
-  // PSK; verify order mirrors DISCONNECT (paired? -> era current -> counter
-  // fresh -> atomic tryConsume). Pass consumes the shared fromApp counter
-  // exactly like drive and stages the coordinator-polled pending flag (the
-  // coordinator tick drains it into onManualTake). Never drives. Fail =
-  // silent drop. The paired/era/fresh reads are logging-only pre-checks;
-  // tryConsume is the authoritative gate.
-  void handleManualTake(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
-                        transport::IUdpTransport& t) {
+  // Shared MANUAL_TAKE / MANUAL_RELEASE / EXPR_TRIGGER verify-stage: paired ->
+  // era current -> counter fresh -> atomic tryConsume -> alive funnel ->
+  // pending stage. The paired/era/fresh reads are logging-only pre-checks;
+  // tryConsume is the authoritative gate. Per-frame differences (wire
+  // offsets, tag composer, pending slot, log kind) arrive as parameters so
+  // the drop strings stay byte-identical. True when the frame staged.
+  template <typename ConsumeFn, typename StageFn>
+  bool verifyStagePoll(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
+                       transport::IUdpTransport& t, const char* kind, bool& firstDrop, size_t eraOff, size_t ctrOff,
+                       size_t tagOff, ConsumeFn consume, StageFn stage, bool alive) {
     DESKY_ASSERT(buf != nullptr);
     if (buf == nullptr) {
-      return;
+      return false;
     }
     if (!paired_) {
-      dropFirst(firstManualDrop_, "drop manual-take unpaired (first of boot)");
-      LOG_EVERY_N(20, "UDP", "drop manual-take unpaired");
-      return;
+      dropFirst(firstDrop, "drop %s unpaired (first of boot)", kind);
+      LOG_EVERY_N(20, "UDP", "drop %s unpaired", kind);
+      return false;
     }
-    const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(buf[1]) << 8) | static_cast<uint16_t>(buf[2]));
+    const uint16_t era =
+        static_cast<uint16_t>((static_cast<uint16_t>(buf[eraOff]) << 8) | static_cast<uint16_t>(buf[eraOff + 1]));
     if (era != era_) {
-      dropFirst(firstManualDrop_, "drop manual-take era=%u have=%u (first of boot)", static_cast<unsigned>(era),
+      dropFirst(firstDrop, "drop %s era=%u have=%u (first of boot)", kind, static_cast<unsigned>(era),
                 static_cast<unsigned>(era_));
-      LOG_EVERY_N(20, "UDP", "drop manual-take era=%u have=%u", static_cast<unsigned>(era),
-                  static_cast<unsigned>(era_));
-      return;
+      LOG_EVERY_N(20, "UDP", "drop %s era=%u have=%u", kind, static_cast<unsigned>(era), static_cast<unsigned>(era_));
+      return false;
     }
-    const uint32_t ctr = (static_cast<uint32_t>(buf[3]) << 24) | (static_cast<uint32_t>(buf[4]) << 16) |
-                         (static_cast<uint32_t>(buf[5]) << 8) | static_cast<uint32_t>(buf[6]);
+    const uint32_t ctr = (static_cast<uint32_t>(buf[ctrOff]) << 24) | (static_cast<uint32_t>(buf[ctrOff + 1]) << 16) |
+                         (static_cast<uint32_t>(buf[ctrOff + 2]) << 8) | static_cast<uint32_t>(buf[ctrOff + 3]);
     if (!t.isFreshCounter(fromAppCounter_, ctr)) {
-      dropFirst(firstManualDrop_, "drop manual-take replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
-      LOG_EVERY_N(20, "UDP", "drop manual-take replay ctr=%lu", static_cast<unsigned long>(ctr));
-      return;
+      dropFirst(firstDrop, "drop %s replay ctr=%lu (first of boot)", kind, static_cast<unsigned long>(ctr));
+      LOG_EVERY_N(20, "UDP", "drop %s replay ctr=%lu", kind, static_cast<unsigned long>(ctr));
+      return false;
     }
-    // Tag composition + atomic consume live in tryConsumeManualTake above.
-    connection::Verified verified = tryConsumeManualTake(era, ctr, buf + 7);
+    // Tag composition + atomic consume live in the tryConsume* callee above.
+    connection::Verified verified = consume(era, ctr, buf + tagOff);
     if (!verified.valid()) {
-      dropFirst(firstManualDrop_, "drop manual-take auth (first of boot)");
-      LOG_EVERY_N(20, "UDP", "drop manual-take auth");
-      return;
+      dropFirst(firstDrop, "drop %s auth (first of boot)", kind);
+      LOG_EVERY_N(20, "UDP", "drop %s auth", kind);
+      return false;
     }
-    // A verified take proves the owner alive exactly like drive: pin the
-    // peer + refresh the stamp before staging the coordinator flag.
-    t.markAlive(std::move(verified), rip, rport, nowMs, era);
-    // Counter consumed (a replayed take can never stage twice). The
-    // coordinator tick drains the flag into onManualTake.
-    manualTakePending_ = true;
-    LOG_I("UDP", "manual take ok");
+    if (alive) {
+      t.markAlive(std::move(verified), rip, rport, nowMs, era);
+    }
+    stage();
+    return true;
+  }
+
+  // MANUAL_TAKE layout [0x57|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR
+  // checked by the caller). Explicit drive-session take under the paired
+  // PSK; pass consumes the shared fromApp counter exactly like drive and
+  // stages the coordinator-polled pending flag (the coordinator tick drains
+  // it into onManualTake). Never drives. Fail = silent drop.
+  void handleManualTake(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
+                        transport::IUdpTransport& t) {
+    const bool staged = verifyStagePoll(
+        buf, rip, rport, nowMs, t, "manual-take", firstManualDrop_, 1, 3, 7,
+        [this](uint16_t era, uint32_t ctr, const uint8_t* tag) { return tryConsumeManualTake(era, ctr, tag); },
+        [this]() { manualTakePending_ = true; }, true);
+    if (staged) {
+      // A verified take proves the owner alive exactly like drive: the helper
+      // pinned the peer + refreshed the stamp before staging the flag.
+      LOG_I("UDP", "manual take ok");
+    }
   }
 
   // MANUAL_RELEASE layout [0x58|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR
@@ -921,88 +937,35 @@ class PairingTask : public transport::IPairingSession {
   // into onManualRelease). Fail = silent drop.
   void handleManualRelease(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
                            transport::IUdpTransport& t) {
-    DESKY_ASSERT(buf != nullptr);
-    if (buf == nullptr) {
-      return;
+    const bool staged = verifyStagePoll(
+        buf, rip, rport, nowMs, t, "manual-release", firstManualDrop_, 1, 3, 7,
+        [this](uint16_t era, uint32_t ctr, const uint8_t* tag) { return tryConsumeManualRelease(era, ctr, tag); },
+        [this]() { manualReleasePending_ = true; }, false);
+    if (staged) {
+      LOG_I("UDP", "manual release ok");
     }
-    if (!paired_) {
-      dropFirst(firstManualDrop_, "drop manual-release unpaired (first of boot)");
-      LOG_EVERY_N(20, "UDP", "drop manual-release unpaired");
-      return;
-    }
-    const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(buf[1]) << 8) | static_cast<uint16_t>(buf[2]));
-    if (era != era_) {
-      dropFirst(firstManualDrop_, "drop manual-release era=%u have=%u (first of boot)", static_cast<unsigned>(era),
-                static_cast<unsigned>(era_));
-      LOG_EVERY_N(20, "UDP", "drop manual-release era=%u have=%u", static_cast<unsigned>(era),
-                  static_cast<unsigned>(era_));
-      return;
-    }
-    const uint32_t ctr = (static_cast<uint32_t>(buf[3]) << 24) | (static_cast<uint32_t>(buf[4]) << 16) |
-                         (static_cast<uint32_t>(buf[5]) << 8) | static_cast<uint32_t>(buf[6]);
-    if (!t.isFreshCounter(fromAppCounter_, ctr)) {
-      dropFirst(firstManualDrop_, "drop manual-release replay ctr=%lu (first of boot)",
-                static_cast<unsigned long>(ctr));
-      LOG_EVERY_N(20, "UDP", "drop manual-release replay ctr=%lu", static_cast<unsigned long>(ctr));
-      return;
-    }
-    const connection::Verified verified = tryConsumeManualRelease(era, ctr, buf + 7);
-    if (!verified.valid()) {
-      dropFirst(firstManualDrop_, "drop manual-release auth (first of boot)");
-      LOG_EVERY_N(20, "UDP", "drop manual-release auth");
-      return;
-    }
-    manualReleasePending_ = true;
-    LOG_I("UDP", "manual release ok");
   }
 
   // EXPR_TRIGGER layout [0x5B|id|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR
   // checked by the caller). Authenticated face request under the paired PSK;
-  // verify mirrors the take path. Pass consumes the shared fromApp counter,
-  // refreshes the alive funnel, and stages the coordinator-polled pending id
-  // (the coordinator tick forwards it to the expression owner only while
-  // sysmode MANUAL is held, else drops it with no reply). Never drives.
-  // Fail = silent drop.
+  // pass consumes the shared fromApp counter, refreshes the alive funnel,
+  // and stages the coordinator-polled pending id (the coordinator tick
+  // forwards it to the expression owner only while sysmode MANUAL is held,
+  // else drops it with no reply). Never drives. Fail = silent drop.
   void handleExprTrigger(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
                          transport::IUdpTransport& t) {
-    DESKY_ASSERT(buf != nullptr);
-    if (buf == nullptr) {
-      return;
+    const uint8_t id = (buf != nullptr) ? buf[1] : 0;
+    const bool staged = verifyStagePoll(
+        buf, rip, rport, nowMs, t, "expr-trigger", firstExprDrop_, 2, 4, 8,
+        [this, id](uint16_t era, uint32_t ctr, const uint8_t* tag) { return tryConsumeExprTrigger(id, era, ctr, tag); },
+        [this, id]() {
+          exprTriggerId_ = id;
+          exprTriggerPending_ = true;
+        },
+        true);
+    if (staged) {
+      LOG_I("UDP", "expr trigger ok id=%u", static_cast<unsigned>(id));
     }
-    if (!paired_) {
-      dropFirst(firstExprDrop_, "drop expr-trigger unpaired (first of boot)");
-      LOG_EVERY_N(20, "UDP", "drop expr-trigger unpaired");
-      return;
-    }
-    const uint8_t id = buf[1];
-    const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(buf[2]) << 8) | static_cast<uint16_t>(buf[3]));
-    if (era != era_) {
-      dropFirst(firstExprDrop_, "drop expr-trigger era=%u have=%u (first of boot)", static_cast<unsigned>(era),
-                static_cast<unsigned>(era_));
-      LOG_EVERY_N(20, "UDP", "drop expr-trigger era=%u have=%u", static_cast<unsigned>(era),
-                  static_cast<unsigned>(era_));
-      return;
-    }
-    const uint32_t ctr = (static_cast<uint32_t>(buf[4]) << 24) | (static_cast<uint32_t>(buf[5]) << 16) |
-                         (static_cast<uint32_t>(buf[6]) << 8) | static_cast<uint32_t>(buf[7]);
-    if (!t.isFreshCounter(fromAppCounter_, ctr)) {
-      dropFirst(firstExprDrop_, "drop expr-trigger replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
-      LOG_EVERY_N(20, "UDP", "drop expr-trigger replay ctr=%lu", static_cast<unsigned long>(ctr));
-      return;
-    }
-    // Tag composition + atomic consume live in tryConsumeExprTrigger above.
-    connection::Verified verified = tryConsumeExprTrigger(id, era, ctr, buf + 8);
-    if (!verified.valid()) {
-      dropFirst(firstExprDrop_, "drop expr-trigger auth (first of boot)");
-      LOG_EVERY_N(20, "UDP", "drop expr-trigger auth");
-      return;
-    }
-    // Counter consumed (a replayed trigger can never stage twice). The
-    // coordinator tick drains the staged id into the MANUAL-gated forward.
-    t.markAlive(std::move(verified), rip, rport, nowMs, era);
-    exprTriggerId_ = id;
-    exprTriggerPending_ = true;
-    LOG_I("UDP", "expr trigger ok id=%u", static_cast<unsigned>(id));
   }
 
   // PAIR_REFRESH_REQ layout [0x53|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR

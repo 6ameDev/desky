@@ -7,7 +7,7 @@ import com.desky.shared.domain.FromRobotCounter
 import com.desky.shared.domain.GetPairPskUseCase
 import com.desky.shared.domain.ObserveTelemetryUseCase
 import com.desky.shared.domain.RobotMode
-import com.desky.shared.domain.STATIC_EXPRESSIONS
+import com.desky.shared.domain.PICKER_EXPRESSIONS
 import com.desky.shared.domain.SendSignedControlUseCase
 import com.desky.shared.domain.Telemetry
 import com.desky.shared.domain.TelemetryPacketCodec
@@ -77,16 +77,17 @@ class ExpressionsViewModelTest {
     @Test
     fun pickerListsStaticCatalogSynchronously() = runVmTest { main ->
         val s = setup()
-        // No fetch, no wait: the hardcoded catalog is in state from init.
-        assertEquals(STATIC_EXPRESSIONS, s.vm.state.value.expressions)
+        // No fetch, no wait: the hardcoded picker is in state from init.
+        assertEquals(PICKER_EXPRESSIONS, s.vm.state.value.expressions)
         assertEquals(
-            listOf("boot", "happy", "sad", "blink", "alert", "curious", "surprised"),
+            listOf("Neutral", "happy", "sad", "curious", "surprised"),
             s.vm.state.value.expressions.map { it.name },
         )
+        assertTrue(s.vm.state.value.expressions.none { it.id == 3 || it.id == 4 }, "blink/alert left the picker")
 
         main.advanceTimeBy(2000)
         main.runCurrent()
-        assertEquals(STATIC_EXPRESSIONS, s.vm.state.value.expressions)
+        assertEquals(PICKER_EXPRESSIONS, s.vm.state.value.expressions)
         assertTrue(trigs(s.udp).isEmpty(), "listing never transmits")
     }
 
@@ -99,6 +100,7 @@ class ExpressionsViewModelTest {
         main.runCurrent()
         assertTrue(s.vm.state.value.manualMode)
 
+        // Blink left the picker but validation stays open: still triggers.
         s.vm.onTriggerExpression(3)
         main.runCurrent()
         main.runCurrent()
@@ -178,7 +180,7 @@ class ExpressionsViewModelTest {
         main.runCurrent()
         main.advanceTimeBy(500)
         main.runCurrent()
-        assertEquals(STATIC_EXPRESSIONS, vm.state.value.expressions)
+        assertEquals(PICKER_EXPRESSIONS, vm.state.value.expressions)
         vm.onTriggerExpression(3)
         main.runCurrent()
         assertTrue(udp.sent.isEmpty())

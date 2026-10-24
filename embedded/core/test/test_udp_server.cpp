@@ -1020,11 +1020,10 @@ void test_udp_pair_ok_framing() {
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(38, 0xFF)));
 }
 
-// Expression trigger demux: 0x5B claims the 15B trigger shape. 0x59/0x5A are
-// retired-reserved: the RX demux drops them at every length. The HMAC tag is
-// ARDUINO-only (mbedTLS); the cross-side golden lives in
-// shared/protocol/README.md (trig_tag=95ade6a7dea4 for era=1, counter=100,
-// id=1 under the shared psk).
+// Expression trigger demux: 0x5B claims the 15B trigger shape; 0x59/0x5A are
+// retired-reserved and drop at every length. The HMAC tag is ARDUINO-only
+// (mbedTLS); the cross-side golden lives in shared/protocol/README.md
+// (trig_tag=95ade6a7dea4 for era=1, counter=100, id=1 under the shared psk).
 void test_udp_classify_expr() {
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kExprTrigger), rxKindInt(udpstatus::classifyRx(15, 0x5B)));
   // Neighbouring sizes/headers still drop.
@@ -1034,8 +1033,6 @@ void test_udp_classify_expr() {
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(15, 0xAC)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0xFF)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(15, 0xFF)));
-  // Retired-reserved: 0x59 drops at every length (incl. its old 14B shape),
-  // and the 0x5A list answer never arrives on the RX path.
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0x59)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(15, 0x59)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(4, 0x5A)));

@@ -449,7 +449,7 @@ class Coordinator {
       // preemption runs; dispatch to head flows through the staged pump).
       if (pairing_ != nullptr && expr_ != nullptr) {
         uint8_t exprId = 0;
-        if (pairing_->takeExprTrigger(exprId) && expression::triggerAllowed(sysMode_.mode)) {
+        if (pairing_->takeExprTrigger(exprId) && sysmode::exprTriggerAllowed(sysMode_.mode)) {
           expr_->request(exprId, nowMs);
         }
       }

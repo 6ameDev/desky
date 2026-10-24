@@ -505,6 +505,29 @@ suspend fun encodeDisconnect(psk: ByteArray, era: UShort, counter: UInt): ByteAr
 }
 
 /**
+ * Shared composer for the session poll-seam frames (`MANUAL_TAKE`,
+ * `MANUAL_RELEASE`, `EXPR_TRIGGER`): `[header | id? | eraBE2 | counterBE4 |
+ * tag6 | XOR]`. The tag arrives composed (HMAC stays in the callers); only
+ * the framing is shared.
+ */
+private fun encodeSessionFrame(header: Int, id: Int?, era: UShort, counter: UInt, tag: ByteArray): ByteArray {
+    val size = 1 + (if (id != null) 1 else 0) + 2 + 4 + 6 + 1
+    val out = ByteArray(size)
+    out[0] = header.toByte()
+    var at = 1
+    if (id != null) out[at++] = id.toByte()
+    out[at++] = ((era.toInt() shr 8) and 0xFF).toByte()
+    out[at++] = (era.toInt() and 0xFF).toByte()
+    out[at++] = (counter shr 24).toByte()
+    out[at++] = (counter shr 16).toByte()
+    out[at++] = (counter shr 8).toByte()
+    out[at++] = counter.toByte()
+    tag.copyInto(out, destinationOffset = at)
+    out[size - 1] = xorChecksum(out, size - 1)
+    return out
+}
+
+/**
  * `MANUAL_TAKE` mode-entry frame: App -> Robot, 14 bytes
  * `[0x57 | eraBE2 | counterBE4 | tag6 | XOR]`
  * (`tag = manualTakeTag(psk, era, counter)`).
@@ -525,17 +548,7 @@ suspend fun encodeDisconnect(psk: ByteArray, era: UShort, counter: UInt): ByteAr
  */
 suspend fun encodeManualTake(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
     require(psk.size == 16) { "encodeManualTake: psk must be 16 bytes" }
-    val out = ByteArray(MANUAL_TAKE_SIZE)
-    out[0] = MANUAL_TAKE_HEADER.toByte()
-    out[1] = ((era.toInt() shr 8) and 0xFF).toByte()
-    out[2] = (era.toInt() and 0xFF).toByte()
-    out[3] = (counter shr 24).toByte()
-    out[4] = (counter shr 16).toByte()
-    out[5] = (counter shr 8).toByte()
-    out[6] = counter.toByte()
-    manualTakeTag(psk, era, counter).copyInto(out, destinationOffset = 7)
-    out[MANUAL_TAKE_SIZE - 1] = xorChecksum(out, MANUAL_TAKE_SIZE - 1)
-    return out
+    return encodeSessionFrame(MANUAL_TAKE_HEADER, null, era, counter, manualTakeTag(psk, era, counter))
 }
 
 /**
@@ -559,17 +572,7 @@ suspend fun encodeManualTake(psk: ByteArray, era: UShort, counter: UInt): ByteAr
  */
 suspend fun encodeManualRelease(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
     require(psk.size == 16) { "encodeManualRelease: psk must be 16 bytes" }
-    val out = ByteArray(MANUAL_RELEASE_SIZE)
-    out[0] = MANUAL_RELEASE_HEADER.toByte()
-    out[1] = ((era.toInt() shr 8) and 0xFF).toByte()
-    out[2] = (era.toInt() and 0xFF).toByte()
-    out[3] = (counter shr 24).toByte()
-    out[4] = (counter shr 16).toByte()
-    out[5] = (counter shr 8).toByte()
-    out[6] = counter.toByte()
-    manualReleaseTag(psk, era, counter).copyInto(out, destinationOffset = 7)
-    out[MANUAL_RELEASE_SIZE - 1] = xorChecksum(out, MANUAL_RELEASE_SIZE - 1)
-    return out
+    return encodeSessionFrame(MANUAL_RELEASE_HEADER, null, era, counter, manualReleaseTag(psk, era, counter))
 }
 
 /**
@@ -595,18 +598,7 @@ suspend fun encodeManualRelease(psk: ByteArray, era: UShort, counter: UInt): Byt
 suspend fun encodeExprTrigger(psk: ByteArray, id: Int, era: UShort, counter: UInt): ByteArray {
     require(psk.size == 16) { "encodeExprTrigger: psk must be 16 bytes" }
     require(id in 0..255) { "encodeExprTrigger: id out of range: $id" }
-    val out = ByteArray(EXPR_TRIGGER_SIZE)
-    out[0] = EXPR_TRIGGER_HEADER.toByte()
-    out[1] = id.toByte()
-    out[2] = ((era.toInt() shr 8) and 0xFF).toByte()
-    out[3] = (era.toInt() and 0xFF).toByte()
-    out[4] = (counter shr 24).toByte()
-    out[5] = (counter shr 16).toByte()
-    out[6] = (counter shr 8).toByte()
-    out[7] = counter.toByte()
-    exprTriggerTag(psk, id, era, counter).copyInto(out, destinationOffset = 8)
-    out[EXPR_TRIGGER_SIZE - 1] = xorChecksum(out, EXPR_TRIGGER_SIZE - 1)
-    return out
+    return encodeSessionFrame(EXPR_TRIGGER_HEADER, id, era, counter, exprTriggerTag(psk, id, era, counter))
 }
 
 /**

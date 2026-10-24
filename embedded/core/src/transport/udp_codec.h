@@ -115,7 +115,6 @@ constexpr size_t kManualReleaseSize = 14;
 // header. Tag builders live in abilities/pairing/pairing_codec.h; the demux
 // row lives in the udpstatus top half of udp_server.h. Never re-literalize
 // these elsewhere.
-// 0x59/0x5A retired-reserved: list fetch removed, values stay claimed forever.
 constexpr uint8_t kExprListReqHeader = 0x59;
 constexpr size_t kExprListReqSize = 14;
 constexpr uint8_t kExprListRespHeader = 0x5A;

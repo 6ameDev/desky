@@ -107,6 +107,11 @@ inline bool motionInhibited(Mode mode, bool commandStale) {
 // alive-expiry).
 inline bool manualDriveAllowed(Mode mode, bool paired) { return mode == Mode::kManual && paired; }
 
+// App-trigger gate: a verified EXPR_TRIGGER reaches the expression owner only
+// while sysmode MANUAL is held (the app holds the drive session); every other
+// mode drops it with no reply.
+inline bool exprTriggerAllowed(Mode mode) { return mode == Mode::kManual; }
+
 // Mode query the display layer reads: which overlay follows the active mode.
 inline Display displayFor(Mode mode) {
   switch (mode) {

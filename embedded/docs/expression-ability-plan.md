@@ -27,8 +27,8 @@ table rows, never as rewrites.
   presets with neutral fallback and keeps screen arbitration. The shared
   table is the single source both sides read.
 - The app picker carries a hardcoded list mirroring the catalog and plays
-  through core MANUAL-gated triggers. The list-fetch round trip was tried,
-  raced, then retired; headers stay reserved.
+  through core MANUAL-gated triggers. The list-fetch round trip is retired;
+  headers stay reserved.
 
 ## Layer rules (apply to all versions)
 
