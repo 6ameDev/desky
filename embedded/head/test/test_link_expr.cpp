@@ -44,7 +44,9 @@ void test_link_expr_golden_round_trip() {
 }
 
 void test_link_expr_unpack_fail_closed() {
-  const uint8_t good[] = {FACE_BOOT, FACE_HAPPY, FACE_SAD, FACE_BLINK, FACE_ALERT, FACE_CURIOUS, FACE_SURPRISED};
+  const uint8_t good[] = {FACE_BOOT,       FACE_HAPPY,   FACE_SAD,          FACE_BLINK,
+                            FACE_ALERT,      FACE_CURIOUS, FACE_SURPRISED,  exprcat::kAngry,
+                            exprcat::kScared, exprcat::kExcited, exprcat::kConfused};
   for (size_t i = 0; i < sizeof(good); ++i) {
     uint8_t id = 0xFF;
     TEST_ASSERT_TRUE(linkcode::unpackExpr(good[i], id));
@@ -54,7 +56,7 @@ void test_link_expr_unpack_fail_closed() {
     TEST_ASSERT_EQUAL_UINT8(good[i], wire);
   }
   // QR has no catalog row; the rest sit outside the table.
-  const uint8_t bad[] = {FACE_QR, FACE_COUNT, 99, 0xFF};
+  const uint8_t bad[] = {FACE_QR, 12, 99, 0xFF};
   for (size_t i = 0; i < sizeof(bad); ++i) {
     uint8_t id = 0xAA;
     TEST_ASSERT_FALSE(linkcode::unpackExpr(bad[i], id));
@@ -78,7 +80,7 @@ void test_link_expr_maps_to_face_gate() {
 
 void test_link_expr_unknown_maps_neutral() {
   PowerCommand cmd;
-  const uint8_t bad[] = {FACE_QR, FACE_COUNT, 99, 0xFF};
+  const uint8_t bad[] = {FACE_QR, 12, 99, 0xFF};
   for (size_t i = 0; i < sizeof(bad); ++i) {
     TEST_ASSERT_TRUE(wifilink::mapCmd(linkcode::kTypeExpr, &bad[i], 1, cmd));
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::FACE), static_cast<uint8_t>(cmd.target));

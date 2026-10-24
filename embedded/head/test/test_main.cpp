@@ -131,9 +131,11 @@ void test_exprcat_priorities();
 void test_exprcat_play_once_and_hold();
 void test_exprcat_eye_commands();
 void test_exprcat_placeholders_none();
+void test_exprcat_v2_bundles();
 void test_exprcat_lookup_fail_closed();
 void test_exprcat_accessors_fail_closed();
 void test_exprcat_matches_head_tables();
+void test_exprcat_v2_eye_map();
 
 void test_expr_priority_order();
 void test_expr_play_once_shape();
@@ -274,9 +276,11 @@ int main() {
   RUN_TEST(test_exprcat_play_once_and_hold);
   RUN_TEST(test_exprcat_eye_commands);
   RUN_TEST(test_exprcat_placeholders_none);
+  RUN_TEST(test_exprcat_v2_bundles);
   RUN_TEST(test_exprcat_lookup_fail_closed);
   RUN_TEST(test_exprcat_accessors_fail_closed);
   RUN_TEST(test_exprcat_matches_head_tables);
+  RUN_TEST(test_exprcat_v2_eye_map);
   RUN_TEST(test_expr_priority_order);
   RUN_TEST(test_expr_play_once_shape);
   RUN_TEST(test_expr_higher_preempts_lower);
