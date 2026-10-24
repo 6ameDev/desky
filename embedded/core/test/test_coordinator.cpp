@@ -11,6 +11,7 @@
 
 #include <unity.h>
 
+#include "../src/abilities/expression/expression_task.h"
 #include "../src/behavior/coordinator.h"
 #include "../src/transport/udp_codec.h"
 
@@ -517,6 +518,105 @@ void test_coord_safety_level_sequence_survives_sibling_clear() {
   TEST_ASSERT_TRUE(d.request);
   TEST_ASSERT_EQUAL_UINT8(exprcat::kBoot, d.id);
   TEST_ASSERT_FALSE(d.hasHold);
+}
+
+void test_coord_safety_stepdown_plans_release_first() {
+  // Scared showing (9), desired angry (8): the plan is [boot, angry].
+  const coordinator::SafetyDecision d =
+      coordinator::resolveSafetyEdge(true, exprcat::kAngry, true, exprcat::kScared, exprcat::kScared);
+  TEST_ASSERT_TRUE(d.request);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kAngry, d.id);
+  TEST_ASSERT_TRUE(d.hasHold);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kAngry, d.holdId);
+  TEST_ASSERT_TRUE(d.releaseFirst);
+}
+
+void test_coord_safety_stepup_needs_no_release() {
+  // Angry showing (8), desired scared (9): direct re-request.
+  const coordinator::SafetyDecision d =
+      coordinator::resolveSafetyEdge(true, exprcat::kScared, true, exprcat::kAngry, exprcat::kAngry);
+  TEST_ASSERT_TRUE(d.request);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kScared, d.id);
+  TEST_ASSERT_TRUE(d.hasHold);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kScared, d.holdId);
+  TEST_ASSERT_FALSE(d.releaseFirst);
+}
+
+void test_coord_safety_equal_restate_needs_no_release() {
+  const coordinator::SafetyDecision d =
+      coordinator::resolveSafetyEdge(true, exprcat::kScared, true, exprcat::kScared, exprcat::kScared);
+  TEST_ASSERT_TRUE(d.request);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kScared, d.id);
+  TEST_ASSERT_FALSE(d.releaseFirst);
+}
+
+namespace {
+// Host mirror of the Coordinator firmware tick: ordered release-then-set,
+// claim only on the accepted final request.
+void stepSafetyTick(expression::Task& expr, bool& hasHold, uint8_t& holdId, bool desiredPresent, uint8_t desiredId,
+                    uint32_t nowMs) {
+  const coordinator::SafetyDecision d =
+      coordinator::resolveSafetyEdge(desiredPresent, desiredId, hasHold, holdId, expr.active());
+  if (!d.request) {
+    hasHold = d.hasHold;
+    holdId = d.holdId;
+    return;
+  }
+  if (d.releaseFirst) {
+    expr.request(exprcat::kBoot, nowMs);
+  }
+  if (expr.request(d.id, nowMs)) {
+    hasHold = d.hasHold;
+    holdId = d.holdId;
+  }
+}
+
+// Host seam for the dispatch pump: mirrors LinkServer::sendUnicast.
+struct StepdownLink {
+  unsigned calls = 0;
+  uint8_t lastByte = 0xFF;
+  bool sendUnicast(uint8_t, const uint8_t* payload, uint16_t len, uint16_t& seqOut) {
+    ++calls;
+    lastByte = (payload != nullptr && len == 1) ? payload[0] : 0xFF;
+    seqOut = 0;
+    return true;
+  }
+};
+}  // namespace
+
+void test_coord_safety_bench_stepdown_restates_survivor() {
+  // Bench sequence: obstacle->angry, cliff->scared, cliff-clear->angry
+  // restated via release-then-set, obstacle-clear->boot.
+  expression::Task expr;
+  StepdownLink link;
+  bool hasHold = false;
+  uint8_t holdId = 0;
+  uint8_t id = 0;
+  TEST_ASSERT_TRUE(coordinator::desiredSafetyFace(false, true, id));
+  stepSafetyTick(expr, hasHold, holdId, true, id, 100);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kAngry, expr.active());
+  TEST_ASSERT_TRUE(hasHold);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kAngry, holdId);
+  TEST_ASSERT_TRUE(coordinator::desiredSafetyFace(true, true, id));
+  stepSafetyTick(expr, hasHold, holdId, true, id, 200);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kScared, expr.active());
+  TEST_ASSERT_TRUE(hasHold);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kScared, holdId);
+  TEST_ASSERT_TRUE(coordinator::desiredSafetyFace(false, true, id));
+  stepSafetyTick(expr, hasHold, holdId, true, id, 300);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kAngry, expr.active());
+  TEST_ASSERT_TRUE(hasHold);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kAngry, holdId);
+  // The intermediate neutral never reaches the wire: one staged id, one send.
+  TEST_ASSERT_TRUE(expr.hasStaged());
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kAngry, expr.staged());
+  TEST_ASSERT_TRUE(expr.publishStaged(link, 0x08));
+  TEST_ASSERT_EQUAL_UINT(1, link.calls);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kAngry, link.lastByte);
+  TEST_ASSERT_FALSE(coordinator::desiredSafetyFace(false, false, id));
+  stepSafetyTick(expr, hasHold, holdId, false, 0, 400);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kBoot, expr.active());
+  TEST_ASSERT_FALSE(hasHold);
 }
 
 // Runner lives in test_udp_codec.cpp (single main for the native-test
