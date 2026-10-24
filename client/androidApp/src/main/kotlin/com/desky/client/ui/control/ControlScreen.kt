@@ -18,6 +18,9 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -135,9 +138,9 @@ fun ControlContent(
             }
             // Expression picker: the hardcoded picker subset mirroring
             // the shared firmware table (see PICKER_EXPRESSIONS in the
-            // shared domain). Taps send one EXPR_TRIGGER while MANUAL is
-            // reported — the same gating language as the sticks above
-            // (inert until the hold is reported).
+            // shared domain). Taps select, Apply sends one EXPR_TRIGGER
+            // while MANUAL is reported — the same gating language as the
+            // sticks above (inert until the hold is reported).
             ExpressionPicker(
                 state = state,
                 enabled = manualControls,
@@ -163,22 +166,44 @@ fun ControlContent(
 @Composable
 private fun ExpressionPicker(
     state: RobotControlUiState,
-    /** MANUAL gate: while false, taps send nothing (same language as the sticks). */
+    /** MANUAL gate: while false, selection changes nothing and Apply sends nothing. */
     enabled: Boolean,
     onTriggerExpression: (Int) -> Unit,
 ) {
+    val entries = state.expressions
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text("Expressions")
-        state.expressions.forEach { entry ->
-            OutlinedButton(
-                onClick = { onTriggerExpression(entry.id) },
-                enabled = enabled,
-            ) { Text(entry.name) }
+        if (entries.isEmpty()) return@Column
+        var selectedIndex by remember { mutableStateOf(0) }
+        val selected = selectedIndex.coerceIn(entries.indices)
+        // Circular strip: large virtual count with modulo indexing, parked
+        // in the middle so both directions scroll seamlessly (no edge).
+        val virtualCount = entries.size * 1000
+        val startIndex = virtualCount / 2 - (virtualCount / 2 % entries.size)
+        val listState = rememberLazyListState(initialFirstVisibleItemIndex = startIndex)
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            state = listState,
+        ) {
+            items(virtualCount) { virtualIndex ->
+                val index = virtualIndex % entries.size
+                val entry = entries[index]
+                FilterChip(
+                    selected = index == selected,
+                    onClick = { selectedIndex = index },
+                    enabled = enabled,
+                    label = { Text(entry.name) },
+                )
+            }
         }
+        Button(
+            onClick = { onTriggerExpression(entries[selected].id) },
+            enabled = enabled,
+        ) { Text("Apply") }
     }
 }
 
