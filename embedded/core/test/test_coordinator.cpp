@@ -420,5 +420,104 @@ void test_coord_safety_explicit_clears_false_unchanged() {
   TEST_ASSERT_FALSE(coordinator::safetyExpressionFor(false, false, id, false, false));
 }
 
+void test_coord_desired_ground_wins_over_obstacle() {
+  uint8_t id = 0;
+  TEST_ASSERT_TRUE(coordinator::desiredSafetyFace(true, true, id));
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kScared, id);
+  TEST_ASSERT_TRUE(coordinator::desiredSafetyFace(true, false, id));
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kScared, id);
+}
+
+void test_coord_desired_obstacle_alone_maps_angry() {
+  uint8_t id = 0;
+  TEST_ASSERT_TRUE(coordinator::desiredSafetyFace(false, true, id));
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kAngry, id);
+}
+
+void test_coord_desired_none_alone() {
+  uint8_t id = 0xFF;
+  TEST_ASSERT_FALSE(coordinator::desiredSafetyFace(false, false, id));
+}
+
+void test_coord_safety_release_with_held_face_sends_boot() {
+  const coordinator::SafetyDecision d =
+      coordinator::resolveSafetyEdge(false, 0, true, exprcat::kScared, exprcat::kScared);
+  TEST_ASSERT_TRUE(d.request);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kBoot, d.id);
+  TEST_ASSERT_FALSE(d.hasHold);
+}
+
+void test_coord_safety_release_with_stolen_face_sends_nothing() {
+  const coordinator::SafetyDecision d =
+      coordinator::resolveSafetyEdge(false, 0, true, exprcat::kAngry, exprcat::kScared);
+  TEST_ASSERT_FALSE(d.request);
+  TEST_ASSERT_FALSE(d.hasHold);
+}
+
+void test_coord_safety_release_without_claim_sends_nothing() {
+  const coordinator::SafetyDecision d = coordinator::resolveSafetyEdge(false, 0, false, 0, exprcat::kBoot);
+  TEST_ASSERT_FALSE(d.request);
+  TEST_ASSERT_FALSE(d.hasHold);
+}
+
+void test_coord_safety_sibling_clear_rerequests_survivor() {
+  uint8_t id = 0;
+  TEST_ASSERT_TRUE(coordinator::desiredSafetyFace(false, true, id));
+  const coordinator::SafetyDecision d =
+      coordinator::resolveSafetyEdge(true, id, true, exprcat::kScared, exprcat::kScared);
+  TEST_ASSERT_TRUE(d.request);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kAngry, d.id);
+  TEST_ASSERT_TRUE(d.hasHold);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kAngry, d.holdId);
+}
+
+void test_coord_safety_assert_while_other_active_reannounces_top() {
+  uint8_t id = 0;
+  TEST_ASSERT_TRUE(coordinator::desiredSafetyFace(true, true, id));
+  const coordinator::SafetyDecision d =
+      coordinator::resolveSafetyEdge(true, id, true, exprcat::kScared, exprcat::kScared);
+  TEST_ASSERT_TRUE(d.request);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kScared, d.id);
+  TEST_ASSERT_TRUE(d.hasHold);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kScared, d.holdId);
+}
+
+void test_coord_safety_level_sequence_survives_sibling_clear() {
+  bool hasHold = false;
+  uint8_t holdId = 0;
+  uint8_t requested = 0xFF;
+  // Obstacle asserts alone -> angry.
+  uint8_t id = 0;
+  TEST_ASSERT_TRUE(coordinator::desiredSafetyFace(false, true, id));
+  coordinator::SafetyDecision d = coordinator::resolveSafetyEdge(true, id, hasHold, holdId, exprcat::kBoot);
+  TEST_ASSERT_TRUE(d.request);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kAngry, d.id);
+  hasHold = d.hasHold;
+  holdId = d.holdId;
+  requested = d.id;
+  // Ground asserts too -> scared wins, re-announced over angry.
+  TEST_ASSERT_TRUE(coordinator::desiredSafetyFace(true, true, id));
+  d = coordinator::resolveSafetyEdge(true, id, hasHold, holdId, requested);
+  TEST_ASSERT_TRUE(d.request);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kScared, d.id);
+  hasHold = d.hasHold;
+  holdId = d.holdId;
+  requested = d.id;
+  // Obstacle clears while ground still lost -> scared restated, never boot.
+  TEST_ASSERT_TRUE(coordinator::desiredSafetyFace(true, false, id));
+  d = coordinator::resolveSafetyEdge(true, id, hasHold, holdId, requested);
+  TEST_ASSERT_TRUE(d.request);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kScared, d.id);
+  hasHold = d.hasHold;
+  holdId = d.holdId;
+  requested = d.id;
+  // Ground clears with nothing left, face still ours -> boot releases.
+  TEST_ASSERT_FALSE(coordinator::desiredSafetyFace(false, false, id));
+  d = coordinator::resolveSafetyEdge(false, 0, hasHold, holdId, requested);
+  TEST_ASSERT_TRUE(d.request);
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kBoot, d.id);
+  TEST_ASSERT_FALSE(d.hasHold);
+}
+
 // Runner lives in test_udp_codec.cpp (single main for the native-test
 // binary): the coordinator tests are declared extern there.
