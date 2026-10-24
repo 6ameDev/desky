@@ -1,5 +1,5 @@
 #pragma once
-// Motion primitives for expression bundles — behavior/.
+// Motion primitives for expression bundles — shared/link.
 //
 // Arduino-free key->params table over the shared catalog motion ids: the
 // expression conductor maps a row's motion field to startWiggle/stop args
