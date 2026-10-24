@@ -24,6 +24,6 @@ void test_eyes_map_ordinals_track_emotions() {
 
 void test_eyes_map_falls_back_to_normal() {
   TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionNormal, eyesmap::emotionForFace(FACE_QR));
-  TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionNormal, eyesmap::emotionForFace(FACE_COUNT));
+  TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionNormal, eyesmap::emotionForFace(12));
   TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionNormal, eyesmap::emotionForFace(99));
 }

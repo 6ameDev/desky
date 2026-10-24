@@ -79,7 +79,7 @@ void test_link_cmd_vocab_expr_literal_range() {
   // Producer side packs through packExpr: catalog ids ride raw, QR 5 and
   // anything outside the table fail closed — never hand-roll the byte.
   TEST_ASSERT_EQUAL_UINT8(0x08, link::kTypeExpr);
-  const uint8_t good[] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x06, 0x07};
+  const uint8_t good[] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B};
   for (size_t i = 0; i < sizeof(good); ++i) {
     uint8_t wire = 0xFF;
     TEST_ASSERT_TRUE(link::packExpr(good[i], wire));
@@ -88,7 +88,7 @@ void test_link_cmd_vocab_expr_literal_range() {
     TEST_ASSERT_TRUE(link::unpackExpr(good[i], id));
     TEST_ASSERT_EQUAL_UINT8(good[i], id);
   }
-  const uint8_t bad[] = {0x05, 0x08, 0x63, 0xFF};
+  const uint8_t bad[] = {0x05, 0x0C, 0x63, 0xFF};
   for (size_t i = 0; i < sizeof(bad); ++i) {
     uint8_t wire = 0xFF;
     TEST_ASSERT_FALSE(link::packExpr(bad[i], wire));

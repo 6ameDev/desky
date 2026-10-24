@@ -134,7 +134,7 @@ void test_exprmgr_hold_wraps_and_persists() {
 void test_exprmgr_unknown_ids_fail_closed() {
   expression::Manager mgr;
   TEST_ASSERT_TRUE(mgr.request(expression::kAlert, 0));
-  const uint8_t bad[] = {5, 8, 99, 0xFF};
+  const uint8_t bad[] = {5, 12, 99, 0xFF};
   for (size_t i = 0; i < sizeof(bad); ++i) {
     TEST_ASSERT_FALSE(mgr.request(bad[i], 100));
     TEST_ASSERT_EQUAL_UINT8(expression::kAlert, mgr.active());
@@ -179,9 +179,14 @@ void test_exprtask_tick_yield_stages_neutral() {
 }
 
 void test_exprtask_placeholders_stay_none() {
-  for (size_t i = 0; i < exprcat::count(); ++i) {
-    TEST_ASSERT_EQUAL_UINT8(exprcat::kSoundNone, exprcat::kTable[i].sound);
-    TEST_ASSERT_EQUAL_UINT8(exprcat::kMotionNone, exprcat::kTable[i].motion);
+  static const uint8_t kV1[] = {0, 1, 2, 3, 4, 6, 7};
+  for (size_t i = 0; i < sizeof(kV1); ++i) {
+    const exprcat::Entry* e = exprcat::lookup(kV1[i]);
+    TEST_ASSERT_NOT_NULL(e);
+    TEST_ASSERT_EQUAL_UINT8(exprcat::kSoundNone, e->sound);
+    TEST_ASSERT_EQUAL_UINT8(exprcat::kMotionNone, e->motion);
+    TEST_ASSERT_EQUAL_UINT8(exprcat::kNeckNone, e->neckPose);
+    TEST_ASSERT_EQUAL_UINT8(exprcat::kArmNone, e->armPose);
   }
 }
 
