@@ -206,6 +206,7 @@ inline ArbitrateOutput arbitrate(const ArbitrateInput& in) {
 
 #include <Arduino.h>
 
+#include "abilities/expression/expression_task.h"
 #include "abilities/pairing/pairing_task.h"
 #include "behavior/motion_controller.h"
 #include "common/diagnostics.h"
@@ -326,6 +327,14 @@ class Coordinator {
     telem_ = telem;
   }
 
+  // Pins the setup-owned expression owner for the MANUAL-gated app-trigger
+  // forward below. Set once from main()/setup(); null-safe until then (a
+  // staged trigger is dropped).
+  void attachExpression(expression::Task* expr) {
+    DESKY_ASSERT(expr != nullptr);
+    expr_ = expr;
+  }
+
   // Mode query the display layer reads: the active system mode (NORMAL by
   // default, PAIRING while the pair window is open, OTA/MANUAL via their
   // notifiers below). Motion is unaffected — the failsafe overlay inhibits
@@ -433,6 +442,17 @@ class Coordinator {
           onManualRelease();
         }
       }
+      // Expression-trigger poll: a verified EXPR_TRIGGER stages a
+      // consume-on-read id in the pairing ability; forward it to the
+      // expression owner only while sysmode MANUAL is held, else drop it
+      // with no reply. Unknown ids fail closed inside request (core
+      // preemption runs; dispatch to head flows through the staged pump).
+      if (pairing_ != nullptr && expr_ != nullptr) {
+        uint8_t exprId = 0;
+        if (pairing_->takeExprTrigger(exprId) && expression::triggerAllowed(sysMode_.mode)) {
+          expr_->request(exprId, nowMs);
+        }
+      }
       // MANUAL exit on the alive clock: the session holds while the paired
       // peer stays alive-fresh, independent of the drive clock. Command-stale
       // only inhibits motion via motionInhibited below, never exits. A dropped
@@ -527,6 +547,9 @@ class Coordinator {
   bool hasCmd_;
   uint32_t lastCmdMs_;
   pairing::PairingTask* pairing_;
+  // Expression owner (setup-owned; pinned by attachExpression()). The
+  // coordinator owns no face state — the ability does.
+  expression::Task* expr_ = nullptr;
   // Telemetry RX-observation report target (setup-owned; pinned by
   // attachTelemetry()). The coordinator owns no driving flag — the manager
   // does.

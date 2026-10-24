@@ -43,6 +43,9 @@ class IUdpTransport {
   // Core-originated DISCONNECT unicast (physical pair-button eviction):
   // composed ability-side, fire-and-forget here with no gate and no retry.
   virtual void sendDisconnect(const IPAddress& ip, uint16_t port, const uint8_t* frame, size_t len) = 0;
+  // EXPR_LIST_RESP unicast (expression picker list): composed ability-side
+  // from the shared catalog, single send to the requester with no retry.
+  virtual void sendExprList(const IPAddress& ip, uint16_t port, const uint8_t* frame, size_t len) = 0;
   // PAIR_REFRESH_ACK unicast, composed by the ability. The token-gated send is
   // the only path the verified switch takes; the Impl path re-ACKs the
   // idempotent duplicate (the ACK carries no secret, so it bypasses the gate).

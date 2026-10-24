@@ -79,8 +79,20 @@ class WireConstantsTest {
     }
 
     @Test
+    fun expressions() {
+        assertEquals(0x59, EXPR_LIST_REQ_HEADER)
+        assertEquals(14, EXPR_LIST_REQ_SIZE)
+        assertEquals(0x5A, EXPR_LIST_RESP_HEADER)
+        assertEquals(0x5B, EXPR_TRIGGER_HEADER)
+        assertEquals(15, EXPR_TRIGGER_SIZE)
+        assertEquals(1, EXPR_LIST_RESP_VERSION)
+        assertEquals(12, EXPR_LIST_MAX_COUNT)
+        assertEquals(10, EXPR_NAME_SIZE)
+    }
+
+    @Test
     fun claimedHeadersDistinct() {
-        val headers = listOf(CONTROL_HEADER, TELEMETRY_HEADER, PAIR_REQ_HEADER, PAIR_OK_HEADER, PAIR_ERR_HEADER, DRIVE_HEADER, UNPAIR_HEADER, PAIR_REFRESH_REQ_HEADER, PAIR_REFRESH_ACK_HEADER, ALIVE_HEADER, DISCONNECT_HEADER, MANUAL_TAKE_HEADER, MANUAL_RELEASE_HEADER)
+        val headers = listOf(CONTROL_HEADER, TELEMETRY_HEADER, PAIR_REQ_HEADER, PAIR_OK_HEADER, PAIR_ERR_HEADER, DRIVE_HEADER, UNPAIR_HEADER, PAIR_REFRESH_REQ_HEADER, PAIR_REFRESH_ACK_HEADER, ALIVE_HEADER, DISCONNECT_HEADER, MANUAL_TAKE_HEADER, MANUAL_RELEASE_HEADER, EXPR_LIST_REQ_HEADER, EXPR_LIST_RESP_HEADER, EXPR_TRIGGER_HEADER)
         assertEquals(headers.size, headers.toSet().size) // never reuse/renumber
         assertTrue(headers.none { it == 0x00 }) // 0x00 stays unclaimed
     }

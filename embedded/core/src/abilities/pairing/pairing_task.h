@@ -8,6 +8,11 @@
 #include "pairing_codec.h"
 #include "pairing_manager.h"
 
+// Response composer home (abilities/expression): the list answer is served
+// from the shared catalog, so composition lives in the expression codec;
+// the request/trigger auth above stays in the pairing codec.
+#include "abilities/expression/expression_codec.h"
+
 #ifdef ARDUINO
 // ── Firmware: pairing crypto glue (mbedTLS) ───────────────────────
 // Arduino-ESP32 (S3) bundles mbedTLS; headers live under the framework
@@ -523,6 +528,29 @@ class PairingTask : public transport::IPairingSession {
     return verified;
   }
 
+  // EXPR_LIST_REQ verify: tag = first6(HMAC-SHA256(psk,
+  // "EXPRLIST"||eraBE2||counterBE4)). Consumes the shared fromApp counter
+  // on accept exactly like drive, so a replayed fetch can never run twice.
+  // Zero state change on any failure.
+  connection::Verified tryConsumeExprList(uint16_t wireEra, uint32_t ctr, const uint8_t* tag) {
+    uint8_t msg[pairing::kExprListMsgLen];
+    pairing::exprListTagMsg(wireEra, ctr, msg);
+    connection::Verified verified = tryConsume(ctr, wireEra == era_, tag, msg, sizeof(msg));
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    return verified;
+  }
+
+  // EXPR_TRIGGER verify: tag = first6(HMAC-SHA256(psk,
+  // "EXPRTRIG"||id||eraBE2||counterBE4)). Same consume-on-accept domain;
+  // the MANUAL gate runs later at the coordinator drain.
+  connection::Verified tryConsumeExprTrigger(uint8_t id, uint16_t wireEra, uint32_t ctr, const uint8_t* tag) {
+    uint8_t msg[pairing::kExprTriggerMsgLen];
+    pairing::exprTriggerTagMsg(id, wireEra, ctr, msg);
+    connection::Verified verified = tryConsume(ctr, wireEra == era_, tag, msg, sizeof(msg));
+    mbedtls_platform_zeroize(msg, sizeof(msg));
+    return verified;
+  }
+
   // MANUAL session poll seam: the coordinator drains these each tick into
   // onManualTake/onManualRelease. Consume-on-read — a staged take fires
   // exactly once.
@@ -536,6 +564,18 @@ class PairingTask : public transport::IPairingSession {
     const bool pending = manualReleasePending_;
     manualReleasePending_ = false;
     return pending;
+  }
+
+  // Expression-trigger poll seam: the coordinator drains the staged id each
+  // tick, gates it on sysmode MANUAL, and forwards it to the expression
+  // owner. Consume-on-read — a staged trigger fires exactly once.
+  bool takeExprTrigger(uint8_t& id) {
+    if (!exprTriggerPending_) {
+      return false;
+    }
+    exprTriggerPending_ = false;
+    id = exprTriggerId_;
+    return true;
   }
 
   // Alive-fresh poll for the MANUAL exit rule: reads the transport-owned
@@ -572,6 +612,8 @@ class PairingTask : public transport::IPairingSession {
     pairShowSent_ = false;       // Next window sends exactly once.
     manualTakePending_ = false;  // A staged take dies with the session.
     manualReleasePending_ = false;
+    exprTriggerPending_ = false;  // A staged trigger dies with the session.
+    exprTriggerId_ = 0;
     if (link_ != nullptr) {
       notifyPairingDone(*link_);  // Fire-and-forget; peerless = silent no-op.
     }
@@ -599,6 +641,12 @@ class PairingTask : public transport::IPairingSession {
         break;
       case pairing::kManualReleaseHeader:
         handleManualRelease(buf, rip, rport, nowMs, t);
+        break;
+      case pairing::kExprListReqHeader:
+        handleExprList(buf, rip, rport, nowMs, t);
+        break;
+      case pairing::kExprTriggerHeader:
+        handleExprTrigger(buf, rip, rport, nowMs, t);
         break;
       default:
         break;
@@ -829,6 +877,8 @@ class PairingTask : public transport::IPairingSession {
     pairShowSent_ = false;
     manualTakePending_ = false;  // A staged take dies with the session.
     manualReleasePending_ = false;
+    exprTriggerPending_ = false;  // A staged trigger dies with the session.
+    exprTriggerId_ = 0;
     if (link_ != nullptr) {
       notifyPairingDone(*link_);  // Fire-and-forget; peerless = silent no-op.
     }
@@ -924,6 +974,111 @@ class PairingTask : public transport::IPairingSession {
     }
     manualReleasePending_ = true;
     LOG_I("UDP", "manual release ok");
+  }
+
+  // EXPR_LIST_REQ layout [0x59|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR
+  // checked by the caller). Authenticated face-list fetch under the paired
+  // PSK; verify order mirrors MANUAL_TAKE (paired? -> era current -> counter
+  // fresh -> atomic tryConsume). Pass consumes the shared fromApp counter
+  // exactly like drive, refreshes the alive funnel, consumes one robot->app
+  // send-domain counter, and unicasts a single EXPR_LIST_RESP served from
+  // the shared catalog (no retry: the app refetches on screen entry, so loss
+  // heals). Fail = silent drop. The paired/era/fresh reads are logging-only
+  // pre-checks; tryConsume is the authoritative gate.
+  void handleExprList(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
+                      transport::IUdpTransport& t) {
+    DESKY_ASSERT(buf != nullptr);
+    if (buf == nullptr) {
+      return;
+    }
+    if (!paired_) {
+      dropFirst(firstExprDrop_, "drop expr-list unpaired (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop expr-list unpaired");
+      return;
+    }
+    const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(buf[1]) << 8) | static_cast<uint16_t>(buf[2]));
+    if (era != era_) {
+      dropFirst(firstExprDrop_, "drop expr-list era=%u have=%u (first of boot)", static_cast<unsigned>(era),
+                static_cast<unsigned>(era_));
+      LOG_EVERY_N(20, "UDP", "drop expr-list era=%u have=%u", static_cast<unsigned>(era), static_cast<unsigned>(era_));
+      return;
+    }
+    const uint32_t ctr = (static_cast<uint32_t>(buf[3]) << 24) | (static_cast<uint32_t>(buf[4]) << 16) |
+                         (static_cast<uint32_t>(buf[5]) << 8) | static_cast<uint32_t>(buf[6]);
+    if (!t.isFreshCounter(fromAppCounter_, ctr)) {
+      dropFirst(firstExprDrop_, "drop expr-list replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
+      LOG_EVERY_N(20, "UDP", "drop expr-list replay ctr=%lu", static_cast<unsigned long>(ctr));
+      return;
+    }
+    // Tag composition + atomic consume live in tryConsumeExprList above.
+    connection::Verified verified = tryConsumeExprList(era, ctr, buf + 7);
+    if (!verified.valid()) {
+      dropFirst(firstExprDrop_, "drop expr-list auth (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop expr-list auth");
+      return;
+    }
+    // A verified fetch proves the owner alive exactly like drive: pin the
+    // peer + refresh the stamp before answering.
+    t.markAlive(std::move(verified), rip, rport, nowMs, era);
+    // The response carries no counter field but still consumes the robot->app
+    // send domain, keeping it strictly increasing like evictions.
+    nextToAppCounter();
+    uint8_t resp[4 + expression::kExprEntryLen * expression::kExprListRespMaxCount];
+    const size_t respLen = expression::composeExprListResp(resp, sizeof(resp));
+    if (respLen != 0) {
+      t.sendExprList(rip, rport, resp, respLen);
+    }
+    mbedtls_platform_zeroize(resp, sizeof(resp));
+    LOG_I("UDP", "expr list ok");
+  }
+
+  // EXPR_TRIGGER layout [0x5B|id|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR
+  // checked by the caller). Authenticated face request under the paired PSK;
+  // verify mirrors the take path. Pass consumes the shared fromApp counter,
+  // refreshes the alive funnel, and stages the coordinator-polled pending id
+  // (the coordinator tick forwards it to the expression owner only while
+  // sysmode MANUAL is held, else drops it with no reply). Never drives.
+  // Fail = silent drop.
+  void handleExprTrigger(const uint8_t* buf, const IPAddress& rip, uint16_t rport, uint32_t nowMs,
+                         transport::IUdpTransport& t) {
+    DESKY_ASSERT(buf != nullptr);
+    if (buf == nullptr) {
+      return;
+    }
+    if (!paired_) {
+      dropFirst(firstExprDrop_, "drop expr-trigger unpaired (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop expr-trigger unpaired");
+      return;
+    }
+    const uint8_t id = buf[1];
+    const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(buf[2]) << 8) | static_cast<uint16_t>(buf[3]));
+    if (era != era_) {
+      dropFirst(firstExprDrop_, "drop expr-trigger era=%u have=%u (first of boot)", static_cast<unsigned>(era),
+                static_cast<unsigned>(era_));
+      LOG_EVERY_N(20, "UDP", "drop expr-trigger era=%u have=%u", static_cast<unsigned>(era),
+                  static_cast<unsigned>(era_));
+      return;
+    }
+    const uint32_t ctr = (static_cast<uint32_t>(buf[4]) << 24) | (static_cast<uint32_t>(buf[5]) << 16) |
+                         (static_cast<uint32_t>(buf[6]) << 8) | static_cast<uint32_t>(buf[7]);
+    if (!t.isFreshCounter(fromAppCounter_, ctr)) {
+      dropFirst(firstExprDrop_, "drop expr-trigger replay ctr=%lu (first of boot)", static_cast<unsigned long>(ctr));
+      LOG_EVERY_N(20, "UDP", "drop expr-trigger replay ctr=%lu", static_cast<unsigned long>(ctr));
+      return;
+    }
+    // Tag composition + atomic consume live in tryConsumeExprTrigger above.
+    connection::Verified verified = tryConsumeExprTrigger(id, era, ctr, buf + 8);
+    if (!verified.valid()) {
+      dropFirst(firstExprDrop_, "drop expr-trigger auth (first of boot)");
+      LOG_EVERY_N(20, "UDP", "drop expr-trigger auth");
+      return;
+    }
+    // Counter consumed (a replayed trigger can never stage twice). The
+    // coordinator tick drains the staged id into the MANUAL-gated forward.
+    t.markAlive(std::move(verified), rip, rport, nowMs, era);
+    exprTriggerId_ = id;
+    exprTriggerPending_ = true;
+    LOG_I("UDP", "expr trigger ok id=%u", static_cast<unsigned>(id));
   }
 
   // PAIR_REFRESH_REQ layout [0x53|eraBE2|ctrBE4|tag6|XOR] (len + header + XOR
@@ -1154,6 +1309,11 @@ class PairingTask : public transport::IPairingSession {
   // above). Cleared with the pair. RX-written, coordinator-read.
   bool manualTakePending_ = false;
   bool manualReleasePending_ = false;
+  // Staged expression trigger id, same consume-on-read seam as the MANUAL
+  // flags: the coordinator tick forwards it to the expression owner only
+  // while sysmode MANUAL is held. Cleared with the pair.
+  bool exprTriggerPending_ = false;
+  uint8_t exprTriggerId_ = 0;
   // Staged eviction burst (pair-button DISCONNECT resends): the byte-identical
   // frame composed under the cleared session + its peer + remaining resends +
   // next-due timestamp + stamped counter (log-only). Drained by the main-loop
@@ -1185,6 +1345,7 @@ class PairingTask : public transport::IPairingSession {
   bool firstUnpairDrop_ = true;
   bool firstPairRefreshDrop_ = true;
   bool firstManualDrop_ = true;
+  bool firstExprDrop_ = true;
 };
 
 }  // namespace pairing

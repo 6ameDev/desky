@@ -80,9 +80,12 @@ Frozen wire table (M9 three-way mirror gate — normative source is
 | `0x56` | 14   | DISCONNECT | Both (same layout; App->Robot goodbye, Robot->App pair-button eviction) |
 | `0x57` | 14   | MANUAL_TAKE | App->Robot |
 | `0x58` | 14   | MANUAL_RELEASE | App->Robot |
+| `0x59` | 14   | EXPR_LIST_REQ | App->Robot |
+| `0x5A` | var  | EXPR_LIST_RESP | Robot->App |
+| `0x5B` | 15   | EXPR_TRIGGER | App->Robot |
 
 Reserved: headers `0xAA`/`0xBB`/`0x50`/`0x51`/`0x52`/`0xAC`/`0xAD`/`0x53`/
-`0x54`/`0x55`/`0x56`/`0x57`/`0x58` are claimed — never reuse or renumber a header, never
+`0x54`/`0x55`/`0x56`/`0x57`/`0x58`/`0x59`/`0x5A`/`0x5B` are claimed — never reuse or renumber a header, never
 change a size, never repurpose a reserved byte. New messages claim a fresh
 header (Phase-2 `SET_RATE` must pick other values).
 
@@ -213,6 +216,26 @@ pair-refresh rotation.
   with `tag = first6(HMAC-SHA256(psk, "MANUALRELEASE"||eraBE2||counterBE4))`
   — the 19B message is the 13 ASCII bytes of `"MANUALRELEASE"` + eraBE2 +
   counterBE4. Same verify order and consume-on-accept domain as the take.
+- `EXPR_LIST_REQ` App -> Robot, 14 bytes (face-list fetch):
+  `[0x59 | eraBE2 | counterBE4 | tag 6B | XOR]`
+  with `tag = first6(HMAC-SHA256(psk, "EXPRLIST"||eraBE2||counterBE4))` —
+  the 14B message is the 8 ASCII bytes of `"EXPRLIST"` + the 2B big-endian
+  CURRENT era + the 4B big-endian counter (fresh per `isFreshCounter`,
+  allocated from the app's toRobotCounter — a valid fetch consumes the
+  robot's fromAppCounter exactly like drive, so a replayed fetch can never
+  run twice).
+- `EXPR_LIST_RESP` Robot -> App, variable (face-list answer, unicast):
+  `[0x5A | ver | count | (id, flags, name[10]) x count | XOR]`, ver 1,
+  count 0..12, names blank-padded to exactly 10B (never NUL-terminated).
+  Flags byte per entry: bit 0 = play-once (vs hold); sound/motion stay off
+  the wire. Unauthenticated (XOR only); stamped from the robot's
+  toAppCounter send domain (consumed on send, no field on the wire); single
+  send, no retry.
+- `EXPR_TRIGGER` App -> Robot, 15 bytes (face request):
+  `[0x5B | id | eraBE2 | counterBE4 | tag 6B | XOR]`
+  with `tag = first6(HMAC-SHA256(psk, "EXPRTRIG"||id||eraBE2||counterBE4))`
+  — the 15B message is the 8 ASCII bytes of `"EXPRTRIG"` + id + eraBE2 +
+  counterBE4. Same verify order and consume-on-accept domain as the take.
 
 MANUAL session (explicit take/release, alive-expiry, goodbye): pairing proves
 ownership, but motion needs a held drive session on top. The app enters it
@@ -235,6 +258,22 @@ cleanly into motion. Telemetry `statusFlags` bit 4 (`0x10`) mirrors the
 session: 1 while sysmode MANUAL is held, 0 otherwise (bits 5-7 stay
 reserved). The app keeps `ALIVE` (or drive) flowing to hold the session —
 drive itself may start after the take.
+
+Expression picker (face list + trigger): the app fetches the face list on
+screen entry with `EXPR_LIST_REQ` (verify order mirrors `MANUAL_TAKE`: len
+-> header -> XOR -> paired? -> era equals the stored era -> counter
+wrap-aware strictly greater -> HMAC constant-time; fail = silent drop) and
+the robot answers with one `EXPR_LIST_RESP` served from the shared
+expression catalog (`embedded/shared/link/expression_catalog.h`, which core
+compiles — never a second copy), versioned so the app can gate on `ver`.
+The list carries no sound/motion vocabulary (reserved placeholders stay
+`0xFF` off the wire). A tap sends `EXPR_TRIGGER` (same verify, then the
+MANUAL gate: the coordinator forwards the staged id to the expression owner
+only while sysmode MANUAL is held, else silent drop with no reply either
+way). Core preemption runs on accept and dispatch to head flows through the
+existing staged EXPR pump — loss heals because the app refetches on screen
+entry. Headers `0x59`/`0x5A`/`0x5B` are claimed here — never reuse any
+earlier claimed header.
 
 Robot alive rule (firmware `UdpServer::markAlive` funnel): every VALID
 paired packet — ALIVE, DRIVE, PAIR_REFRESH_REQ — pins the telemetry unicast
@@ -358,3 +397,14 @@ rel_msg=`4d414e55414c52454c45415345000100000064`
 (`"MANUALRELEASE"||eraBE2(0001)||ctrBE4(00000064)`),
 rel_tag=`e2ce426715b5`,
 `MANUAL_RELEASE`=`58000100000064e2ce426715b594` (14B).
+Expression list/trigger test vector (same psk as above, era=`1`, counter=`100`, trigger id=`1`):
+list_msg=`455850524c495354000100000064`
+(`"EXPRLIST"||eraBE2(0001)||ctrBE4(00000064)`),
+list_tag=`926efe36104a`,
+`EXPR_LIST_REQ`=`59000100000064926efe36104a52` (14B),
+trig_msg=`455850525452494701000100000064`
+(`"EXPRTRIG"||id(01)||eraBE2(0001)||ctrBE4(00000064)`),
+trig_tag=`95ade6a7dea4`,
+`EXPR_TRIGGER`=`5b0100010000006495ade6a7dea43c` (15B),
+`EXPR_LIST_RESP`=`5a01070000626f6f742020202020200100686170707920202020200200736164202020202020200300626c696e6b20202020200400616c65727420202020200600637572696f75732020200701737572707269736564204d`
+(88B: ver 1, count 7, blank-padded names, play-once flag on `surprised` only).

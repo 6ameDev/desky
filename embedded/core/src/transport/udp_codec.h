@@ -27,6 +27,9 @@
 //     pair-button eviction clears it; fire-and-forget, burst of 3)
 //   0x57 / 14  MANUAL_TAKE    App->Robot [hdr|eraBE2|ctrBE4|tag6|XOR]
 //   0x58 / 14  MANUAL_RELEASE App->Robot [hdr|eraBE2|ctrBE4|tag6|XOR]
+//   0x59 / 14  EXPR_LIST_REQ  App->Robot [hdr|eraBE2|ctrBE4|tag6|XOR]
+//   0x5A / var EXPR_LIST_RESP Robot->App [hdr|ver|count|(id,flags,name10)xcount|XOR]
+//   0x5B / 15  EXPR_TRIGGER   App->Robot [hdr|id|eraBE2|ctrBE4|tag6|XOR]
 // Per-link counter domains: the app->robot stream rides the app's
 // toRobotCounter (robot verifies against fromAppCounter); the robot->app
 // eviction rides the robot's toAppCounter (app verifies against
@@ -75,6 +78,9 @@ constexpr size_t kTelemetrySize = 9;
 //     toAppCounter)
 //   MANUAL_TAKE    App->Robot 14B [0x57|eraBE2|ctrBE4|tag6|XOR]
 //   MANUAL_RELEASE App->Robot 14B [0x58|eraBE2|ctrBE4|tag6|XOR]
+//   EXPR_LIST_REQ  App->Robot 14B [0x59|eraBE2|ctrBE4|tag6|XOR]
+//   EXPR_LIST_RESP Robot->App var [0x5A|ver|count|(id,flags,name10)xcount|XOR]
+//   EXPR_TRIGGER   App->Robot 15B [0x5B|id|eraBE2|ctrBE4|tag6|XOR]
 // pairing_codec.h and the udpstatus top half of udp_server.h alias these;
 // never re-literalize them elsewhere.
 constexpr uint8_t kPairReqHeader = 0x50;
@@ -102,6 +108,18 @@ constexpr uint8_t kManualTakeHeader = 0x57;
 constexpr size_t kManualTakeSize = 14;
 constexpr uint8_t kManualReleaseHeader = 0x58;
 constexpr size_t kManualReleaseSize = 14;
+// Expression picker vocabulary (fetch-on-entry list + MANUAL-gated trigger):
+//   EXPR_LIST_REQ  App->Robot 14B [0x59|eraBE2|ctrBE4|tag6|XOR]
+//   EXPR_LIST_RESP Robot->App var [0x5A|ver|count|(id,flags,name10)xcount|XOR]
+//   EXPR_TRIGGER   App->Robot 15B [0x5B|id|eraBE2|ctrBE4|tag6|XOR]
+// Tag builders + the list composer live in abilities/pairing/pairing_codec.h;
+// the demux rows live in the udpstatus top half of udp_server.h. Never
+// re-literalize these elsewhere.
+constexpr uint8_t kExprListReqHeader = 0x59;
+constexpr size_t kExprListReqSize = 14;
+constexpr uint8_t kExprListRespHeader = 0x5A;
+constexpr uint8_t kExprTriggerHeader = 0x5B;
+constexpr size_t kExprTriggerSize = 15;
 
 inline uint8_t checksum(const uint8_t* data, size_t len) {
   uint8_t sum = 0;

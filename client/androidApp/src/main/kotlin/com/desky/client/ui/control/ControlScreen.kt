@@ -81,6 +81,7 @@ fun ControlScreen(
         onReleaseEmergency = vm::onReleaseEmergency,
         onTakeManual = vm::onTakeManual,
         onReleaseManual = vm::onReleaseManual,
+        onTriggerExpression = vm::onTriggerExpression,
         onOpenSettings = onOpenSettings,
     )
 }
@@ -95,6 +96,7 @@ fun ControlContent(
     onOpenSettings: () -> Unit,
     onTakeManual: () -> Unit = {},
     onReleaseManual: () -> Unit = {},
+    onTriggerExpression: (Int) -> Unit = {},
 ) {
     Scaffold(
         topBar = {
@@ -131,6 +133,15 @@ fun ControlContent(
             } else {
                 Button(onClick = onTakeManual, enabled = controlsEnabled) { Text("Take Manual") }
             }
+            // Expression picker: the robot-owned catalog fetched on screen
+            // entry (see RobotControlViewModel). Taps send one EXPR_TRIGGER
+            // while MANUAL is reported — the same gating language as the
+            // sticks above (inert until the hold is reported).
+            ExpressionPicker(
+                state = state,
+                enabled = manualControls,
+                onTriggerExpression = onTriggerExpression,
+            )
             JoystickPad(onStick = onStick, enabled = manualControls)
             if (state.eStopped) {
                 OutlinedButton(onClick = onReleaseEmergency, enabled = controlsEnabled) { Text("Release E-STOP") }
@@ -144,6 +155,32 @@ fun ControlContent(
                 ) { Text("E-STOP") }
             }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
+    }
+}
+
+@Composable
+private fun ExpressionPicker(
+    state: RobotControlUiState,
+    /** MANUAL gate: while false, taps send nothing (same language as the sticks). */
+    enabled: Boolean,
+    onTriggerExpression: (Int) -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("Expressions")
+        if (state.expressions.isEmpty()) {
+            Text(if (state.expressionsLoading) "Loading expressions…" else "No expressions")
+        } else {
+            state.expressions.forEach { entry ->
+                OutlinedButton(
+                    onClick = { onTriggerExpression(entry.id) },
+                    enabled = enabled,
+                ) { Text(entry.name) }
+            }
         }
     }
 }
