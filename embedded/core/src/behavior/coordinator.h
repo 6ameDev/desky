@@ -200,16 +200,22 @@ inline ArbitrateOutput arbitrate(const ArbitrateInput& in) {
   return out;
 }
 
-// Safety expression map: ground-loss edge -> scared, obstacle assert edge ->
-// angry. Scared wins when both edges land on the same tick. No I/O, no
-// statics — the firmware loop feeds one call per tick from its event drain.
-inline bool safetyExpressionFor(bool groundEvent, bool obstacleEvent, uint8_t& idOut) {
+// Safety expression map: assert edges -> scared/angry, either clear edge ->
+// neutral (kBoot, which bypasses priority by manager design). Asserts win
+// when assert and clear land on the same tick. No I/O, no statics — the
+// firmware loop feeds one call per tick from its event drain.
+inline bool safetyExpressionFor(bool groundEvent, bool obstacleEvent, uint8_t& idOut, bool groundClear = false,
+                                bool obstacleClear = false) {
   if (groundEvent) {
     idOut = exprcat::kScared;
     return true;
   }
   if (obstacleEvent) {
     idOut = exprcat::kAngry;
+    return true;
+  }
+  if (groundClear || obstacleClear) {
+    idOut = exprcat::kBoot;
     return true;
   }
   return false;
@@ -383,7 +389,9 @@ class Coordinator {
       // Drain the private queue (non-blocking): at most one decision per
       // tick. Edges reset every tick; the ground levels persist.
       bool groundEvent = false;
+      bool groundClear = false;
       bool obstacleEvent = false;
+      bool obstacleClear = false;
       bool freshCommand = false;
       bool doneReceived = false;
       uint32_t doneId = BEHAVIOR_NONE;
@@ -394,12 +402,16 @@ class Coordinator {
             bool fwd = true;
             bool rev = true;
             unpackGround(ev.payload, fwd, rev);
-            // Entry edge: fresh 1→0 on either rail. Clear edges (0→1) only
-            // update the levels.
+            // Entry edge: fresh 1→0 on either rail. Clear edge: any prior
+            // loss fully present again (both rails 1).
+            const bool wasLoss = !gndFwd_ || !gndRev_;
             if ((gndFwd_ && !fwd) || (gndRev_ && !rev)) {
               groundEvent = true;
               LOG_D("COORD", "ground lost fwd=%u rev=%u", fwd ? 1u : 0u, rev ? 1u : 0u);
             } else {
+              if (wasLoss && fwd && rev) {
+                groundClear = true;
+              }
               LOG_D("COORD", "ground update fwd=%u rev=%u", fwd ? 1u : 0u, rev ? 1u : 0u);
             }
             gndFwd_ = fwd;
@@ -430,6 +442,10 @@ class Coordinator {
           case EVENT_OBSTACLE_DETECTED:
             obstacleEvent = true;
             LOG_D("COORD", "obstacle dist=%lu", (unsigned long)ev.payload);
+            break;
+          case EVENT_OBSTACLE_CLEARED:
+            obstacleClear = true;
+            LOG_D("COORD", "obstacle cleared dist=%lu", (unsigned long)ev.payload);
             break;
           default:
             break;
@@ -511,7 +527,7 @@ class Coordinator {
       // Safety fires in every mode: deliberately bypasses the MANUAL app-trigger gate below.
       if (expr_ != nullptr) {
         uint8_t safetyId = 0;
-        if (coordinator::safetyExpressionFor(groundEvent, obstacleEvent, safetyId)) {
+        if (coordinator::safetyExpressionFor(groundEvent, obstacleEvent, safetyId, groundClear, obstacleClear)) {
           expr_->request(safetyId, nowMs);
         }
       }
