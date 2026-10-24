@@ -153,10 +153,7 @@ class AudioManager {
   // Non-blocking: queue the boot jingle (call after the BOOT banner lines).
   bool bootJingle() { return playTune(kBootJingle, sizeof(kBootJingle) / sizeof(kBootJingle[0])); }
 
-  // Task-safe bundle cancel: drops the queued notes and silences the
-  // in-flight note without EVENT_BEEP_DONE (cancellation is
-  // commander-caused, same precedent as motion maneuver preemption). The
-  // task honors the active-note half on its next loop pass.
+  // Bundle cancel: drops queued + in-flight notes silently with no DONE.
   void cancelAll() {
     if (mutex_ == nullptr) {
       return;

@@ -11,8 +11,6 @@
 #include <stdint.h>
 
 #include "config.h"
-
-// Shared expression catalog ids (V2 kSound* vocabularies + NONE sentinels).
 #include "link/expression_catalog.h"
 
 // Fallbacks if config keys drift; in-project include/config.h always wins.
@@ -103,21 +101,15 @@ struct AudioLevel {
 
 }  // namespace audiometer
 
-// Expression sound cues (namespace exprcue) — the single keyed table the
-// expression conductor plays from: cue id (catalog kSound*) to short note
-// sequences. Plain POD (no AudioManager::Note dependency); the conductor's
-// audio sink converts one beep() call per note. Every cue fits the 8-slot
-// note queue with room to spare. NONE/unknown ids yield no notes (silent).
+// Single keyed table: catalog cue id -> note sequence; NONE/unknown ids yield no notes.
 namespace exprcue {
 
 struct CueNote {
   uint16_t freqHz = 0;  // 0 = rest (silence for durMs)
   uint16_t durMs = 0;
-  uint16_t gapMs = 0;  // Trailing silence before the next note.
+  uint16_t gapMs = 0;
 };
 
-// Angry: low buzz. Scared: tremolo. Excited: ascending fanfare. Confused:
-// two-note wobble.
 constexpr CueNote kCueAngry[] = {{130, 140, 15}, {98, 220, 0}};
 constexpr CueNote kCueScared[] = {{880, 70, 20}, {880, 70, 20}, {660, 140, 0}};
 constexpr CueNote kCueExcited[] = {{523, 110, 15}, {659, 110, 15}, {784, 110, 15}, {1047, 220, 0}};

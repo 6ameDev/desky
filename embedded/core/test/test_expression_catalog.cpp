@@ -1,8 +1,4 @@
 // Host unit tests for the shared expression catalog (link/expression_catalog.h).
-// Pins every V1+V2 row (ids, names, priorities, play-once flags, eye commands,
-// media/pose bundles, NONE placeholders on V1 rows) plus the fail-closed
-// lookup. The id mirror against the head FACE_* vocabulary is pinned here;
-// head pins the eyes/priority mirror.
 
 #include <string.h>
 #include <unity.h>

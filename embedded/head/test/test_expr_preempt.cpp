@@ -1,6 +1,4 @@
-// Expression paint gate (no hardware): head stores the last-commanded id,
-// core owns preemption. Held pairing/OTA overlays reject with zero state
-// change; a live QR show clears.
+// Expression paint gate (no hardware): held overlays reject with zero state change; a live QR show clears.
 
 #include <stdio.h>
 #include <unity.h>
@@ -35,7 +33,6 @@ void test_expr_play_once_shape() {
 void test_expr_paint_stores_every_id() {
   DisplayManager mgr;
   DisplayTransition t;
-  // No policy head-side: a lower id stores over a higher one, neutral stores.
   TEST_ASSERT_TRUE(mgr.paintFace(FACE_SURPRISED, t));
   TEST_ASSERT_EQUAL_UINT8(FACE_SURPRISED, mgr.eyesId());
   TEST_ASSERT_TRUE(mgr.paintFace(FACE_HAPPY, t));
@@ -44,7 +41,6 @@ void test_expr_paint_stores_every_id() {
   TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, mgr.eyesId());
   TEST_ASSERT_TRUE(mgr.paintFace(FACE_BLINK, t));
   TEST_ASSERT_EQUAL_UINT8(FACE_BLINK, mgr.eyesId());
-  // V2 rows store verbatim and render through the catalog eye field.
   const uint8_t v2[] = {FACE_ANGRY, FACE_SCARED, FACE_EXCITED, FACE_CONFUSED};
   for (size_t i = 0; i < sizeof(v2); ++i) {
     TEST_ASSERT_TRUE(mgr.paintFace(v2[i], t));

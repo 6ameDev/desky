@@ -76,13 +76,7 @@ class Task {
     return true;
   }
 
-  // Bundle conductor: plays the staged row's audio cue + motion primitive
-  // exactly once per accepted request (or play-once yield). A newly staged
-  // bundle cancels in-flight parts first (audio queue-clear + motion stop),
-  // then starts the row's cue/primitive (NONE starts nothing). Duck-typed
-  // sinks (exactly like publishStaged): audio needs cancelAll() + beep(),
-  // motion needs stop() + startWiggle(). Rejected requests never stage, so
-  // they conduct nothing.
+  // Bundle conductor (cancel-then-start over duck-typed audio + motion sinks).
   template <typename Audio, typename Motion>
   bool conductBundle(Audio& audio, Motion& motion) {
     if (!hasBundle_) {

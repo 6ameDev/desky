@@ -90,8 +90,6 @@ void test_link_expr_unknown_maps_neutral() {
 }
 
 void test_link_expr_v2_ids_route_to_paint() {
-  // EXPR frames deliver catalog ids 8-11; the widened FACE vocabulary keeps
-  // them verbatim through resolveFace into the single paint entry.
   const uint8_t v2[] = {exprcat::kAngry, exprcat::kScared, exprcat::kExcited, exprcat::kConfused};
   for (size_t i = 0; i < sizeof(v2); ++i) {
     PowerCommand cmd;
@@ -108,8 +106,6 @@ void test_link_expr_v2_ids_route_to_paint() {
 }
 
 void test_link_expr_gated_entry_routes_eyes() {
-  // Link EXPR door end to end: frame payload -> gate -> stored id. Head holds
-  // no policy; every command stores (core sends the single winner).
   DisplayManager mgr;
   DisplayTransition t;
   PowerCommand cmd;
@@ -151,7 +147,6 @@ void test_link_expr_ota_screen_survives_command() {
 }
 
 void test_link_expr_bench_path_intact() {
-  // CLI door converges into the same entry.
   PowerCommand cli;
   TEST_ASSERT_TRUE(headcmd::parseLine("face curious", cli));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::FACE), static_cast<uint8_t>(cli.target));
@@ -162,7 +157,6 @@ void test_link_expr_bench_path_intact() {
   TEST_ASSERT_TRUE(mgr.paintFace(resolved, t));
   TEST_ASSERT_EQUAL_UINT8(FACE_CURIOUS, mgr.eyesId());
   TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionAwe, eyesmap::emotionForFace(mgr.eyesId()));
-  // Link FACE frames keep working through the same entry.
   DisplayManager link;
   PowerCommand wire;
   const uint8_t raw = FACE_HAPPY;
