@@ -1,5 +1,6 @@
-// Expression priority + trigger paths (no hardware): one active V1 id, higher
-// preempts lower, neutral releases, play-once self-clears with fake millis.
+// Expression paint gate (no hardware): head stores the last-commanded id,
+// core owns preemption. Held pairing/OTA overlays reject with zero state
+// change; a live QR show clears.
 
 #include <stdio.h>
 #include <unity.h>
@@ -31,103 +32,87 @@ void test_expr_play_once_shape() {
   TEST_ASSERT_EQUAL_UINT32(0, exprcat::holdMsFor(FACE_HAPPY));
 }
 
-void test_expr_higher_preempts_lower() {
+void test_expr_paint_stores_every_id() {
   DisplayManager mgr;
   DisplayTransition t;
-  const uint8_t chain[] = {FACE_HAPPY, FACE_CURIOUS, FACE_SAD, FACE_ALERT, FACE_SURPRISED};
-  for (size_t i = 0; i < sizeof(chain); ++i) {
-    TEST_ASSERT_TRUE(mgr.showEyes(chain[i], t, 0));
-    TEST_ASSERT_EQUAL_UINT8(chain[i], mgr.eyesId());
-  }
-}
-
-void test_expr_lower_never_displaces_higher() {
-  DisplayManager mgr;
-  DisplayTransition t;
-  TEST_ASSERT_TRUE(mgr.showEyes(FACE_SURPRISED, t, 0));
-  const uint8_t lower[] = {FACE_HAPPY, FACE_CURIOUS, FACE_SAD, FACE_ALERT};
-  for (size_t i = 0; i < sizeof(lower); ++i) {
-    TEST_ASSERT_FALSE(mgr.showEyes(lower[i], t, 100));
-    TEST_ASSERT_EQUAL_UINT8(FACE_SURPRISED, mgr.eyesId());
-  }
-  TEST_ASSERT_TRUE(mgr.showEyes(FACE_BOOT, t, 150));
-  TEST_ASSERT_TRUE(mgr.showEyes(FACE_ALERT, t, 200));
-  TEST_ASSERT_FALSE(mgr.showEyes(FACE_HAPPY, t, 300));
-  TEST_ASSERT_EQUAL_UINT8(FACE_ALERT, mgr.eyesId());
-}
-
-void test_expr_neutral_releases_from_any() {
-  DisplayManager mgr;
-  DisplayTransition t;
-  const uint8_t moods[] = {FACE_HAPPY, FACE_CURIOUS, FACE_SAD, FACE_ALERT, FACE_SURPRISED};
-  for (size_t i = 0; i < sizeof(moods); ++i) {
-    TEST_ASSERT_TRUE(mgr.showEyes(moods[i], t, 0));
-    TEST_ASSERT_TRUE(mgr.showEyes(FACE_BOOT, t, 10));
-    TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, mgr.eyesId());
-  }
-  TEST_ASSERT_TRUE(mgr.showEyes(FACE_SAD, t, 20));
-  TEST_ASSERT_TRUE(mgr.showEyes(FACE_BLINK, t, 30));
+  // No policy head-side: a lower id stores over a higher one, neutral stores.
+  TEST_ASSERT_TRUE(mgr.paintFace(FACE_SURPRISED, t));
+  TEST_ASSERT_EQUAL_UINT8(FACE_SURPRISED, mgr.eyesId());
+  TEST_ASSERT_TRUE(mgr.paintFace(FACE_HAPPY, t));
+  TEST_ASSERT_EQUAL_UINT8(FACE_HAPPY, mgr.eyesId());
+  TEST_ASSERT_TRUE(mgr.paintFace(FACE_BOOT, t));
+  TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, mgr.eyesId());
+  TEST_ASSERT_TRUE(mgr.paintFace(FACE_BLINK, t));
   TEST_ASSERT_EQUAL_UINT8(FACE_BLINK, mgr.eyesId());
+  // V2 rows store verbatim and render through the catalog eye field.
+  const uint8_t v2[] = {FACE_ANGRY, FACE_SCARED, FACE_EXCITED, FACE_CONFUSED};
+  for (size_t i = 0; i < sizeof(v2); ++i) {
+    TEST_ASSERT_TRUE(mgr.paintFace(v2[i], t));
+    TEST_ASSERT_EQUAL_UINT8(v2[i], mgr.eyesId());
+    TEST_ASSERT_EQUAL_UINT8(exprcat::lookup(v2[i])->eye, eyesmap::emotionForFace(mgr.eyesId()));
+  }
 }
 
-void test_expr_yields_neutral_not_previous_mood() {
+void test_expr_paint_unknown_clamps_boot() {
   DisplayManager mgr;
   DisplayTransition t;
-  TEST_ASSERT_TRUE(mgr.showEyes(FACE_HAPPY, t, 0));
-  TEST_ASSERT_TRUE(mgr.showEyes(FACE_SURPRISED, t, 10));
-  TEST_ASSERT_TRUE(mgr.exprTick(10 + exprcat::kSurprisedHoldMs));
+  TEST_ASSERT_TRUE(mgr.paintFace(FACE_HAPPY, t));
+  TEST_ASSERT_TRUE(mgr.paintFace(FACE_QR, t));
   TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, mgr.eyesId());
-  TEST_ASSERT_TRUE(mgr.showEyes(FACE_HAPPY, t, 2000));
-  TEST_ASSERT_TRUE(mgr.showEyes(FACE_SAD, t, 2010));
-  TEST_ASSERT_TRUE(mgr.showEyes(FACE_BOOT, t, 2020));
+  TEST_ASSERT_TRUE(mgr.paintFace(static_cast<uint8_t>(FACE_COUNT), t));
   TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, mgr.eyesId());
-}
-
-void test_expr_play_once_auto_release() {
-  DisplayManager mgr;
-  DisplayTransition t;
-  TEST_ASSERT_TRUE(mgr.showEyes(FACE_SURPRISED, t, 1000));
-  TEST_ASSERT_FALSE(mgr.exprTick(1000 + exprcat::kSurprisedHoldMs - 1));
-  TEST_ASSERT_EQUAL_UINT8(FACE_SURPRISED, mgr.eyesId());
-  TEST_ASSERT_TRUE(mgr.exprTick(1000 + exprcat::kSurprisedHoldMs));
+  TEST_ASSERT_TRUE(mgr.paintFace(99, t));
   TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, mgr.eyesId());
-  TEST_ASSERT_FALSE(mgr.exprTick(1000 + exprcat::kSurprisedHoldMs + 1));
-}
-
-void test_expr_play_once_retrigger_extends_hold() {
-  DisplayManager mgr;
-  DisplayTransition t;
-  TEST_ASSERT_TRUE(mgr.showEyes(FACE_SURPRISED, t, 0));
-  TEST_ASSERT_FALSE(mgr.exprTick(exprcat::kSurprisedHoldMs - 100));
-  TEST_ASSERT_TRUE(mgr.showEyes(FACE_SURPRISED, t, exprcat::kSurprisedHoldMs - 100));
-  TEST_ASSERT_FALSE(mgr.exprTick(2 * exprcat::kSurprisedHoldMs - 101));
-  TEST_ASSERT_EQUAL_UINT8(FACE_SURPRISED, mgr.eyesId());
-  TEST_ASSERT_TRUE(mgr.exprTick(2 * exprcat::kSurprisedHoldMs - 100));
+  TEST_ASSERT_TRUE(mgr.paintFace(0xFF, t));
   TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, mgr.eyesId());
 }
 
-void test_expr_hold_wraps_and_persists() {
+void test_expr_paint_held_pairing_rejects_zero_change() {
   DisplayManager mgr;
   DisplayTransition t;
-  TEST_ASSERT_TRUE(mgr.showEyes(FACE_SURPRISED, t, 0xFFFFFF00u));
-  TEST_ASSERT_FALSE(mgr.exprTick(0xFFFFFF00u + 100));
-  TEST_ASSERT_TRUE(mgr.exprTick(0xFFFFFF00u + exprcat::kSurprisedHoldMs));
-  TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, mgr.eyesId());
-  TEST_ASSERT_TRUE(mgr.showEyes(FACE_SAD, t, 5000));
-  TEST_ASSERT_FALSE(mgr.exprTick(5000 + 100000));
+  TEST_ASSERT_TRUE(mgr.paintFace(FACE_ALERT, t));
+  const uint8_t pin[pairdisplay::kPinLen] = {'1', '2', '3', '4', '5', '6'};
+  TEST_ASSERT_TRUE(mgr.showPairing(pin, 60, 0, t));
+  TEST_ASSERT_TRUE(mgr.pairActive());
+  TEST_ASSERT_FALSE(mgr.paintFace(FACE_HAPPY, t));
+  TEST_ASSERT_TRUE(mgr.pairActive());
+  TEST_ASSERT_EQUAL_UINT8(FACE_ALERT, mgr.eyesId());
+  TEST_ASSERT_EQUAL_UINT32(60, mgr.remainingSecs(0));
+}
+
+void test_expr_paint_held_ota_rejects_zero_change() {
+  DisplayManager mgr;
+  DisplayTransition t;
+  TEST_ASSERT_TRUE(mgr.paintFace(FACE_SAD, t));
+  mgr.showOta(30, 0, t);
+  TEST_ASSERT_TRUE(mgr.otaActive());
+  TEST_ASSERT_FALSE(mgr.paintFace(FACE_HAPPY, t));
+  TEST_ASSERT_TRUE(mgr.otaActive());
+  TEST_ASSERT_EQUAL_UINT8(30, mgr.otaPct());
   TEST_ASSERT_EQUAL_UINT8(FACE_SAD, mgr.eyesId());
 }
 
-void test_expr_gated_request_still_clears_overlays() {
+void test_expr_paint_clears_qr_only() {
+  DisplayManager mgr;
+  DisplayTransition t;
+  TEST_ASSERT_TRUE(mgr.paintFace(FACE_CURIOUS, t));
+  uint8_t qr[qrdisplay::kQrLen] = {};
+  TEST_ASSERT_TRUE(mgr.showQr(qr, 0, t));
+  TEST_ASSERT_TRUE(mgr.qrActive());
+  TEST_ASSERT_TRUE(mgr.paintFace(FACE_HAPPY, t));
+  TEST_ASSERT_TRUE(t.clearedQr);
+  TEST_ASSERT_FALSE(mgr.qrActive());
+  TEST_ASSERT_EQUAL_UINT8(FACE_HAPPY, mgr.eyesId());
+}
+
+void test_expr_paint_applies_after_overlay_clears() {
   DisplayManager mgr;
   DisplayTransition t;
   const uint8_t pin[pairdisplay::kPinLen] = {'1', '2', '3', '4', '5', '6'};
-  TEST_ASSERT_TRUE(mgr.showEyes(FACE_ALERT, t, 0));
   TEST_ASSERT_TRUE(mgr.showPairing(pin, 60, 0, t));
-  TEST_ASSERT_TRUE(mgr.pairActive());
-  TEST_ASSERT_FALSE(mgr.showEyes(FACE_HAPPY, t, 10));
-  TEST_ASSERT_TRUE(t.clearedPair);
-  TEST_ASSERT_FALSE(mgr.pairActive());
+  TEST_ASSERT_FALSE(mgr.paintFace(FACE_ALERT, t));
+  TEST_ASSERT_TRUE(mgr.clearPairing(t));
+  TEST_ASSERT_TRUE(mgr.paintFace(FACE_ALERT, t));
   TEST_ASSERT_EQUAL_UINT8(FACE_ALERT, mgr.eyesId());
 }
 
@@ -161,12 +146,12 @@ void test_expr_trigger_paths_cover_all_five() {
     const uint8_t raw = rows[i].id;
     TEST_ASSERT_TRUE(wifilink::mapCmd(linkcode::kTypeFace, &raw, 1, wire));
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::FACE), static_cast<uint8_t>(wire.target));
-    // End to end from neutral: resolve -> gate -> render row.
+    // Single paint entry stores the resolved id verbatim.
     DisplayManager mgr;
     DisplayTransition t;
     const uint8_t resolved = headapply::resolveFace(wire.arg);
     TEST_ASSERT_EQUAL_UINT8(rows[i].id, resolved);
-    TEST_ASSERT_TRUE(mgr.showEyes(resolved, t, 0));
+    TEST_ASSERT_TRUE(mgr.paintFace(resolved, t));
     TEST_ASSERT_EQUAL_UINT8(rows[i].id, mgr.eyesId());
     TEST_ASSERT_EQUAL_UINT8(rows[i].emotion, eyesmap::emotionForFace(mgr.eyesId()));
   }

@@ -34,10 +34,17 @@
 
 static_assert(eyesmap::kEmotionNormal == static_cast<uint8_t>(eEmotions::Normal),
               "eyes map must track vendored eEmotions");
+static_assert(eyesmap::kEmotionAngry == static_cast<uint8_t>(eEmotions::Angry),
+              "eyes map must track vendored eEmotions");
+static_assert(eyesmap::kEmotionGlee == static_cast<uint8_t>(eEmotions::Glee), "eyes map must track vendored eEmotions");
 static_assert(eyesmap::kEmotionHappy == static_cast<uint8_t>(eEmotions::Happy),
               "eyes map must track vendored eEmotions");
 static_assert(eyesmap::kEmotionSad == static_cast<uint8_t>(eEmotions::Sad), "eyes map must track vendored eEmotions");
 static_assert(eyesmap::kEmotionSurprised == static_cast<uint8_t>(eEmotions::Surprised),
+              "eyes map must track vendored eEmotions");
+static_assert(eyesmap::kEmotionSkeptic == static_cast<uint8_t>(eEmotions::Skeptic),
+              "eyes map must track vendored eEmotions");
+static_assert(eyesmap::kEmotionScared == static_cast<uint8_t>(eEmotions::Scared),
               "eyes map must track vendored eEmotions");
 static_assert(eyesmap::kEmotionAwe == static_cast<uint8_t>(eEmotions::Awe), "eyes map must track vendored eEmotions");
 
@@ -84,32 +91,23 @@ class DisplayRenderer : public IDisplayPort {
 
   bool present() const { return panel_.present(); }
 
-  // Stores (clamped), paints when live. Clears every live overlay. A lower id
-  // never displaces a higher one (release via the neutral family first). A
-  // held pairing/OTA overlay rejects the request with zero state change and
-  // no repaint: pairing/OTA own the screen while held.
+  // Stores (clamped) + paints when live. Head holds no preemption policy:
+  // core sends the single winner; play-once expiry arrives as a neutral id
+  // over the link. A held pairing/OTA overlay rejects the request with zero
+  // state change and no repaint: overlays own the screen while held. A live
+  // QR show clears (the staging buffer yields to FACE, same as timeout).
   void showEyes(uint8_t id) {
     DisplayTransition t;
-    const bool stored = mgr_.requestEyes(id, t, millis());
-    if (!stored && (mgr_.pairActive() || mgr_.otaActive())) {
+    const bool stored = mgr_.paintFace(id, t);
+    if (!stored) {
       LOG_I("FACE", "face=%s held by overlay (pairing/ota own the screen)", faceName(clampFace(static_cast<int>(id))));
       return;
     }
     if (panel_.present() && enabled_) {
       drawEyes(mgr_.eyesId());
     }
-    if (!stored) {
-      LOG_I("FACE", "face=%s held by %s (send boot first)", faceName(clampFace(static_cast<int>(id))),
-            faceName(mgr_.eyesId()));
-    }
     if (t.clearedQr) {
       LOG_I("FACE", "qr cleared (face)");
-    }
-    if (t.clearedPair) {
-      LOG_I("FACE", "pairing cleared (face)");
-    }
-    if (t.clearedOta) {
-      LOG_I("FACE", "ota cleared (face)");
     }
   }
 
@@ -299,9 +297,6 @@ class DisplayRenderer : public IDisplayPort {
         } else {
           self->wasPairActive_ = false;
           self->lastPairSec_ = kNoPairSec;
-          if (self->mgr_.exprTick(millis())) {
-            LOG_I("FACE", "play-once done (neutral)");
-          }
           if (self->mgr_.qrExpired(millis())) {
             self->clearQr("timeout");
           } else if (self->mgr_.qrActive()) {

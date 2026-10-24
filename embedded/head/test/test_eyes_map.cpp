@@ -16,14 +16,26 @@ void test_eyes_map_request_ids() {
 
 void test_eyes_map_ordinals_track_emotions() {
   TEST_ASSERT_EQUAL_UINT8(0, eyesmap::kEmotionNormal);
+  TEST_ASSERT_EQUAL_UINT8(1, eyesmap::kEmotionAngry);
+  TEST_ASSERT_EQUAL_UINT8(2, eyesmap::kEmotionGlee);
   TEST_ASSERT_EQUAL_UINT8(3, eyesmap::kEmotionHappy);
   TEST_ASSERT_EQUAL_UINT8(4, eyesmap::kEmotionSad);
   TEST_ASSERT_EQUAL_UINT8(8, eyesmap::kEmotionSurprised);
+  TEST_ASSERT_EQUAL_UINT8(9, eyesmap::kEmotionSkeptic);
+  TEST_ASSERT_EQUAL_UINT8(16, eyesmap::kEmotionScared);
   TEST_ASSERT_EQUAL_UINT8(17, eyesmap::kEmotionAwe);
+}
+
+void test_eyes_map_v2_rows() {
+  TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionAngry, eyesmap::emotionForFace(exprcat::kAngry));
+  TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionScared, eyesmap::emotionForFace(exprcat::kScared));
+  TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionGlee, eyesmap::emotionForFace(exprcat::kExcited));
+  TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionSkeptic, eyesmap::emotionForFace(exprcat::kConfused));
 }
 
 void test_eyes_map_falls_back_to_normal() {
   TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionNormal, eyesmap::emotionForFace(FACE_QR));
-  TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionNormal, eyesmap::emotionForFace(12));
+  TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionNormal, eyesmap::emotionForFace(static_cast<uint8_t>(FACE_COUNT)));
+  TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionNormal, eyesmap::emotionForFace(13));
   TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionNormal, eyesmap::emotionForFace(99));
 }

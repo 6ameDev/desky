@@ -37,12 +37,16 @@ void test_cli_face_numeric_and_name() {
   TEST_ASSERT_EQUAL_INT32(6, cmd.arg);
   TEST_ASSERT_TRUE(headcmd::parseLine("face 7", cmd));
   TEST_ASSERT_EQUAL_INT32(7, cmd.arg);
+  TEST_ASSERT_TRUE(headcmd::parseLine("face angry", cmd));
+  TEST_ASSERT_EQUAL_INT32(FACE_ANGRY, cmd.arg);
+  TEST_ASSERT_TRUE(headcmd::parseLine("face 11", cmd));
+  TEST_ASSERT_EQUAL_INT32(11, cmd.arg);
 }
 
 void test_cli_face_rejects() {
   PowerCommand cmd;
   TEST_ASSERT_FALSE(headcmd::parseLine("face", cmd));
-  TEST_ASSERT_FALSE(headcmd::parseLine("face scared", cmd));
+  TEST_ASSERT_FALSE(headcmd::parseLine("face sleepy", cmd));
   TEST_ASSERT_FALSE(headcmd::parseLine("face -1", cmd));
   TEST_ASSERT_FALSE(headcmd::parseLine("face 1 2", cmd));
 }
