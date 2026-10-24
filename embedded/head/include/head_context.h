@@ -80,7 +80,8 @@ inline uint8_t clampFace(int id) {
   if (id < 0 || id >= static_cast<int>(FACE_COUNT)) {
     return FACE_BOOT;
   }
-  return exprcat::lookup(static_cast<uint8_t>(id)) == nullptr ? FACE_BOOT : static_cast<uint8_t>(id);
+  return exprcat::lookup(static_cast<uint8_t>(id)) == nullptr ? static_cast<uint8_t>(FACE_BOOT)
+                                                              : static_cast<uint8_t>(id);
 }
 
 // Power-matrix states
