@@ -85,10 +85,16 @@ class DisplayRenderer : public IDisplayPort {
   bool present() const { return panel_.present(); }
 
   // Stores (clamped), paints when live. Clears every live overlay. A lower id
-  // never displaces a higher one (release via the neutral family first).
+  // never displaces a higher one (release via the neutral family first). A
+  // held pairing/OTA overlay rejects the request with zero state change and
+  // no repaint: pairing/OTA own the screen while held.
   void showEyes(uint8_t id) {
     DisplayTransition t;
-    const bool stored = mgr_.showEyes(id, t, millis());
+    const bool stored = mgr_.requestEyes(id, t, millis());
+    if (!stored && (mgr_.pairActive() || mgr_.otaActive())) {
+      LOG_I("FACE", "face=%s held by overlay (pairing/ota own the screen)", faceName(clampFace(static_cast<int>(id))));
+      return;
+    }
     if (panel_.present() && enabled_) {
       drawEyes(mgr_.eyesId());
     }

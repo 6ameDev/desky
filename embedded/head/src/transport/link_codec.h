@@ -53,6 +53,8 @@ inline const char* typeName(uint8_t type) {
       return "PAIRSHOW";
     case linkcode::kTypePairDone:
       return "PAIRDONE";
+    case linkcode::kTypeExpr:
+      return "EXPR";
     case linkcode::kTypeOta:
       return "OTA";
     case linkcode::kTypeJpeg:
@@ -68,8 +70,8 @@ inline const char* typeName(uint8_t type) {
   }
 }
 
-// Codec frame -> PowerCommand (FACE/OLED/CAMCTL only, value-checked through
-// the shared codec vocabulary). False = not a command frame or bad value.
+// Codec frame -> PowerCommand (FACE/OLED/CAMCTL/EXPR only, value-checked
+// through the shared codec vocabulary). False = not a command frame or bad value.
 inline bool mapCmd(uint8_t type, const uint8_t* payload, uint16_t len, PowerCommand& out) {
   if (len > 0 && payload == nullptr) {
     return false;
@@ -121,6 +123,21 @@ inline bool mapCmd(uint8_t type, const uint8_t* payload, uint16_t len, PowerComm
       }
       out.target = CmdTarget::CAM;
       out.arg = (wire == linkcode::kCamOn) ? 1 : 0;
+      return true;
+    }
+    case linkcode::kTypeExpr: {
+      if (len != linkcode::kExprLen) {
+        return false;
+      }
+      // Catalog ids ride through; anything else lands on neutral (the
+      // fail-closed unpack never blanks the face, resolveFace clamps QR).
+      uint8_t id = FACE_BOOT;
+      uint8_t decoded = FACE_BOOT;
+      if (linkcode::unpackExpr(payload[0], decoded)) {
+        id = decoded;
+      }
+      out.target = CmdTarget::FACE;
+      out.arg = static_cast<int32_t>(id);
       return true;
     }
     default:

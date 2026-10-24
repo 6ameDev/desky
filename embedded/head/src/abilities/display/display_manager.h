@@ -25,6 +25,21 @@ enum class DisplayLiveMode : uint8_t { kEyes, kQr, kOtaBar, kOtaAlert };
 
 class DisplayManager {
  public:
+  // Single gated expression entry: the core->head EXPR link command and the
+  // local bench trigger (CLI `face`) converge here — one entry, two callers.
+  // Pairing/OTA own the screen while held, so a held overlay rejects the
+  // request with zero state change; eyes otherwise. Core owns app/behavior
+  // requests; head keeps local preemption for its bench path via showEyes.
+  bool requestEyes(uint8_t id, DisplayTransition& t, uint32_t nowMs) {
+    if (pairActive_ || ota_.active) {
+      t.clearedQr = false;
+      t.clearedPair = false;
+      t.clearedOta = false;
+      return false;
+    }
+    return showEyes(id, t, nowMs);
+  }
+
   // Stores (clamped) + clears every live overlay. Neutral-family ids always
   // release; higher priorities preempt, equal refresh, lower never displace.
   // True when the request took effect.

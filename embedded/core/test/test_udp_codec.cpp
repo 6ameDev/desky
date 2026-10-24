@@ -349,6 +349,49 @@ void test_link_cmd_vocab_oled_literal_round_trip();
 void test_link_cmd_vocab_camctl_literal_round_trip();
 void test_link_cmd_vocab_ota_literal_length();
 void test_link_cmd_vocab_face_literal_range();
+void test_link_cmd_vocab_expr_literal_range();
+
+// Core->head expression command (EXPR 0x08 goldens + pack/unpack), defined
+// in test_link_expr.cpp.
+void test_link_expr_literal_contract();
+void test_link_expr_golden_encode();
+void test_link_expr_golden_decode();
+void test_link_expr_pack_unpack_round_trip();
+void test_link_expr_pack_unpack_fail_closed();
+
+// Shared expression catalog (one V1 face table both firmwares compile from),
+// defined in test_expression_catalog.cpp.
+void test_exprcat_ids_mirror_face_vocabulary();
+void test_exprcat_count_and_order();
+void test_exprcat_names();
+void test_exprcat_priorities();
+void test_exprcat_play_once_and_hold();
+void test_exprcat_eye_commands();
+void test_exprcat_placeholders_none();
+void test_exprcat_lookup_fail_closed();
+void test_exprcat_accessors_fail_closed();
+
+// Core expression owner (one-active preemption + staged dispatch), defined
+// in test_expression.cpp.
+void test_exprcodec_ids_mirror_catalog();
+void test_exprcodec_neutral_family();
+void test_exprmgr_starts_neutral();
+void test_exprmgr_priority_order();
+void test_exprmgr_higher_preempts_lower();
+void test_exprmgr_lower_never_displaces_higher();
+void test_exprmgr_neutral_releases_from_any();
+void test_exprmgr_yields_neutral_not_previous_mood();
+void test_exprmgr_play_once_expiry();
+void test_exprmgr_play_once_retrigger_extends_hold();
+void test_exprmgr_hold_wraps_and_persists();
+void test_exprmgr_unknown_ids_fail_closed();
+void test_exprtask_request_stages_dispatch_id();
+void test_exprtask_gated_request_keeps_latch();
+void test_exprtask_tick_yield_stages_neutral();
+void test_exprtask_placeholders_stay_none();
+void test_exprtask_pump_sends_staged_once();
+void test_exprtask_pump_refused_send_keeps_latch();
+void test_exprtask_pump_tick_yield_sends_neutral();
 
 // Link endpoint helpers, defined in test_link_server.cpp.
 void test_linkserver_first_frame_fresh();
@@ -661,6 +704,40 @@ int main() {
   RUN_TEST(test_link_cmd_vocab_camctl_literal_round_trip);
   RUN_TEST(test_link_cmd_vocab_ota_literal_length);
   RUN_TEST(test_link_cmd_vocab_face_literal_range);
+  RUN_TEST(test_link_cmd_vocab_expr_literal_range);
+  RUN_TEST(test_link_expr_literal_contract);
+  RUN_TEST(test_link_expr_golden_encode);
+  RUN_TEST(test_link_expr_golden_decode);
+  RUN_TEST(test_link_expr_pack_unpack_round_trip);
+  RUN_TEST(test_link_expr_pack_unpack_fail_closed);
+  RUN_TEST(test_exprcat_ids_mirror_face_vocabulary);
+  RUN_TEST(test_exprcat_count_and_order);
+  RUN_TEST(test_exprcat_names);
+  RUN_TEST(test_exprcat_priorities);
+  RUN_TEST(test_exprcat_play_once_and_hold);
+  RUN_TEST(test_exprcat_eye_commands);
+  RUN_TEST(test_exprcat_placeholders_none);
+  RUN_TEST(test_exprcat_lookup_fail_closed);
+  RUN_TEST(test_exprcat_accessors_fail_closed);
+  RUN_TEST(test_exprcodec_ids_mirror_catalog);
+  RUN_TEST(test_exprcodec_neutral_family);
+  RUN_TEST(test_exprmgr_starts_neutral);
+  RUN_TEST(test_exprmgr_priority_order);
+  RUN_TEST(test_exprmgr_higher_preempts_lower);
+  RUN_TEST(test_exprmgr_lower_never_displaces_higher);
+  RUN_TEST(test_exprmgr_neutral_releases_from_any);
+  RUN_TEST(test_exprmgr_yields_neutral_not_previous_mood);
+  RUN_TEST(test_exprmgr_play_once_expiry);
+  RUN_TEST(test_exprmgr_play_once_retrigger_extends_hold);
+  RUN_TEST(test_exprmgr_hold_wraps_and_persists);
+  RUN_TEST(test_exprmgr_unknown_ids_fail_closed);
+  RUN_TEST(test_exprtask_request_stages_dispatch_id);
+  RUN_TEST(test_exprtask_gated_request_keeps_latch);
+  RUN_TEST(test_exprtask_tick_yield_stages_neutral);
+  RUN_TEST(test_exprtask_placeholders_stay_none);
+  RUN_TEST(test_exprtask_pump_sends_staged_once);
+  RUN_TEST(test_exprtask_pump_refused_send_keeps_latch);
+  RUN_TEST(test_exprtask_pump_tick_yield_sends_neutral);
   RUN_TEST(test_linkserver_first_frame_fresh);
   RUN_TEST(test_linkserver_duplicate_stale_fresh);
   RUN_TEST(test_linkserver_pull_framing);

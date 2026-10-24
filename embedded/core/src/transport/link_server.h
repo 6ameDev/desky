@@ -33,8 +33,8 @@
 // the re-trigger via its in-flight guard. URL bytes are validated by the
 // shared otamanifest grammar and never logged.
 //
-// Direction map: PAIRSHOW + PAIRDONE ride the core->head tx domain
-// (sendUnicast). The two never share a counter.
+// Direction map: PAIRSHOW + PAIRDONE + EXPR ride the core->head tx domain
+// (sendUnicast). The three never share a counter.
 //
 // Auth: NONE beyond CRC+seq — transport-only trust, exactly like the AP
 // passphrase. Never logs payload bytes beyond counters, never touches UART.
@@ -144,6 +144,8 @@ inline const char* typeName(uint8_t type) {
       return "PAIRSHOW";
     case linkcode::kTypePairDone:
       return "PAIRDONE";
+    case linkcode::kTypeExpr:
+      return "EXPR";
     case linkcode::kTypeOta:
       return "OTA";
     case linkcode::kTypeJpeg:
@@ -305,6 +307,9 @@ class LinkServer {
         break;
       case linkcode::kTypePairDone:
         what = "pairdone";
+        break;
+      case linkcode::kTypeExpr:
+        what = "expr";
         break;
       case linkcode::kTypeOta:
         what = "ota";
@@ -479,6 +484,7 @@ class LinkServer {
       case linkcode::kTypeOta:
       case linkcode::kTypePairShow:
       case linkcode::kTypePairDone:
+      case linkcode::kTypeExpr:
         // Core->head direction on the UDP socket: never valid inbound here.
         // Silent drop, throttled.
         dropFirst(firstUnexpectedDrop_, "drop link unexpected %s on udp (first of boot)", linkserver::typeName(f.type));
