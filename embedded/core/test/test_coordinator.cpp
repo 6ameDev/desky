@@ -363,5 +363,28 @@ void test_coord_denied_gate_holds_stop() {
   TEST_ASSERT_FALSE(out.holdMotion);
 }
 
+void test_coord_safety_ground_maps_scared() {
+  uint8_t id = 0;
+  TEST_ASSERT_TRUE(coordinator::safetyExpressionFor(true, false, id));
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kScared, id);
+}
+
+void test_coord_safety_obstacle_maps_angry() {
+  uint8_t id = 0;
+  TEST_ASSERT_TRUE(coordinator::safetyExpressionFor(false, true, id));
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kAngry, id);
+}
+
+void test_coord_safety_no_edge_maps_none() {
+  uint8_t id = 0xFF;
+  TEST_ASSERT_FALSE(coordinator::safetyExpressionFor(false, false, id));
+}
+
+void test_coord_safety_both_edges_scared_wins() {
+  uint8_t id = 0;
+  TEST_ASSERT_TRUE(coordinator::safetyExpressionFor(true, true, id));
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kScared, id);
+}
+
 // Runner lives in test_udp_codec.cpp (single main for the native-test
 // binary): the coordinator tests are declared extern there.

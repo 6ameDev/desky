@@ -25,6 +25,10 @@ val STATIC_EXPRESSIONS: List<ExpressionEntry> = listOf(
     ExpressionEntry(id = 4, flags = 0, name = "alert"),
     ExpressionEntry(id = 6, flags = 0, name = "curious"),
     ExpressionEntry(id = 7, flags = 1, name = "surprised"),
+    ExpressionEntry(id = 8, flags = 0, name = "angry"),
+    ExpressionEntry(id = 9, flags = 0, name = "scared"),
+    ExpressionEntry(id = 10, flags = 0, name = "excited"),
+    ExpressionEntry(id = 11, flags = 0, name = "confused"),
 )
 
 /** Id set of [STATIC_EXPRESSIONS]: the trigger allow-list. */
@@ -33,7 +37,7 @@ val STATIC_EXPRESSION_IDS: Set<Int> = STATIC_EXPRESSIONS.map { it.id }.toSet()
 /**
  * Picker subset of [STATIC_EXPRESSIONS]: blink and alert stay triggerable
  * (validation reads the full allow-list) but leave the picker, which lists
- * the four moods plus Neutral.
+ * the eight moods plus Neutral.
  */
 val PICKER_EXPRESSIONS: List<ExpressionEntry> = listOf(
     ExpressionEntry(id = 0, flags = 0, name = "Neutral"),
@@ -41,6 +45,10 @@ val PICKER_EXPRESSIONS: List<ExpressionEntry> = listOf(
     ExpressionEntry(id = 2, flags = 0, name = "sad"),
     ExpressionEntry(id = 6, flags = 0, name = "curious"),
     ExpressionEntry(id = 7, flags = 1, name = "surprised"),
+    ExpressionEntry(id = 8, flags = 0, name = "angry"),
+    ExpressionEntry(id = 9, flags = 0, name = "scared"),
+    ExpressionEntry(id = 10, flags = 0, name = "excited"),
+    ExpressionEntry(id = 11, flags = 0, name = "confused"),
 )
 
 /**

@@ -174,6 +174,10 @@ void test_coord_drive_passes_throttle_raw();
 void test_coord_centered_stick_releases_drive();
 void test_coord_mismatched_done_does_not_clear();
 void test_coord_denied_gate_holds_stop();
+void test_coord_safety_ground_maps_scared();
+void test_coord_safety_obstacle_maps_angry();
+void test_coord_safety_no_edge_maps_none();
+void test_coord_safety_both_edges_scared_wins();
 
 // System mode policy, defined in test_mode_manager.cpp.
 void test_mode_starts_normal();
@@ -567,6 +571,10 @@ int main() {
   RUN_TEST(test_coord_centered_stick_releases_drive);
   RUN_TEST(test_coord_mismatched_done_does_not_clear);
   RUN_TEST(test_coord_denied_gate_holds_stop);
+  RUN_TEST(test_coord_safety_ground_maps_scared);
+  RUN_TEST(test_coord_safety_obstacle_maps_angry);
+  RUN_TEST(test_coord_safety_no_edge_maps_none);
+  RUN_TEST(test_coord_safety_both_edges_scared_wins);
   RUN_TEST(test_mode_starts_normal);
   RUN_TEST(test_mode_pair_window_open_enters_pairing);
   RUN_TEST(test_mode_paired_exits_pairing_to_normal);

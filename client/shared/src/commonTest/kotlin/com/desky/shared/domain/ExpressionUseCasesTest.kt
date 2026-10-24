@@ -154,6 +154,10 @@ class StaticExpressionCatalogTest {
             ExpressionEntry(id = 4, flags = 0, name = "alert"),
             ExpressionEntry(id = 6, flags = 0, name = "curious"),
             ExpressionEntry(id = 7, flags = 1, name = "surprised"),
+            ExpressionEntry(id = 8, flags = 0, name = "angry"),
+            ExpressionEntry(id = 9, flags = 0, name = "scared"),
+            ExpressionEntry(id = 10, flags = 0, name = "excited"),
+            ExpressionEntry(id = 11, flags = 0, name = "confused"),
         )
         assertEquals(expected, STATIC_EXPRESSIONS)
         assertEquals(expected.map { it.id }.toSet(), STATIC_EXPRESSION_IDS)
