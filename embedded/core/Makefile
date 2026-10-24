@@ -2,6 +2,10 @@
 -include .env
 export
 
+# Offline-first PlatformIO; interval is days.
+export PLATFORMIO_SETTING_CHECK_PLATFORMIO_INTERVAL=7
+export PLATFORMIO_SETTING_ENABLE_TELEMETRY=No
+
 .PHONY: clean build build-release build-sta build-bench test test-verbose check check-pins check-arch upload-monitor upload-monitor-release upload-monitor-sta upload-sta upload-bench monitor-decode
 
 clean:
