@@ -2,7 +2,7 @@
 // desky-head WiFi link client (B-link) - TRANSPORT layer, dumb pipe.
 // Sockets, framing, peer/assoc/HB state only; business arrives as injected
 // LinkHandlers callbacks (stored, never owned, bound in main.cpp).
-// UDP 3334: HB head->core at 1Hz + ACK replies; RX FACE/EXPR/OLED/CAMCTL/
+// UDP 3334: HB head->core at 1Hz + ACK replies; RX EXPR/OLED/CAMCTL/
 // PAIRSHOW/PAIRDONE/OTA + HB_ACK. Link down after 3 missed ACKs (~3s).
 // Tx seq is monotonic within a boot; the per-boot bootId epoch lets the
 // core resync after a head reboot. TCP 3335: JPEG stills, one frame per
@@ -37,7 +37,7 @@
 // Injected business edges (stored, never owned). main.cpp binds them.
 struct LinkHandlers {
   void* ctx = nullptr;
-  // Validated FACE/OLED/CAMCTL frame. Handler maps, publishes, executes.
+  // Validated OLED/CAMCTL/EXPR frame. Handler maps, publishes, executes.
   void (*onCommand)(void* ctx, const linkcode::Frame& f) = nullptr;
   // Validated PAIRSHOW payload (digits + window).
   void (*onPairShow)(void* ctx, const uint8_t pin6[6], uint16_t validSecs) = nullptr;
@@ -288,7 +288,6 @@ class LinkClient {
       case linkcode::kTypeHbAck:
         handleHbAck(f);
         break;
-      case linkcode::kTypeFace:
       case linkcode::kTypeOled:
       case linkcode::kTypeCamCtl:
       case linkcode::kTypeExpr:
@@ -410,17 +409,12 @@ class LinkClient {
       LOG_I("LINK", "pairdone seq=%u", static_cast<unsigned>(f.seq));
       return;
     }
-    // FACE/OLED/CAMCTL/EXPR only. Value-checked through the shared codec
+    // OLED/CAMCTL/EXPR only. Value-checked through the shared codec
     // vocabulary (fail-closed); the handler re-maps via wifilink::mapCmd.
     // EXPR gates on length alone: unknown ids fall back to neutral at the
     // gate, so every 1B frame applies.
     bool ok = false;
     switch (f.type) {
-      case linkcode::kTypeFace: {
-        uint8_t id = 0;
-        ok = (f.payloadLen == linkcode::kFaceLen && f.payload != nullptr && linkcode::unpackFace(f.payload[0], id));
-        break;
-      }
       case linkcode::kTypeExpr: {
         ok = (f.payloadLen == linkcode::kExprLen && f.payload != nullptr);
         break;

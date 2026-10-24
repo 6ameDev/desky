@@ -2,7 +2,6 @@
 
 #include <unity.h>
 
-#include "../src/services/cli_manager.h"
 #include "../src/transport/link_codec.h"
 
 void test_wifilink_seq_first_fresh_then_duplicate_then_stale() {
@@ -23,32 +22,24 @@ void test_wifilink_seq_wraps() {
 }
 
 void test_wifilink_type_names() {
-  TEST_ASSERT_EQUAL_STRING("FACE", wifilink::typeName(linkcode::kTypeFace));
   TEST_ASSERT_EQUAL_STRING("OLED", wifilink::typeName(linkcode::kTypeOled));
   TEST_ASSERT_EQUAL_STRING("CAMCTL", wifilink::typeName(linkcode::kTypeCamCtl));
   TEST_ASSERT_EQUAL_STRING("PAIRSHOW", wifilink::typeName(linkcode::kTypePairShow));
   TEST_ASSERT_EQUAL_STRING("PAIRDONE", wifilink::typeName(linkcode::kTypePairDone));
+  TEST_ASSERT_EQUAL_STRING("EXPR", wifilink::typeName(linkcode::kTypeExpr));
   TEST_ASSERT_EQUAL_STRING("JPEG", wifilink::typeName(linkcode::kTypeJpeg));
   TEST_ASSERT_EQUAL_STRING("HB", wifilink::typeName(linkcode::kTypeHb));
   TEST_ASSERT_EQUAL_STRING("HB_ACK", wifilink::typeName(linkcode::kTypeHbAck));
   TEST_ASSERT_EQUAL_STRING("ACK", wifilink::typeName(linkcode::kTypeAck));
   TEST_ASSERT_EQUAL_STRING("UNKNOWN", wifilink::typeName(0xFF));
+  TEST_ASSERT_EQUAL_STRING("UNKNOWN", wifilink::typeName(0x01));  // retired FACE: never reused
 }
 
-void test_wifilink_map_face() {
+void test_wifilink_map_retired_face_drops() {
   PowerCommand cmd;
   const uint8_t id = 3;
-  TEST_ASSERT_TRUE(wifilink::mapCmd(linkcode::kTypeFace, &id, 1, cmd));
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::FACE), static_cast<uint8_t>(cmd.target));
-  TEST_ASSERT_EQUAL_INT32(3, cmd.arg);
-  const uint8_t curious = FACE_CURIOUS;
-  TEST_ASSERT_TRUE(wifilink::mapCmd(linkcode::kTypeFace, &curious, 1, cmd));
-  TEST_ASSERT_EQUAL_INT32(FACE_CURIOUS, cmd.arg);
-  const uint8_t surprised = FACE_SURPRISED;
-  TEST_ASSERT_TRUE(wifilink::mapCmd(linkcode::kTypeFace, &surprised, 1, cmd));
-  TEST_ASSERT_EQUAL_INT32(FACE_SURPRISED, cmd.arg);
-  TEST_ASSERT_FALSE(wifilink::mapCmd(linkcode::kTypeFace, &id, 2, cmd));
-  TEST_ASSERT_FALSE(wifilink::mapCmd(linkcode::kTypeFace, nullptr, 1, cmd));
+  TEST_ASSERT_FALSE(wifilink::mapCmd(0x01, &id, 1, cmd));  // retired FACE falls to unknown-drop
+  TEST_ASSERT_FALSE(wifilink::mapCmd(0x01, nullptr, 1, cmd));
 }
 
 void test_wifilink_map_oled_rows() {
@@ -81,6 +72,7 @@ void test_wifilink_map_cam() {
 void test_wifilink_map_rejects_non_commands() {
   PowerCommand cmd;
   const uint8_t one = 0;
+  TEST_ASSERT_FALSE(wifilink::mapCmd(0x01, &one, 1, cmd));  // retired FACE: stays unmapped
   TEST_ASSERT_FALSE(wifilink::mapCmd(0x04, &one, 1, cmd));  // retired QRBITMAP: stays unmapped
   TEST_ASSERT_FALSE(wifilink::mapCmd(linkcode::kTypePairShow, &one, 1, cmd));
   TEST_ASSERT_FALSE(wifilink::mapCmd(linkcode::kTypePairDone, &one, 1, cmd));
@@ -159,17 +151,4 @@ void test_wifilink_frag_plan() {
   TEST_ASSERT_TRUE(wifilink::fragSlice(0, 1024, 0, 1, off, len));
   TEST_ASSERT_EQUAL_size_t(0, len);
   TEST_ASSERT_FALSE(wifilink::fragSlice(0, 1024, 1, 2, off, len));
-}
-
-void test_cli_link_and_snap_parse() {
-  PowerCommand cmd;
-  TEST_ASSERT_TRUE(headcmd::parseLine("link", cmd));
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::LINK), static_cast<uint8_t>(cmd.target));
-  TEST_ASSERT_TRUE(headcmd::parseLine("snap", cmd));
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::SNAP), static_cast<uint8_t>(cmd.target));
-  TEST_ASSERT_TRUE(headcmd::parseLine("  snap  ", cmd));
-  TEST_ASSERT_FALSE(headcmd::parseLine("LINK", cmd));
-  TEST_ASSERT_FALSE(headcmd::parseLine("SNAP", cmd));
-  TEST_ASSERT_FALSE(headcmd::parseLine("link status", cmd));
-  TEST_ASSERT_FALSE(headcmd::parseLine("snapshot", cmd));
 }

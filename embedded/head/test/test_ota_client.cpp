@@ -4,7 +4,6 @@
 #include <unity.h>
 
 #include "../src/abilities/ota/ota_codec.h"
-#include "../src/services/cli_manager.h"
 
 void test_ota_parse_plain_host() {
   ota::Url u;
@@ -167,20 +166,4 @@ void test_ota_state_rejects_bad_events() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ota::State::kVerify), static_cast<uint8_t>(s));
   TEST_ASSERT_TRUE(ota::step(s, ota::Event::kAbort));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ota::State::kIdle), static_cast<uint8_t>(s));
-}
-
-void test_cli_ota_verb() {
-  PowerCommand cmd;
-  TEST_ASSERT_TRUE(headcmd::parseLine("ota http://192.168.4.1/fw.bin", cmd));
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::OTA), static_cast<uint8_t>(cmd.target));
-  TEST_ASSERT_TRUE(headcmd::parseLine("  ota http://h:8080/a.bin  ", cmd));
-  TEST_ASSERT_FALSE(headcmd::parseLine("ota", cmd));
-  TEST_ASSERT_FALSE(headcmd::parseLine("ota   ", cmd));
-  TEST_ASSERT_FALSE(headcmd::parseLine("OTA http://h/fw.bin", cmd));
-  TEST_ASSERT_FALSE(headcmd::parseLine("otax http://h/fw.bin", cmd));
-  // Bad URLs fail at start (grammar lives in ota::parseUrl).
-  TEST_ASSERT_TRUE(headcmd::parseLine("ota https://h/fw.bin", cmd));
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::OTA), static_cast<uint8_t>(cmd.target));
-  ota::Url u;
-  TEST_ASSERT_FALSE(ota::parseUrl("https://h/fw.bin", u));
 }

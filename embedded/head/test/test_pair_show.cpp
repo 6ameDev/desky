@@ -45,10 +45,10 @@ void test_pairshow_literal_contract() {
   TEST_ASSERT_TRUE(wifilink::isPairShowFrame(linkcode::kTypePairShow, linkcode::kPairShowLen));
   TEST_ASSERT_FALSE(wifilink::isPairShowFrame(linkcode::kTypePairShow, 7));
   TEST_ASSERT_FALSE(wifilink::isPairShowFrame(linkcode::kTypePairShow, 9));
-  TEST_ASSERT_FALSE(wifilink::isPairShowFrame(linkcode::kTypeFace, 8));
+  TEST_ASSERT_FALSE(wifilink::isPairShowFrame(linkcode::kTypeOled, 8));
   TEST_ASSERT_TRUE(wifilink::isPairDoneFrame(linkcode::kTypePairDone, linkcode::kPairDoneLen));
   TEST_ASSERT_FALSE(wifilink::isPairDoneFrame(linkcode::kTypePairDone, 1));
-  TEST_ASSERT_FALSE(wifilink::isPairDoneFrame(linkcode::kTypeFace, 0));
+  TEST_ASSERT_FALSE(wifilink::isPairDoneFrame(linkcode::kTypeOled, 0));
 
   PowerCommand cmd;
   const uint8_t one = 0;

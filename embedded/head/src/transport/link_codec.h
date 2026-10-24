@@ -47,8 +47,6 @@ inline RxVerdict classifyRx(bool haveSeen, uint16_t lastSeen, uint16_t got) {
 // Log-only type name ("UNKNOWN" outside the frozen contract).
 inline const char* typeName(uint8_t type) {
   switch (type) {
-    case linkcode::kTypeFace:
-      return "FACE";
     case linkcode::kTypeOled:
       return "OLED";
     case linkcode::kTypeCamCtl:
@@ -74,25 +72,13 @@ inline const char* typeName(uint8_t type) {
   }
 }
 
-// Codec frame -> PowerCommand (FACE/OLED/CAMCTL/EXPR only, value-checked
+// Codec frame -> PowerCommand (OLED/CAMCTL/EXPR only, value-checked
 // through the shared codec vocabulary). False = not a command frame or bad value.
 inline bool mapCmd(uint8_t type, const uint8_t* payload, uint16_t len, PowerCommand& out) {
   if (len > 0 && payload == nullptr) {
     return false;
   }
   switch (type) {
-    case linkcode::kTypeFace: {
-      if (len != linkcode::kFaceLen) {
-        return false;
-      }
-      uint8_t id = 0;
-      if (!linkcode::unpackFace(payload[0], id)) {
-        return false;
-      }
-      out.target = CmdTarget::FACE;
-      out.arg = static_cast<int32_t>(id);  // clamped downstream
-      return true;
-    }
     case linkcode::kTypeOled: {
       if (len != linkcode::kOledLen) {
         return false;

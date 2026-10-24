@@ -5,7 +5,6 @@
 #include <unity.h>
 
 #include "../src/abilities/display/display_manager.h"
-#include "../src/services/cli_manager.h"
 #include "../src/services/power_manager.h"  // headapply:: (Arduino-free top half)
 #include "../src/transport/link_codec.h"    // linkcode:: alias + wifilink::
 
@@ -147,20 +146,28 @@ void test_link_expr_ota_screen_survives_command() {
 }
 
 void test_link_expr_bench_path_intact() {
-  PowerCommand cli;
-  TEST_ASSERT_TRUE(headcmd::parseLine("face curious", cli));
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::FACE), static_cast<uint8_t>(cli.target));
+  // Bench path: EXPR frame bytes decode -> map -> resolve -> paint.
+  uint8_t produced[linkcode::kMaxFrame] = {};
+  const uint8_t curiousPayload[1] = {FACE_CURIOUS};
+  const size_t n =
+      linkcode::encodeFrame(linkcode::kTypeExpr, 0x0046, curiousPayload, 1, 0, 1, produced, sizeof(produced));
+  TEST_ASSERT_EQUAL_size_t(linkcode::kOverhead + 1, n);
+  linkcode::Frame f;
+  TEST_ASSERT_TRUE(linkcode::decodeFrame(produced, n, f));
+  PowerCommand wire;
+  TEST_ASSERT_TRUE(wifilink::mapCmd(f.type, f.payload, f.payloadLen, wire));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::FACE), static_cast<uint8_t>(wire.target));
   DisplayManager mgr;
   DisplayTransition t;
-  const uint8_t resolved = headapply::resolveFace(cli.arg);
+  const uint8_t resolved = headapply::resolveFace(wire.arg);
   TEST_ASSERT_EQUAL_UINT8(FACE_CURIOUS, resolved);
   TEST_ASSERT_TRUE(mgr.paintFace(resolved, t));
   TEST_ASSERT_EQUAL_UINT8(FACE_CURIOUS, mgr.eyesId());
   TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionAwe, eyesmap::emotionForFace(mgr.eyesId()));
   DisplayManager link;
-  PowerCommand wire;
+  PowerCommand happy;
   const uint8_t raw = FACE_HAPPY;
-  TEST_ASSERT_TRUE(wifilink::mapCmd(linkcode::kTypeFace, &raw, 1, wire));
-  TEST_ASSERT_TRUE(link.paintFace(headapply::resolveFace(wire.arg), t));
+  TEST_ASSERT_TRUE(wifilink::mapCmd(linkcode::kTypeExpr, &raw, 1, happy));
+  TEST_ASSERT_TRUE(link.paintFace(headapply::resolveFace(happy.arg), t));
   TEST_ASSERT_EQUAL_UINT8(FACE_HAPPY, link.eyesId());
 }

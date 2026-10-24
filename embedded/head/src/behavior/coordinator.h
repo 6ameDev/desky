@@ -1,7 +1,8 @@
 #pragma once
-// Command coordinator (BEHAVIOR layer): the single dispatch point both doors
-// call. CAM/OLED route to PowerManager; FACE to the renderer; the rest is
-// answered at the doors. Stored pointers only; no sockets.
+// Command coordinator (BEHAVIOR layer): the single dispatch point for
+// inbound WiFi link commands. CAM/OLED route to PowerManager; FACE to
+// the renderer; the rest is answered at the door. Stored pointers only;
+// no sockets.
 
 #ifdef ARDUINO
 // ── Firmware: command-table owner ────────────────────────────────────────────
@@ -24,7 +25,7 @@ class HeadCoordinator {
     display_ = display;
   }
 
-  // THE command table: every parsed line/frame from either door lands here.
+  // THE command table: every validated frame lands here.
   void dispatch(const PowerCommand& cmd) {
     switch (cmd.target) {
       case CmdTarget::CAM:

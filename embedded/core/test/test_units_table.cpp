@@ -73,7 +73,7 @@ void test_units_linkdown_cadence() {
   // `>= 3u * CFG_LINK_HEARTBEAT_MS`). Note the gate's `3u` duplicates
   // CFG_LINK_MAX_MISSED — this test ties the two spellings together.
   // The heartbeat side is the literal from head include/config.h:20
-  // (fallbacks wifi_link.h:279, link_stub.h:110 — all firmware-gated, so no
+  // (fallback link_client.h — firmware-gated, so no host-visible macro
   // host-visible macro exists; same reason as the QR literal above).
   const uint32_t kHbMs = 1000;  // == CFG_LINK_HEARTBEAT_MS (head)
   TEST_ASSERT_EQUAL_UINT32(3, static_cast<uint32_t>(CFG_LINK_MAX_MISSED));

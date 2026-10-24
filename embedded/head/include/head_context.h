@@ -7,8 +7,7 @@
 
 #include "link/expression_catalog.h"
 
-// Face ids
-// FACE ids are the frozen wire vocabulary; Display (abilities/display) is the ability name.
+// Face ids: display vocabulary shared by EXPR frames and the paint gate.
 enum FaceId : uint8_t {
   FACE_BOOT = 0,  // neutral squares — power-on default
   FACE_HAPPY = 1,
@@ -98,8 +97,8 @@ inline uint8_t faceIdFromName(const char* name) {
   return 0xFF;
 }
 
-// Multiplexed protocol, separate vocabularies: FACE frames carry legacy ids and EXPR frames carry catalog ids,
-// both failing closed to BOOT through the shared catalog lookup. QR id 5 has no catalog row and stays reserved.
+// EXPR frames carry catalog ids, failing closed to BOOT through the shared
+// catalog lookup. QR id 5 has no catalog row and stays reserved.
 inline uint8_t clampFace(int id) {
   if (id < 0 || id >= static_cast<int>(FACE_COUNT)) {
     return FACE_BOOT;
@@ -148,7 +147,7 @@ inline DisplayState resolveOledCommand(DisplayState cur, DisplayState want) {
   return want;
 }
 
-// Both doors dispatch through this struct.
+// WiFi link frames dispatch through this struct.
 enum class CmdTarget : uint8_t { CAM, FACE, OLED, STATUS, HELP, INVALID, LINK, SNAP, OTA };
 
 struct PowerCommand {

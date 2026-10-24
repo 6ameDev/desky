@@ -14,12 +14,10 @@
 #include "hal/ssd1306_display.h"
 #include "head_context.h"
 #include "link/ota_manifest.h"
-#include "services/cli_manager.h"
 #include "services/event_bus.h"
 #include "services/power_manager.h"
 #include "transport/link_client.h"
 #include "transport/link_codec.h"
-#include "transport/link_stub.h"
 
 // desky-head (face-unit stub, PARKED).
 // Setup order: logger -> fault -> config -> banner.
@@ -41,23 +39,8 @@ DisplayRenderer g_display(g_panel);
 PowerManager g_power;
 HeadCoordinator g_coordinator;
 PairingManager g_pairing;
-LinkStub g_link;
 LinkClient g_wifi;
 OtaUpdater g_ota;
-CliManager g_cli;
-// Binder fan-out: the CLI parses + triggers through this sink; the client
-// objects stay owned here in main.cpp.
-struct HeadCliSink : ICliSink {
-  void onStatusExtra() override {
-    g_coordinator.status();
-    g_wifi.logStatus();
-  }
-  void onLinkStatus() override { g_wifi.logStatus(); }
-  void onSnap() override { g_wifi.requestStill(); }
-  void onOta(const char* args) override { g_ota.start(args); }
-  void onCoord(const PowerCommand& cmd) override { g_coordinator.dispatch(cmd); }
-};
-HeadCliSink g_cliSink;
 EventBus::Subscription g_sub;
 uint32_t g_lastCamMs = 0;
 uint32_t g_lastAliveMs = 0;
@@ -93,13 +76,6 @@ bool isCameraOn(void* ctx) {
   (void)ctx;
   return g_cam.isEnabled();
 }
-
-// UART stub edge.
-void onStubCommand(void* ctx, const PowerCommand& cmd) {
-  (void)ctx;
-  EventBus::publish(HEAD_EVENT_LINK_CMD, static_cast<uint32_t>(cmd.target));
-  g_coordinator.dispatch(cmd);
-}
 }  // namespace
 
 // Single-U8G2 binding for the vendored eyes stack (declared in lib/esp32-eyes/Common.h).
@@ -126,13 +102,6 @@ void setup() {
   g_power.begin(&g_cam, &g_display);
   g_coordinator.begin(&g_power, &g_display);
   g_pairing.attach(&g_display.overlays());
-  g_link.begin();
-  {
-    StubHandlers sh;
-    sh.ctx = nullptr;
-    sh.onCommand = onStubCommand;
-    g_link.setHandlers(sh);
-  }
   g_wifi.begin();  // Live path: WiFi STA link client.
   {
     LinkHandlers wh;
@@ -144,8 +113,6 @@ void setup() {
     wh.isCameraOn = isCameraOn;
     g_wifi.setHandlers(wh);
   }
-  g_cli.begin(&g_power);
-  g_cli.attachSink(&g_cliSink);
   g_ota.attachDisplay(&g_display);
   g_sub = EventBus::subscribe();
   g_lastCamMs = millis();
@@ -159,9 +126,6 @@ void setup() {
 
 void loop() {
   FaultManager::watchdogFeed();
-  g_cli.poll();  // USB door (human).
-  g_link.poll();
-  g_link.heartbeatTick();
   g_wifi.poll();
   g_wifi.heartbeatTick();
   g_ota.poll();
