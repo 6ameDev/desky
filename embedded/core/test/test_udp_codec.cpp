@@ -146,6 +146,9 @@ void test_obstacle_assert_fires_once_below_band();
 void test_obstacle_rearm_needs_clear_above_band();
 void test_obstacle_far_readings_never_fire();
 void test_obstacle_dead_ticks_hold_silence();
+void test_obstacle_clear_publishes_once();
+void test_obstacle_held_clear_silent();
+void test_obstacle_hysteresis_band_pins();
 
 // Coordinator arbitrator tests, defined in test_coordinator.cpp.
 void test_coord_stick_bytes_map_center_128();
@@ -178,6 +181,11 @@ void test_coord_safety_ground_maps_scared();
 void test_coord_safety_obstacle_maps_angry();
 void test_coord_safety_no_edge_maps_none();
 void test_coord_safety_both_edges_scared_wins();
+void test_coord_safety_ground_clear_maps_boot();
+void test_coord_safety_obstacle_clear_maps_boot();
+void test_coord_safety_ground_assert_wins_over_clear();
+void test_coord_safety_obstacle_assert_wins_over_clear();
+void test_coord_safety_explicit_clears_false_unchanged();
 
 // System mode policy, defined in test_mode_manager.cpp.
 void test_mode_starts_normal();
@@ -545,6 +553,9 @@ int main() {
   RUN_TEST(test_obstacle_rearm_needs_clear_above_band);
   RUN_TEST(test_obstacle_far_readings_never_fire);
   RUN_TEST(test_obstacle_dead_ticks_hold_silence);
+  RUN_TEST(test_obstacle_clear_publishes_once);
+  RUN_TEST(test_obstacle_held_clear_silent);
+  RUN_TEST(test_obstacle_hysteresis_band_pins);
   RUN_TEST(test_coord_stick_bytes_map_center_128);
   RUN_TEST(test_coord_ground_bits_pack_unpack);
   RUN_TEST(test_coord_cliff_entry_brakes_and_latches);
@@ -575,6 +586,11 @@ int main() {
   RUN_TEST(test_coord_safety_obstacle_maps_angry);
   RUN_TEST(test_coord_safety_no_edge_maps_none);
   RUN_TEST(test_coord_safety_both_edges_scared_wins);
+  RUN_TEST(test_coord_safety_ground_clear_maps_boot);
+  RUN_TEST(test_coord_safety_obstacle_clear_maps_boot);
+  RUN_TEST(test_coord_safety_ground_assert_wins_over_clear);
+  RUN_TEST(test_coord_safety_obstacle_assert_wins_over_clear);
+  RUN_TEST(test_coord_safety_explicit_clears_false_unchanged);
   RUN_TEST(test_mode_starts_normal);
   RUN_TEST(test_mode_pair_window_open_enters_pairing);
   RUN_TEST(test_mode_paired_exits_pairing_to_normal);

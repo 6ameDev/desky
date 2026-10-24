@@ -386,5 +386,39 @@ void test_coord_safety_both_edges_scared_wins() {
   TEST_ASSERT_EQUAL_UINT8(exprcat::kScared, id);
 }
 
+void test_coord_safety_ground_clear_maps_boot() {
+  uint8_t id = 0xFF;
+  TEST_ASSERT_TRUE(coordinator::safetyExpressionFor(false, false, id, true));
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kBoot, id);
+}
+
+void test_coord_safety_obstacle_clear_maps_boot() {
+  uint8_t id = 0xFF;
+  TEST_ASSERT_TRUE(coordinator::safetyExpressionFor(false, false, id, false, true));
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kBoot, id);
+}
+
+void test_coord_safety_ground_assert_wins_over_clear() {
+  uint8_t id = 0;
+  TEST_ASSERT_TRUE(coordinator::safetyExpressionFor(true, false, id, true));
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kScared, id);
+}
+
+void test_coord_safety_obstacle_assert_wins_over_clear() {
+  uint8_t id = 0;
+  TEST_ASSERT_TRUE(coordinator::safetyExpressionFor(false, true, id, true));
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kAngry, id);
+}
+
+void test_coord_safety_explicit_clears_false_unchanged() {
+  uint8_t id = 0;
+  TEST_ASSERT_TRUE(coordinator::safetyExpressionFor(true, false, id, false, false));
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kScared, id);
+  TEST_ASSERT_TRUE(coordinator::safetyExpressionFor(false, true, id, false, false));
+  TEST_ASSERT_EQUAL_UINT8(exprcat::kAngry, id);
+  id = 0xFF;
+  TEST_ASSERT_FALSE(coordinator::safetyExpressionFor(false, false, id, false, false));
+}
+
 // Runner lives in test_udp_codec.cpp (single main for the native-test
 // binary): the coordinator tests are declared extern there.

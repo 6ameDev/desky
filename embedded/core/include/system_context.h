@@ -49,12 +49,16 @@ enum EventType {
   // Appended at the end: never renumber existing values.
   // EVENT_OBSTACLE_DETECTED payload contract: payload = ToF distance in mm
   // at the assert edge. Published edge-triggered by the sensor task; the
-  // coordinator ignores it (no behavior action yet).
+  // coordinator maps the assert edge to the angry expression.
   EVENT_OBSTACLE_DETECTED,
   // EVENT_BEEP_DONE payload contract: payload = 0 (unused). Published once
   // by the audio task when the beep queue drains to empty (rare, edge-only);
   // the coordinator ignores it.
-  EVENT_BEEP_DONE
+  EVENT_BEEP_DONE,
+  // EVENT_OBSTACLE_CLEARED payload contract: payload = ToF distance in mm
+  // at the clear edge. Published edge-triggered by the sensor task; the
+  // coordinator maps the clear edge to the neutral expression.
+  EVENT_OBSTACLE_CLEARED
 };
 
 // Unified ground event (documented once, here): EVENT_GROUND_CHANGED payload
