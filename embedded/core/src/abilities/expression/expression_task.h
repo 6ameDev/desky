@@ -10,8 +10,8 @@
 #include <stdint.h>
 
 #include "abilities/audio/audio_codec.h"
-#include "behavior/motion_primitives.h"
 #include "expression_manager.h"
+#include "link/motion_primitives.h"
 
 namespace expression {
 

@@ -31,9 +31,13 @@ table rows, never as rewrites.
   relaxes on all-clear. Safety evaluates before the app-trigger poll.
   Obstacle threshold is CFG_OBSTACLE_MM 80 (assert below 70, clear
   above 90, 10 hysteresis).
-- Bench gap: desky-bench has no expression trigger path (conductor and
-  attach live under the WiFi branch, USB door is otahead-only), so the
-  sound-plus-motion play-through needs hands or a desky-mode session.
+- Bench proof: hands-tested on the bench by the owner (core plus head
+  plus app trio): each new entry plays its cue and motion, interrupts
+  cut over cleanly, surprised yields on its own, and both hazard
+  round-trips relax the face on clear. desky-bench itself has no
+  expression trigger path (conductor and attach live under the WiFi
+  branch, USB door is otahead-only), so scripted bench proof still
+  needs hands or a desky-mode session.
 - V1 was eyes-only; its rows carry NONE for all media and pose fields.
   Sound cues and motion primitives play from V2; neck and arm poses
   stay reserved until servo HAL lands.

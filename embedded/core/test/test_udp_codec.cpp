@@ -186,6 +186,15 @@ void test_coord_safety_obstacle_clear_maps_boot();
 void test_coord_safety_ground_assert_wins_over_clear();
 void test_coord_safety_obstacle_assert_wins_over_clear();
 void test_coord_safety_explicit_clears_false_unchanged();
+void test_coord_desired_ground_wins_over_obstacle();
+void test_coord_desired_obstacle_alone_maps_angry();
+void test_coord_desired_none_alone();
+void test_coord_safety_release_with_held_face_sends_boot();
+void test_coord_safety_release_with_stolen_face_sends_nothing();
+void test_coord_safety_release_without_claim_sends_nothing();
+void test_coord_safety_sibling_clear_rerequests_survivor();
+void test_coord_safety_assert_while_other_active_reannounces_top();
+void test_coord_safety_level_sequence_survives_sibling_clear();
 
 // System mode policy, defined in test_mode_manager.cpp.
 void test_mode_starts_normal();
@@ -591,6 +600,15 @@ int main() {
   RUN_TEST(test_coord_safety_ground_assert_wins_over_clear);
   RUN_TEST(test_coord_safety_obstacle_assert_wins_over_clear);
   RUN_TEST(test_coord_safety_explicit_clears_false_unchanged);
+  RUN_TEST(test_coord_desired_ground_wins_over_obstacle);
+  RUN_TEST(test_coord_desired_obstacle_alone_maps_angry);
+  RUN_TEST(test_coord_desired_none_alone);
+  RUN_TEST(test_coord_safety_release_with_held_face_sends_boot);
+  RUN_TEST(test_coord_safety_release_with_stolen_face_sends_nothing);
+  RUN_TEST(test_coord_safety_release_without_claim_sends_nothing);
+  RUN_TEST(test_coord_safety_sibling_clear_rerequests_survivor);
+  RUN_TEST(test_coord_safety_assert_while_other_active_reannounces_top);
+  RUN_TEST(test_coord_safety_level_sequence_survives_sibling_clear);
   RUN_TEST(test_mode_starts_normal);
   RUN_TEST(test_mode_pair_window_open_enters_pairing);
   RUN_TEST(test_mode_paired_exits_pairing_to_normal);

@@ -221,6 +221,44 @@ inline bool safetyExpressionFor(bool groundEvent, bool obstacleEvent, uint8_t& i
   return false;
 }
 
+// State-based safety annunciation: face = highest-priority active hazard.
+// Ground loss on either rail outranks a latched obstacle; no hazard yields
+// none. Pure levels in, no I/O — the firmware loop owns the levels.
+inline bool desiredSafetyFace(bool groundLost, bool obstacleLatched, uint8_t& idOut) {
+  if (groundLost) {
+    idOut = exprcat::kScared;
+    return true;
+  }
+  if (obstacleLatched) {
+    idOut = exprcat::kAngry;
+    return true;
+  }
+  return false;
+}
+
+// Ownership claim over the safety face: which id safety holds, if any.
+struct SafetyDecision {
+  bool request;
+  uint8_t id;
+  bool hasHold;
+  uint8_t holdId;
+};
+
+// Next safety-face step for one drain tick that carried any safety edge.
+// Desired present always re-requests (restates the survivor on a sibling
+// clear, refreshes on re-assert). Desired absent releases neutral only while
+// the face still shows our hold; a stolen face just drops the claim.
+inline SafetyDecision resolveSafetyEdge(bool desiredPresent, uint8_t desiredId, bool hasLast, uint8_t lastId,
+                                        uint8_t activeId) {
+  if (desiredPresent) {
+    return SafetyDecision{true, desiredId, true, desiredId};
+  }
+  if (hasLast && activeId == lastId) {
+    return SafetyDecision{true, exprcat::kBoot, false, 0};
+  }
+  return SafetyDecision{false, 0, false, 0};
+}
+
 }  // namespace coordinator
 
 #ifdef ARDUINO
@@ -277,6 +315,9 @@ class Coordinator {
         emergencyLatched_(false),
         gndFwd_(true),
         gndRev_(true),
+        obstacleAsserted_(false),
+        hasSafety_(false),
+        lastSafety_(exprcat::kBoot),
         cmdV_(0.0f),
         cmdOmega_(0.0f),
         hasCmd_(false),
@@ -441,10 +482,12 @@ class Coordinator {
             break;
           case EVENT_OBSTACLE_DETECTED:
             obstacleEvent = true;
+            obstacleAsserted_ = true;
             LOG_D("COORD", "obstacle dist=%lu", (unsigned long)ev.payload);
             break;
           case EVENT_OBSTACLE_CLEARED:
             obstacleClear = true;
+            obstacleAsserted_ = false;
             LOG_D("COORD", "obstacle cleared dist=%lu", (unsigned long)ev.payload);
             break;
           default:
@@ -525,10 +568,22 @@ class Coordinator {
       }
 
       // Safety fires in every mode: deliberately bypasses the MANUAL app-trigger gate below.
-      if (expr_ != nullptr) {
-        uint8_t safetyId = 0;
-        if (coordinator::safetyExpressionFor(groundEvent, obstacleEvent, safetyId, groundClear, obstacleClear)) {
-          expr_->request(safetyId, nowMs);
+      if (expr_ != nullptr && (groundEvent || obstacleEvent || groundClear || obstacleClear)) {
+        uint8_t desiredId = 0;
+        const bool desired = coordinator::desiredSafetyFace(!gndFwd_ || !gndRev_, obstacleAsserted_, desiredId);
+        const coordinator::SafetyDecision safety =
+            coordinator::resolveSafetyEdge(desired, desiredId, hasSafety_, lastSafety_, expr_->active());
+        if (safety.request) {
+          // Claim only what safety actually holds: a rejected request (a
+          // lower desired id against a higher active one) leaves the
+          // previous claim intact, so a later clear still matches the face.
+          if (expr_->request(safety.id, nowMs)) {
+            hasSafety_ = safety.hasHold;
+            lastSafety_ = safety.holdId;
+          }
+        } else {
+          hasSafety_ = safety.hasHold;
+          lastSafety_ = safety.holdId;
         }
       }
       // Expression-trigger poll: a verified EXPR_TRIGGER stages a
@@ -587,6 +642,9 @@ class Coordinator {
   bool emergencyLatched_;
   bool gndFwd_;
   bool gndRev_;
+  bool obstacleAsserted_;
+  bool hasSafety_;
+  uint8_t lastSafety_;
   float cmdV_;
   float cmdOmega_;
   bool hasCmd_;
