@@ -110,11 +110,10 @@ data class RobotConfig(
 }
 
 /**
- * One robot-owned expression catalog entry (from `EXPR_LIST_RESP`).
- * [id] is the catalog id the `EXPR_TRIGGER` frame carries (0..255);
- * [flags] is the opaque entry-flags byte (bit 0 = play-once);
- * [name] is the display name (wire: blank-padded exactly 10 bytes,
- * decoded trimmed).
+ * One hardcoded expression catalog entry (app-side mirror of the shared
+ * firmware table — see [STATIC_EXPRESSIONS]). [id] is the catalog id the
+ * `EXPR_TRIGGER` frame carries (0..255); [flags] is the opaque entry-flags
+ * byte (bit 0 = play-once); [name] is the display name.
  */
 data class ExpressionEntry(
     val id: Int,

@@ -55,8 +55,8 @@ static_assert(udpstatus::kManualTakeHeader == 0x57, "MANUAL_TAKE header is 0x57"
 static_assert(udpstatus::kManualTakeSize == 14, "MANUAL_TAKE is 14B");
 static_assert(udpstatus::kManualReleaseHeader == 0x58, "MANUAL_RELEASE header is 0x58");
 static_assert(udpstatus::kManualReleaseSize == 14, "MANUAL_RELEASE is 14B");
-static_assert(udpstatus::kExprListReqHeader == 0x59, "EXPR_LIST_REQ header is 0x59");
-static_assert(udpstatus::kExprListReqSize == 14, "EXPR_LIST_REQ is 14B");
+static_assert(udp::kExprListReqHeader == 0x59, "0x59 retired-reserved, never reused");
+static_assert(udp::kExprListRespHeader == 0x5A, "0x5A retired-reserved, never reused");
 static_assert(udpstatus::kExprTriggerHeader == 0x5B, "EXPR_TRIGGER header is 0x5B");
 static_assert(udpstatus::kExprTriggerSize == 15, "EXPR_TRIGGER is 15B");
 static_assert(pairing::kAliveSize == 14, "ALIVE is 14B (pairing owner)");
@@ -85,10 +85,6 @@ static_assert(udpstatus::kManualReleaseHeader != udpstatus::kAliveHeader, "claim
 static_assert(udpstatus::kManualReleaseHeader != udpstatus::kDisconnectHeader, "claimed headers distinct");
 static_assert(udpstatus::kManualTakeHeader != udpstatus::kUnpairHeader, "claimed headers distinct");
 static_assert(udpstatus::kManualReleaseHeader != udpstatus::kUnpairHeader, "claimed headers distinct");
-static_assert(udpstatus::kExprListReqHeader != udpstatus::kExprTriggerHeader, "claimed headers distinct");
-static_assert(udpstatus::kExprListReqHeader != udpstatus::kManualTakeHeader, "claimed headers distinct");
-static_assert(udpstatus::kExprListReqHeader != udpstatus::kAliveHeader, "claimed headers distinct");
-static_assert(udpstatus::kExprListReqHeader != udpstatus::kDisconnectHeader, "claimed headers distinct");
 static_assert(udpstatus::kExprTriggerHeader != udpstatus::kManualTakeHeader, "claimed headers distinct");
 static_assert(udpstatus::kExprTriggerHeader != udpstatus::kAliveHeader, "claimed headers distinct");
 static_assert(udpstatus::kExprTriggerHeader != udpstatus::kDisconnectHeader, "claimed headers distinct");
@@ -410,7 +406,7 @@ void test_udp_claimed_headers_distinct() {
                              udpstatus::kDisconnectHeader,
                              udpstatus::kManualTakeHeader,
                              udpstatus::kManualReleaseHeader,
-                             udpstatus::kExprListReqHeader,
+                             udp::kExprListReqHeader,
                              udpstatus::kExprTriggerHeader};
   for (size_t i = 0; i < sizeof(headers); ++i) {
     for (size_t j = i + 1; j < sizeof(headers); ++j) {
@@ -762,8 +758,9 @@ void test_udp_mirror_freeze() {
   TEST_ASSERT_EQUAL(14, static_cast<int>(udpstatus::kManualTakeSize));
   TEST_ASSERT_EQUAL_UINT8(0x58, udpstatus::kManualReleaseHeader);
   TEST_ASSERT_EQUAL(14, static_cast<int>(udpstatus::kManualReleaseSize));
-  TEST_ASSERT_EQUAL_UINT8(0x59, udpstatus::kExprListReqHeader);
-  TEST_ASSERT_EQUAL(14, static_cast<int>(udpstatus::kExprListReqSize));
+  TEST_ASSERT_EQUAL_UINT8(0x59, udp::kExprListReqHeader);
+  TEST_ASSERT_EQUAL(14, static_cast<int>(udp::kExprListReqSize));
+  TEST_ASSERT_EQUAL_UINT8(0x5A, udp::kExprListRespHeader);
   TEST_ASSERT_EQUAL_UINT8(0x5B, udpstatus::kExprTriggerHeader);
   TEST_ASSERT_EQUAL(15, static_cast<int>(udpstatus::kExprTriggerSize));
   // TX-only sizes never collide with an RX shape (PAIR_OK 38/39, PAIR_ERR 4,
@@ -1023,51 +1020,27 @@ void test_udp_pair_ok_framing() {
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(38, 0xFF)));
 }
 
-// Expression picker demux: 0x59 claims the 14B list-fetch shape, 0x5B the
-// 15B trigger shape. The 0x5A list answer is TX-only: the RX demux drops it
-// at every length. The HMAC tags are ARDUINO-only (mbedTLS); the cross-side
-// goldens live in shared/protocol/README.md (list_tag=926efe36104a,
-// trig_tag=95ade6a7dea4 for era=1, counter=100, id=1 under the shared psk).
+// Expression trigger demux: 0x5B claims the 15B trigger shape. 0x59/0x5A are
+// retired-reserved: the RX demux drops them at every length. The HMAC tag is
+// ARDUINO-only (mbedTLS); the cross-side golden lives in
+// shared/protocol/README.md (trig_tag=95ade6a7dea4 for era=1, counter=100,
+// id=1 under the shared psk).
 void test_udp_classify_expr() {
-  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kExprListReq), rxKindInt(udpstatus::classifyRx(14, 0x59)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kExprTrigger), rxKindInt(udpstatus::classifyRx(15, 0x5B)));
-  // Neighbouring sizes/headers still drop (0x53/0x55/0x56/0x57/0x58 at 14B
-  // are the valid refresh/alive/disconnect/manual shapes, absent here).
-  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(13, 0x59)));
-  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(15, 0x59)));
+  // Neighbouring sizes/headers still drop.
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0x5B)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(16, 0x5B)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0xAD)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(15, 0xAC)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0xFF)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(15, 0xFF)));
-  // The list answer never arrives on the RX path (variable length, TX-only).
+  // Retired-reserved: 0x59 drops at every length (incl. its old 14B shape),
+  // and the 0x5A list answer never arrives on the RX path.
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0x59)));
+  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(15, 0x59)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(4, 0x5A)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(88, 0x5A)));
   TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(148, 0x5A)));
-}
-
-// EXPR_LIST_REQ 14B [0x59|eraBE2|ctrBE4|tag6|XOR]: era 1, counter 100 under
-// psk 0011..eeff, tag 926efe36104a.
-void test_udp_expr_list_req_frame_golden() {
-  const uint8_t frame[14] = {0x59, 0x00, 0x01, 0x00, 0x00, 0x00, 0x64, 0x92, 0x6E, 0xFE, 0x36, 0x10, 0x4A, 0x52};
-  TEST_ASSERT_TRUE(mirrorXorOk(frame, sizeof(frame)));
-  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kExprListReq),
-                    rxKindInt(udpstatus::classifyRx(sizeof(frame), frame[0])));
-  const uint16_t era = static_cast<uint16_t>((static_cast<uint16_t>(frame[1]) << 8) | static_cast<uint16_t>(frame[2]));
-  TEST_ASSERT_EQUAL_UINT16(1, era);
-  const uint32_t ctr = (static_cast<uint32_t>(frame[3]) << 24) | (static_cast<uint32_t>(frame[4]) << 16) |
-                       (static_cast<uint32_t>(frame[5]) << 8) | static_cast<uint32_t>(frame[6]);
-  TEST_ASSERT_EQUAL_UINT32(100, ctr);
-  // Reject: truncated, bad CRC, unknown ID at 14B.
-  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(13, 0x59)));
-  uint8_t bad[14];
-  for (size_t i = 0; i < sizeof(bad); ++i) {
-    bad[i] = frame[i];
-  }
-  bad[7] ^= 0xFF;
-  TEST_ASSERT_FALSE(mirrorXorOk(bad, sizeof(bad)));
-  TEST_ASSERT_EQUAL(rxKindInt(udpstatus::RxKind::kDrop), rxKindInt(udpstatus::classifyRx(14, 0xFF)));
 }
 
 // EXPR_TRIGGER 15B [0x5B|id|eraBE2|ctrBE4|tag6|XOR]: id 1, era 1, counter 100

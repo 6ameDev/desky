@@ -320,52 +320,17 @@ inline void manualReleaseTagMsg(uint16_t era, uint32_t counter, uint8_t out19[kM
   out19[18] = static_cast<uint8_t>(counter & 0xFFu);
 }
 
-// ── Expression picker (fetch-on-entry list + MANUAL-gated trigger) ──────
+// ── Expression trigger (MANUAL-gated face request) ──────
 // Wire (see shared/protocol/README.md):
-//   EXPR_LIST_REQ  App -> Robot, 14B [0x59 | eraBE2 | counterBE4 | tag6 | XOR]
-//     tag = first6(HMAC-SHA256(psk, "EXPRLIST" || eraBE2 || counterBE4))
-//     era = CURRENT paired era. Counter is the app's toRobotCounter; the
-//     robot verifies against its fromAppCounter and consumes it on accept
-//     exactly like drive/alive.
-//   EXPR_LIST_RESP Robot -> App, variable
-//     [0x5A | ver | count | (id, flags, name[10]) x count | XOR], ver 1,
-//     count 0..12, names blank-padded to exactly 10B (never NUL-terminated).
-//     Flags bit 0 = play-once (vs hold); sound/motion stay off the wire.
-//     Unauthenticated (XOR only); stamped from the robot's toAppCounter send
-//     domain (consumed on send, no field on the wire); single send, no retry.
 //   EXPR_TRIGGER   App -> Robot, 15B [0x5B | id | eraBE2 | counterBE4 | tag6 | XOR]
 //     tag = first6(HMAC-SHA256(psk, "EXPRTRIG" || id || eraBE2 || counterBE4)).
-// Headers 0x59/0x5A/0x5B are claimed in transport/udp_codec.h (frozen table) —
-// never reuse any earlier claimed header.
-constexpr uint8_t kExprListReqHeader = udp::kExprListReqHeader;
-constexpr size_t kExprListReqSize = udp::kExprListReqSize;
+// 0x59/0x5A are retired-reserved (list fetch removed; never reuse either
+// header). 0x5B is claimed in transport/udp_codec.h (frozen table) — never
+// reuse any earlier claimed header.
 constexpr uint8_t kExprTriggerHeader = udp::kExprTriggerHeader;
 constexpr size_t kExprTriggerSize = udp::kExprTriggerSize;
 constexpr size_t kExprTagLen = 6;
-constexpr size_t kExprListMsgLen = 14;     // "EXPRLIST"(8) || eraBE2 || counterBE4
 constexpr size_t kExprTriggerMsgLen = 15;  // "EXPRTRIG"(8) || id || eraBE2 || counterBE4
-
-// EXPR_LIST_REQ tag message (14B, host-testable): "EXPRLIST" ASCII || eraBE2
-// || counterBE4.
-inline void exprListTagMsg(uint16_t era, uint32_t counter, uint8_t out14[kExprListMsgLen]) {
-  if (out14 == nullptr) {
-    return;
-  }
-  out14[0] = 'E';
-  out14[1] = 'X';
-  out14[2] = 'P';
-  out14[3] = 'R';
-  out14[4] = 'L';
-  out14[5] = 'I';
-  out14[6] = 'S';
-  out14[7] = 'T';
-  out14[8] = static_cast<uint8_t>((era >> 8) & 0xFFu);
-  out14[9] = static_cast<uint8_t>(era & 0xFFu);
-  out14[10] = static_cast<uint8_t>((counter >> 24) & 0xFFu);
-  out14[11] = static_cast<uint8_t>((counter >> 16) & 0xFFu);
-  out14[12] = static_cast<uint8_t>((counter >> 8) & 0xFFu);
-  out14[13] = static_cast<uint8_t>(counter & 0xFFu);
-}
 
 // EXPR_TRIGGER tag message (15B, host-testable): "EXPRTRIG" ASCII || id ||
 // eraBE2 || counterBE4.

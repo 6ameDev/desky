@@ -133,10 +133,11 @@ fun ControlContent(
             } else {
                 Button(onClick = onTakeManual, enabled = controlsEnabled) { Text("Take Manual") }
             }
-            // Expression picker: the robot-owned catalog fetched on screen
-            // entry (see RobotControlViewModel). Taps send one EXPR_TRIGGER
-            // while MANUAL is reported — the same gating language as the
-            // sticks above (inert until the hold is reported).
+            // Expression picker: the hardcoded app-side catalog mirroring
+            // the shared firmware table (see STATIC_EXPRESSIONS in the
+            // shared domain). Taps send one EXPR_TRIGGER while MANUAL is
+            // reported — the same gating language as the sticks above
+            // (inert until the hold is reported).
             ExpressionPicker(
                 state = state,
                 enabled = manualControls,
@@ -172,15 +173,11 @@ private fun ExpressionPicker(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text("Expressions")
-        if (state.expressions.isEmpty()) {
-            Text(if (state.expressionsLoading) "Loading expressions…" else "No expressions")
-        } else {
-            state.expressions.forEach { entry ->
-                OutlinedButton(
-                    onClick = { onTriggerExpression(entry.id) },
-                    enabled = enabled,
-                ) { Text(entry.name) }
-            }
+        state.expressions.forEach { entry ->
+            OutlinedButton(
+                onClick = { onTriggerExpression(entry.id) },
+                enabled = enabled,
+            ) { Text(entry.name) }
         }
     }
 }

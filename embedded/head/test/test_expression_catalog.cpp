@@ -1,6 +1,6 @@
 // Host unit tests for the shared expression catalog (link/expression_catalog.h).
-// Same row goldens as the core suite, plus a read-only cross-check that the
-// shared rows match the head eyesmap/exprprio tables adopted later.
+// Same row goldens as the core suite, plus a pin that the head mapping
+// reads the catalog (single source; no mirrored tables).
 
 #include <unity.h>
 
@@ -100,9 +100,6 @@ void test_exprcat_matches_head_tables() {
     const exprcat::Entry* e = exprcat::lookup(id);
     TEST_ASSERT_NOT_NULL(e);
     TEST_ASSERT_EQUAL_UINT8(eyesmap::emotionForFace(id), e->eye);
-    TEST_ASSERT_EQUAL_UINT8(exprprio::priorityFor(id), e->priority);
-    TEST_ASSERT_EQUAL(exprprio::isPlayOnce(id), e->playOnce);
-    TEST_ASSERT_EQUAL_UINT32(exprprio::holdMsFor(id), e->holdMs);
     TEST_ASSERT_EQUAL_STRING(faceName(id), e->name);
   }
 }

@@ -233,7 +233,6 @@ void test_udp_classify_alive_disconnect();
 void test_udp_manual_wire_constants();
 void test_udp_classify_manual();
 void test_udp_classify_expr();
-void test_udp_expr_list_req_frame_golden();
 void test_udp_expr_trigger_frame_golden();
 void test_udp_legacy_never_drives();
 void test_udp_claimed_headers_distinct();
@@ -261,14 +260,10 @@ void test_telemetry_publish_holds_cadence();
 void test_telemetry_publish_edge_forces_early();
 void test_telemetry_encode_snapshot_manual_bit();
 
-// Expression picker wire (tag layouts, list composer, MANUAL gate), defined
+// Expression trigger wire (tag layout, MANUAL gate), defined
 // in test_expr_wire.cpp.
 void test_expr_wire_consts();
-void test_expr_list_tag_msg_golden();
 void test_expr_trigger_tag_msg_golden();
-void test_expr_list_resp_layout_matches_catalog();
-void test_expr_list_resp_golden();
-void test_expr_list_resp_fail_closed();
 void test_expr_trigger_gate_manual_only();
 
 // I2S audio DSP + meter policy, defined in test_audio.cpp.
@@ -613,7 +608,6 @@ int main() {
   RUN_TEST(test_udp_manual_wire_constants);
   RUN_TEST(test_udp_classify_manual);
   RUN_TEST(test_udp_classify_expr);
-  RUN_TEST(test_udp_expr_list_req_frame_golden);
   RUN_TEST(test_udp_expr_trigger_frame_golden);
   RUN_TEST(test_udp_legacy_never_drives);
   RUN_TEST(test_udp_claimed_headers_distinct);
@@ -641,11 +635,7 @@ int main() {
   RUN_TEST(test_telemetry_publish_edge_forces_early);
   RUN_TEST(test_telemetry_encode_snapshot_manual_bit);
   RUN_TEST(test_expr_wire_consts);
-  RUN_TEST(test_expr_list_tag_msg_golden);
   RUN_TEST(test_expr_trigger_tag_msg_golden);
-  RUN_TEST(test_expr_list_resp_layout_matches_catalog);
-  RUN_TEST(test_expr_list_resp_golden);
-  RUN_TEST(test_expr_list_resp_fail_closed);
   RUN_TEST(test_expr_trigger_gate_manual_only);
   RUN_TEST(test_audio_dual_mono32_top_justified);
   RUN_TEST(test_audio_chime_shape_and_decay);
