@@ -39,7 +39,7 @@ class HeadCoordinator {
         if (display_ != nullptr) {
           display_->showEyes(id);
         }
-        // Status mirrors the gated id: a lower request never displaces a higher expression.
+        // Status mirrors the stored id: head paints the last command, core owns preemption.
         const uint8_t active = (display_ != nullptr) ? display_->eyesId() : id;
         if (power_ != nullptr) {
           power_->setEyesId(active);

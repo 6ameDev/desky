@@ -19,7 +19,11 @@ enum FaceId : uint8_t {
   FACE_QR = 5,
   FACE_CURIOUS = 6,
   FACE_SURPRISED = 7,
-  FACE_COUNT = 8,
+  FACE_ANGRY = 8,
+  FACE_SCARED = 9,
+  FACE_EXCITED = 10,
+  FACE_CONFUSED = 11,
+  FACE_COUNT = 12,
 };
 
 inline const char* faceName(uint8_t id) {
@@ -40,6 +44,14 @@ inline const char* faceName(uint8_t id) {
       return "curious";
     case FACE_SURPRISED:
       return "surprised";
+    case FACE_ANGRY:
+      return "angry";
+    case FACE_SCARED:
+      return "scared";
+    case FACE_EXCITED:
+      return "excited";
+    case FACE_CONFUSED:
+      return "confused";
     default:
       return "unknown";
   }
@@ -70,6 +82,18 @@ inline uint8_t faceIdFromName(const char* name) {
   }
   if (strcmp(name, "surprised") == 0) {
     return FACE_SURPRISED;
+  }
+  if (strcmp(name, "angry") == 0) {
+    return FACE_ANGRY;
+  }
+  if (strcmp(name, "scared") == 0) {
+    return FACE_SCARED;
+  }
+  if (strcmp(name, "excited") == 0) {
+    return FACE_EXCITED;
+  }
+  if (strcmp(name, "confused") == 0) {
+    return FACE_CONFUSED;
   }
   return 0xFF;
 }

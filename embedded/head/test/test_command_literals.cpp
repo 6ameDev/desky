@@ -76,7 +76,8 @@ void test_cmd_literals_face_ids_and_clamp() {
     const uint8_t* frame;
     int32_t id;
   };
-  const Row good[] = {{kFace00, 0}, {kFace01, 1}, {kFace02, 2}, {kFace03, 3}, {kFace04, 4}, {kFace06, 6}, {kFace07, 7}};
+  const Row good[] = {{kFace00, 0}, {kFace01, 1}, {kFace02, 2}, {kFace03, 3},
+                      {kFace04, 4}, {kFace06, 6}, {kFace07, 7}, {kFace08, 8}};
   for (size_t i = 0; i < sizeof(good) / sizeof(good[0]); ++i) {
     TEST_ASSERT_TRUE(decodeAndMap(good[i].frame, cmd, f));
     TEST_ASSERT_EQUAL_UINT8(0x01, f.type);
@@ -85,8 +86,8 @@ void test_cmd_literals_face_ids_and_clamp() {
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(good[i].id), headapply::resolveFace(cmd.arg));  // passthrough
   }
   // Out-of-range ids still decode+map (passthrough), then clamp to BOOT (0).
-  const uint8_t* bad[4] = {kFace05, kFace08, kFace63, kFaceFf};
-  for (size_t i = 0; i < 4; ++i) {
+  const uint8_t* bad[3] = {kFace05, kFace63, kFaceFf};
+  for (size_t i = 0; i < 3; ++i) {
     TEST_ASSERT_TRUE(decodeAndMap(bad[i], cmd, f));
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::FACE), static_cast<uint8_t>(cmd.target));
     TEST_ASSERT_EQUAL_UINT8(0, headapply::resolveFace(cmd.arg));
@@ -145,7 +146,11 @@ void test_headapply_value_table() {
   TEST_ASSERT_EQUAL_UINT8(0, headapply::resolveFace(5));
   TEST_ASSERT_EQUAL_UINT8(6, headapply::resolveFace(6));
   TEST_ASSERT_EQUAL_UINT8(7, headapply::resolveFace(7));
-  TEST_ASSERT_EQUAL_UINT8(0, headapply::resolveFace(8));
+  TEST_ASSERT_EQUAL_UINT8(8, headapply::resolveFace(8));
+  TEST_ASSERT_EQUAL_UINT8(9, headapply::resolveFace(9));
+  TEST_ASSERT_EQUAL_UINT8(10, headapply::resolveFace(10));
+  TEST_ASSERT_EQUAL_UINT8(11, headapply::resolveFace(11));
+  TEST_ASSERT_EQUAL_UINT8(0, headapply::resolveFace(12));
 }
 
 // Shared codec vocabulary guards.
@@ -184,18 +189,15 @@ void test_cmd_literals_shared_codec_camctl() {
 }
 
 void test_cmd_literals_shared_codec_face() {
-  // Map-then-clamp: 0x00..0x04,0x06,0x07 survive, rest fall back to BOOT.
+  // Map-then-clamp: 0x00..0x04,0x06..0x0B survive, rest fall back to BOOT.
   uint8_t id = 0xFF;
-  const uint8_t good[] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x06, 0x07};
+  const uint8_t good[] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B};
   for (size_t i = 0; i < sizeof(good); ++i) {
     TEST_ASSERT_TRUE(linkcode::unpackFace(good[i], id));
     TEST_ASSERT_EQUAL_UINT8(good[i], id);
   }
   TEST_ASSERT_TRUE(linkcode::unpackFace(0x05, id));
   TEST_ASSERT_EQUAL_UINT8(0x05, id);
-  TEST_ASSERT_EQUAL_UINT8(0, headapply::resolveFace(id));
-  TEST_ASSERT_TRUE(linkcode::unpackFace(0x08, id));
-  TEST_ASSERT_EQUAL_UINT8(0x08, id);
   TEST_ASSERT_EQUAL_UINT8(0, headapply::resolveFace(id));
   TEST_ASSERT_TRUE(linkcode::unpackFace(0x63, id));
   TEST_ASSERT_EQUAL_UINT8(0x63, id);

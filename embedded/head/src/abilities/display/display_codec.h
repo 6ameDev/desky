@@ -223,9 +223,13 @@ inline void hide(Progress& p) {
 // on neutral eyes while the blink assistant pulses.
 namespace eyesmap {
 constexpr uint8_t kEmotionNormal = 0;
+constexpr uint8_t kEmotionAngry = 1;
+constexpr uint8_t kEmotionGlee = 2;
 constexpr uint8_t kEmotionHappy = 3;
 constexpr uint8_t kEmotionSad = 4;
 constexpr uint8_t kEmotionSurprised = 8;
+constexpr uint8_t kEmotionSkeptic = 9;
+constexpr uint8_t kEmotionScared = 16;
 constexpr uint8_t kEmotionAwe = 17;
 
 inline uint8_t emotionForFace(uint8_t faceId) {

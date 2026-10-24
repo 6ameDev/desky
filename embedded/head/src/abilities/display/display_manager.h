@@ -25,51 +25,27 @@ enum class DisplayLiveMode : uint8_t { kEyes, kQr, kOtaBar, kOtaAlert };
 
 class DisplayManager {
  public:
-  // Single gated expression entry: the core->head EXPR link command and the
-  // local bench trigger (CLI `face`) converge here — one entry, two callers.
-  // Pairing/OTA own the screen while held, so a held overlay rejects the
-  // request with zero state change; eyes otherwise. Core owns app/behavior
-  // requests; head keeps local preemption for its bench path via showEyes.
-  bool requestEyes(uint8_t id, DisplayTransition& t, uint32_t nowMs) {
+  // Single paint entry: the core->head EXPR link command and the local bench
+  // trigger (CLI `face`) converge here — one entry, two callers. Head holds
+  // no preemption policy; core owns it. A held pairing/OTA overlay rejects
+  // the request with zero state change; a live QR show clears (FACE wins
+  // over the staging buffer, same as the timeout path); otherwise the
+  // clamped id is stored for repaint. True when the request took effect.
+  bool paintFace(uint8_t id, DisplayTransition& t) {
+    t.clearedQr = false;
+    t.clearedPair = false;
+    t.clearedOta = false;
     if (pairActive_ || ota_.active) {
-      t.clearedQr = false;
-      t.clearedPair = false;
-      t.clearedOta = false;
       return false;
     }
-    return showEyes(id, t, nowMs);
-  }
-
-  // Stores (clamped) + clears every live overlay. Neutral-family ids always
-  // release; higher priorities preempt, equal refresh, lower never displace.
-  // True when the request took effect.
-  bool showEyes(uint8_t id, DisplayTransition& t, uint32_t nowMs) {
     t.clearedQr = qrActive_;
-    t.clearedPair = pairActive_;
-    t.clearedOta = ota_.active;
     qrActive_ = false;
-    pairActive_ = false;
-    otadisplay::hide(ota_);
-    const uint8_t c = clampFace(static_cast<int>(id));
-    if (!exprcat::isNeutral(c) && exprcat::priorityFor(c) < exprcat::priorityFor(eyesId_)) {
-      return false;
-    }
-    eyesId_ = c;
-    exprSinceMs_ = nowMs;
+    // Last-commanded id only, like a framebuffer; preemption lives core-side.
+    eyesId_ = clampFace(static_cast<int>(id));
     return true;
   }
 
   uint8_t eyesId() const { return eyesId_; }
-
-  // Play-once expiry pump (wrap-safe): true once when an id fell back to neutral.
-  bool exprTick(uint32_t nowMs) {
-    if (!exprcat::isPlayOnce(eyesId_) || (nowMs - exprSinceMs_) < exprcat::holdMsFor(eyesId_)) {
-      return false;
-    }
-    eyesId_ = FACE_BOOT;
-    exprSinceMs_ = nowMs;
-    return true;
-  }
 
   // Stages the 63B bitmap until a FACE command or timeout. False on null.
   bool showQr(const uint8_t* qr63, uint32_t nowMs, DisplayTransition& t) {
@@ -244,7 +220,6 @@ class DisplayManager {
 
  private:
   uint8_t eyesId_ = FACE_BOOT;
-  uint32_t exprSinceMs_ = 0;
   bool qrActive_ = false;
   uint8_t qrBuf_[qrdisplay::kQrLen] = {};
   uint32_t qrShownMs_ = 0;

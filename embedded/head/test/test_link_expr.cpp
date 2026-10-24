@@ -44,9 +44,9 @@ void test_link_expr_golden_round_trip() {
 }
 
 void test_link_expr_unpack_fail_closed() {
-  const uint8_t good[] = {FACE_BOOT,       FACE_HAPPY,   FACE_SAD,          FACE_BLINK,
-                            FACE_ALERT,      FACE_CURIOUS, FACE_SURPRISED,  exprcat::kAngry,
-                            exprcat::kScared, exprcat::kExcited, exprcat::kConfused};
+  const uint8_t good[] = {FACE_BOOT,        FACE_HAPPY,        FACE_SAD,          FACE_BLINK,
+                          FACE_ALERT,       FACE_CURIOUS,      FACE_SURPRISED,    exprcat::kAngry,
+                          exprcat::kScared, exprcat::kExcited, exprcat::kConfused};
   for (size_t i = 0; i < sizeof(good); ++i) {
     uint8_t id = 0xFF;
     TEST_ASSERT_TRUE(linkcode::unpackExpr(good[i], id));
@@ -89,9 +89,27 @@ void test_link_expr_unknown_maps_neutral() {
   }
 }
 
+void test_link_expr_v2_ids_route_to_paint() {
+  // EXPR frames deliver catalog ids 8-11; the widened FACE vocabulary keeps
+  // them verbatim through resolveFace into the single paint entry.
+  const uint8_t v2[] = {exprcat::kAngry, exprcat::kScared, exprcat::kExcited, exprcat::kConfused};
+  for (size_t i = 0; i < sizeof(v2); ++i) {
+    PowerCommand cmd;
+    TEST_ASSERT_TRUE(wifilink::mapCmd(linkcode::kTypeExpr, &v2[i], 1, cmd));
+    TEST_ASSERT_EQUAL_INT32(v2[i], cmd.arg);
+    const uint8_t resolved = headapply::resolveFace(cmd.arg);
+    TEST_ASSERT_EQUAL_UINT8(v2[i], resolved);
+    DisplayManager mgr;
+    DisplayTransition t;
+    TEST_ASSERT_TRUE(mgr.paintFace(resolved, t));
+    TEST_ASSERT_EQUAL_UINT8(v2[i], mgr.eyesId());
+    TEST_ASSERT_EQUAL_UINT8(eyesmap::emotionForFace(v2[i]), eyesmap::emotionForFace(mgr.eyesId()));
+  }
+}
+
 void test_link_expr_gated_entry_routes_eyes() {
-  // Link EXPR door end to end from neutral: frame payload -> gate -> preset.
-  // Local preemption still applies at the gate (lower never displaces higher).
+  // Link EXPR door end to end: frame payload -> gate -> stored id. Head holds
+  // no policy; every command stores (core sends the single winner).
   DisplayManager mgr;
   DisplayTransition t;
   PowerCommand cmd;
@@ -99,12 +117,13 @@ void test_link_expr_gated_entry_routes_eyes() {
   TEST_ASSERT_TRUE(wifilink::mapCmd(linkcode::kTypeExpr, &raw, 1, cmd));
   const uint8_t resolved = headapply::resolveFace(cmd.arg);
   TEST_ASSERT_EQUAL_UINT8(FACE_SAD, resolved);
-  TEST_ASSERT_TRUE(mgr.requestEyes(resolved, t, 0));
+  TEST_ASSERT_TRUE(mgr.paintFace(resolved, t));
   TEST_ASSERT_EQUAL_UINT8(FACE_SAD, mgr.eyesId());
   TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionSad, eyesmap::emotionForFace(mgr.eyesId()));
-  TEST_ASSERT_TRUE(mgr.requestEyes(FACE_ALERT, t, 10));
-  TEST_ASSERT_FALSE(mgr.requestEyes(FACE_HAPPY, t, 20));
+  TEST_ASSERT_TRUE(mgr.paintFace(FACE_ALERT, t));
   TEST_ASSERT_EQUAL_UINT8(FACE_ALERT, mgr.eyesId());
+  TEST_ASSERT_TRUE(mgr.paintFace(FACE_HAPPY, t));
+  TEST_ASSERT_EQUAL_UINT8(FACE_HAPPY, mgr.eyesId());
 }
 
 void test_link_expr_pairing_screen_survives_command() {
@@ -112,13 +131,12 @@ void test_link_expr_pairing_screen_survives_command() {
   DisplayTransition t;
   TEST_ASSERT_TRUE(mgr.showPairing(kPairPin, 60, 0, t));
   TEST_ASSERT_TRUE(mgr.pairActive());
-  TEST_ASSERT_FALSE(mgr.requestEyes(FACE_ALERT, t, 10));
-  TEST_ASSERT_FALSE(t.clearedPair);
+  TEST_ASSERT_FALSE(mgr.paintFace(FACE_ALERT, t));
   TEST_ASSERT_TRUE(mgr.pairActive());
   TEST_ASSERT_EQUAL_UINT8(FACE_BOOT, mgr.eyesId());
   // Eyes otherwise: once the overlay clears, the same entry applies.
   TEST_ASSERT_TRUE(mgr.clearPairing(t));
-  TEST_ASSERT_TRUE(mgr.requestEyes(FACE_ALERT, t, 20));
+  TEST_ASSERT_TRUE(mgr.paintFace(FACE_ALERT, t));
   TEST_ASSERT_EQUAL_UINT8(FACE_ALERT, mgr.eyesId());
 }
 
@@ -127,8 +145,7 @@ void test_link_expr_ota_screen_survives_command() {
   DisplayTransition t;
   mgr.showOta(30, 0, t);
   TEST_ASSERT_TRUE(mgr.otaActive());
-  TEST_ASSERT_FALSE(mgr.requestEyes(FACE_HAPPY, t, 10));
-  TEST_ASSERT_FALSE(t.clearedOta);
+  TEST_ASSERT_FALSE(mgr.paintFace(FACE_HAPPY, t));
   TEST_ASSERT_TRUE(mgr.otaActive());
   TEST_ASSERT_EQUAL_UINT8(30, mgr.otaPct());
 }
@@ -142,7 +159,7 @@ void test_link_expr_bench_path_intact() {
   DisplayTransition t;
   const uint8_t resolved = headapply::resolveFace(cli.arg);
   TEST_ASSERT_EQUAL_UINT8(FACE_CURIOUS, resolved);
-  TEST_ASSERT_TRUE(mgr.requestEyes(resolved, t, 0));
+  TEST_ASSERT_TRUE(mgr.paintFace(resolved, t));
   TEST_ASSERT_EQUAL_UINT8(FACE_CURIOUS, mgr.eyesId());
   TEST_ASSERT_EQUAL_UINT8(eyesmap::kEmotionAwe, eyesmap::emotionForFace(mgr.eyesId()));
   // Link FACE frames keep working through the same entry.
@@ -150,6 +167,6 @@ void test_link_expr_bench_path_intact() {
   PowerCommand wire;
   const uint8_t raw = FACE_HAPPY;
   TEST_ASSERT_TRUE(wifilink::mapCmd(linkcode::kTypeFace, &raw, 1, wire));
-  TEST_ASSERT_TRUE(link.requestEyes(headapply::resolveFace(wire.arg), t, 0));
+  TEST_ASSERT_TRUE(link.paintFace(headapply::resolveFace(wire.arg), t));
   TEST_ASSERT_EQUAL_UINT8(FACE_HAPPY, link.eyesId());
 }

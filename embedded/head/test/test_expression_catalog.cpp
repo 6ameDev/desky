@@ -15,7 +15,7 @@ void test_exprcat_ids_mirror_face_vocabulary() {
   TEST_ASSERT_EQUAL_UINT8(FACE_ALERT, exprcat::kAlert);
   TEST_ASSERT_EQUAL_UINT8(FACE_CURIOUS, exprcat::kCurious);
   TEST_ASSERT_EQUAL_UINT8(FACE_SURPRISED, exprcat::kSurprised);
-  TEST_ASSERT_EQUAL_UINT8(8, FACE_COUNT);
+  TEST_ASSERT_EQUAL_UINT8(12, FACE_COUNT);
 }
 
 void test_exprcat_count_and_order() {
