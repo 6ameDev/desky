@@ -237,26 +237,32 @@ inline bool desiredSafetyFace(bool groundLost, bool obstacleLatched, uint8_t& id
 }
 
 // Ownership claim over the safety face: which id safety holds, if any.
+// releaseFirst plans [kBoot, id]: the desired id sits below the showing face,
+// so the tick releases through neutral first (the staged latch overwrites
+// before any pump consumes it, so the wire sees one transition).
 struct SafetyDecision {
   bool request;
   uint8_t id;
   bool hasHold;
   uint8_t holdId;
+  bool releaseFirst;
 };
 
 // Next safety-face step for one drain tick that carried any safety edge.
 // Desired present always re-requests (restates the survivor on a sibling
-// clear, refreshes on re-assert). Desired absent releases neutral only while
+// clear, refreshes on re-assert), stepping down via neutral when the desired
+// id sits below the showing face. Desired absent releases neutral only while
 // the face still shows our hold; a stolen face just drops the claim.
 inline SafetyDecision resolveSafetyEdge(bool desiredPresent, uint8_t desiredId, bool hasLast, uint8_t lastId,
                                         uint8_t activeId) {
   if (desiredPresent) {
-    return SafetyDecision{true, desiredId, true, desiredId};
+    const bool stepDown = exprcat::priorityFor(desiredId) < exprcat::priorityFor(activeId);
+    return SafetyDecision{true, desiredId, true, desiredId, stepDown};
   }
   if (hasLast && activeId == lastId) {
-    return SafetyDecision{true, exprcat::kBoot, false, 0};
+    return SafetyDecision{true, exprcat::kBoot, false, 0, false};
   }
-  return SafetyDecision{false, 0, false, 0};
+  return SafetyDecision{false, 0, false, 0, false};
 }
 
 }  // namespace coordinator
@@ -574,9 +580,15 @@ class Coordinator {
         const coordinator::SafetyDecision safety =
             coordinator::resolveSafetyEdge(desired, desiredId, hasSafety_, lastSafety_, expr_->active());
         if (safety.request) {
-          // Claim only what safety actually holds: a rejected request (a
-          // lower desired id against a higher active one) leaves the
-          // previous claim intact, so a later clear still matches the face.
+          // Claim only what safety actually holds: a rejected final request
+          // leaves the previous claim intact, so a later clear still matches
+          // the face.
+          // A planned step-down releases through neutral first; each accepted
+          // request overwrites the staged latch before any pump consumes it,
+          // so the wire sees one transition.
+          if (safety.releaseFirst) {
+            expr_->request(exprcat::kBoot, nowMs);
+          }
           if (expr_->request(safety.id, nowMs)) {
             hasSafety_ = safety.hasHold;
             lastSafety_ = safety.holdId;

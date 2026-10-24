@@ -195,6 +195,10 @@ void test_coord_safety_release_without_claim_sends_nothing();
 void test_coord_safety_sibling_clear_rerequests_survivor();
 void test_coord_safety_assert_while_other_active_reannounces_top();
 void test_coord_safety_level_sequence_survives_sibling_clear();
+void test_coord_safety_stepdown_plans_release_first();
+void test_coord_safety_stepup_needs_no_release();
+void test_coord_safety_equal_restate_needs_no_release();
+void test_coord_safety_bench_stepdown_restates_survivor();
 
 // System mode policy, defined in test_mode_manager.cpp.
 void test_mode_starts_normal();
@@ -609,6 +613,10 @@ int main() {
   RUN_TEST(test_coord_safety_sibling_clear_rerequests_survivor);
   RUN_TEST(test_coord_safety_assert_while_other_active_reannounces_top);
   RUN_TEST(test_coord_safety_level_sequence_survives_sibling_clear);
+  RUN_TEST(test_coord_safety_stepdown_plans_release_first);
+  RUN_TEST(test_coord_safety_stepup_needs_no_release);
+  RUN_TEST(test_coord_safety_equal_restate_needs_no_release);
+  RUN_TEST(test_coord_safety_bench_stepdown_restates_survivor);
   RUN_TEST(test_mode_starts_normal);
   RUN_TEST(test_mode_pair_window_open_enters_pairing);
   RUN_TEST(test_mode_paired_exits_pairing_to_normal);
