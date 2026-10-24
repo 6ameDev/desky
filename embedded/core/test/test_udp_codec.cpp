@@ -346,9 +346,9 @@ void test_qr_rs_syndrome_zero();
 void test_qr_boundary_goldens_self_consistent();
 
 // Link frame codec (B-link core<->head), defined in test_link_codec.cpp.
-void test_link_face_golden_encode();
+void test_link_retired_face_rejected_encode();
 void test_link_crc16_standard_vector();
-void test_link_face_golden_decode();
+void test_link_retired_face_rejected_decode();
 void test_link_hb_golden_encode();
 void test_link_hb_golden_decode();
 void test_link_rejects_bad_magic();
@@ -381,7 +381,6 @@ void test_link_pairdone_empty_frame();
 void test_link_cmd_vocab_oled_literal_round_trip();
 void test_link_cmd_vocab_camctl_literal_round_trip();
 void test_link_cmd_vocab_ota_literal_length();
-void test_link_cmd_vocab_face_literal_range();
 void test_link_cmd_vocab_expr_literal_range();
 
 // Core->head expression command (EXPR 0x08 goldens + pack/unpack), defined
@@ -748,8 +747,8 @@ int main() {
   RUN_TEST(test_qr_rs_syndrome_zero);
   RUN_TEST(test_qr_boundary_goldens_self_consistent);
   RUN_TEST(test_link_crc16_standard_vector);
-  RUN_TEST(test_link_face_golden_encode);
-  RUN_TEST(test_link_face_golden_decode);
+  RUN_TEST(test_link_retired_face_rejected_encode);
+  RUN_TEST(test_link_retired_face_rejected_decode);
   RUN_TEST(test_link_hb_golden_encode);
   RUN_TEST(test_link_hb_golden_decode);
   RUN_TEST(test_link_rejects_bad_magic);
@@ -779,7 +778,6 @@ int main() {
   RUN_TEST(test_link_cmd_vocab_oled_literal_round_trip);
   RUN_TEST(test_link_cmd_vocab_camctl_literal_round_trip);
   RUN_TEST(test_link_cmd_vocab_ota_literal_length);
-  RUN_TEST(test_link_cmd_vocab_face_literal_range);
   RUN_TEST(test_link_cmd_vocab_expr_literal_range);
   RUN_TEST(test_link_expr_literal_contract);
   RUN_TEST(test_link_expr_golden_encode);

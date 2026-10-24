@@ -1,10 +1,9 @@
-// Command LITERALS: literal wire bytes through decode -> mapCmd + CLI door.
+// Command LITERALS: literal wire bytes through decode -> mapCmd.
 // Frames are literal [4C|type|seq|frag|len|payload|CRC16BE] from the encoder;
 // any constant renumber breaks these by construction.
 
 #include <unity.h>
 
-#include "../src/services/cli_manager.h"
 #include "../src/services/power_manager.h"  // headapply:: (Arduino-free top half)
 #include "../src/transport/link_codec.h"    // linkcode:: alias + wifilink::
 
@@ -18,17 +17,6 @@ const uint8_t kOled03[11] = {0x4C, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x0
 const uint8_t kCam00[11] = {0x4C, 0x03, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x3A, 0xEB};
 const uint8_t kCam01[11] = {0x4C, 0x03, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x01, 0x2A, 0xCA};
 const uint8_t kCam02[11] = {0x4C, 0x03, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x02, 0x1A, 0xA9};
-const uint8_t kFace00[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0xB5, 0x4D};
-const uint8_t kFace01[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x01, 0xA5, 0x6C};
-const uint8_t kFace02[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x02, 0x95, 0x0F};
-const uint8_t kFace03[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x03, 0x85, 0x2E};
-const uint8_t kFace04[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x04, 0xF5, 0xC9};
-const uint8_t kFace05[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x05, 0xE5, 0xE8};
-const uint8_t kFace06[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x06, 0xD5, 0x8B};
-const uint8_t kFace07[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x07, 0xC5, 0xAA};
-const uint8_t kFace08[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x08, 0x34, 0x45};
-const uint8_t kFace63[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x63, 0xE9, 0x88};
-const uint8_t kFaceFf[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0xFF, 0xAB, 0xBD};
 
 // Full path for one literal frame: decode must succeed, then map.
 bool decodeAndMap(const uint8_t frame[11], PowerCommand& cmdOut, linkcode::Frame& fOut) {
@@ -69,49 +57,6 @@ void test_cmd_literals_camctl_wire_values() {
   TEST_ASSERT_FALSE(wifilink::mapCmd(f.type, f.payload, f.payloadLen, cmd));
 }
 
-void test_cmd_literals_face_ids_and_clamp() {
-  PowerCommand cmd;
-  linkcode::Frame f;
-  struct Row {
-    const uint8_t* frame;
-    int32_t id;
-  };
-  const Row good[] = {{kFace00, 0}, {kFace01, 1}, {kFace02, 2}, {kFace03, 3},
-                      {kFace04, 4}, {kFace06, 6}, {kFace07, 7}, {kFace08, 8}};
-  for (size_t i = 0; i < sizeof(good) / sizeof(good[0]); ++i) {
-    TEST_ASSERT_TRUE(decodeAndMap(good[i].frame, cmd, f));
-    TEST_ASSERT_EQUAL_UINT8(0x01, f.type);
-    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::FACE), static_cast<uint8_t>(cmd.target));
-    TEST_ASSERT_EQUAL_INT32(good[i].id, cmd.arg);
-    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(good[i].id), headapply::resolveFace(cmd.arg));  // passthrough
-  }
-  // Out-of-range ids still decode+map (passthrough), then clamp to BOOT (0).
-  const uint8_t* bad[3] = {kFace05, kFace63, kFaceFf};
-  for (size_t i = 0; i < 3; ++i) {
-    TEST_ASSERT_TRUE(decodeAndMap(bad[i], cmd, f));
-    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::FACE), static_cast<uint8_t>(cmd.target));
-    TEST_ASSERT_EQUAL_UINT8(0, headapply::resolveFace(cmd.arg));
-  }
-  TEST_ASSERT_EQUAL_UINT8(0, headapply::resolveFace(-1));
-}
-
-void test_cmd_literals_cli_equivalence() {
-  PowerCommand cli;
-  PowerCommand wire;
-  linkcode::Frame f;
-  // "oled on" (human door) is the same command as wire {0x00} (link door).
-  TEST_ASSERT_TRUE(headcmd::parseLine("oled on", cli));
-  TEST_ASSERT_TRUE(decodeAndMap(kOled00, wire, f));
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(cli.target), static_cast<uint8_t>(wire.target));
-  TEST_ASSERT_EQUAL_INT32(2, cli.arg);
-  TEST_ASSERT_EQUAL_INT32(cli.arg, wire.arg);
-  // "oled off" (human door) is the same command as wire {0x02}.
-  TEST_ASSERT_TRUE(headcmd::parseLine("oled off", cli));
-  TEST_ASSERT_TRUE(decodeAndMap(kOled02, wire, f));
-  TEST_ASSERT_EQUAL_INT32(0, cli.arg);
-  TEST_ASSERT_EQUAL_INT32(cli.arg, wire.arg);
-}
-
 void test_cmd_literals_tampered_frames_reject() {
   linkcode::Frame f;
   uint8_t buf[11];
@@ -124,7 +69,7 @@ void test_cmd_literals_tampered_frames_reject() {
   buf[10] ^= 0x01;
   buf[0] = 0xAA;  // phone-wire header: never a link frame
   TEST_ASSERT_FALSE(linkcode::decodeFrame(buf, sizeof(buf), f));
-  TEST_ASSERT_FALSE(linkcode::decodeFrame(kFace02, 10, f));  // truncated
+  TEST_ASSERT_FALSE(linkcode::decodeFrame(kCam02, 10, f));  // truncated
 }
 
 // Shared value table (pinned through the Arduino-free helper).
@@ -186,23 +131,4 @@ void test_cmd_literals_shared_codec_camctl() {
   TEST_ASSERT_TRUE(linkcode::unpackCamCtl(0x01, mode));
   TEST_ASSERT_EQUAL_UINT8(0x01, mode);
   TEST_ASSERT_FALSE(linkcode::unpackCamCtl(0x02, mode));
-}
-
-void test_cmd_literals_shared_codec_face() {
-  // Map-then-clamp: 0x00..0x04,0x06..0x0B survive, rest fall back to BOOT.
-  uint8_t id = 0xFF;
-  const uint8_t good[] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B};
-  for (size_t i = 0; i < sizeof(good); ++i) {
-    TEST_ASSERT_TRUE(linkcode::unpackFace(good[i], id));
-    TEST_ASSERT_EQUAL_UINT8(good[i], id);
-  }
-  TEST_ASSERT_TRUE(linkcode::unpackFace(0x05, id));
-  TEST_ASSERT_EQUAL_UINT8(0x05, id);
-  TEST_ASSERT_EQUAL_UINT8(0, headapply::resolveFace(id));
-  TEST_ASSERT_TRUE(linkcode::unpackFace(0x63, id));
-  TEST_ASSERT_EQUAL_UINT8(0x63, id);
-  TEST_ASSERT_EQUAL_UINT8(0, headapply::resolveFace(id));
-  TEST_ASSERT_TRUE(linkcode::unpackFace(0xFF, id));
-  TEST_ASSERT_EQUAL_UINT8(0xFF, id);
-  TEST_ASSERT_EQUAL_UINT8(0, headapply::resolveFace(id));
 }

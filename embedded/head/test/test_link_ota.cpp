@@ -76,7 +76,7 @@ void test_link_ota_literal_contract() {
   }
   TEST_ASSERT_FALSE(otamanifest::copyOtaUrl(big, sizeof(big), url));
 
-  TEST_ASSERT_FALSE(wifilink::isOtaFrame(linkcode::kTypeFace, 1));
+  TEST_ASSERT_FALSE(wifilink::isOtaFrame(linkcode::kTypeCamCtl, 1));
   TEST_ASSERT_FALSE(wifilink::isOtaFrame(linkcode::kTypePairShow, linkcode::kPairShowLen));
   TEST_ASSERT_FALSE(wifilink::isOtaFrame(linkcode::kTypeOta, 0));
   TEST_ASSERT_FALSE(wifilink::isOtaFrame(linkcode::kTypeOta, 129));

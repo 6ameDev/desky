@@ -20,7 +20,8 @@ constexpr size_t kMaxFrame = kOverhead + kMaxPayload;
 
 // ── Frame types ─────────────────────────────────────────────────────────────
 // BUMP RULE (additive only): a new type takes the next free value. Never renumber, never change lengths.
-constexpr uint8_t kTypeFace = 0x01;    // core->head, 1B face id u8.
+// 0x01 FACE retired: never reuse; stale peers fail closed at the gates below.
+constexpr uint8_t kTypeFace = 0x01;
 constexpr uint8_t kTypeOled = 0x02;    // core->head, 1B mode 0=ON 1=DIM 2=OFF.
 constexpr uint8_t kTypeCamCtl = 0x03;  // core->head, 1B 0=off 1=on.
 // 0x04 QRBITMAP retired (never sent on the wire): do not reuse.
@@ -34,7 +35,6 @@ constexpr uint8_t kTypeHbAck = 0x21;     // core->head, 5B heartbeat ack.
 constexpr uint8_t kTypeAck = 0x22;       // either, 2B acked seq u16BE.
 
 // Fixed payload lengths (variable: JPEG only).
-constexpr size_t kFaceLen = 1;
 constexpr size_t kOledLen = 1;
 constexpr size_t kCamCtlLen = 1;
 // URL grammar lives in ota_manifest.h; length only here.
@@ -100,7 +100,6 @@ inline uint16_t crc16Ccitt(const uint8_t* data, size_t len) {
 // ── Type / length gate ──────────────────────────────────────────────────────
 inline bool isKnownType(uint8_t type) {
   switch (type) {
-    case kTypeFace:
     case kTypeOled:
     case kTypeCamCtl:
     case kTypeOta:
@@ -119,7 +118,6 @@ inline bool isKnownType(uint8_t type) {
 
 inline bool isValidPayloadLen(uint8_t type, uint16_t len) {
   switch (type) {
-    case kTypeFace:
     case kTypeOled:
     case kTypeCamCtl:
     case kTypeExpr:
@@ -386,12 +384,6 @@ inline bool unpackCamCtl(uint8_t wire, uint8_t& modeOut) {
     default:
       return false;
   }
-}
-
-// FACE ids pass through; out-of-range clamps downstream.
-inline bool unpackFace(uint8_t wire, uint8_t& idOut) {
-  idOut = wire;
-  return true;
 }
 
 // EXPR ids validate against the shared catalog; unknown ids (including QR)

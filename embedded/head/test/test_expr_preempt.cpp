@@ -1,13 +1,10 @@
 // Expression paint gate (no hardware): held overlays reject with zero state change; a live QR show clears.
 
-#include <stdio.h>
 #include <unity.h>
 
 #include "../src/abilities/display/display_manager.h"
-#include "../src/services/cli_manager.h"
 #include "../src/services/power_manager.h"  // headapply:: (Arduino-free top half)
 #include "../src/transport/link_codec.h"    // linkcode:: alias + wifilink::
-#include "../src/transport/link_stub.h"
 
 void test_expr_priority_order() {
   TEST_ASSERT_GREATER_THAN_UINT8(exprcat::priorityFor(FACE_BOOT), exprcat::priorityFor(FACE_HAPPY));
@@ -115,33 +112,20 @@ void test_expr_paint_applies_after_overlay_clears() {
 void test_expr_trigger_paths_cover_all_five() {
   struct Row {
     uint8_t id;
-    const char* name;
     uint8_t emotion;
   };
-  const Row rows[] = {{FACE_BOOT, "boot", eyesmap::kEmotionNormal},
-                      {FACE_HAPPY, "happy", eyesmap::kEmotionHappy},
-                      {FACE_SAD, "sad", eyesmap::kEmotionSad},
-                      {FACE_CURIOUS, "curious", eyesmap::kEmotionAwe},
-                      {FACE_SURPRISED, "surprised", eyesmap::kEmotionSurprised}};
+  const Row rows[] = {{FACE_BOOT, eyesmap::kEmotionNormal},
+                      {FACE_HAPPY, eyesmap::kEmotionHappy},
+                      {FACE_SAD, eyesmap::kEmotionSad},
+                      {FACE_CURIOUS, eyesmap::kEmotionAwe},
+                      {FACE_SURPRISED, eyesmap::kEmotionSurprised}};
   for (size_t i = 0; i < sizeof(rows) / sizeof(rows[0]); ++i) {
-    // CLI door: name + numeric.
-    PowerCommand cli;
-    char line[24];
-    snprintf(line, sizeof(line), "face %s", rows[i].name);
-    TEST_ASSERT_TRUE(headcmd::parseLine(line, cli));
-    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::FACE), static_cast<uint8_t>(cli.target));
-    TEST_ASSERT_EQUAL_INT32(rows[i].id, cli.arg);
-    // Link stub door: numeric.
-    PowerCommand stub;
-    char uline[16];
-    snprintf(uline, sizeof(uline), "FACE %u", static_cast<unsigned>(rows[i].id));
-    TEST_ASSERT_TRUE(linkstub::mapLine(uline, stub));
-    TEST_ASSERT_EQUAL_INT32(rows[i].id, stub.arg);
-    // WiFi frame door: passthrough, clamped downstream.
+    // WiFi frame door: EXPR id rides the wire, clamped downstream.
     PowerCommand wire;
     const uint8_t raw = rows[i].id;
-    TEST_ASSERT_TRUE(wifilink::mapCmd(linkcode::kTypeFace, &raw, 1, wire));
+    TEST_ASSERT_TRUE(wifilink::mapCmd(linkcode::kTypeExpr, &raw, 1, wire));
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(CmdTarget::FACE), static_cast<uint8_t>(wire.target));
+    TEST_ASSERT_EQUAL_INT32(rows[i].id, wire.arg);
     // Single paint entry stores the resolved id verbatim.
     DisplayManager mgr;
     DisplayTransition t;

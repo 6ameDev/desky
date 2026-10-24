@@ -20,25 +20,20 @@ void test_link_crc16_standard_vector() {
   TEST_ASSERT_EQUAL_UINT16(0x29B1, link::crc16Ccitt(msg, sizeof(msg)));
 }
 
-void test_link_face_golden_encode() {
+void test_link_retired_face_rejected_encode() {
+  // 0x01 FACE is retired-reserved: never known, never encodable, never reused.
   const uint8_t payload[1] = {0x02};
   uint8_t out[link::kMaxFrame] = {};
-  const size_t n = link::encodeFrame(link::kTypeFace, 1, payload, sizeof(payload), 0, 1, out, sizeof(out));
-  TEST_ASSERT_EQUAL_size_t(11, n);
-  const uint8_t expected[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x02, 0x95, 0x0F};
-  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, out, sizeof(expected));
+  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(0x01, 1, payload, sizeof(payload), 0, 1, out, sizeof(out)));
+  TEST_ASSERT_FALSE(link::isKnownType(0x01));
+  TEST_ASSERT_FALSE(link::isValidPayloadLen(0x01, 1));
 }
 
-void test_link_face_golden_decode() {
-  const uint8_t golden[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x02, 0x95, 0x0F};
+void test_link_retired_face_rejected_decode() {
+  // Stale 0x01 bytes on the wire fail closed at decode.
+  const uint8_t stale[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x02, 0x95, 0x0F};
   link::Frame f;
-  TEST_ASSERT_TRUE(link::decodeFrame(golden, sizeof(golden), f));
-  TEST_ASSERT_EQUAL_UINT8(link::kTypeFace, f.type);
-  TEST_ASSERT_EQUAL_UINT16(1, f.seq);
-  TEST_ASSERT_EQUAL_UINT8(0, f.fragIdx);
-  TEST_ASSERT_EQUAL_UINT8(1, f.fragTotal);
-  TEST_ASSERT_EQUAL_UINT16(1, f.payloadLen);
-  TEST_ASSERT_EQUAL_UINT8(0x02, f.payload[0]);
+  TEST_ASSERT_FALSE(link::decodeFrame(stale, sizeof(stale), f));
 }
 
 void test_link_hb_golden_encode() {
@@ -118,8 +113,8 @@ void test_link_rejects_length_mismatch() {
 void test_link_null_safety() {
   const uint8_t payload[1] = {0x02};
   uint8_t out[16] = {};
-  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeFace, 1, payload, 1, 0, 1, nullptr, sizeof(out)));
-  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeFace, 1, nullptr, 1, 0, 1, out, sizeof(out)));
+  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeExpr, 1, payload, 1, 0, 1, nullptr, sizeof(out)));
+  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeExpr, 1, nullptr, 1, 0, 1, out, sizeof(out)));
   link::Frame f;
   TEST_ASSERT_FALSE(link::decodeFrame(nullptr, 11, f));
   TEST_ASSERT_FALSE(link::decodeFrame(out, 0, f));
@@ -140,12 +135,12 @@ void test_link_null_safety() {
 void test_link_encode_rejects_bad_args() {
   const uint8_t payload[1] = {0x02};
   uint8_t out[link::kMaxFrame] = {};
-  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeFace, 1, payload, 1, 0, 0, out, sizeof(out)));
-  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeFace, 1, payload, 1, 1, 1, out, sizeof(out)));
-  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeFace, 1, payload, 1, 2, 1, out, sizeof(out)));
+  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeExpr, 1, payload, 1, 0, 0, out, sizeof(out)));
+  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeExpr, 1, payload, 1, 1, 1, out, sizeof(out)));
+  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeExpr, 1, payload, 1, 2, 1, out, sizeof(out)));
   TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(0x09, 1, payload, 1, 0, 1, out, sizeof(out)));
   TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(0xFF, 1, payload, 1, 0, 1, out, sizeof(out)));
-  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeFace, 1, payload, 1, 0, 1, out, 10));
+  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeExpr, 1, payload, 1, 0, 1, out, 10));
   uint8_t big[1025];
   for (size_t i = 0; i < sizeof(big); ++i) {
     big[i] = static_cast<uint8_t>(i & 0xFFu);
@@ -156,11 +151,11 @@ void test_link_encode_rejects_bad_args() {
 void test_link_decode_rejects_bad_frag_and_unknown_type() {
   link::Frame f;
   // fragTotal == 0 with a matching CRC is still rejected.
-  uint8_t zeroTotal[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x02, 0x00, 0x00};
+  uint8_t zeroTotal[11] = {0x4C, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x02, 0x00, 0x00};
   link::putU16BE(zeroTotal + 9, link::crc16Ccitt(zeroTotal, 9));
   TEST_ASSERT_FALSE(link::decodeFrame(zeroTotal, sizeof(zeroTotal), f));
   // fragIdx >= fragTotal with a matching CRC is still rejected.
-  uint8_t idxHigh[11] = {0x4C, 0x01, 0x00, 0x01, 0x01, 0x01, 0x00, 0x01, 0x02, 0x00, 0x00};
+  uint8_t idxHigh[11] = {0x4C, 0x02, 0x00, 0x01, 0x01, 0x01, 0x00, 0x01, 0x02, 0x00, 0x00};
   link::putU16BE(idxHigh + 9, link::crc16Ccitt(idxHigh, 9));
   TEST_ASSERT_FALSE(link::decodeFrame(idxHigh, sizeof(idxHigh), f));
   // Unknown type with a matching CRC is still rejected (frozen contract).
@@ -192,8 +187,10 @@ void test_link_jpeg_max_boundary() {
 void test_link_fixed_type_lengths() {
   uint8_t payload[6] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
   uint8_t out[link::kMaxFrame] = {};
-  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeFace, 1, payload, 0, 0, 1, out, sizeof(out)));
-  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeFace, 1, payload, 2, 0, 1, out, sizeof(out)));
+  // Retired 0x01 FACE never encodes, at any length.
+  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(0x01, 1, payload, 0, 0, 1, out, sizeof(out)));
+  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(0x01, 1, payload, 1, 0, 1, out, sizeof(out)));
+  TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(0x01, 1, payload, 2, 0, 1, out, sizeof(out)));
   TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeOled, 1, payload, 0, 0, 1, out, sizeof(out)));
   TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeCamCtl, 1, payload, 2, 0, 1, out, sizeof(out)));
   TEST_ASSERT_EQUAL_size_t(0, link::encodeFrame(link::kTypeHb, 1, payload, 5, 0, 1, out, sizeof(out)));
@@ -216,8 +213,8 @@ void test_link_round_trip_all_types() {
     uint16_t len;
   };
   static const Case cases[] = {
-      {link::kTypeFace, 1}, {link::kTypeOled, 1}, {link::kTypeCamCtl, 1}, {link::kTypeExpr, 1},
-      {link::kTypeJpeg, 7}, {link::kTypeHb, 10},  {link::kTypeHbAck, 5},  {link::kTypeAck, 2},
+      {link::kTypeOled, 1}, {link::kTypeCamCtl, 1}, {link::kTypeExpr, 1}, {link::kTypeJpeg, 7},
+      {link::kTypeHb, 10},  {link::kTypeHbAck, 5},  {link::kTypeAck, 2},
   };
   for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); ++c) {
     uint8_t payload[63];
@@ -510,14 +507,15 @@ void test_link_phone_wire_headers_distinct() {
   TEST_ASSERT_EQUAL_UINT8(0x4C, link::kMagic);
   // Link type bytes are disjoint from the magic, so a resync scan cannot
   // mistake a type byte for a frame start.
-  static const uint8_t kTypes[] = {link::kTypeFace,     link::kTypeOled, link::kTypeCamCtl, link::kTypePairShow,
-                                   link::kTypePairDone, link::kTypeExpr, link::kTypeJpeg,   link::kTypeHb,
-                                   link::kTypeHbAck,    link::kTypeAck};
+  static const uint8_t kTypes[] = {link::kTypeOled,     link::kTypeCamCtl, link::kTypePairShow,
+                                   link::kTypePairDone, link::kTypeExpr,   link::kTypeJpeg,
+                                   link::kTypeHb,       link::kTypeHbAck,  link::kTypeAck};
   for (size_t i = 0; i < sizeof(kTypes); ++i) {
     TEST_ASSERT_NOT_EQUAL(link::kMagic, kTypes[i]);
     TEST_ASSERT_TRUE(link::isKnownType(kTypes[i]));
   }
   TEST_ASSERT_FALSE(link::isKnownType(0x4C));
   TEST_ASSERT_FALSE(link::isKnownType(0xAA));
+  TEST_ASSERT_FALSE(link::isKnownType(0x01));  // retired FACE: stays unknown, never reused
   TEST_ASSERT_FALSE(link::isKnownType(0x04));  // retired QRBITMAP: stays unknown
 }

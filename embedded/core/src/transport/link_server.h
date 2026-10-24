@@ -3,11 +3,11 @@
 // one Core 0 FreeRTOS task. Sockets only; implements the frozen B-link
 // contract in shared/link (codec never touched from this file).
 //
-//   UDP 3334: RX link frames (FACE/OLED/CAMCTL/HB/ACK), CRC/seq validated via
+//   UDP 3334: RX link frames (OLED/CAMCTL/HB/ACK), CRC/seq validated via
 //     the codec. Seq freshness via linkcode::isFreshSeq on a single shared
 //     head->core seq domain (HB + staged commands share head's counter;
 //     received ACKs ride outside it). Duplicate seq re-ACKs idempotently
-//     without re-executing. Valid HB replies HB_ACK. Valid FACE/OLED/CAMCTL
+//     without re-executing. Valid HB replies HB_ACK. Valid OLED/CAMCTL
 //     stage into LastLinkCmd for the main loop — applying is the LOG_I
 //     command line. Unknown types land in the unknown-type drop class.
 //   TCP 3335: JPEG head->core stream, ONE client at a time. Length-framed via
@@ -138,8 +138,6 @@ inline Pull pullFrame(const uint8_t* buf, size_t buffered, size_t& frameLenOut) 
 // Log-only type name (never payload bytes). "UNKNOWN" outside the contract.
 inline const char* typeName(uint8_t type) {
   switch (type) {
-    case linkcode::kTypeFace:
-      return "FACE";
     case linkcode::kTypeOled:
       return "OLED";
     case linkcode::kTypeCamCtl:
@@ -475,7 +473,6 @@ class LinkServer {
       case linkcode::kTypeHb:
         handleHb(f, rip, rport);
         break;
-      case linkcode::kTypeFace:
       case linkcode::kTypeOled:
       case linkcode::kTypeCamCtl:
         handleCmd(f, rip, rport);
@@ -558,7 +555,7 @@ class LinkServer {
     LOG_EVERY_N(10, "LINK", "hb seq=%u", static_cast<unsigned>(f.seq));
   }
 
-  // FACE/OLED/CAMCTL: freshness-gated; fresh stages a bounded copy under
+  // OLED/CAMCTL: freshness-gated; fresh stages a bounded copy under
   // lock + ACKs + LOG_Is the command (never payload bytes); duplicates
   // re-ACK without re-staging; stale drops.
   void handleCmd(const linkcode::Frame& f, const IPAddress& rip, uint16_t rport) {

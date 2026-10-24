@@ -35,8 +35,8 @@ void test_linkserver_pull_framing() {
   uint8_t garbage[linkcode::kOverhead] = {};
   garbage[0] = 0xAA;  // Phone-wire header: never a frame start.
   TEST_ASSERT_TRUE(linkserver::pullFrame(garbage, sizeof(garbage), frameLen) == linkserver::Pull::kResync);
-  // Golden FACE frame (11B): partial header -> NeedMore, full -> HaveFrame.
-  const uint8_t golden[11] = {0x4C, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x02, 0x95, 0x0F};
+  // Golden EXPR frame (11B): partial header -> NeedMore, full -> HaveFrame.
+  const uint8_t golden[11] = {0x4C, 0x08, 0x00, 0x45, 0x00, 0x01, 0x00, 0x01, 0x01, 0x90, 0xD4};
   TEST_ASSERT_TRUE(linkserver::pullFrame(golden, 10, frameLen) == linkserver::Pull::kNeedMore);
   TEST_ASSERT_TRUE(linkserver::pullFrame(golden, sizeof(golden), frameLen) == linkserver::Pull::kHaveFrame);
   TEST_ASSERT_EQUAL_size_t(11, frameLen);
@@ -53,7 +53,6 @@ void test_linkserver_qr_pin_rule() {
 }
 
 void test_linkserver_type_names() {
-  TEST_ASSERT_EQUAL_STRING("FACE", linkserver::typeName(linkcode::kTypeFace));
   TEST_ASSERT_EQUAL_STRING("OLED", linkserver::typeName(linkcode::kTypeOled));
   TEST_ASSERT_EQUAL_STRING("CAMCTL", linkserver::typeName(linkcode::kTypeCamCtl));
   TEST_ASSERT_EQUAL_STRING("PAIRSHOW", linkserver::typeName(linkcode::kTypePairShow));
@@ -65,6 +64,7 @@ void test_linkserver_type_names() {
   TEST_ASSERT_EQUAL_STRING("HB_ACK", linkserver::typeName(linkcode::kTypeHbAck));
   TEST_ASSERT_EQUAL_STRING("ACK", linkserver::typeName(linkcode::kTypeAck));
   TEST_ASSERT_EQUAL_STRING("UNKNOWN", linkserver::typeName(0xFF));
+  TEST_ASSERT_EQUAL_STRING("UNKNOWN", linkserver::typeName(0x01));  // retired FACE: never reused
 }
 
 void test_linkserver_boot_epoch_resync_gate() {
