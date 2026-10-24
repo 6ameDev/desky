@@ -80,7 +80,7 @@ class ExpressionsViewModelTest {
         // No fetch, no wait: the hardcoded picker is in state from init.
         assertEquals(PICKER_EXPRESSIONS, s.vm.state.value.expressions)
         assertEquals(
-            listOf("Neutral", "happy", "sad", "curious", "surprised"),
+            listOf("Neutral", "happy", "sad", "curious", "surprised", "angry", "scared", "excited", "confused"),
             s.vm.state.value.expressions.map { it.name },
         )
         assertTrue(s.vm.state.value.expressions.none { it.id == 3 || it.id == 4 }, "blink/alert left the picker")
@@ -152,7 +152,7 @@ class ExpressionsViewModelTest {
         promote(s.udp, manual = true)
         main.runCurrent()
 
-        s.vm.onTriggerExpression(9)
+        s.vm.onTriggerExpression(5)
         main.runCurrent()
         main.runCurrent()
         assertTrue(trigs(s.udp).isEmpty(), "stale taps never reach the wire")
