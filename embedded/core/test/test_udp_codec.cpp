@@ -401,6 +401,18 @@ void test_exprtask_placeholders_stay_none();
 void test_exprtask_pump_sends_staged_once();
 void test_exprtask_pump_refused_send_keeps_latch();
 void test_exprtask_pump_tick_yield_sends_neutral();
+void test_exprcue_v2_cue_shapes();
+void test_exprcue_none_and_unknown_silent();
+void test_motionprim_v2_params();
+void test_motionprim_none_still();
+void test_exprtask_conduct_fires_each_v2_bundle_once();
+void test_exprtask_conduct_none_rows_silent_still();
+void test_exprtask_conduct_preemption_cancels_first();
+void test_exprtask_conduct_neutral_release_cancels();
+void test_exprtask_conduct_playonce_yield_cancels();
+void test_exprtask_conduct_retrigger_restarts_bundle();
+void test_exprtask_conduct_rejected_requests_silent();
+void test_exprtask_conduct_link_retry_no_replay();
 
 // Link endpoint helpers, defined in test_link_server.cpp.
 void test_linkserver_first_frame_fresh();
@@ -753,6 +765,18 @@ int main() {
   RUN_TEST(test_exprtask_pump_sends_staged_once);
   RUN_TEST(test_exprtask_pump_refused_send_keeps_latch);
   RUN_TEST(test_exprtask_pump_tick_yield_sends_neutral);
+  RUN_TEST(test_exprcue_v2_cue_shapes);
+  RUN_TEST(test_exprcue_none_and_unknown_silent);
+  RUN_TEST(test_motionprim_v2_params);
+  RUN_TEST(test_motionprim_none_still);
+  RUN_TEST(test_exprtask_conduct_fires_each_v2_bundle_once);
+  RUN_TEST(test_exprtask_conduct_none_rows_silent_still);
+  RUN_TEST(test_exprtask_conduct_preemption_cancels_first);
+  RUN_TEST(test_exprtask_conduct_neutral_release_cancels);
+  RUN_TEST(test_exprtask_conduct_playonce_yield_cancels);
+  RUN_TEST(test_exprtask_conduct_retrigger_restarts_bundle);
+  RUN_TEST(test_exprtask_conduct_rejected_requests_silent);
+  RUN_TEST(test_exprtask_conduct_link_retry_no_replay);
   RUN_TEST(test_linkserver_first_frame_fresh);
   RUN_TEST(test_linkserver_duplicate_stale_fresh);
   RUN_TEST(test_linkserver_pull_framing);

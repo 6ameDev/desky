@@ -4,7 +4,11 @@
 // Covers the codec id mirror + neutral predicate, the manager one-active
 // policy (priority order, preemption, lower-never-displaces, neutral release,
 // yield-to-neutral, play-once expiry/retrigger with fake millis, wrap
-// safety, fail-closed unknown ids), and the task staged-dispatch latch.
+// safety, fail-closed unknown ids), the task staged-dispatch latch, and the
+// bundle conductor (per-row cue+primitive mapping, NONE silent/still,
+// cancel-then-start on preemption/release/yield, retrigger restart, rejected
+// silence, link-retry no-replay) over fake audio/motion sinks plus the
+// Arduino-free cue/primitive tables.
 // Runner lives in test_udp_codec.cpp (single main).
 
 #include <unity.h>
@@ -252,4 +256,268 @@ void test_exprtask_pump_tick_yield_sends_neutral() {
   TEST_ASSERT_TRUE(task.tick(exprcat::kSurprisedHoldMs));
   TEST_ASSERT_TRUE(task.publishStaged(link, 0x08));
   TEST_ASSERT_EQUAL_UINT8(expression::kBoot, link.lastByte);
+}
+
+namespace {
+// Host seams for the bundle conductor: mirror the real sink APIs
+// (AudioTask::cancelAll/beep, MotionController::stop/startWiggle) and record
+// every call. nBeepsAtCancel/wigglesAtStop pin the cancel-before-start order.
+struct FakeExprAudio {
+  unsigned cancelCalls = 0;
+  struct Beep {
+    uint16_t freqHz;
+    uint16_t durMs;
+    uint16_t gapMs;
+  };
+  Beep beeps[16] = {};
+  unsigned nBeeps = 0;
+  unsigned nBeepsAtCancel = 0;
+  void cancelAll() {
+    ++cancelCalls;
+    nBeepsAtCancel = nBeeps;
+  }
+  bool beep(uint16_t freqHz, uint16_t durMs, uint16_t gapMs = 0) {
+    if (nBeeps < 16) {
+      beeps[nBeeps++] = {freqHz, durMs, gapMs};
+    }
+    return true;
+  }
+};
+
+struct FakeExprMotion {
+  unsigned stops = 0;
+  unsigned wiggles = 0;
+  unsigned wigglesAtStop = 0;
+  uint32_t durMs = 0;
+  float rateHz = 0.0f;
+  float amplitude = 0.0f;
+  void stop() {
+    ++stops;
+    wigglesAtStop = wiggles;
+  }
+  void startWiggle(uint32_t durationMs, float rateHzIn = 2.0f, float amplitudeIn = 0.6f) {
+    ++wiggles;
+    durMs = durationMs;
+    rateHz = rateHzIn;
+    amplitude = amplitudeIn;
+  }
+};
+
+void assertBeepsMatchCue(const FakeExprAudio& audio, unsigned base, const exprcue::Cue& cue) {
+  TEST_ASSERT_EQUAL_UINT(cue.len, audio.nBeeps - base);
+  for (uint8_t i = 0; i < cue.len; ++i) {
+    TEST_ASSERT_EQUAL_UINT16(cue.notes[i].freqHz, audio.beeps[base + i].freqHz);
+    TEST_ASSERT_EQUAL_UINT16(cue.notes[i].durMs, audio.beeps[base + i].durMs);
+    TEST_ASSERT_EQUAL_UINT16(cue.notes[i].gapMs, audio.beeps[base + i].gapMs);
+  }
+}
+
+void assertWiggleMatchesPrim(const FakeExprMotion& motion, const motionprim::Primitive& prim) {
+  TEST_ASSERT_EQUAL_UINT32(prim.durationMs, motion.durMs);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, prim.rateHz, motion.rateHz);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, prim.amplitude, motion.amplitude);
+}
+
+}  // namespace
+
+void test_exprcue_v2_cue_shapes() {
+  const exprcue::Cue angry = exprcue::cueFor(exprcat::kSoundAngry);
+  TEST_ASSERT_EQUAL_UINT8(2, angry.len);
+  TEST_ASSERT_EQUAL_UINT16(130, angry.notes[0].freqHz);
+  TEST_ASSERT_EQUAL_UINT16(98, angry.notes[1].freqHz);
+  const exprcue::Cue scared = exprcue::cueFor(exprcat::kSoundScared);
+  TEST_ASSERT_EQUAL_UINT8(3, scared.len);
+  const exprcue::Cue excited = exprcue::cueFor(exprcat::kSoundExcited);
+  TEST_ASSERT_EQUAL_UINT8(4, excited.len);
+  for (uint8_t i = 1; i < excited.len; ++i) {
+    TEST_ASSERT_TRUE(excited.notes[i].freqHz > excited.notes[i - 1].freqHz);
+  }
+  const exprcue::Cue confused = exprcue::cueFor(exprcat::kSoundConfused);
+  TEST_ASSERT_EQUAL_UINT8(2, confused.len);
+  TEST_ASSERT_EQUAL_UINT16(392, confused.notes[0].freqHz);
+  TEST_ASSERT_EQUAL_UINT16(311, confused.notes[1].freqHz);
+  TEST_ASSERT_TRUE(angry.len <= 4 && scared.len <= 4 && excited.len <= 4 && confused.len <= 4);
+}
+
+void test_exprcue_none_and_unknown_silent() {
+  TEST_ASSERT_EQUAL_UINT8(0, exprcue::cueFor(exprcat::kSoundNone).len);
+  TEST_ASSERT_NULL(exprcue::cueFor(exprcat::kSoundNone).notes);
+  TEST_ASSERT_EQUAL_UINT8(0, exprcue::cueFor(0xFE).len);
+  static const uint8_t kV1[] = {0, 1, 2, 3, 4, 6, 7};
+  for (size_t i = 0; i < sizeof(kV1); ++i) {
+    const exprcat::Entry* e = exprcat::lookup(kV1[i]);
+    TEST_ASSERT_NOT_NULL(e);
+    TEST_ASSERT_EQUAL_UINT8(0, exprcue::cueFor(e->sound).len);
+  }
+}
+
+void test_motionprim_v2_params() {
+  const motionprim::Primitive shake = motionprim::forId(exprcat::kMotionShake);
+  TEST_ASSERT_FALSE(shake.still);
+  TEST_ASSERT_TRUE(shake.rateHz > 2.0f);
+  TEST_ASSERT_TRUE(shake.durationMs < 1200);
+  const motionprim::Primitive cower = motionprim::forId(exprcat::kMotionCower);
+  TEST_ASSERT_TRUE(cower.still);
+  const motionprim::Primitive bounce = motionprim::forId(exprcat::kMotionBounce);
+  TEST_ASSERT_FALSE(bounce.still);
+  TEST_ASSERT_EQUAL_UINT32(1200, bounce.durationMs);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.0f, bounce.rateHz);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.6f, bounce.amplitude);
+  const motionprim::Primitive tilt = motionprim::forId(exprcat::kMotionTilt);
+  TEST_ASSERT_FALSE(tilt.still);
+  TEST_ASSERT_TRUE(tilt.rateHz < 2.0f);
+}
+
+void test_motionprim_none_still() {
+  TEST_ASSERT_TRUE(motionprim::forId(exprcat::kMotionNone).still);
+  TEST_ASSERT_TRUE(motionprim::forId(0xFE).still);
+}
+
+void test_exprtask_conduct_fires_each_v2_bundle_once() {
+  const uint8_t ids[] = {exprcat::kAngry, exprcat::kScared, exprcat::kExcited, exprcat::kConfused};
+  for (size_t i = 0; i < sizeof(ids); ++i) {
+    expression::Task task;
+    FakeExprAudio audio;
+    FakeExprMotion motion;
+    TEST_ASSERT_FALSE(task.conductBundle(audio, motion));
+    TEST_ASSERT_TRUE(task.request(ids[i], 0));
+    TEST_ASSERT_TRUE(task.hasBundle());
+    TEST_ASSERT_EQUAL_UINT8(ids[i], task.bundle());
+    TEST_ASSERT_TRUE(task.conductBundle(audio, motion));
+    TEST_ASSERT_EQUAL_UINT(1, audio.cancelCalls);
+    TEST_ASSERT_EQUAL_UINT(1, motion.stops);
+    const exprcat::Entry* e = exprcat::lookup(ids[i]);
+    TEST_ASSERT_NOT_NULL(e);
+    assertBeepsMatchCue(audio, 0, exprcue::cueFor(e->sound));
+    const motionprim::Primitive prim = motionprim::forId(e->motion);
+    if (prim.still) {
+      TEST_ASSERT_EQUAL_UINT(0, motion.wiggles);
+    } else {
+      TEST_ASSERT_EQUAL_UINT(1, motion.wiggles);
+      assertWiggleMatchesPrim(motion, prim);
+    }
+    TEST_ASSERT_FALSE(task.hasBundle());
+    TEST_ASSERT_FALSE(task.conductBundle(audio, motion));
+    TEST_ASSERT_EQUAL_UINT(1, audio.cancelCalls);
+  }
+}
+
+void test_exprtask_conduct_none_rows_silent_still() {
+  expression::Task task;
+  FakeExprAudio audio;
+  FakeExprMotion motion;
+  TEST_ASSERT_TRUE(task.request(expression::kHappy, 0));
+  TEST_ASSERT_TRUE(task.conductBundle(audio, motion));
+  TEST_ASSERT_EQUAL_UINT(1, audio.cancelCalls);
+  TEST_ASSERT_EQUAL_UINT(1, motion.stops);
+  TEST_ASSERT_EQUAL_UINT(0, audio.nBeeps);
+  TEST_ASSERT_EQUAL_UINT(0, motion.wiggles);
+  TEST_ASSERT_FALSE(task.conductBundle(audio, motion));
+}
+
+void test_exprtask_conduct_preemption_cancels_first() {
+  expression::Task task;
+  FakeExprAudio audio;
+  FakeExprMotion motion;
+  TEST_ASSERT_TRUE(task.request(expression::kHappy, 0));
+  TEST_ASSERT_TRUE(task.conductBundle(audio, motion));
+  TEST_ASSERT_TRUE(task.request(exprcat::kAngry, 10));
+  TEST_ASSERT_TRUE(task.conductBundle(audio, motion));
+  TEST_ASSERT_EQUAL_UINT(2, audio.cancelCalls);
+  TEST_ASSERT_EQUAL_UINT(2, motion.stops);
+  assertBeepsMatchCue(audio, 0, exprcue::cueFor(exprcat::kSoundAngry));
+  TEST_ASSERT_EQUAL_UINT(1, motion.wiggles);
+  assertWiggleMatchesPrim(motion, motionprim::forId(exprcat::kMotionShake));
+  TEST_ASSERT_TRUE(task.request(exprcat::kScared, 20));
+  TEST_ASSERT_TRUE(task.conductBundle(audio, motion));
+  TEST_ASSERT_EQUAL_UINT(3, audio.cancelCalls);
+  TEST_ASSERT_EQUAL_UINT(2, audio.nBeepsAtCancel);
+  TEST_ASSERT_EQUAL_UINT(3, motion.stops);
+  TEST_ASSERT_EQUAL_UINT(1, motion.wigglesAtStop);
+  assertBeepsMatchCue(audio, 2, exprcue::cueFor(exprcat::kSoundScared));
+  TEST_ASSERT_EQUAL_UINT(1, motion.wiggles);
+}
+
+void test_exprtask_conduct_neutral_release_cancels() {
+  expression::Task task;
+  FakeExprAudio audio;
+  FakeExprMotion motion;
+  TEST_ASSERT_TRUE(task.request(exprcat::kAngry, 0));
+  TEST_ASSERT_TRUE(task.conductBundle(audio, motion));
+  TEST_ASSERT_TRUE(task.request(exprcat::kBoot, 10));
+  TEST_ASSERT_TRUE(task.conductBundle(audio, motion));
+  TEST_ASSERT_EQUAL_UINT(2, audio.cancelCalls);
+  TEST_ASSERT_EQUAL_UINT(2, motion.stops);
+  TEST_ASSERT_EQUAL_UINT(2, audio.nBeeps);
+  TEST_ASSERT_EQUAL_UINT(1, motion.wiggles);
+  TEST_ASSERT_FALSE(task.conductBundle(audio, motion));
+}
+
+void test_exprtask_conduct_playonce_yield_cancels() {
+  expression::Task task;
+  FakeExprAudio audio;
+  FakeExprMotion motion;
+  TEST_ASSERT_TRUE(task.request(expression::kSurprised, 0));
+  TEST_ASSERT_TRUE(task.conductBundle(audio, motion));
+  TEST_ASSERT_EQUAL_UINT(0, audio.nBeeps);
+  TEST_ASSERT_EQUAL_UINT(0, motion.wiggles);
+  TEST_ASSERT_TRUE(task.tick(exprcat::kSurprisedHoldMs));
+  TEST_ASSERT_TRUE(task.conductBundle(audio, motion));
+  TEST_ASSERT_EQUAL_UINT(2, audio.cancelCalls);
+  TEST_ASSERT_EQUAL_UINT(2, motion.stops);
+  TEST_ASSERT_EQUAL_UINT(0, audio.nBeeps);
+  TEST_ASSERT_EQUAL_UINT(0, motion.wiggles);
+}
+
+void test_exprtask_conduct_retrigger_restarts_bundle() {
+  expression::Task task;
+  FakeExprAudio audio;
+  FakeExprMotion motion;
+  TEST_ASSERT_TRUE(task.request(exprcat::kScared, 0));
+  TEST_ASSERT_TRUE(task.conductBundle(audio, motion));
+  TEST_ASSERT_EQUAL_UINT(3, audio.nBeeps);
+  assertBeepsMatchCue(audio, 0, exprcue::cueFor(exprcat::kSoundScared));
+  TEST_ASSERT_TRUE(task.request(exprcat::kScared, 10));
+  TEST_ASSERT_TRUE(task.conductBundle(audio, motion));
+  TEST_ASSERT_EQUAL_UINT(2, audio.cancelCalls);
+  TEST_ASSERT_EQUAL_UINT(2, motion.stops);
+  TEST_ASSERT_EQUAL_UINT(6, audio.nBeeps);
+  assertBeepsMatchCue(audio, 3, exprcue::cueFor(exprcat::kSoundScared));
+  TEST_ASSERT_EQUAL_UINT(0, motion.wiggles);
+}
+
+void test_exprtask_conduct_rejected_requests_silent() {
+  expression::Task task;
+  FakeExprAudio audio;
+  FakeExprMotion motion;
+  TEST_ASSERT_TRUE(task.request(expression::kSurprised, 0));
+  TEST_ASSERT_TRUE(task.conductBundle(audio, motion));
+  TEST_ASSERT_FALSE(task.request(expression::kHappy, 100));
+  TEST_ASSERT_FALSE(task.conductBundle(audio, motion));
+  TEST_ASSERT_FALSE(task.request(99, 200));
+  TEST_ASSERT_FALSE(task.conductBundle(audio, motion));
+  TEST_ASSERT_EQUAL_UINT(1, audio.cancelCalls);
+  TEST_ASSERT_EQUAL_UINT(1, motion.stops);
+  TEST_ASSERT_EQUAL_UINT(0, audio.nBeeps);
+  TEST_ASSERT_EQUAL_UINT(0, motion.wiggles);
+}
+
+void test_exprtask_conduct_link_retry_no_replay() {
+  expression::Task task;
+  FakeExprAudio audio;
+  FakeExprMotion motion;
+  FakeExprLink link;
+  TEST_ASSERT_TRUE(task.request(exprcat::kAngry, 0));
+  TEST_ASSERT_TRUE(task.conductBundle(audio, motion));
+  TEST_ASSERT_EQUAL_UINT(2, audio.nBeeps);
+  link.ok = false;
+  TEST_ASSERT_FALSE(task.publishStaged(link, 0x08));
+  TEST_ASSERT_FALSE(task.conductBundle(audio, motion));
+  TEST_ASSERT_EQUAL_UINT(1, audio.cancelCalls);
+  TEST_ASSERT_EQUAL_UINT(2, audio.nBeeps);
+  TEST_ASSERT_EQUAL_UINT(1, motion.wiggles);
+  link.ok = true;
+  TEST_ASSERT_TRUE(task.publishStaged(link, 0x08));
+  TEST_ASSERT_FALSE(task.conductBundle(audio, motion));
+  TEST_ASSERT_EQUAL_UINT(1, audio.cancelCalls);
 }

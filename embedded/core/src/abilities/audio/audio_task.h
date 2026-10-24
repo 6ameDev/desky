@@ -29,6 +29,9 @@ class AudioTask {
 
   bool bootJingle() { return mgr_.bootJingle(); }
 
+  // Drops queued + in-flight notes with no DONE (conductor preemption).
+  void cancelAll() { mgr_.cancelAll(); }
+
   bool playPcm(const int16_t* samples, size_t frames) { return mgr_.playPcm(samples, frames); }
 
   audiometer::AudioLevel snapshot() const { return mgr_.snapshot(); }

@@ -169,6 +169,10 @@ void loop() {
   g_pairing.publishPairShow(g_link);
   g_pairing.pumpEvictionBurst(g_udp, millis());
   g_otaStage.pumpOtaLink(g_link);
+  // Bundle pump: fires the staged row's audio cue + motion primitive once per
+  // accepted request (cancel-then-start); the link latch below is
+  // independent, so refused sends retry the face id without replaying sound.
+  g_expression.conductBundle(g_audio, g_motion);
   if (g_expression.publishStaged(g_link, linkcode::kTypeExpr)) {
     LOG_I("LINK", "expr sent id=%u", static_cast<unsigned>(g_expression.staged()));
   }
