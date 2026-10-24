@@ -1,5 +1,5 @@
 #pragma once
-// Shared expression catalog: one V1 face table both firmwares compile from.
+// Shared expression catalog: one V2 face+media table both firmwares compile from.
 // Header-only, Arduino-free, no heap, no logging. Normative source: this file.
 // BUMP RULE (additive only): a new expression takes the next free id. Never
 // renumber, never reorder, never change a shipped row.
@@ -18,12 +18,36 @@ constexpr uint8_t kAlert = 4;
 // Id 5 is QR: entered only via showQr, never via a face id, so it has no row.
 constexpr uint8_t kCurious = 6;
 constexpr uint8_t kSurprised = 7;
-constexpr uint8_t kCount = 8;
+constexpr uint8_t kAngry = 8;
+constexpr uint8_t kScared = 9;
+constexpr uint8_t kExcited = 10;
+constexpr uint8_t kConfused = 11;
+constexpr uint8_t kCount = 12;
 
-// Reserved media placeholders: no sound/motion vocabulary ships yet, so every
-// row carries NONE. 0xFF is frozen as the NONE sentinel, never a valid id.
+// V1 rows predate the media vocabularies, so every media/pose field on those
+// rows carries NONE. 0xFF is frozen as the NONE sentinel, never a valid id.
 constexpr uint8_t kSoundNone = 0xFF;
 constexpr uint8_t kMotionNone = 0xFF;
+constexpr uint8_t kNeckNone = 0xFF;
+constexpr uint8_t kArmNone = 0xFF;
+
+// V2 media/pose vocabularies: small ids per new row; NONE stays 0xFF.
+constexpr uint8_t kSoundAngry = 0;
+constexpr uint8_t kSoundScared = 1;
+constexpr uint8_t kSoundExcited = 2;
+constexpr uint8_t kSoundConfused = 3;
+constexpr uint8_t kMotionShake = 0;
+constexpr uint8_t kMotionCower = 1;
+constexpr uint8_t kMotionBounce = 2;
+constexpr uint8_t kMotionTilt = 3;
+constexpr uint8_t kNeckAngry = 0;
+constexpr uint8_t kNeckScared = 1;
+constexpr uint8_t kNeckExcited = 2;
+constexpr uint8_t kNeckConfused = 3;
+constexpr uint8_t kArmAngry = 0;
+constexpr uint8_t kArmScared = 1;
+constexpr uint8_t kArmExcited = 2;
+constexpr uint8_t kArmConfused = 3;
 
 constexpr uint32_t kSurprisedHoldMs = 1500;
 
@@ -34,18 +58,24 @@ struct Entry {
   bool playOnce;
   uint32_t holdMs;
   uint8_t eye;     // Opaque to core; head interprets.
-  uint8_t sound;   // Reserved, always kSoundNone.
-  uint8_t motion;  // Reserved, always kMotionNone.
+  uint8_t sound;   // kSoundNone when the row carries no audio cue.
+  uint8_t motion;  // kMotionNone when the row carries no motion primitive.
+  uint8_t neckPose;  // kNeckNone when the row carries no neck pose.
+  uint8_t armPose;   // kArmNone when the row carries no arm gesture.
 };
 
 constexpr Entry kTable[] = {
-    {kBoot, "boot", 0, false, 0, 0, kSoundNone, kMotionNone},
-    {kHappy, "happy", 1, false, 0, 3, kSoundNone, kMotionNone},
-    {kSad, "sad", 3, false, 0, 4, kSoundNone, kMotionNone},
-    {kBlink, "blink", 0, false, 0, 0, kSoundNone, kMotionNone},
-    {kAlert, "alert", 4, false, 0, 8, kSoundNone, kMotionNone},
-    {kCurious, "curious", 2, false, 0, 17, kSoundNone, kMotionNone},
-    {kSurprised, "surprised", 5, true, kSurprisedHoldMs, 8, kSoundNone, kMotionNone},
+    {kBoot, "boot", 0, false, 0, 0, kSoundNone, kMotionNone, kNeckNone, kArmNone},
+    {kHappy, "happy", 1, false, 0, 3, kSoundNone, kMotionNone, kNeckNone, kArmNone},
+    {kSad, "sad", 3, false, 0, 4, kSoundNone, kMotionNone, kNeckNone, kArmNone},
+    {kBlink, "blink", 0, false, 0, 0, kSoundNone, kMotionNone, kNeckNone, kArmNone},
+    {kAlert, "alert", 4, false, 0, 8, kSoundNone, kMotionNone, kNeckNone, kArmNone},
+    {kCurious, "curious", 2, false, 0, 17, kSoundNone, kMotionNone, kNeckNone, kArmNone},
+    {kSurprised, "surprised", 5, true, kSurprisedHoldMs, 8, kSoundNone, kMotionNone, kNeckNone, kArmNone},
+    {kAngry, "angry", 8, false, 0, 1, kSoundAngry, kMotionShake, kNeckAngry, kArmAngry},
+    {kScared, "scared", 9, false, 0, 16, kSoundScared, kMotionCower, kNeckScared, kArmScared},
+    {kExcited, "excited", 7, false, 0, 2, kSoundExcited, kMotionBounce, kNeckExcited, kArmExcited},
+    {kConfused, "confused", 6, false, 0, 9, kSoundConfused, kMotionTilt, kNeckConfused, kArmConfused},
 };
 
 constexpr size_t kEntryCount = sizeof(kTable) / sizeof(kTable[0]);

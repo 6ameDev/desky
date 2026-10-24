@@ -367,7 +367,7 @@ void test_link_expr_golden_decode();
 void test_link_expr_pack_unpack_round_trip();
 void test_link_expr_pack_unpack_fail_closed();
 
-// Shared expression catalog (one V1 face table both firmwares compile from),
+// Shared expression catalog (one V2 face+media table both firmwares compile from),
 // defined in test_expression_catalog.cpp.
 void test_exprcat_ids_mirror_face_vocabulary();
 void test_exprcat_count_and_order();
@@ -376,6 +376,7 @@ void test_exprcat_priorities();
 void test_exprcat_play_once_and_hold();
 void test_exprcat_eye_commands();
 void test_exprcat_placeholders_none();
+void test_exprcat_v2_bundles();
 void test_exprcat_lookup_fail_closed();
 void test_exprcat_accessors_fail_closed();
 
@@ -730,6 +731,7 @@ int main() {
   RUN_TEST(test_exprcat_play_once_and_hold);
   RUN_TEST(test_exprcat_eye_commands);
   RUN_TEST(test_exprcat_placeholders_none);
+  RUN_TEST(test_exprcat_v2_bundles);
   RUN_TEST(test_exprcat_lookup_fail_closed);
   RUN_TEST(test_exprcat_accessors_fail_closed);
   RUN_TEST(test_exprcodec_ids_mirror_catalog);
