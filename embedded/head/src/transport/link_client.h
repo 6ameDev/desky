@@ -165,6 +165,7 @@ class LinkClient {
           if (wifilink::retryDue(now, cycleEndMs_, CFG_LINK_FOLLOW_BACKOFF_MS)) {
             cycleExhausted_ = false;
             followTarget_ = wifilink::firstFollowTarget(haveLastGood_, haveHomeCreds_);
+            LOG_I("LINK", "follow backoff elapsed, restart tgt=%u", static_cast<unsigned>(followTarget_));
           }
         } else if (wifilink::retryDue(now, lastAssocTryMs_, CFG_LINK_ASSOC_RETRY_MS)) {
           maybeShortCircuit();

@@ -15,12 +15,12 @@
 // DUAL-MONO (identical L+R samples). Quiet by construction: peak =
 // CFG_AUDIO_VOLUME of int16 full-scale.
 //
-// Serial lines: one boot line, one DEBUG meter line at CFG_AUDIO_METER_MS
-// cadence, one beep-start line per note + one done line per queue drain.
+// Serial lines: one boot line, one DEBUG meter summary every ~5s, one
+// beep-start line per note + one done line per queue drain.
 //
 // Rules: no heap/String in the audio task paths (fixed 8-slot note queue,
 // drop + LOG_W when full), WDT fed every loop, logWatermarks("AUDIO") every
-// ~5s, task never halts, no ISR work (DMA polled in the task).
+// ~60s, task never halts, no ISR work (DMA polled in the task).
 
 #include "audio_codec.h"
 
@@ -343,21 +343,22 @@ class AudioManager {
       speaker::packMono32(txMono_, txStereo_, kTxChunkFrames);
       hal_.writeTx(txStereo_, sizeof(txStereo_), 50);
 
-      // Meter serial line at the CFG cadence (the ONLY periodic audio log),
-      // DEBUG level so INFO transcripts stay readable.
+      // Meter summary at ~5s (50 x the CFG gate): the peak-hold keeps spikes
+      // visible while the serial line stays quiet. DEBUG level so INFO
+      // transcripts stay readable.
       const uint32_t nowMs = millis();
       if (nowMs - lastMeterMs_ >= kMeterMs) {
         lastMeterMs_ = nowMs;
         xSemaphoreTake(mutex_, portMAX_DELAY);
         const audiometer::AudioLevel level = level_;
         xSemaphoreGive(mutex_);
-        LOG_D("AUDIO", "meter rmsL=%lu rmsR=%lu peak=%lu side=%s", static_cast<unsigned long>(level.rmsL),
-              static_cast<unsigned long>(level.rmsR), static_cast<unsigned long>(level.peak),
-              audiometer::sideName(level.side));
+        LOG_EVERY_N(50, "AUDIO", "meter rmsL=%lu rmsR=%lu peak=%lu side=%s", static_cast<unsigned long>(level.rmsL),
+                    static_cast<unsigned long>(level.rmsR), static_cast<unsigned long>(level.peak),
+                    audiometer::sideName(level.side));
       }
 
       FaultManager::watchdogFeed();
-      if (nowMs - lastWmMs_ >= 5000u) {
+      if (nowMs - lastWmMs_ >= 60000u) {
         lastWmMs_ = nowMs;
         Diagnostics::logWatermarks("AUDIO");
       }

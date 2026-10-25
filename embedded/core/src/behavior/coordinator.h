@@ -619,7 +619,7 @@ class Coordinator {
 
       FaultManager::watchdogFeed();
       ++ticks;
-      if (ticks % (5000 / kLoopMs) == 0) {
+      if (ticks % (60000 / kLoopMs) == 0) {
         Diagnostics::logWatermarks("COORD");
       }
     }

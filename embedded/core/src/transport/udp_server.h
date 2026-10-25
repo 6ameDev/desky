@@ -26,7 +26,7 @@
 // otherwise (no broadcast fallback, pre-pair silent).
 //
 // Rules: no heap/String in RX/TX path (fixed stack buffers); WDT fed every
-// tick; logWatermarks("UDP") every ~5s; task never halts. Key, code and nonce
+// tick; logWatermarks("UDP") every ~60s; task never halts. Key, code and nonce
 // bytes are never logged; drops log first-of-boot at INFO then throttled.
 
 // ── Arduino-free: statusFlags bit map + fixed-point helpers ──────────────
@@ -327,7 +327,11 @@ class UdpServer : public transport::IUdpTransport {
     if (net.trySta && staSsid_[0] != '\0') {
       netState_ = NetState::kJoining;
       WiFi.mode(WIFI_STA);
-      WiFi.begin(staSsid_, staPass_);
+      // The task loop below owns every later retry at kStaRetryMs, so the
+      // framework auto-retry stays off: two retriers would re-begin while
+      // the other is mid-connect (ESP_ERR_WIFI_STATE by construction).
+      WiFi.setAutoReconnect(false);
+      staPending_ = (WiFi.begin(staSsid_, staPass_) == WL_DISCONNECTED);
       LOG_I("BOOT", "wifi STA ssid=%s ip=connecting udp=%u", staSsid_, kPort);
     } else {
       if (!startAp()) {
@@ -414,10 +418,10 @@ class UdpServer : public transport::IUdpTransport {
       // stays throttled afterwards — same pattern as the no-peer path.
       if (pairing_->isPaired() && conn_.havePeer()) {
         dropFirst(firstTelemetryDrop_, "alive stale -> silent (first of boot)");
-        LOG_EVERY_N(20, "UDP", "alive stale -> silent");
+        LOG_EVERY_N(200, "UDP", "alive stale -> silent");
       } else {
         dropFirst(firstTelemetryDrop_, "drop telemetry no-peer/stale (first of boot)");
-        LOG_EVERY_N(20, "UDP", "drop telemetry no-peer/stale");
+        LOG_EVERY_N(200, "UDP", "drop telemetry no-peer/stale");
       }
     }
     return gateOk;
@@ -536,6 +540,7 @@ class UdpServer : public transport::IUdpTransport {
       if (netState_ != NetState::kAp) {
         if (WiFi.status() == WL_CONNECTED) {
           lastLinkMs_ = nowMs;
+          staPending_ = false;
           if (netState_ == NetState::kJoining) {
             netState_ = NetState::kUp;
             startMdns();
@@ -545,8 +550,19 @@ class UdpServer : public transport::IUdpTransport {
           // Unsigned subtraction: wrap-safe across millis() rollover.
           if (nowMs - lastRetryMs_ >= kStaRetryMs) {
             lastRetryMs_ = nowMs;
-            WiFi.begin(staSsid_, staPass_);
-            LOG_D("UDP", "STA reconnect ssid=%s", staSsid_);
+            // Reconnect only when the driver is idle: a begin issued while
+            // our own attempt is still in flight fails the driver connect
+            // with ESP_ERR_WIFI_STATE. Settled-failure statuses prove the
+            // attempt resolved; anything else keeps the outstanding attempt.
+            const wl_status_t st = WiFi.status();
+            if (st == WL_CONNECT_FAILED || st == WL_CONNECTION_LOST || st == WL_NO_SSID_AVAIL) {
+              staPending_ = false;
+            }
+            if (!staPending_) {
+              const wl_status_t rc = WiFi.begin(staSsid_, staPass_);
+              staPending_ = (rc != WL_CONNECTED && rc != WL_CONNECT_FAILED);
+              LOG_D("UDP", "STA reconnect ssid=%s", staSsid_);
+            }
           }
           const bool expired = (netState_ == NetState::kJoining) ? (nowMs - staStartMs_ >= joinTimeoutMs_)
                                                                  : (nowMs - lastLinkMs_ >= failoverMs_);
@@ -624,7 +640,7 @@ class UdpServer : public transport::IUdpTransport {
 
       FaultManager::watchdogFeed();
       ++ticks;
-      if (ticks % (5000 / kLoopMs) == 0) {
+      if (ticks % (60000 / kLoopMs) == 0) {
         Diagnostics::logWatermarks("UDP");
       }
     }
@@ -662,7 +678,12 @@ class UdpServer : public transport::IUdpTransport {
   // compiled default only covers a broken provision. False when softAP fails.
   // PASS never logged.
   bool startAp() {
-    WiFi.disconnect(true);
+    // Disconnect only when the driver is initialized: the no-credentials
+    // boot path reaches here with the driver never started, and an
+    // unconditional disconnect fails with ESP_ERR_WIFI_NOT_INIT.
+    if (WiFi.getMode() != WIFI_MODE_NULL) {
+      WiFi.disconnect(true);
+    }
     WiFi.mode(WIFI_AP);
     char apPass[linkcrypto::kPassphraseCap] = {};
     const linkcrypto::Key key = linkcrypto::provisionedKey();
@@ -867,6 +888,10 @@ class UdpServer : public transport::IUdpTransport {
   // portable identity.
   connection::ConnectionManager conn_;
   uint32_t lastRetryMs_;
+  // True while our own STA attempt is unresolved: a second begin before it
+  // resolves fails the driver connect with ESP_ERR_WIFI_STATE. Set on every
+  // begin we issue, cleared on link-up or a settled-failure status.
+  bool staPending_ = false;
   NetState netState_ = NetState::kAp;
   char staSsid_[33];
   char staPass_[65];

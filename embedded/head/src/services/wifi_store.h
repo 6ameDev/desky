@@ -70,15 +70,15 @@ class HeadWifiStore {
       return false;
     }
     // putString stores the NUL terminator; content length is one less.
-    const size_t ssidStored = headstore::HeadStore::bytesLength(kSsidKey);
+    const size_t ssidStored = headstore::HeadStore::stringLength(kSsidKey);
     if (ssidStored < 2 || !credentialsUsable(true, ssidStored - 1)) {
       return false;
     }
     char ssidTmp[kSsidMax + 1] = {};
     char passTmp[kPassMax + 1] = {};
-    const size_t ssidGot = headstore::HeadStore::readBytes(kSsidKey, ssidTmp, sizeof(ssidTmp));
+    const size_t ssidGot = headstore::HeadStore::readString(kSsidKey, ssidTmp, sizeof(ssidTmp));
     const size_t passGot = headstore::HeadStore::hasKey(kPassKey)
-                               ? headstore::HeadStore::readBytes(kPassKey, passTmp, sizeof(passTmp))
+                               ? headstore::HeadStore::readString(kPassKey, passTmp, sizeof(passTmp))
                                : 1;
     if (ssidGot == 0 || passGot == 0) {
       return false;

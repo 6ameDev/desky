@@ -187,7 +187,7 @@ void test_link_wificreds_clear_sealed_minimum() {
 }
 
 void test_linkserver_cred_retry_policy() {
-  // 5 attempts over ~5s: first at the epoch, then every 1s.
+  // 5 attempts over ~5s: first at the portal relay, then every 1s.
   TEST_ASSERT_EQUAL_UINT8(5, linkserver::kCredMaxAttempts);
   TEST_ASSERT_EQUAL_UINT32(1000, linkserver::kCredRetryMs);
   TEST_ASSERT_TRUE(linkserver::credRetryDue(0, 0, 1000));
@@ -202,4 +202,24 @@ void test_linkserver_cred_retry_policy() {
 void test_linkserver_wificreds_type_name() {
   TEST_ASSERT_EQUAL_STRING("WIFICREDS", linkserver::typeName(linkcode::kTypeWifiCreds));
   TEST_ASSERT_EQUAL_STRING("WIFICREDS", linkserver::typeName(0x09));  // literal: the bundle bump
+}
+
+void test_linkserver_cred_arm_only_if_sent() {
+  // Refused first send arms nothing: no budget, no seq.
+  const linkserver::CredPushArm refused = linkserver::credPushArm(false, 0);
+  TEST_ASSERT_FALSE(refused.armed);
+  TEST_ASSERT_FALSE(refused.haveSeq);
+  TEST_ASSERT_EQUAL_UINT16(0, refused.seq);
+  TEST_ASSERT_EQUAL_UINT8(0, refused.attempts);
+  // Refused send never arms, even with a stale seq value on hand.
+  const linkserver::CredPushArm refusedStale = linkserver::credPushArm(false, 41);
+  TEST_ASSERT_FALSE(refusedStale.armed);
+  TEST_ASSERT_FALSE(refusedStale.haveSeq);
+  TEST_ASSERT_EQUAL_UINT8(0, refusedStale.attempts);
+  // Sent first datagram arms one attempt carrying the minted seq.
+  const linkserver::CredPushArm armed = linkserver::credPushArm(true, 41);
+  TEST_ASSERT_TRUE(armed.armed);
+  TEST_ASSERT_TRUE(armed.haveSeq);
+  TEST_ASSERT_EQUAL_UINT16(41, armed.seq);
+  TEST_ASSERT_EQUAL_UINT8(1, armed.attempts);
 }

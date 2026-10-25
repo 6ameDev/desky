@@ -7,13 +7,26 @@ export
 export PLATFORMIO_SETTING_CHECK_PLATFORMIO_INTERVAL=7
 export PLATFORMIO_SETTING_ENABLE_TELEMETRY=No
 
-.PHONY: clean build test check check-pins check-arch
+.PHONY: clean build test check check-pins check-arch upload-head
+
+# Default USB port for head uploads (stable path on this bench). Override
+# per invocation when needed: make upload-head PORT=/dev/cu.usbserial-XXXX.
+# A pinned default beats autodetect whenever the core is attached alongside.
+PORT ?= /dev/cu.usbserial-140
 
 clean:
 	pio run -e desky-head -t clean
 
 build:
 	pio run -e desky-head
+
+# Build + upload to the head only. PORT is required so a simultaneously
+# attached core is never flashed by mistake (list ports with pio device list).
+# Proves the flash with hashes, same pattern as the core upload targets.
+upload-head:
+	@test -n "$(PORT)" || (echo "usage: make upload-head PORT=/dev/cu.usbserial-XXXX"; exit 1)
+	pio run -e desky-head --upload-port $(PORT) -t upload > /tmp/desky-head-upload.log 2>&1; CODE=$$?; cat /tmp/desky-head-upload.log; test $$CODE -eq 0
+	grep -q "Hash of data verified" /tmp/desky-head-upload.log && grep -q "Hard resetting" /tmp/desky-head-upload.log
 
 test:
 	pio test -e native-test

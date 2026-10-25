@@ -12,6 +12,7 @@
 #include "common/diagnostics.h"
 #include "common/fault_manager.h"
 #include "common/i2c_manager.h"
+#include "common/log_filter.h"
 #include "common/logger.h"
 #include "config.h"
 #include "hal/motor_driver.h"
@@ -136,6 +137,12 @@ void setup() {
   DESKY_ASSERT(tofOk);
   const bool mpuOk = g_mpu.init();
   DESKY_ASSERT(mpuOk);
+  // The ADC bus attaches lazily on first analogRead, so the pre-read
+  // attenuation call logs "Pin is not configured as analog channel" at
+  // ERROR and succeeds anyway (default attenuation is already 11dB).
+  LogFilter::addRule("Pin is not configured as analog channel");
+  LogFilter::begin();
+  LOG_I("LOG", "filter rules=%u", LogFilter::ruleCount());
   const bool tcrtFwdOk = g_tcrtFwd.init();
   DESKY_ASSERT(tcrtFwdOk);
   const bool tcrtRevOk = g_tcrtRev.init();
@@ -272,18 +279,31 @@ void loop() {
 #endif
 #if !DESKY_NO_WIFI
   // The loop runs hot (~5ms) for the 15 Hz telemetry cadence; the heartbeat
-  // + watermarks stay on the ~2 s cadence.
+  // stays on the ~30s cadence with watermarks at ~60s.
+  static uint32_t lastAliveMs = 0;
   static uint32_t lastWmMs = 0;
   const uint32_t nowMs = millis();
-  if (nowMs - lastWmMs >= 2000) {
-    lastWmMs = nowMs;
+  if (nowMs - lastAliveMs >= 30000) {
+    lastAliveMs = nowMs;
     LOG_D("MAIN", "desky v2 skeleton alive");
+  }
+  if (nowMs - lastWmMs >= 60000) {
+    lastWmMs = nowMs;
     Diagnostics::logWatermarks();
   }
   delay(5);
 #else
-  LOG_D("MAIN", "desky v2 skeleton alive");
-  Diagnostics::logWatermarks();
+  static uint32_t lastAliveMs = 0;
+  static uint32_t lastWmMs = 0;
+  const uint32_t nowMs = millis();
+  if (nowMs - lastAliveMs >= 30000) {
+    lastAliveMs = nowMs;
+    LOG_D("MAIN", "desky v2 skeleton alive");
+  }
+  if (nowMs - lastWmMs >= 60000) {
+    lastWmMs = nowMs;
+    Diagnostics::logWatermarks();
+  }
   delay(2000);
 #endif
 }

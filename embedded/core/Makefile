@@ -9,6 +9,12 @@ export PLATFORMIO_SETTING_ENABLE_TELEMETRY=No
 
 .PHONY: clean build build-release build-bench test test-verbose check check-pins check-arch upload-monitor upload-monitor-release upload-bench monitor-decode
 
+# Default USB port for core uploads/monitors (stable modem path on this
+# bench). Override per invocation when needed: make upload-monitor
+# PORT=/dev/cu.usbserial-XXXX. A pinned default beats autodetect whenever
+# the head is attached alongside.
+PORT ?= /dev/cu.usbmodem5C941480511
+
 clean:
 	pio run -e desky -t clean
 
@@ -21,18 +27,22 @@ build-release:
 	pio run -e desky-release
 
 # Build, upload to ESP32, and monitor serial output (dev).
-# Upload is verified (hashes + hard reset) before the monitor starts —
-# a bare SUCCESS table proves the build, not the flash.
+# PORT is required so a simultaneously attached head is never flashed by
+# mistake (list ports with pio device list). Upload is verified (hashes +
+# hard reset) before the monitor starts — a bare SUCCESS table proves the
+# build, not the flash.
 upload-monitor:
-	pio run -e desky -t upload > /tmp/desky-upload.log 2>&1; CODE=$$?; cat /tmp/desky-upload.log; test $$CODE -eq 0
+	@test -n "$(PORT)" || (echo "usage: make upload-monitor PORT=/dev/cu.usbserial-XXXX"; exit 1)
+	pio run -e desky --upload-port $(PORT) -t upload > /tmp/desky-upload.log 2>&1; CODE=$$?; cat /tmp/desky-upload.log; test $$CODE -eq 0
 	grep -q "Hash of data verified" /tmp/desky-upload.log && grep -q "Hard resetting" /tmp/desky-upload.log
-	pio device monitor
+	pio device monitor --port $(PORT)
 
 # Build, upload to ESP32, and monitor serial output (release)
 upload-monitor-release:
-	pio run -e desky-release -t upload > /tmp/desky-release-upload.log 2>&1; CODE=$$?; cat /tmp/desky-release-upload.log; test $$CODE -eq 0
+	@test -n "$(PORT)" || (echo "usage: make upload-monitor-release PORT=/dev/cu.usbserial-XXXX"; exit 1)
+	pio run -e desky-release --upload-port $(PORT) -t upload > /tmp/desky-release-upload.log 2>&1; CODE=$$?; cat /tmp/desky-release-upload.log; test $$CODE -eq 0
 	grep -q "Hash of data verified" /tmp/desky-release-upload.log && grep -q "Hard resetting" /tmp/desky-release-upload.log
-	pio device monitor
+	pio device monitor --port $(PORT)
 
 # Verify compilation (bench env: WiFi off for TCRT bring-up).
 # Deliberately NOT part of `check` — the gate stays desky/desky-release.
@@ -42,7 +52,8 @@ build-bench:
 # Build + upload (bench), no monitor — for scripted TCRT calibration captures
 # (see docs/debugging.md). Same hash-verified upload pattern as the dev path.
 upload-bench:
-	pio run -e desky-bench -t upload > /tmp/desky-bench-upload.log 2>&1; CODE=$$?; cat /tmp/desky-bench-upload.log; test $$CODE -eq 0
+	@test -n "$(PORT)" || (echo "usage: make upload-bench PORT=/dev/cu.usbserial-XXXX"; exit 1)
+	pio run -e desky-bench --upload-port $(PORT) -t upload > /tmp/desky-bench-upload.log 2>&1; CODE=$$?; cat /tmp/desky-bench-upload.log; test $$CODE -eq 0
 	grep -q "Hash of data verified" /tmp/desky-bench-upload.log && grep -q "Hard resetting" /tmp/desky-bench-upload.log
 
 # Serial monitor with backtrace decoding (see docs/debugging.md)
