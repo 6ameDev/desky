@@ -71,6 +71,7 @@ void test_link_ota_old_head_drops_as_unknown();
 void test_otadisplay_geometry_and_fill();
 void test_otadisplay_state_transitions();
 void test_link_ota_version_vocabulary_and_gate();
+void test_link_ota_channel_policy();
 
 // Authoritative-PIN pairing display, defined in test_pair_show.cpp.
 void test_pairshow_literal_contract();
@@ -207,6 +208,7 @@ int main() {
   RUN_TEST(test_otadisplay_geometry_and_fill);
   RUN_TEST(test_otadisplay_state_transitions);
   RUN_TEST(test_link_ota_version_vocabulary_and_gate);
+  RUN_TEST(test_link_ota_channel_policy);
   RUN_TEST(test_pairshow_literal_contract);
   RUN_TEST(test_pairshow_shared_codec_pack_unpack);
   RUN_TEST(test_pairshow_producer_bytes_to_renderer_exact);
