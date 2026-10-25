@@ -127,6 +127,8 @@ void test_pairbtn_bounce_inside_window_ignored();
 void test_pairbtn_release_never_fires_second_press_refires();
 void test_pairbtn_wrap_safe_timing();
 void test_pairbtn_cfg_defaults_match_header();
+void test_pairbtn_force_ap_hold_threshold();
+void test_pairbtn_force_ap_hold_injectable_and_wrap_safe();
 
 // Sensor task edge + hold logic, defined in test_sensor_task.cpp.
 void test_sensor_rising_publishes_once();
@@ -551,6 +553,16 @@ void test_linkcrypto_open_failure_zeroes_output();
 void test_linkcrypto_passphrase_goldens();
 void test_linkcrypto_passphrase_shape();
 
+// Captive portal policy (services/captive_portal.h), defined in test_captive_portal.cpp.
+void test_portal_store_valid_matrix();
+void test_portal_routes();
+void test_portal_relay_budget_honors_link_retry();
+void test_portal_relay_timeout_edges();
+void test_portal_relay_timeout_wrap_safe();
+void test_portal_escape_html();
+void test_portal_status_header();
+void test_portal_mode_and_relay_texts();
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_control_golden_vector);
@@ -591,6 +603,8 @@ int main() {
   RUN_TEST(test_pairbtn_release_never_fires_second_press_refires);
   RUN_TEST(test_pairbtn_wrap_safe_timing);
   RUN_TEST(test_pairbtn_cfg_defaults_match_header);
+  RUN_TEST(test_pairbtn_force_ap_hold_threshold);
+  RUN_TEST(test_pairbtn_force_ap_hold_injectable_and_wrap_safe);
   RUN_TEST(test_sensor_rising_publishes_once);
   RUN_TEST(test_sensor_held_levels_silent);
   RUN_TEST(test_sensor_falling_publishes_once);
@@ -957,5 +971,13 @@ int main() {
   RUN_TEST(test_linkcrypto_open_failure_zeroes_output);
   RUN_TEST(test_linkcrypto_passphrase_goldens);
   RUN_TEST(test_linkcrypto_passphrase_shape);
+  RUN_TEST(test_portal_store_valid_matrix);
+  RUN_TEST(test_portal_routes);
+  RUN_TEST(test_portal_relay_budget_honors_link_retry);
+  RUN_TEST(test_portal_relay_timeout_edges);
+  RUN_TEST(test_portal_relay_timeout_wrap_safe);
+  RUN_TEST(test_portal_escape_html);
+  RUN_TEST(test_portal_status_header);
+  RUN_TEST(test_portal_mode_and_relay_texts);
   return UNITY_END();
 }

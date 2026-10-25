@@ -21,6 +21,16 @@
 
 namespace pairbtn {
 
+// Forced-AP latch hold: the pair button held this long across boot jumps
+// straight to the provisioning AP until reboot.
+constexpr uint32_t kForceApHoldMs = 3000;
+
+// True once the press held holdMs. Unsigned subtraction: wrap-safe across
+// millis() rollover.
+inline bool forceApLatched(uint32_t pressStartMs, uint32_t nowMs, uint32_t holdMs = kForceApHoldMs) {
+  return (nowMs - pressStartMs) >= holdMs;
+}
+
 // Debounce state for an active-low button. stablePressed is the debounced
 // level, lastChangeMs stamps the last raw transition.
 struct State {
@@ -57,6 +67,7 @@ inline bool update(State& s, bool rawPressed, uint32_t nowMs, uint32_t debounceM
 
 #include <Arduino.h>
 
+#include "common/fault_manager.h"
 #include "common/logger.h"
 
 class PairButton {
@@ -77,6 +88,25 @@ class PairButton {
 
   // Test seam: inject time + raw level.
   bool pollAt(uint32_t nowMs, bool rawPressed) { return pairbtn::update(state_, rawPressed, nowMs, debounceMs_); }
+
+  // Boot forced-AP latch: true once the button held holdMs across this
+  // call, false on early release. Returns on one read when released, so
+  // normal boots pay nothing; feeds the task WDT while held (setup
+  // already subscribed it). The caller latches the result until reboot.
+  bool pollForceApAtBoot(uint32_t holdMs = pairbtn::kForceApHoldMs) {
+    if (digitalRead(static_cast<uint8_t>(pin_)) != LOW) {
+      return false;
+    }
+    const uint32_t startMs = millis();
+    while (digitalRead(static_cast<uint8_t>(pin_)) == LOW) {
+      FaultManager::watchdogFeed();
+      if (pairbtn::forceApLatched(startMs, millis(), holdMs)) {
+        return true;
+      }
+      delay(10);
+    }
+    return false;
+  }
 
  private:
   int pin_;

@@ -339,6 +339,26 @@ class LinkServer {
     homeCredsValid_ = true;
   }
 
+  // Portal-triggered re-offer of the injected home bundle: same sealed
+  // bytes as the epoch push (fresh nonce per attempt). False when
+  // unprovisioned, keyless, or peerless. The sequence-ACK confirms the push
+  // (see credConfirmed); the retry pump owns the budget past the first try.
+  bool relayStore() {
+    pushCreds(millis());
+    return credHaveSeq_;
+  }
+
+  // Portal-triggered sealed CLEAR (forget): same relay + ACK gate as the
+  // store path, empty plaintext per the frozen bundle contract.
+  bool relayClear() {
+    pushClear(millis());
+    return credHaveSeq_;
+  }
+
+  // True once the head ACKed the armed push (store or clear); reset false
+  // by the next push. Polled by the portal's bounded wait.
+  bool credConfirmed() const { return credConfirmed_; }
+
   // Core->head unicast for the ability pumps (PairShow/PairDone + OTA stages
   // live ability-side — this class holds no business state, only sockets +
   // framing + the pinned peer + the tx counter). Mints the frame seq under
@@ -711,8 +731,23 @@ class LinkServer {
   // or peerless. seqOut carries the minted seq (0 unless sent). Counters only
   // in logs: never SSID/pass bytes.
   bool sendCredsOnce(uint16_t& seqOut) {
-    seqOut = 0;
     if (!homeCredsValid_) {
+      seqOut = 0;
+      return false;
+    }
+    return sendBundleOnce(homeSsid_, homePass_, seqOut);
+  }
+
+  // Sealed CLEAR once: same encoding path with empty plaintext (the 2B wipe
+  // signal). The head ACKs it exactly like a store.
+  bool sendClearOnce(uint16_t& seqOut) {
+    const char empty[1] = {};
+    return sendBundleOnce(empty, empty, seqOut);
+  }
+
+  bool sendBundleOnce(const char* ssid, const char* pass, uint16_t& seqOut) {
+    seqOut = 0;
+    if (ssid == nullptr || pass == nullptr) {
       return false;
     }
     const linkcrypto::Key key = linkcrypto::provisionedKey();
@@ -720,17 +755,17 @@ class LinkServer {
       return false;
     }
     size_t ssidLen = 0;
-    while (homeSsid_[ssidLen] != '\0' && ssidLen < sizeof(homeSsid_)) {
+    while (ssid[ssidLen] != '\0' && ssidLen < 33) {
       ++ssidLen;
     }
     size_t passLen = 0;
-    while (homePass_[passLen] != '\0' && passLen < sizeof(homePass_)) {
+    while (pass[passLen] != '\0' && passLen < 65) {
       ++passLen;
     }
     uint8_t plain[linkcode::kWifiCredPlainMax] = {};
     const size_t plainLen =
-        linkcode::packWifiCreds(reinterpret_cast<const uint8_t*>(homeSsid_), ssidLen,
-                                reinterpret_cast<const uint8_t*>(homePass_), passLen, plain, sizeof(plain));
+        linkcode::packWifiCreds(reinterpret_cast<const uint8_t*>(ssid), ssidLen, reinterpret_cast<const uint8_t*>(pass),
+                                passLen, plain, sizeof(plain));
     if (plainLen == 0) {
       return false;
     }
@@ -766,6 +801,7 @@ class LinkServer {
     const bool sent = sendCredsOnce(seq);
     credArmed_ = true;
     credConfirmed_ = false;
+    credClear_ = false;
     credHaveSeq_ = sent;
     credSeq_ = seq;
     credAttempts_ = 1;
@@ -773,6 +809,23 @@ class LinkServer {
     if (sent) {
       ++credTx_;
       LOG_I("LINK", "wificreds sent seq=%u", static_cast<unsigned>(seq));
+    }
+  }
+
+  // Arms the CLEAR push (forget): same gate as the store push, empty bundle.
+  void pushClear(uint32_t nowMs) {
+    uint16_t seq = 0;
+    const bool sent = sendClearOnce(seq);
+    credArmed_ = true;
+    credConfirmed_ = false;
+    credClear_ = true;
+    credHaveSeq_ = sent;
+    credSeq_ = seq;
+    credAttempts_ = 1;
+    credLastTryMs_ = nowMs;
+    if (sent) {
+      ++credTx_;
+      LOG_I("LINK", "wificreds clear sent seq=%u", static_cast<unsigned>(seq));
     }
   }
 
@@ -793,7 +846,7 @@ class LinkServer {
       return;
     }
     uint16_t seq = 0;
-    const bool sent = sendCredsOnce(seq);
+    const bool sent = credClear_ ? sendClearOnce(seq) : sendCredsOnce(seq);
     ++credAttempts_;
     credLastTryMs_ = nowMs;
     if (sent) {
@@ -953,6 +1006,7 @@ class LinkServer {
   bool homeCredsValid_ = false;
   bool credArmed_ = false;
   bool credConfirmed_ = false;
+  bool credClear_ = false;
   bool credHaveSeq_ = false;
   uint16_t credSeq_ = 0;
   uint8_t credAttempts_ = 0;

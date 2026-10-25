@@ -511,6 +511,10 @@ class UdpServer : public transport::IUdpTransport {
   // udpsend::udpSendChecked; failures bump txFail_ + LOG_W.
   uint32_t txFail() const { return txFail_; }
 
+  // True once the AP is raised (until reboot there is no path back).
+  // Read-only for the setup/loop portal lifecycle.
+  bool apActive() const { return netState_ == NetState::kAp; }
+
  private:
   static void taskEntry(void* arg) { static_cast<UdpServer*>(arg)->loop(); }
 
@@ -664,6 +668,10 @@ class UdpServer : public transport::IUdpTransport {
     const linkcrypto::Key key = linkcrypto::provisionedKey();
     const bool derived = key.ok && linkcrypto::deriveApPassphrase(key.bytes, sizeof(key.bytes), apPass, sizeof(apPass));
     const bool apOk = WiFi.softAP(CFG_WIFI_AP_SSID, derived ? apPass : CFG_WIFI_AP_PASS);
+    // Dev serial only: LOG_D is compiled out at release INFO level, so the
+    // derived passphrase never reaches release logs. Field units read it off
+    // the printed on-body label; it never renders on any display.
+    LOG_D("BOOT", "wifi AP pass=%s (dev serial only)", derived ? apPass : "fallback");
     mbedtls_platform_zeroize(apPass, sizeof(apPass));
     DESKY_ASSERT(apOk);
     if (!apOk) {
