@@ -195,17 +195,17 @@ class ConfigStore {
       prefs.end();
       return false;
     }
-    // putString stores the NUL terminator; content length is one less.
-    const size_t ssidStored = prefs.getBytesLength(kWifiSsidKey);
-    const size_t passStored = prefs.isKey(kWifiPassKey) ? prefs.getBytesLength(kWifiPassKey) : 1;
+    // putString/getString pair stores the NUL terminator; content length is one less.
+    const size_t ssidStored = prefs.getStringLength(kWifiSsidKey);
+    const size_t passStored = prefs.isKey(kWifiPassKey) ? prefs.getStringLength(kWifiPassKey) : 1;
     if (ssidStored < 2 || !wificreds::credentialsUsable(true, ssidStored - 1)) {
       prefs.end();
       return false;
     }
-    char ssidTmp[wificreds::kSsidMax + 1];
-    char passTmp[wificreds::kPassMax + 1];
-    const size_t ssidGot = prefs.getBytes(kWifiSsidKey, ssidTmp, sizeof(ssidTmp));
-    const size_t passGot = prefs.isKey(kWifiPassKey) ? prefs.getBytes(kWifiPassKey, passTmp, sizeof(passTmp)) : 1;
+    char ssidTmp[wificreds::kSsidMax + 1] = {};
+    char passTmp[wificreds::kPassMax + 1] = {};
+    const size_t ssidGot = prefs.getString(kWifiSsidKey, ssidTmp, sizeof(ssidTmp));
+    const size_t passGot = prefs.isKey(kWifiPassKey) ? prefs.getString(kWifiPassKey, passTmp, sizeof(passTmp)) : 1;
     prefs.end();
     if (ssidGot == 0 || passGot == 0) {
       return false;

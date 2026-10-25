@@ -47,6 +47,7 @@ OtaUpdater g_ota;
 EventBus::Subscription g_sub;
 uint32_t g_lastCamMs = 0;
 uint32_t g_lastAliveMs = 0;
+uint32_t g_lastWmMs = 0;
 
 // Link callbacks (transport invokes, main executes).
 void onWifiCommand(void* ctx, const linkcode::Frame& f) {
@@ -118,6 +119,9 @@ void setup() {
   g_pairing.attach(&g_display.overlays());
   // Follow-loop injection: the stored home bundle (if any) seeds the search
   // head before the first attempt; without it the search starts at the AP.
+  // The RW open creates the namespace on virgin flash so the read below
+  // never fails on a missing namespace.
+  headstore::HeadStore::ensure();
   char homeSsid[headwifi::kSsidMax + 1] = {};
   char homePass[headwifi::kPassMax + 1] = {};
   const bool homeHave = headwifi::HeadWifiStore::load(homeSsid, sizeof(homeSsid), homePass, sizeof(homePass));
@@ -160,11 +164,14 @@ void loop() {
   while (g_sub.receive(ev, 0)) {
     LOG_D("BUS", "ev %s payload=%lu", headEventName(ev.type), static_cast<unsigned long>(ev.payload));
   }
-  if (now - g_lastAliveMs >= 5000) {
+  if (now - g_lastAliveMs >= 30000) {
     g_lastAliveMs = now;
     LOG_I("HEAD", "alive cam=%s oled=%s face=%s qr=%s pair=%s", camStateName(g_power.camState()),
           oledStateName(g_power.oledState()), faceName(g_power.eyesId()), g_coordinator.qrActive() ? "on" : "off",
           g_coordinator.pairActive() ? "on" : "off");
+  }
+  if (now - g_lastWmMs >= 60000) {
+    g_lastWmMs = now;
     Diagnostics::logWatermarks("HEAD");
   }
 }

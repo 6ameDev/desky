@@ -39,7 +39,7 @@
 // Auth: NONE beyond CRC+seq — transport-only trust, exactly like the AP
 // passphrase. Never logs payload bytes beyond counters, never touches UART.
 
-// Rules: WDT fed every tick, logWatermarks("LINK") every ~5s, task never
+// Rules: WDT fed every tick, logWatermarks("LINK") every ~60s, task never
 // halts. (A halted WDT-subscribed task becomes a panic-reboot loop.)
 // Priority +2, same as audio, BELOW UdpServer +3. begin() runs AFTER
 // UdpServer::begin and BEFORE the BOOT banner; failure LOG_Ws and the boot
@@ -86,9 +86,9 @@ namespace linkcode = linkwrap__::link;
 #ifndef CFG_LINK_LOOP_MS
 #define CFG_LINK_LOOP_MS 10
 #endif
-// Credential-push retry budget: attempts per fresh head epoch, spacing between
+// Credential-push retry budget: attempts per portal relay, spacing between
 // re-sends. 5 attempts ~5s; exhaustion only leaves the push unconfirmed (the
-// next head epoch re-arms).
+// next portal relay re-arms).
 #ifndef CFG_LINK_CRED_MAX_ATTEMPTS
 #define CFG_LINK_CRED_MAX_ATTEMPTS 5
 #endif
@@ -187,6 +187,22 @@ constexpr uint32_t kCredRetryMs = CFG_LINK_CRED_RETRY_MS;
 
 inline bool credRetryDue(uint8_t attemptsUsed, uint32_t lastTryMs, uint32_t nowMs) {
   return attemptsUsed < kCredMaxAttempts && (nowMs - lastTryMs) >= kCredRetryMs;
+}
+
+// Credential-push arm rule (host-testable): the retry budget arms only when
+// the first datagram left the radio; a refused send arms nothing.
+struct CredPushArm {
+  bool armed;
+  bool haveSeq;
+  uint16_t seq;
+  uint8_t attempts;
+};
+
+inline CredPushArm credPushArm(bool sent, uint16_t seq) {
+  if (!sent) {
+    return {false, false, 0, 0};
+  }
+  return {true, true, seq, 1};
 }
 
 // HB peer pin rule (host-testable): every non-stale HB refreshes the target;
@@ -340,19 +356,20 @@ class LinkServer {
   }
 
   // Portal-triggered re-offer of the injected home bundle: same sealed
-  // bytes as the epoch push (fresh nonce per attempt). False when
-  // unprovisioned, keyless, or peerless. The sequence-ACK confirms the push
-  // (see credConfirmed); the retry pump owns the budget past the first try.
+  // bytes every trigger (fresh nonce per attempt). False when
+  // unprovisioned, keyless, peerless, or the radio refused the first
+  // datagram. The sequence-ACK confirms the push (see credConfirmed); the
+  // retry pump owns the budget past the first try.
   bool relayStore() {
     pushCreds(millis());
-    return credHaveSeq_;
+    return credArmed_;
   }
 
   // Portal-triggered sealed CLEAR (forget): same relay + ACK gate as the
   // store path, empty plaintext per the frozen bundle contract.
   bool relayClear() {
     pushClear(millis());
-    return credHaveSeq_;
+    return credArmed_;
   }
 
   // True once the head ACKed the armed push (store or clear); reset false
@@ -457,8 +474,10 @@ class LinkServer {
       FaultManager::watchdogFeed();
       ++ticks;
       if (ticks % (5000u / kLoopMs) == 0) {
-        Diagnostics::logWatermarks("LINK");
         logLinkAccounting();
+      }
+      if (ticks % (60000u / kLoopMs) == 0) {
+        Diagnostics::logWatermarks("LINK");
       }
     }
   }
@@ -606,7 +625,6 @@ class LinkServer {
       pinHeadPeer(rip, rport);  // (Re)pin: head rebooted or first contact.
       sendHbAck(rip, rport, channel);
       LOG_I("LINK", "hb resync boot=%08lx seq=%u", static_cast<unsigned long>(bootId), static_cast<unsigned>(f.seq));
-      pushCreds(millis());  // Fresh epoch: (re)offer the sealed home bundle, if any.
       return;
     }
     const linkserver::SeqVerdict v = linkserver::classifySeq(haveSeq_, lastSeq_, f.seq);
@@ -793,45 +811,50 @@ class LinkServer {
     return true;
   }
 
-  // Arms the credential push on a fresh head epoch: first attempt now, the
-  // retry pump below owns the rest. A refused first datagram still arms (the
-  // pump retries); only a minted seq can confirm.
+  // Arms the portal-triggered credential push: first attempt now, the
+  // retry pump below owns the rest. A refused first datagram arms nothing
+  // (no budget spent); only a minted seq can confirm.
   void pushCreds(uint32_t nowMs) {
     uint16_t seq = 0;
     const bool sent = sendCredsOnce(seq);
+    const linkserver::CredPushArm arm = linkserver::credPushArm(sent, seq);
+    if (!arm.armed) {
+      return;
+    }
     credArmed_ = true;
     credConfirmed_ = false;
     credClear_ = false;
-    credHaveSeq_ = sent;
-    credSeq_ = seq;
-    credAttempts_ = 1;
+    credHaveSeq_ = arm.haveSeq;
+    credSeq_ = arm.seq;
+    credAttempts_ = arm.attempts;
     credLastTryMs_ = nowMs;
-    if (sent) {
-      ++credTx_;
-      LOG_I("LINK", "wificreds sent seq=%u", static_cast<unsigned>(seq));
-    }
+    ++credTx_;
+    LOG_I("LINK", "wificreds sent seq=%u", static_cast<unsigned>(arm.seq));
   }
 
-  // Arms the CLEAR push (forget): same gate as the store push, empty bundle.
+  // Arms the CLEAR push (forget): same arm-only-if-sent gate as the store
+  // push, empty bundle.
   void pushClear(uint32_t nowMs) {
     uint16_t seq = 0;
     const bool sent = sendClearOnce(seq);
+    const linkserver::CredPushArm arm = linkserver::credPushArm(sent, seq);
+    if (!arm.armed) {
+      return;
+    }
     credArmed_ = true;
     credConfirmed_ = false;
     credClear_ = true;
-    credHaveSeq_ = sent;
-    credSeq_ = seq;
-    credAttempts_ = 1;
+    credHaveSeq_ = arm.haveSeq;
+    credSeq_ = arm.seq;
+    credAttempts_ = arm.attempts;
     credLastTryMs_ = nowMs;
-    if (sent) {
-      ++credTx_;
-      LOG_I("LINK", "wificreds clear sent seq=%u", static_cast<unsigned>(seq));
-    }
+    ++credTx_;
+    LOG_I("LINK", "wificreds clear sent seq=%u", static_cast<unsigned>(arm.seq));
   }
 
   // Retry pump for the armed push (link-task tick): re-seals with a fresh
   // nonce and resends while the backoff gate holds. Budget exhaustion only
-  // disarms as unconfirmed (NVS keeps the creds; the next head epoch
+  // disarms as unconfirmed (NVS keeps the creds; the next portal relay
   // re-arms). Silent without an armed push.
   void pollCredPush(uint32_t nowMs) {
     if (!credArmed_ || credConfirmed_) {
@@ -1000,7 +1023,7 @@ class LinkServer {
   uint32_t lastBootId_ = 0;
   uint16_t txSeq_ = 0;
   // Credential-push state: home bundle injected pre-begin by main.cpp;
-  // armed on a fresh head epoch, confirmed by the sequence-ACK.
+  // armed by the portal relay, confirmed by the sequence-ACK.
   char homeSsid_[33] = {};  // 32 + NUL, mirrors the services-side bound.
   char homePass_[65] = {};  // 64 + NUL, mirrors the services-side bound.
   bool homeCredsValid_ = false;

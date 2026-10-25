@@ -186,7 +186,7 @@ class MotionController {
       driver_->setDuty(left, right);
       FaultManager::watchdogFeed();
       ++ticks;
-      if (ticks % (kLoopHz * 5) == 0) {
+      if (ticks % (kLoopHz * 60) == 0) {
         Diagnostics::logWatermarks("MOTION");
       }
     }

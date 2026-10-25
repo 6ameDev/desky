@@ -458,6 +458,7 @@ void test_link_wificreds_unpack_rejects();
 void test_link_wificreds_sealed_round_trip();
 void test_link_wificreds_clear_sealed_minimum();
 void test_linkserver_cred_retry_policy();
+void test_linkserver_cred_arm_only_if_sent();
 void test_linkserver_wificreds_type_name();
 
 // Telemetry X-WIRE (literal producer bytes -> real consumer + independent
@@ -896,6 +897,7 @@ int main() {
   RUN_TEST(test_link_wificreds_sealed_round_trip);
   RUN_TEST(test_link_wificreds_clear_sealed_minimum);
   RUN_TEST(test_linkserver_cred_retry_policy);
+  RUN_TEST(test_linkserver_cred_arm_only_if_sent);
   RUN_TEST(test_linkserver_wificreds_type_name);
   RUN_TEST(test_link_ota_golden_encode);
   RUN_TEST(test_link_ota_golden_decode);
