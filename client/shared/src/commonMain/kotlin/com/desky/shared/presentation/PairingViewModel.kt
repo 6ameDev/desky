@@ -18,9 +18,9 @@ import kotlinx.coroutines.launch
  * Pairing screen state (unidirectional data flow: single [StateFlow] +
  * explicit intents below).
  *
- * The robot endpoint is fixed (`192.168.4.1:3333` — pairing/auth v1), so
- * there is no IP/host field: [pin] holds the 6-digit pairing code shown on
- * the robot display.
+ * The robot endpoint resolves via mDNS (`desky.local:3333` — pairing/auth
+ * v1), so there is no IP/host field: [pin] holds the 6-digit pairing code
+ * shown on the robot display.
  */
 data class PairingUiState(
     val pin: String = "",

@@ -12,9 +12,12 @@ package com.desky.shared.data
  * `sin_addr.s_addr` must contain. Do NOT "fix" this by shifting the first
  * octet to the top: that yields host order and byte-reverses every
  * non-palindromic address on the wire (255.255.255.255 still works, which
- * is why the bug hides until unicast to 192.168.4.1 fails).
+ * is why the bug hides until unicast to a literal fails).
  *
- * Only dotted-quad literals are supported — no DNS in v1 scope.
+ * Only dotted-quad literals are parsed here — hostname resolution (mDNS)
+ * lives in the socket send paths (`getaddrinfo` on iOS,
+ * `InetAddress.getByName` on Android/JVM), which call this only for the
+ * literal fast path.
  */
 
 /** Dotted quad (e.g. `192.168.4.1`) to network-order UInt32. */

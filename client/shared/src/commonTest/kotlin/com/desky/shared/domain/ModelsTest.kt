@@ -45,10 +45,10 @@ class ModelsTest {
 
     @Test
     fun pairedDeviceDefaults() {
-        val d = PairedDevice(id = "robot-1", ip = "192.168.4.1", authToken = "token")
+        val d = PairedDevice(id = "robot-1", ip = ROBOT_HOST, authToken = "token")
         assertEquals(3333, d.port)
         assertEquals(DEFAULT_UDP_PORT, d.port)
-        assertEquals("192.168.4.1", d.alias)
+        assertEquals(ROBOT_HOST, d.alias)
     }
 
     @Test

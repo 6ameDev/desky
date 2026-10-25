@@ -10,15 +10,15 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 
 private const val PSK_HEX = "00112233445566778899aabbccddeeff"
-private const val DEVICE_ID = "desky-192.168.4.1"
+private const val DEVICE_ID = "desky-desky.local"
 
 private fun pairedDevice() = PairedDevice(
     id = DEVICE_ID,
-    ip = "192.168.4.1",
+    ip = ROBOT_HOST,
     port = DEFAULT_UDP_PORT,
     authToken = "psk-v1",
     lastCounter = 0u,
-    alias = "192.168.4.1",
+    alias = ROBOT_HOST,
 )
 
 class GetPairPskUseCaseTest {

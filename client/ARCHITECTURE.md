@@ -104,7 +104,7 @@ graph LR
         ST --> UI[Compose / SwiftUI bars]
     end
     subgraph Pairing["Pairing/auth v1 (real handshake)"]
-        CODE[6-digit code] --> REQ[PairDeviceWithCodeUseCase<br/>PAIR_REQ to fixed 192.168.4.1]
+        CODE[6-digit code] --> REQ[PairDeviceWithCodeUseCase<br/>PAIR_REQ to desky.local over mDNS]
         REQ --> OK[PAIR_OK: unwrap PSK<br/>HKDF + AES-GCM]
         OK --> VAULT[(platform vault:<br/>Keystore / Keychain)]
         VAULT --> DB[(Room: 1 device row<br/>no key material)]

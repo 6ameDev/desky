@@ -16,8 +16,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 
 private fun testDevice() = PairedDevice(
-    id = "desky-192.168.4.1",
-    ip = "192.168.4.1",
+    id = "desky-$ROBOT_HOST",
+    ip = ROBOT_HOST,
     port = DEFAULT_UDP_PORT,
     authToken = "psk-v1",
 )

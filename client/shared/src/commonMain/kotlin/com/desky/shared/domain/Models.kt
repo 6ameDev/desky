@@ -84,6 +84,12 @@ data class Telemetry(
  */
 data class PairedDevice(
     val id: String,
+    /**
+     * Robot address: the mDNS hostname ([ROBOT_HOST]) for current pairs, or
+     * a dotted-quad literal for direct-IP setups. AP-era rows carrying
+     * [LEGACY_ROBOT_HOST] are mapped to [ROBOT_HOST] on Room read, so the
+     * id (vault/counter key) is the only stable identity — never the ip.
+     */
     val ip: String,
     val port: Int = DEFAULT_UDP_PORT,
     val authToken: String,

@@ -45,7 +45,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * QR pairing shortcut: CameraX preview + bundled ML Kit barcode analyzer
- * (QR-only, model in-APK so first scan works offline on the robot AP). A decoded payload that [QrCodeParser] accepts is a single-shot
+ * (QR-only, model in-APK so the first scan works fully offline). A decoded payload that [QrCodeParser] accepts is a single-shot
  * result — the camera unbinds immediately and [onQrResult] feeds the shared
  * `PairingViewModel.onQrScanned` (auto-pair path, same guards as manual
  * entry). Anything else (non-QR, non-Desky payload) is ignored in place so

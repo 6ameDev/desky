@@ -28,7 +28,7 @@ class ObserveTelemetryUseCaseTest {
     private val t1 = Telemetry(12.3f, -4.5f, 1234, cliff = false, driving = true, mode = RobotMode.MANUAL)
     private val t2 = Telemetry(-9.9f, 0f, 42, cliff = true, driving = false, mode = RobotMode.EMERGENCY)
 
-    private fun datagram(bytes: ByteArray) = UdpDatagram(bytes, "192.168.4.1", DEFAULT_UDP_PORT)
+    private fun datagram(bytes: ByteArray) = UdpDatagram(bytes, ROBOT_HOST, DEFAULT_UDP_PORT)
 
     @Test
     fun garbageDatagramsAreDroppedNeverCrash() = runTest {

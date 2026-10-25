@@ -256,7 +256,7 @@ class RobotControlViewModel(
      */
     private val aliveUC: AliveUseCase? = null,
     /**
-     * AP-rejoin signal (see [UdpSocketBinder.networkAvailable]): null in
+     * Rejoin signal (see [UdpSocketBinder.networkAvailable]): null in
      * tests/legacy call sites and on JVM/iOS (no binder — iOS has no
      * `NWPathMonitor` binder yet, so rejoin there relies on the steady 2 Hz
      * cadence); production Android DI passes the shared `WifiSocketBinder`.
@@ -372,8 +372,8 @@ class RobotControlViewModel(
      * independent of the drive idle heartbeat above: `ALIVE` goes out even
      * on ticks where the drive loop idles to a skip. Starts due (==
      * [aliveTickEvery]) so the first paired tick — vault + Room + socket
-     * done, session ready — transmits immediately; [onForeground], the AP-
-     * rejoin collector, and the unpair reset force it due again for the same
+     * done, session ready — transmits immediately; [onForeground], the rejoin
+     * collector, and the unpair reset force it due again for the same
      * immediate reason. Runs
      * on `viewModelScope` (Main), so a plain var suffices — see
      * [ticksSinceTelemetry].
@@ -443,7 +443,7 @@ class RobotControlViewModel(
     }
 
     init {
-        // AP rejoin (Android `WifiSocketBinder.onAvailable`, debounced):
+        // Network rejoin (Android `WifiSocketBinder.onAvailable`, debounced):
         // force the `ALIVE` clock due so the next send-loop tick knocks
         // immediately, same as [onForeground] but without resuming a
         // background pause. Unconditional by design: while unpaired the

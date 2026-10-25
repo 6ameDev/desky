@@ -9,8 +9,9 @@ import kotlinx.coroutines.withTimeout
 val DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS: List<Long> = listOf(1000, 2000, 4000, 4000, 4000)
 
 /**
- * Pair with the fixed robot (`[ROBOT_HOST]:[DEFAULT_UDP_PORT]`) using the
- * 6-digit code shown on its display (pairing/auth v1, frozen spec:
+ * Pair with the robot at ([ROBOT_HOST]:[DEFAULT_UDP_PORT], resolved via
+ * mDNS on the shared home network) using the 6-digit code shown on its
+ * display (pairing/auth v1, frozen spec:
  * `shared/protocol/README.md` §"Pairing + authenticated drive v1").
  *
  * Flow: validate the code -> `client_nonce = pairingNonce()` -> send

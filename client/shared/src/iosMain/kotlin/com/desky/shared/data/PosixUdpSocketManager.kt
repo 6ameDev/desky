@@ -4,6 +4,7 @@ package com.desky.shared.data
 
 import com.desky.shared.domain.UdpDatagram
 import com.desky.shared.domain.UdpSocketManager
+import kotlinx.cinterop.CPointerVar
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.addressOf
@@ -11,6 +12,7 @@ import kotlinx.cinterop.alloc
 import kotlinx.cinterop.cValuesOf
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.pointed
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.sizeOf
@@ -32,8 +34,11 @@ import platform.posix.SOCK_DGRAM
 import platform.posix.SOL_SOCKET
 import platform.posix.SO_BROADCAST
 import platform.posix.SO_RCVTIMEO
+import platform.posix.addrinfo
 import platform.posix.bind
 import platform.posix.close
+import platform.posix.freeaddrinfo
+import platform.posix.getaddrinfo
 import platform.posix.memset
 import platform.posix.recvfrom
 import platform.posix.sendto
@@ -53,8 +58,8 @@ import kotlin.concurrent.Volatile
  *   `platform.posix`): IPv4 literal <-> network-order conversion is the
  *   pure-Kotlin, unit-tested code in common `Ipv4.kt` (little-endian
  *   network-order semantics — see the KDoc there before touching it);
- *   only literals are supported (discovery broadcast + discovered device
- *   IPs — no DNS in v1 scope);
+ *   literals take that fast path, hostnames (e.g. `desky.local`) resolve
+ *   per send via `getaddrinfo` ([resolveIpv4]);
  * - no `htons`/`ntohs`: port byte order is swapped manually;
  * - no `errno`/`strerror`: failures carry plain messages naming the call;
  * - otherwise canonical patterns only: `alloc`'d structs with field access,
@@ -122,7 +127,10 @@ internal class PosixUdpSocketManager(
                 dest.sin_len = sizeOf<sockaddr_in>().toUByte()
                 dest.sin_family = AF_INET.toUByte()
                 dest.sin_port = hostPortToNetworkOrder(port)
-                dest.sin_addr.s_addr = parseIpv4ToNetworkOrder(host)
+                // Literal fast path; anything else (e.g. `desky.local`)
+                // resolves per send via the system resolver, so a reboot
+                // onto a new address re-resolves on the next datagram.
+                dest.sin_addr.s_addr = resolveIpv4(host)
                 val sent = bytes.usePinned { pinned ->
                     sendto(
                         fd,
@@ -177,6 +185,38 @@ internal class PosixUdpSocketManager(
         }
         val s = sender ?: return null
         return UdpDatagram(buf.copyOf(count), s.first, s.second)
+    }
+}
+
+/**
+ * Host to IPv4 `s_addr`: dotted-quad literals take the pure-Kotlin fast
+ * path; anything else resolves per call via the system resolver
+ * (`getaddrinfo`, IPv4 only), which covers mDNS names like `desky.local`.
+ * Per-send resolution keeps no stale peer: a reboot onto a new address
+ * re-resolves on the next datagram. Throws on resolution failure — callers
+ * already map send throws to [Outcome.Failure][com.desky.shared.domain.Outcome.Failure].
+ */
+private fun resolveIpv4(host: String): UInt {
+    try {
+        return parseIpv4ToNetworkOrder(host)
+    } catch (_: IllegalArgumentException) {
+        // Not a literal — fall through to the system resolver.
+    }
+    memScoped {
+        val hints = alloc<addrinfo>()
+        memset(hints.ptr, 0, sizeOf<addrinfo>().convert())
+        hints.ai_family = AF_INET
+        hints.ai_socktype = SOCK_DGRAM
+        val res = alloc<CPointerVar<addrinfo>>()
+        val err = getaddrinfo(host, null, hints.ptr, res.ptr)
+        if (err != 0) throw IllegalStateException("getaddrinfo($host) failed: $err")
+        try {
+            val destAddr = res.value?.pointed?.ai_addr?.reinterpret<sockaddr_in>()
+                ?: throw IllegalStateException("getaddrinfo($host) returned no address")
+            return destAddr.pointed.sin_addr.s_addr
+        } finally {
+            freeaddrinfo(res.value)
+        }
     }
 }
 

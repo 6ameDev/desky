@@ -150,7 +150,7 @@ class PairDeviceWithCodeUseCaseTest {
         val result = deferred.await()
 
         val outcome = assertIs<Outcome.Success<PairedDevice>>(result)
-        assertEquals("desky-192.168.4.1", outcome.data.id)
+        assertEquals("desky-$ROBOT_HOST", outcome.data.id)
         assertEquals(ROBOT_HOST, outcome.data.ip)
         assertEquals(DEFAULT_UDP_PORT, outcome.data.port)
         assertEquals("psk-v1", outcome.data.authToken)

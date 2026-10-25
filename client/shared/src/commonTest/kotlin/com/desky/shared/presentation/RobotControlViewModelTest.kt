@@ -25,6 +25,7 @@ import com.desky.shared.domain.encodeSigned
 import com.desky.shared.domain.encodeUnpair
 import com.desky.shared.domain.ObserveTelemetryUseCase
 import com.desky.shared.domain.Outcome
+import com.desky.shared.domain.ROBOT_HOST
 import com.desky.shared.domain.ReleaseManualUseCase
 import com.desky.shared.domain.RobotMode
 import com.desky.shared.domain.SendSignedControlUseCase
@@ -102,7 +103,7 @@ class RobotControlViewModelTest {
             mode = RobotMode.MANUAL,
             manual = manual,
         )
-        udp.inbound.emit(UdpDatagram(TelemetryPacketCodec.encode(packet), "192.168.4.1", DEFAULT_UDP_PORT))
+        udp.inbound.emit(UdpDatagram(TelemetryPacketCodec.encode(packet), ROBOT_HOST, DEFAULT_UDP_PORT))
     }
 
     private data class Quad(
@@ -156,7 +157,7 @@ class RobotControlViewModelTest {
             assertEquals(DRIVE_SIZE, frame.bytes.size, "frame $i")
             assertEquals(DRIVE_HEADER, frame.bytes[0].toInt() and 0xFF, "frame $i")
         }
-        assertEquals("192.168.4.1", udp.sent[0].host)
+        assertEquals(ROBOT_HOST, udp.sent[0].host)
         assertEquals(DEFAULT_UDP_PORT, udp.sent[0].port)
         val last = udp.sent.last()
         assertTrue(
@@ -532,7 +533,7 @@ class RobotControlViewModelTest {
             driving = true,
             mode = RobotMode.AUTONOMOUS,
         )
-        udp.inbound.emit(UdpDatagram(TelemetryPacketCodec.encode(packet), "192.168.4.1", DEFAULT_UDP_PORT))
+        udp.inbound.emit(UdpDatagram(TelemetryPacketCodec.encode(packet), ROBOT_HOST, DEFAULT_UDP_PORT))
         main.runCurrent()
 
         val state = viewModel.state.value
@@ -560,7 +561,7 @@ class RobotControlViewModelTest {
             driving = true,
             mode = RobotMode.AUTONOMOUS,
         )
-        udp.inbound.emit(UdpDatagram(TelemetryPacketCodec.encode(packet), "192.168.4.1", DEFAULT_UDP_PORT))
+        udp.inbound.emit(UdpDatagram(TelemetryPacketCodec.encode(packet), ROBOT_HOST, DEFAULT_UDP_PORT))
         main.runCurrent()
         assertEquals(Connectivity.Connected, viewModel.state.value.connectivity)
 
@@ -575,7 +576,7 @@ class RobotControlViewModelTest {
         assertEquals(packet, stale.telemetry)
 
         // Fresh packet promotes again.
-        udp.inbound.emit(UdpDatagram(TelemetryPacketCodec.encode(packet), "192.168.4.1", DEFAULT_UDP_PORT))
+        udp.inbound.emit(UdpDatagram(TelemetryPacketCodec.encode(packet), ROBOT_HOST, DEFAULT_UDP_PORT))
         main.runCurrent()
         assertEquals(Connectivity.Connected, viewModel.state.value.connectivity)
     }
@@ -925,7 +926,7 @@ class RobotControlViewModelTest {
                     mode = RobotMode.MANUAL,
                 ),
             ),
-            "192.168.4.1",
+            ROBOT_HOST,
             DEFAULT_UDP_PORT,
         )
 
@@ -999,7 +1000,7 @@ class RobotControlViewModelTest {
                     mode = mode,
                 ),
             ),
-            "192.168.4.1",
+            ROBOT_HOST,
             DEFAULT_UDP_PORT,
         )
 
@@ -1228,7 +1229,7 @@ class RobotControlViewModelTest {
     }
 
     /**
-     * AP rejoin: a `networkAvailable` event forces the `ALIVE` clock due so
+     * Network rejoin: a `networkAvailable` event forces the `ALIVE` clock due so
      * the next tick knocks immediately (boot-ready treatment), then the
      * steady 2 Hz resumes; a flap burst collapses to one `ALIVE` (idempotent
      * due-flag — the Fake has no 1 s debounce, so 5 rapid emits must still
@@ -1330,7 +1331,7 @@ class RobotControlViewModelTest {
                     manual = manual,
                 ),
             ),
-            "192.168.4.1",
+            ROBOT_HOST,
             DEFAULT_UDP_PORT,
         )
 
@@ -1500,5 +1501,44 @@ class RobotControlViewModelTest {
             h == MANUAL_TAKE_HEADER || h == MANUAL_RELEASE_HEADER
         })
         assertTrue(udp.sent.isNotEmpty(), "drive still flows under MANUAL without the use cases")
+    }
+
+    /**
+     * No wedge on a dead endpoint: while sends fail the banner latches but
+     * the loop keeps ticking, and once the link is back frames resume to
+     * the same hostname (re-resolved per send) with the banner cleared.
+     */
+    @Test
+    fun transientSendFailureLatchesBannerThenResumesToHostname() = runVmTest { main ->
+        val (viewModel, _, udp, _) = setup(tickMs = 20)
+        main.runCurrent()
+        promote(udp)
+        main.runCurrent()
+        viewModel.onStick(0.5f, 0f)
+        main.runCurrent()
+        // +1 for advanceTimeBy's exclusive end boundary: ticks at 20..100.
+        main.advanceTimeBy(101)
+        main.runCurrent()
+        assertTrue(udp.sent.isNotEmpty(), "drive flows before the outage")
+        assertNull(viewModel.state.value.error)
+
+        // Outage (robot rebooting onto a new address): every send throws.
+        udp.sendError = IllegalStateException("dead socket")
+        main.advanceTimeBy(101)
+        main.runCurrent()
+        val outageError = viewModel.state.value.error
+        assertTrue(
+            outageError != null && outageError.contains("Failed to send control command"),
+            "outage latches the banner: $outageError",
+        )
+
+        // Link back: the loop resumes to the same hostname, banner cleared.
+        udp.sendError = null
+        udp.sent.clear()
+        main.advanceTimeBy(101)
+        main.runCurrent()
+        assertTrue(udp.sent.isNotEmpty(), "sends resume after the outage")
+        udp.sent.forEach { assertEquals(ROBOT_HOST, it.host) }
+        assertNull(viewModel.state.value.error, "recovery clears the banner")
     }
 }
