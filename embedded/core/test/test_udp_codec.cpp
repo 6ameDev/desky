@@ -446,6 +446,18 @@ void test_linkserver_type_names();
 void test_linkserver_qr_pin_rule();
 void test_linkserver_boot_epoch_resync_gate();
 
+// Sealed credential bundle (kTypeWifiCreds goldens + push retry policy),
+// defined in test_link_wificreds.cpp.
+void test_link_wificreds_literal_contract();
+void test_link_wificreds_plaintext_golden();
+void test_link_wificreds_clear_and_open_network();
+void test_link_wificreds_pack_rejects();
+void test_link_wificreds_unpack_rejects();
+void test_link_wificreds_sealed_round_trip();
+void test_link_wificreds_clear_sealed_minimum();
+void test_linkserver_cred_retry_policy();
+void test_linkserver_wificreds_type_name();
+
 // Telemetry X-WIRE (literal producer bytes -> real consumer + independent
 // parse), defined in test_telemetry_xwire.cpp.
 void test_telemetry_xwire_encode_matches_literals();
@@ -862,6 +874,15 @@ int main() {
   RUN_TEST(test_linkserver_type_names);
   RUN_TEST(test_linkserver_qr_pin_rule);
   RUN_TEST(test_linkserver_boot_epoch_resync_gate);
+  RUN_TEST(test_link_wificreds_literal_contract);
+  RUN_TEST(test_link_wificreds_plaintext_golden);
+  RUN_TEST(test_link_wificreds_clear_and_open_network);
+  RUN_TEST(test_link_wificreds_pack_rejects);
+  RUN_TEST(test_link_wificreds_unpack_rejects);
+  RUN_TEST(test_link_wificreds_sealed_round_trip);
+  RUN_TEST(test_link_wificreds_clear_sealed_minimum);
+  RUN_TEST(test_linkserver_cred_retry_policy);
+  RUN_TEST(test_linkserver_wificreds_type_name);
   RUN_TEST(test_link_ota_golden_encode);
   RUN_TEST(test_link_ota_golden_decode);
   RUN_TEST(test_link_ota_staged_url_round_trip_identical);

@@ -31,14 +31,17 @@ const uint8_t kGolden123456[63] = {0xFE, 0x5B, 0xF8, 0x82, 0x72, 0x08, 0xBA, 0xD
 void test_pairshow_literal_contract() {
   TEST_ASSERT_EQUAL_UINT8(0x06, linkcode::kTypePairShow);
   TEST_ASSERT_EQUAL_UINT8(0x07, linkcode::kTypePairDone);
+  TEST_ASSERT_EQUAL_UINT8(0x09, linkcode::kTypeWifiCreds);
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x06));
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x07));
   TEST_ASSERT_TRUE(linkcode::isKnownType(0x08));
-  TEST_ASSERT_FALSE(linkcode::isKnownType(0x09));
+  TEST_ASSERT_TRUE(linkcode::isKnownType(0x09));
+  TEST_ASSERT_FALSE(linkcode::isKnownType(0x0A));
   TEST_ASSERT_EQUAL_STRING("PAIRSHOW", wifilink::typeName(0x06));
   TEST_ASSERT_EQUAL_STRING("PAIRDONE", wifilink::typeName(0x07));
   TEST_ASSERT_EQUAL_STRING("EXPR", wifilink::typeName(0x08));
-  TEST_ASSERT_EQUAL_STRING("UNKNOWN", wifilink::typeName(0x09));
+  TEST_ASSERT_EQUAL_STRING("WIFICREDS", wifilink::typeName(0x09));
+  TEST_ASSERT_EQUAL_STRING("UNKNOWN", wifilink::typeName(0x0A));
   TEST_ASSERT_EQUAL_size_t(8, linkcode::kPairShowLen);
   TEST_ASSERT_EQUAL_size_t(0, linkcode::kPairDoneLen);
 

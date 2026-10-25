@@ -127,6 +127,7 @@ void setup() {
   DESKY_ASSERT(telemOk);
   // Link endpoint (sockets only): never bricks driving — a bind or task
   // failure only warns and the boot continues headless.
+  g_link.attachHomeCreds(wifiSsid, wifiPass, netCfg.trySta);
   const bool linkOk = g_link.begin();
   if (!linkOk) {
     LOG_W("LINK", "link endpoint failed, continuing headless");

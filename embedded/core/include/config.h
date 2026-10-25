@@ -83,9 +83,9 @@
 #define CFG_COORDINATOR_LOOP_MS 20
 
 // WiFi + UDP server (dual-mode WiFi, binary control/telemetry).
-// AP mode hosts "desky" with a human-typable WPA2 pass (min 8 chars); saved
-// home-router credentials (NVS, never logged) are tried as STA at boot with
-// AP fallback.
+// AP mode hosts "desky" with the link-secret-derived WPA2 passphrase (the
+// compiled pass below is fallback only); saved home-router credentials (NVS,
+// never logged) are tried as STA at boot with AP fallback.
 #define CFG_WIFI_AP_SSID "desky"
 #define CFG_WIFI_AP_PASS "desky1234"
 // UDP control RX + telemetry TX port.

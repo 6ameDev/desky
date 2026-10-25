@@ -17,16 +17,22 @@
 #define CFG_LINK_BAUD 115200
 #define CFG_LINK_HEARTBEAT_MS 1000
 
-// Link WiFi client (head STA -> core AP, modem-sleep between HBs, no AP on head).
+// Link WiFi client (head STA follows the core: last-good -> home STA ->
+// core AP; the core AP joins with the link-secret-derived passphrase, home
+// STA with the NVS bundle; the core endpoint resolves via mDNS with a
+// hardcoded-IP fallback for the AP case).
 #define CFG_LINK_SSID "desky"
 #define CFG_LINK_PASS "desky1234"
 #define CFG_LINK_HOST "192.168.4.1"
+#define CFG_LINK_MDNS_HOST "desky"
 #define CFG_LINK_UDP_PORT 3334
 #define CFG_LINK_TCP_PORT 3335
 // Link-down rule: missed HB ACKs before re-associate.
 #define CFG_LINK_MAX_MISSED 3
 // Assoc retry throttle while the AP is absent.
 #define CFG_LINK_ASSOC_RETRY_MS 5000
+// Full-miss backoff: every candidate unheard before the next search cycle.
+#define CFG_LINK_FOLLOW_BACKOFF_MS 10000
 // Assoc attempt timeout (WiFi.begin() is async).
 #define CFG_LINK_ASSOC_TIMEOUT_MS 10000
 

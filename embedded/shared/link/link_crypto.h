@@ -537,8 +537,7 @@ constexpr bool isSecretHexStr(const char* s, size_t i) {
 }
 static_assert(sizeof(kSecretHex) - 1 == kSecretHexLen,
               "DESKY_LINK_SECRET must be exactly 32 hex chars (16 bytes, see embedded/.env.example)");
-static_assert(isSecretHexStr(kSecretHex, 0),
-              "DESKY_LINK_SECRET must be hex (0-9, a-f, see embedded/.env.example)");
+static_assert(isSecretHexStr(kSecretHex, 0), "DESKY_LINK_SECRET must be hex (0-9, a-f, see embedded/.env.example)");
 
 inline uint8_t secretHexVal(char c) {
   if (c >= '0' && c <= '9') {

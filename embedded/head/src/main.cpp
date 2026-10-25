@@ -18,6 +18,7 @@
 #include "link/ota_manifest.h"
 #include "services/event_bus.h"
 #include "services/power_manager.h"
+#include "services/wifi_store.h"
 #include "transport/link_client.h"
 #include "transport/link_codec.h"
 
@@ -73,6 +74,17 @@ bool onWifiOtaUrl(void* ctx, const uint8_t* url, uint16_t len) {
   return true;
 }
 
+// Home-STA bundle edge (transport authenticated + ACKed). Zero/zero lengths
+// wipe the store (CLEAR); otherwise the bundle persists for the follow loop.
+// True = persisted.
+bool onWifiCreds(void* ctx, const uint8_t* ssid, uint8_t ssidLen, const uint8_t* pass, uint8_t passLen) {
+  (void)ctx;
+  if (ssidLen == 0) {
+    return headwifi::HeadWifiStore::clear();
+  }
+  return headwifi::HeadWifiStore::save(ssid, ssidLen, pass, passLen);
+}
+
 // Camera gate for the TCP stills pump.
 bool isCameraOn(void* ctx) {
   (void)ctx;
@@ -104,6 +116,12 @@ void setup() {
   g_power.begin(&g_cam, &g_display);
   g_coordinator.begin(&g_power, &g_display);
   g_pairing.attach(&g_display.overlays());
+  // Follow-loop injection: the stored home bundle (if any) seeds the search
+  // head before the first attempt; without it the search starts at the AP.
+  char homeSsid[headwifi::kSsidMax + 1] = {};
+  char homePass[headwifi::kPassMax + 1] = {};
+  const bool homeHave = headwifi::HeadWifiStore::load(homeSsid, sizeof(homeSsid), homePass, sizeof(homePass));
+  g_wifi.setHomeCreds(homeSsid, homePass, homeHave);
   g_wifi.begin();  // Live path: WiFi STA link client.
   {
     LinkHandlers wh;
@@ -112,6 +130,7 @@ void setup() {
     wh.onPairShow = pairingtask::onPairShow;
     wh.onPairDone = pairingtask::onPairDone;
     wh.onOtaUrl = onWifiOtaUrl;
+    wh.onWifiCreds = onWifiCreds;
     wh.isCameraOn = isCameraOn;
     g_wifi.setHandlers(wh);
   }

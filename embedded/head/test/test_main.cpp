@@ -73,6 +73,14 @@ void test_otadisplay_state_transitions();
 void test_link_ota_version_vocabulary_and_gate();
 void test_link_ota_channel_policy();
 
+// Dual-mode follow order + credential bundle, defined in test_link_follow.cpp.
+void test_follow_first_target_matrix();
+void test_follow_advance_order_and_skips();
+void test_follow_backoff_config();
+void test_follow_creds_literal_contract();
+void test_follow_creds_plaintext_golden();
+void test_follow_store_validity();
+
 // Authoritative-PIN pairing display, defined in test_pair_show.cpp.
 void test_pairshow_literal_contract();
 void test_pairshow_shared_codec_pack_unpack();
@@ -227,6 +235,12 @@ int main() {
   RUN_TEST(test_otadisplay_state_transitions);
   RUN_TEST(test_link_ota_version_vocabulary_and_gate);
   RUN_TEST(test_link_ota_channel_policy);
+  RUN_TEST(test_follow_first_target_matrix);
+  RUN_TEST(test_follow_advance_order_and_skips);
+  RUN_TEST(test_follow_backoff_config);
+  RUN_TEST(test_follow_creds_literal_contract);
+  RUN_TEST(test_follow_creds_plaintext_golden);
+  RUN_TEST(test_follow_store_validity);
   RUN_TEST(test_pairshow_literal_contract);
   RUN_TEST(test_pairshow_shared_codec_pack_unpack);
   RUN_TEST(test_pairshow_producer_bytes_to_renderer_exact);
