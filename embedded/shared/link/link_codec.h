@@ -25,14 +25,15 @@ constexpr uint8_t kTypeFace = 0x01;
 constexpr uint8_t kTypeOled = 0x02;    // core->head, 1B mode 0=ON 1=DIM 2=OFF.
 constexpr uint8_t kTypeCamCtl = 0x03;  // core->head, 1B 0=off 1=on.
 // 0x04 QRBITMAP retired (never sent on the wire): do not reuse.
-constexpr uint8_t kTypeOta = 0x05;       // core->head, 1..128B OTA pull URL bytes, no NUL.
-constexpr uint8_t kTypePairShow = 0x06;  // core->head, 8B: 6 ASCII digits + valid-seconds u16BE.
-constexpr uint8_t kTypePairDone = 0x07;  // core->head, empty: presence is the signal.
-constexpr uint8_t kTypeExpr = 0x08;      // core->head, 1B expression id u8.
-constexpr uint8_t kTypeJpeg = 0x10;      // 0..1024B raw JPEG bytes.
-constexpr uint8_t kTypeHb = 0x20;        // head->core, 10B heartbeat + boot epoch.
-constexpr uint8_t kTypeHbAck = 0x21;     // core->head, 5B heartbeat ack.
-constexpr uint8_t kTypeAck = 0x22;       // either, 2B acked seq u16BE.
+constexpr uint8_t kTypeOta = 0x05;        // core->head, 1..128B OTA pull URL bytes, no NUL.
+constexpr uint8_t kTypePairShow = 0x06;   // core->head, 8B: 6 ASCII digits + valid-seconds u16BE.
+constexpr uint8_t kTypePairDone = 0x07;   // core->head, empty: presence is the signal.
+constexpr uint8_t kTypeExpr = 0x08;       // core->head, 1B expression id u8.
+constexpr uint8_t kTypeWifiCreds = 0x09;  // core->head, 30..126B sealed home-STA bundle (nonce + ct + tag).
+constexpr uint8_t kTypeJpeg = 0x10;       // 0..1024B raw JPEG bytes.
+constexpr uint8_t kTypeHb = 0x20;         // head->core, 10B heartbeat + boot epoch.
+constexpr uint8_t kTypeHbAck = 0x21;      // core->head, 5B heartbeat ack.
+constexpr uint8_t kTypeAck = 0x22;        // either, 2B acked seq u16BE.
 
 // Fixed payload lengths (variable: JPEG only).
 constexpr size_t kOledLen = 1;
@@ -47,6 +48,15 @@ constexpr size_t kPairDoneLen = 0;
 // Catalog ids only (QR excluded): unknown ids fail closed at unpack, the
 // head gate resolves them to neutral downstream.
 constexpr size_t kExprLen = 1;
+// Sealed home-STA bundle: nonce(12) + ciphertext + tag(16); the plaintext is
+// [ssidLen u8][ssid][passLen u8][pass] (see packWifiCreds). Both lengths zero
+// is the CLEAR signal (wipe stored creds). Empty passphrase is an open net.
+constexpr size_t kWifiCredSsidMax = 32;
+constexpr size_t kWifiCredPassMax = 64;
+constexpr size_t kWifiCredPlainMin = 2;
+constexpr size_t kWifiCredPlainMax = 2 + kWifiCredSsidMax + kWifiCredPassMax;
+constexpr size_t kWifiCredMinLen = 12 + kWifiCredPlainMin + 16;
+constexpr size_t kWifiCredMaxLen = 12 + kWifiCredPlainMax + 16;
 constexpr size_t kHbAckLen = 5;  // channel u8 | era/resync u32BE.
 constexpr size_t kAckLen = 2;    // acked seq u16BE.
 
@@ -106,6 +116,7 @@ inline bool isKnownType(uint8_t type) {
     case kTypePairShow:
     case kTypePairDone:
     case kTypeExpr:
+    case kTypeWifiCreds:
     case kTypeJpeg:
     case kTypeHb:
     case kTypeHbAck:
@@ -124,6 +135,8 @@ inline bool isValidPayloadLen(uint8_t type, uint16_t len) {
       return len == 1;
     case kTypeOta:
       return len >= kOtaUrlMinLen && len <= kOtaUrlMaxLen;
+    case kTypeWifiCreds:
+      return len >= kWifiCredMinLen && len <= kWifiCredMaxLen;
     case kTypePairShow:
       return len == kPairShowLen;
     case kTypePairDone:
@@ -337,6 +350,77 @@ inline bool unpackPairShow(const uint8_t* in, size_t len, uint8_t digitsOut[6], 
   }
   validSecs = getU16BE(in + 6);
   return true;
+}
+
+// Home-STA plaintext: [ssidLen u8][ssid bytes][passLen u8][pass bytes].
+// ssidLen 0 forces passLen 0 (CLEAR); a populated SSID allows an empty
+// passphrase (open net). Returns plaintext bytes, 0 on any error.
+inline size_t packWifiCreds(const uint8_t* ssid, size_t ssidLen, const uint8_t* pass, size_t passLen, uint8_t* out,
+                            size_t outCap) {
+  if (out == nullptr || (ssidLen > 0 && ssid == nullptr) || (passLen > 0 && pass == nullptr)) {
+    return 0;
+  }
+  if (ssidLen > kWifiCredSsidMax || passLen > kWifiCredPassMax) {
+    return 0;
+  }
+  if (ssidLen == 0 && passLen != 0) {
+    return 0;
+  }
+  const size_t total = 2 + ssidLen + passLen;
+  if (outCap < total) {
+    return 0;
+  }
+  out[0] = static_cast<uint8_t>(ssidLen);
+  for (size_t i = 0; i < ssidLen; ++i) {
+    out[1 + i] = ssid[i];
+  }
+  out[1 + ssidLen] = static_cast<uint8_t>(passLen);
+  for (size_t i = 0; i < passLen; ++i) {
+    out[2 + ssidLen + i] = pass[i];
+  }
+  return total;
+}
+
+// Views into the input buffer; valid only while it lives. Fail-closed on
+// truncation, overlong lengths, or a zero-SSID/non-zero-pass mix.
+inline bool unpackWifiCreds(const uint8_t* in, size_t len, const uint8_t*& ssidOut, size_t& ssidLenOut,
+                            const uint8_t*& passOut, size_t& passLenOut) {
+  ssidOut = nullptr;
+  ssidLenOut = 0;
+  passOut = nullptr;
+  passLenOut = 0;
+  if (in == nullptr || len < kWifiCredPlainMin || len > kWifiCredPlainMax) {
+    return false;
+  }
+  const size_t ssidLen = in[0];
+  if (ssidLen > kWifiCredSsidMax || 2 + ssidLen > len) {
+    return false;
+  }
+  const size_t passLen = in[1 + ssidLen];
+  if (passLen > kWifiCredPassMax || 2 + ssidLen + passLen != len) {
+    return false;
+  }
+  if (ssidLen == 0 && passLen != 0) {
+    return false;
+  }
+  ssidOut = in + 1;
+  ssidLenOut = ssidLen;
+  passOut = in + 2 + ssidLen;
+  passLenOut = passLen;
+  return true;
+}
+
+// CLEAR signal: both lengths zero (wipe stored creds). False on any
+// malformed input, never misread as a populated bundle.
+inline bool isClearWifiCreds(const uint8_t* in, size_t len) {
+  const uint8_t* ssid = nullptr;
+  size_t ssidLen = 0;
+  const uint8_t* pass = nullptr;
+  size_t passLen = 0;
+  if (!unpackWifiCreds(in, len, ssid, ssidLen, pass, passLen)) {
+    return false;
+  }
+  return ssidLen == 0 && passLen == 0;
 }
 
 inline bool packOled(uint8_t mode, uint8_t& wireOut) {

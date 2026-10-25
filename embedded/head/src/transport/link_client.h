@@ -3,11 +3,17 @@
 // Sockets, framing, peer/assoc/HB state only; business arrives as injected
 // LinkHandlers callbacks (stored, never owned, bound in main.cpp).
 // UDP 3334: HB head->core at 1Hz + ACK replies; RX EXPR/OLED/CAMCTL/
-// PAIRSHOW/PAIRDONE/OTA + HB_ACK. Link down after 3 missed ACKs (~3s).
+// PAIRSHOW/PAIRDONE/OTA/WIFICREDS + HB_ACK. Link down after 3 missed ACKs (~3s).
 // Tx seq is monotonic within a boot; the per-boot bootId epoch lets the
 // core resync after a head reboot. TCP 3335: JPEG stills, one frame per
 // `snap` trigger. Logs are counters-only, never payload bytes.
-// Association is async with throttled retry; absence of the AP never
+// Association follows the core across networks (last-good -> home STA ->
+// core AP), each candidate gated on hearing the core (HB ACKs, the same
+// 3-missed rule); a full miss backs off before the next cycle, and a visible
+// core beacon short-circuits to the AP. The core AP joins with the derived
+// passphrase, home STA with the injected NVS bundle. The core endpoint is
+// resolved via mDNS with a hardcoded-IP fallback for the AP case.
+// Association is async with throttled retry; absence of every network never
 // blocks boot. poll() + heartbeatTick() run on the Arduino loop.
 
 #include <stddef.h>
@@ -33,6 +39,14 @@
 #ifndef CFG_LINK_ASSOC_RETRY_MS
 #define CFG_LINK_ASSOC_RETRY_MS 5000
 #endif
+// Full-miss backoff: every candidate unheard before the next search cycle.
+#ifndef CFG_LINK_FOLLOW_BACKOFF_MS
+#define CFG_LINK_FOLLOW_BACKOFF_MS 10000
+#endif
+// mDNS hostname answering on either core interface, resolved per assoc.
+#ifndef CFG_LINK_MDNS_HOST
+#define CFG_LINK_MDNS_HOST "desky"
+#endif
 
 // Injected business edges (stored, never owned). main.cpp binds them.
 struct LinkHandlers {
@@ -45,6 +59,9 @@ struct LinkHandlers {
   void (*onPairDone)(void* ctx) = nullptr;
   // Raw OTA URL bytes (length-gated only). True = consumed.
   bool (*onOtaUrl)(void* ctx, const uint8_t* url, uint16_t len) = nullptr;
+  // Authenticated credential plaintext (lengths only, never secrets in logs).
+  // Zero/zero lengths = CLEAR (wipe stored creds). True = persisted.
+  bool (*onWifiCreds)(void* ctx, const uint8_t* ssid, uint8_t ssidLen, const uint8_t* pass, uint8_t passLen) = nullptr;
   // Camera gate for the TCP stills pump.
   bool (*isCameraOn)(void* ctx) = nullptr;
 };
@@ -53,6 +70,7 @@ struct LinkHandlers {
 // ── Firmware: WiFi STA link client (UDP HB/commands + TCP JPEG stills) ─────
 
 #include <Arduino.h>
+#include <ESPmDNS.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <esp_camera.h>
@@ -63,6 +81,7 @@ struct LinkHandlers {
 #include "common/udp_send.h"
 #include "config.h"
 #include "head_context.h"
+#include "link/link_crypto.h"
 
 #ifndef CFG_LINK_HEARTBEAT_MS
 #define CFG_LINK_HEARTBEAT_MS 1000
@@ -109,6 +128,9 @@ class LinkClient {
     WiFi.mode(WIFI_STA);
     WiFi.setSleep(true);
     udp_.begin(CFG_LINK_UDP_PORT);
+    MDNS.begin("desky-head");
+    coreIp_.fromString(CFG_LINK_HOST);  // Hardcoded fallback for the AP case; mDNS refines per assoc.
+    followTarget_ = wifilink::firstFollowTarget(haveLastGood_, haveHomeCreds_);
     LOG_I("LINK", "wifi sta up udp=%u tcp=%u ap=%s", static_cast<unsigned>(CFG_LINK_UDP_PORT),
           static_cast<unsigned>(CFG_LINK_TCP_PORT), CFG_LINK_SSID);
     beginAttempt(millis());
@@ -117,13 +139,35 @@ class LinkClient {
   // Stored, never owned. Call once in setup() after begin().
   void setHandlers(const LinkHandlers& h) { handlers_ = h; }
 
+  // Injected home-STA bundle (main.cpp loads the store pre-begin). Safe to
+  // re-call on credential receipt; restarts the search head while down.
+  void setHomeCreds(const char* ssid, const char* pass, bool have) {
+    haveHomeCreds_ = false;
+    homeSsid_[0] = '\0';
+    homePass_[0] = '\0';
+    if (have && ssid != nullptr && ssid[0] != '\0') {
+      copyCred(homeSsid_, sizeof(homeSsid_), ssid);
+      copyCred(homePass_, sizeof(homePass_), pass);
+      haveHomeCreds_ = true;
+    }
+    if (!associated_ && !connecting_) {
+      followTarget_ = wifilink::firstFollowTarget(haveLastGood_, haveHomeCreds_);
+    }
+  }
+
   // Drains inbound UDP, drives association while down, services one still.
   void poll() {
     const uint32_t now = millis();
     if (!associated_) {
       // Never re-begin() an in-flight handshake here: that aborts it.
       if (!connecting_) {
-        if (wifilink::retryDue(now, lastAssocTryMs_, CFG_LINK_ASSOC_RETRY_MS)) {
+        if (cycleExhausted_) {
+          if (wifilink::retryDue(now, cycleEndMs_, CFG_LINK_FOLLOW_BACKOFF_MS)) {
+            cycleExhausted_ = false;
+            followTarget_ = wifilink::firstFollowTarget(haveLastGood_, haveHomeCreds_);
+          }
+        } else if (wifilink::retryDue(now, lastAssocTryMs_, CFG_LINK_ASSOC_RETRY_MS)) {
+          maybeShortCircuit();
           beginAttempt(now);
         }
       } else {
@@ -137,6 +181,7 @@ class LinkClient {
             WiFi.disconnect();
             connecting_ = false;
             lastAssocTryMs_ = now;
+            advanceFromMiss(now);  // Unheard candidate: step the follow order.
             if (firstAssocFail_) {
               firstAssocFail_ = false;
               LOG_W("LINK", "no AP visible, retry (assoc timeout)");
@@ -187,6 +232,7 @@ class LinkClient {
             static_cast<unsigned long>(hbSent_), static_cast<unsigned long>(hbAckRx_));
       WiFi.disconnect();
       markDown(now);
+      advanceFromMiss(now);  // Core unheard here: step the follow order.
     }
   }
 
@@ -203,16 +249,16 @@ class LinkClient {
   // CLI `link` / `status` door: counters only.
   void logStatus() const {
     LOG_I("LINK",
-          "link state=%s assoc=%d rssi=%d ch=%u hb=%lu/%lu miss=%u cmd=%lu pair=%lu/%lu ota=%lu still=%lu/%lu "
-          "fail=%lu ackT=%lu drop=%lu tx=%u boot=%08lx",
-          linkUp_ ? "up" : "down", associated_ ? 1 : 0, static_cast<int>(lastRssi_),
-          static_cast<unsigned>(lastChannel_), static_cast<unsigned long>(hbSent_),
+          "link state=%s assoc=%d tgt=%u rssi=%d ch=%u hb=%lu/%lu miss=%u cmd=%lu cred=%lu pair=%lu/%lu ota=%lu "
+          "still=%lu/%lu fail=%lu ackT=%lu drop=%lu tx=%u boot=%08lx",
+          linkUp_ ? "up" : "down", associated_ ? 1 : 0, static_cast<unsigned>(followTarget_),
+          static_cast<int>(lastRssi_), static_cast<unsigned>(lastChannel_), static_cast<unsigned long>(hbSent_),
           static_cast<unsigned long>(hbAckRx_), static_cast<unsigned>(hbSinceAck_), static_cast<unsigned long>(cmdRx_),
-          static_cast<unsigned long>(pairShowRx_), static_cast<unsigned long>(pairDoneRx_),
-          static_cast<unsigned long>(otaRx_), static_cast<unsigned long>(framesSent_),
-          static_cast<unsigned long>(stillDrop_), static_cast<unsigned long>(txFail_),
-          static_cast<unsigned long>(ackTx_), static_cast<unsigned long>(udpDrop_), static_cast<unsigned>(txSeq_),
-          static_cast<unsigned long>(bootId_));
+          static_cast<unsigned long>(credRx_), static_cast<unsigned long>(pairShowRx_),
+          static_cast<unsigned long>(pairDoneRx_), static_cast<unsigned long>(otaRx_),
+          static_cast<unsigned long>(framesSent_), static_cast<unsigned long>(stillDrop_),
+          static_cast<unsigned long>(txFail_), static_cast<unsigned long>(ackTx_), static_cast<unsigned long>(udpDrop_),
+          static_cast<unsigned>(txSeq_), static_cast<unsigned long>(bootId_));
   }
 
   uint32_t txFail() const { return txFail_; }
@@ -231,20 +277,149 @@ class LinkClient {
     lastAssocTryMs_ = now;
     attemptStartMs_ = now;
     connecting_ = true;
-    WiFi.begin(CFG_LINK_SSID, CFG_LINK_PASS);
-    dropFirst(firstAttempt_, "assoc attempt ssid=%s", CFG_LINK_SSID);
+    // Per-candidate credentials: last-good replays its snapshot, home STA
+    // uses the injected NVS bundle, the core AP uses the derived passphrase.
+    // The pass buffer is wiped right after begin() copies it into the driver.
+    const char* ssid = CFG_LINK_SSID;
+    char pass[65] = {};
+    switch (followTarget_) {
+      case wifilink::FollowTarget::kLastGood:
+        ssid = lastGoodSsid_;
+        copyCred(pass, sizeof(pass), lastGoodPass_);
+        break;
+      case wifilink::FollowTarget::kHome:
+        ssid = homeSsid_;
+        copyCred(pass, sizeof(pass), homePass_);
+        break;
+      case wifilink::FollowTarget::kCoreAp:
+      default:
+        coreApPass(pass, sizeof(pass));
+        break;
+    }
+    WiFi.begin(ssid, pass);
+    for (size_t i = 0; i < sizeof(pass); ++i) {
+      pass[i] = 0;
+    }
+    if (firstAttempt_) {
+      firstAttempt_ = false;
+      LOG_I("LINK", "assoc attempt ssid=%s tgt=%u", ssid, static_cast<unsigned>(followTarget_));
+    } else {
+      LOG_EVERY_N(12, "LINK", "assoc attempt ssid=%s tgt=%u", ssid, static_cast<unsigned>(followTarget_));
+    }
+  }
+
+  // Derived core-AP passphrase from the compiled secret; the compiled default
+  // only covers a broken provision (never bricks the search).
+  static void coreApPass(char* out, size_t cap) {
+    if (out == nullptr || cap == 0) {
+      return;
+    }
+    const linkcrypto::Key key = linkcrypto::provisionedKey();
+    if (key.ok && linkcrypto::deriveApPassphrase(key.bytes, sizeof(key.bytes), out, cap)) {
+      return;
+    }
+    copyCred(out, cap, CFG_LINK_PASS);
+  }
+
+  static void copyCred(char* dst, size_t cap, const char* src) {
+    if (dst == nullptr || cap == 0) {
+      return;
+    }
+    size_t i = 0;
+    while (src != nullptr && src[i] != '\0' && i + 1 < cap) {
+      dst[i] = src[i];
+      ++i;
+    }
+    dst[i] = '\0';
+  }
+
+  // Step the follow order after a candidate goes unheard (assoc timeout or
+  // the 3-missed rule). An exhausted cycle latches the backoff window; the
+  // poll loop restarts the order when it elapses.
+  void advanceFromMiss(uint32_t now) {
+    wifilink::FollowTarget next = followTarget_;
+    if (wifilink::advanceFollowTarget(followTarget_, haveLastGood_, haveHomeCreds_, next)) {
+      followTarget_ = next;
+      LOG_I("LINK", "follow tgt=%u", static_cast<unsigned>(followTarget_));
+    } else {
+      cycleExhausted_ = true;
+      cycleEndMs_ = now;
+      followTarget_ = wifilink::firstFollowTarget(haveLastGood_, haveHomeCreds_);
+      LOG_W("LINK", "follow cycle missed, backoff ms=%u", static_cast<unsigned>(CFG_LINK_FOLLOW_BACKOFF_MS));
+    }
+  }
+
+  // A visible core beacon jumps the queue straight to the AP: the home STA
+  // cannot hear a core that is itself in AP mode.
+  void maybeShortCircuit() {
+    if (followTarget_ == wifilink::FollowTarget::kCoreAp) {
+      return;
+    }
+    if (coreBeaconVisible()) {
+      followTarget_ = wifilink::FollowTarget::kCoreAp;
+      LOG_I("LINK", "core beacon visible, short-circuit to AP");
+    }
+  }
+
+  static bool coreBeaconVisible() {
+    const int n = WiFi.scanNetworks();
+    if (n <= 0) {
+      WiFi.scanDelete();
+      return false;
+    }
+    bool found = false;
+    for (int i = 0; i < n; ++i) {
+      const String name = WiFi.SSID(i);  // Named local: outlives the compare below.
+      if (strcmp(name.c_str(), CFG_LINK_SSID) == 0) {
+        found = true;
+        break;
+      }
+    }
+    WiFi.scanDelete();
+    return found;
+  }
+
+  // mDNS first (answers on either core interface), hardcoded IP fallback for
+  // the AP case. Runs once per assoc; a slow answer only delays the first HB.
+  void resolveCoreIp() {
+    coreIp_.fromString(CFG_LINK_HOST);
+    const IPAddress mdnsIp = MDNS.queryHost(CFG_LINK_MDNS_HOST, 1500);
+    if (static_cast<uint32_t>(mdnsIp) != 0) {
+      coreIp_ = mdnsIp;
+    }
+  }
+
+  // Pins the working network for the head of the next search cycle. Runs on
+  // the first HB ACK of an assoc: proof the core is actually heard here.
+  void snapshotLastGood() {
+    switch (followTarget_) {
+      case wifilink::FollowTarget::kHome:
+        copyCred(lastGoodSsid_, sizeof(lastGoodSsid_), homeSsid_);
+        copyCred(lastGoodPass_, sizeof(lastGoodPass_), homePass_);
+        break;
+      case wifilink::FollowTarget::kCoreAp:
+        copyCred(lastGoodSsid_, sizeof(lastGoodSsid_), CFG_LINK_SSID);
+        coreApPass(lastGoodPass_, sizeof(lastGoodPass_));
+        break;
+      case wifilink::FollowTarget::kLastGood:
+        break;  // Already the cached snapshot.
+    }
+    haveLastGood_ = true;
+    needLastGood_ = false;
   }
 
   void onAssoc(uint32_t now) {
     associated_ = true;
     linkUp_ = true;
     haveCmdSeq_ = false;
+    needLastGood_ = true;
     hbSinceAck_ = 0;
     lastAckMs_ = now;
     lastHbMs_ = now;
     const int rssiRaw = WiFi.RSSI();
     lastRssi_ = static_cast<int8_t>(rssiRaw < -128 ? -128 : (rssiRaw > 127 ? 127 : rssiRaw));
     lastChannel_ = static_cast<uint8_t>(WiFi.channel());
+    resolveCoreIp();
     LOG_I("LINK", "AWAKE assoc ch=%u seq=%u", static_cast<unsigned>(lastChannel_), static_cast<unsigned>(txSeq_));
     sendHb();
   }
@@ -253,6 +428,7 @@ class LinkClient {
     associated_ = false;
     linkUp_ = false;
     connecting_ = false;
+    needLastGood_ = false;
     lastAssocTryMs_ = now;
     if (stillPending_) {
       stillPending_ = false;
@@ -293,6 +469,7 @@ class LinkClient {
       case linkcode::kTypeExpr:
       case linkcode::kTypePairShow:
       case linkcode::kTypePairDone:
+      case linkcode::kTypeWifiCreds:
       case linkcode::kTypeOta:
         handleCmd(f, rip, rport);
         break;
@@ -330,6 +507,9 @@ class LinkClient {
     lastAckMs_ = millis();
     hbSinceAck_ = 0;
     ++hbAckRx_;
+    if (needLastGood_) {
+      snapshotLastGood();  // First proof the core is heard on this network.
+    }
     if (firstHb_) {
       firstHb_ = false;
       LOG_I("LINK", "hb_ack seq=%u (first of boot)", static_cast<unsigned>(f.seq));
@@ -351,6 +531,12 @@ class LinkClient {
     if (v == wifilink::RxVerdict::kDuplicate) {
       sendAck(rip, rport, f.seq);  // re-ACK, never re-execute
       LOG_EVERY_N(20, "LINK", "redeliver seq=%u", static_cast<unsigned>(f.seq));
+      return;
+    }
+    // WIFICREDS sealed-bundle gate (mirrors the shared codec length rule).
+    if (f.type == linkcode::kTypeWifiCreds && f.payloadLen >= linkcode::kWifiCredMinLen &&
+        f.payloadLen <= linkcode::kWifiCredMaxLen) {
+      handleCreds(f, rip, rport);
       return;
     }
     // OTA length gate (mirrors wifilink::isOtaFrame).
@@ -451,6 +637,65 @@ class LinkClient {
     LOG_I("LINK", "cmd %s seq=%u", wifilink::typeName(f.type), static_cast<unsigned>(f.seq));
   }
 
+  // Sealed home-STA bundle: fail-closed open with the provisioned key, then
+  // persist through the injected edge and ACK. Auth failure drops with no
+  // ACK and no seq advance; a stored bundle (or CLEAR) ACKs exactly once and
+  // refreshes the follow loop without a reboot. Never logs secrets.
+  void handleCreds(const linkcode::Frame& f, const IPAddress& rip, uint16_t rport) {
+    char ssidTmp[33] = {};
+    char passTmp[65] = {};
+    size_t ssidLen = 0;
+    size_t passLen = 0;
+    {
+      const linkcrypto::Key key = linkcrypto::provisionedKey();
+      uint8_t plain[linkcode::kWifiCredPlainMax] = {};
+      size_t plainLen = 0;
+      bool opened = false;
+      if (key.ok && f.payload != nullptr && f.payloadLen > linkcrypto::kNonceLen) {
+        opened = linkcrypto::open(key, f.payload, f.payload + linkcrypto::kNonceLen,
+                                  f.payloadLen - linkcrypto::kNonceLen, plain, sizeof(plain), plainLen);
+      }
+      const uint8_t* ssidView = nullptr;
+      const uint8_t* passView = nullptr;
+      if (opened) {
+        opened = linkcode::unpackWifiCreds(plain, plainLen, ssidView, ssidLen, passView, passLen);
+      }
+      if (opened) {
+        for (size_t i = 0; i < ssidLen; ++i) {
+          ssidTmp[i] = static_cast<char>(ssidView[i]);
+        }
+        for (size_t i = 0; i < passLen; ++i) {
+          passTmp[i] = static_cast<char>(passView[i]);
+        }
+      }
+      for (size_t i = 0; i < sizeof(plain); ++i) {
+        plain[i] = 0;
+      }
+      if (!opened) {
+        dropFirst(firstDrop_, "drop link creds auth (first of boot)");
+        LOG_EVERY_N(20, "LINK", "drop link creds auth");
+        ++udpDrop_;
+        return;
+      }
+    }
+    haveCmdSeq_ = true;
+    lastCmdSeq_ = f.seq;
+    ++cmdRx_;
+    ++credRx_;
+    sendAck(rip, rport, f.seq);
+    if (handlers_.onWifiCreds == nullptr) {
+      LOG_W("LINK", "creds not attached");
+      return;
+    }
+    if (!handlers_.onWifiCreds(handlers_.ctx, reinterpret_cast<const uint8_t*>(ssidTmp), static_cast<uint8_t>(ssidLen),
+                               reinterpret_cast<const uint8_t*>(passTmp), static_cast<uint8_t>(passLen))) {
+      LOG_W("LINK", "creds store failed");
+      return;
+    }
+    setHomeCreds(ssidTmp, passTmp, ssidLen > 0);
+    LOG_I("LINK", "creds seq=%u len=%u", static_cast<unsigned>(f.seq), static_cast<unsigned>(f.payloadLen));
+  }
+
   void sendAck(const IPAddress& ip, uint16_t port, uint16_t ackedSeq) {
     uint8_t payload[linkcode::kAckLen];
     if (!linkcode::packAck(ackedSeq, payload)) {
@@ -482,7 +727,7 @@ class LinkClient {
     if (n == 0) {
       return;
     }
-    if (!udpsend::udpSendChecked(udp_, CFG_LINK_HOST, CFG_LINK_UDP_PORT, txBuf_, n)) {
+    if (!udpsend::udpSendChecked(udp_, coreIp_, CFG_LINK_UDP_PORT, txBuf_, n)) {
       ++txFail_;
       // Never ACKed: counts as missed so the ~3s link-down watch stays live.
       ++hbSinceAck_;
@@ -524,7 +769,7 @@ class LinkClient {
     }
     WiFiClient tcp;
     tcp.setTimeout(1000);
-    if (tcp.connect(CFG_LINK_HOST, CFG_LINK_TCP_PORT, 1000) != 1) {
+    if (tcp.connect(coreIp_, CFG_LINK_TCP_PORT, 1000) != 1) {
       LOG_W("LINK", "snap dropped (tcp refused)");
       ++stillDrop_;
       esp_camera_fb_return(fb);
@@ -569,6 +814,20 @@ class LinkClient {
   bool connecting_;
   uint32_t attemptStartMs_;
   bool firstAttempt_;
+  // Follow-loop search head + injected home bundle + last-heard snapshot.
+  // Bounds mirror the shared credential contract (32/64 + NUL).
+  wifilink::FollowTarget followTarget_ = wifilink::FollowTarget::kCoreAp;
+  bool cycleExhausted_ = false;
+  uint32_t cycleEndMs_ = 0;
+  bool haveHomeCreds_ = false;
+  char homeSsid_[33] = {};
+  char homePass_[65] = {};
+  bool haveLastGood_ = false;
+  bool needLastGood_ = false;
+  char lastGoodSsid_[33] = {};
+  char lastGoodPass_[65] = {};
+  IPAddress coreIp_;
+  uint32_t credRx_ = 0;
   uint32_t lastHbMs_;
   uint32_t lastAckMs_;
   uint8_t hbSinceAck_;

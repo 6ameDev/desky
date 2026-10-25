@@ -55,6 +55,8 @@ inline const char* typeName(uint8_t type) {
       return "PAIRSHOW";
     case linkcode::kTypePairDone:
       return "PAIRDONE";
+    case linkcode::kTypeWifiCreds:
+      return "WIFICREDS";
     case linkcode::kTypeExpr:
       return "EXPR";
     case linkcode::kTypeOta:
@@ -163,6 +165,38 @@ inline AssocAction assocStep(bool connecting, bool connected, uint32_t nowMs, ui
 
 // Link-down rule: 3 missed HB ACKs.
 inline bool linkDownAfter(uint8_t missed) { return missed >= CFG_LINK_MAX_MISSED; }
+
+// Dual-mode follow order: last-good -> home STA -> core AP. Unavailable
+// candidates are skipped; the core AP is always available (compiled
+// credentials on both ends). firstFollowTarget picks the search head;
+// advanceFollowTarget steps after the 3-missed rule fires on cur. False =
+// the cycle is exhausted and the caller backs off before restarting.
+enum class FollowTarget : uint8_t { kLastGood, kHome, kCoreAp };
+
+inline FollowTarget firstFollowTarget(bool haveLastGood, bool haveHomeCreds) {
+  if (haveLastGood) {
+    return FollowTarget::kLastGood;
+  }
+  if (haveHomeCreds) {
+    return FollowTarget::kHome;
+  }
+  return FollowTarget::kCoreAp;
+}
+
+inline bool advanceFollowTarget(FollowTarget cur, bool haveLastGood, bool haveHomeCreds, FollowTarget& next) {
+  (void)haveLastGood;
+  switch (cur) {
+    case FollowTarget::kLastGood:
+      next = haveHomeCreds ? FollowTarget::kHome : FollowTarget::kCoreAp;
+      return true;
+    case FollowTarget::kHome:
+      next = FollowTarget::kCoreAp;
+      return true;
+    case FollowTarget::kCoreAp:
+    default:
+      return false;
+  }
+}
 
 // Byte slice of message [0, totalLen) carried by fragment `idx` of `total`.
 inline bool fragSlice(size_t totalLen, size_t perFrame, uint8_t idx, uint8_t total, size_t& offOut, size_t& lenOut) {

@@ -12,7 +12,9 @@
 // WiFi (one runtime decision at boot): try saved home STA credentials for
 // kJoinTimeoutMs (skipped without valid credentials), else raise AP "desky"
 // 192.168.4.1 until reboot; a lost STA link rides kFailoverMs before AP
-// failover. mDNS answers desky.local on either interface. Both modes async:
+// failover. The AP passphrase is derived from the link secret at raise time
+// (the head derives the same bytes; the compiled default is fallback only).
+// mDNS answers desky.local on either interface. Both modes async:
 // setup never blocks; the task loop retries WiFi.begin() every
 // CFG_WIFI_STA_RETRY_MS and logs the DHCP IP once.
 //
@@ -247,6 +249,7 @@ inline bool shouldRedeliver(bool valid, const uint8_t* storedCode, const uint8_t
 #include "common/fault_manager.h"
 #include "common/logger.h"
 #include "config.h"
+#include "link/link_crypto.h"
 #include "transport/pairing_session.h"
 #include "transport/udp_codec.h"
 
@@ -650,11 +653,18 @@ class UdpServer : public transport::IUdpTransport {
     }
   }
 
-  // Raises AP until reboot (no path back to STA). False when softAP fails.
+  // Raises AP until reboot (no path back to STA). The passphrase is derived
+  // from the link secret (both ends compute it with zero communication); the
+  // compiled default only covers a broken provision. False when softAP fails.
+  // PASS never logged.
   bool startAp() {
     WiFi.disconnect(true);
     WiFi.mode(WIFI_AP);
-    const bool apOk = WiFi.softAP(CFG_WIFI_AP_SSID, CFG_WIFI_AP_PASS);
+    char apPass[linkcrypto::kPassphraseCap] = {};
+    const linkcrypto::Key key = linkcrypto::provisionedKey();
+    const bool derived = key.ok && linkcrypto::deriveApPassphrase(key.bytes, sizeof(key.bytes), apPass, sizeof(apPass));
+    const bool apOk = WiFi.softAP(CFG_WIFI_AP_SSID, derived ? apPass : CFG_WIFI_AP_PASS);
+    mbedtls_platform_zeroize(apPass, sizeof(apPass));
     DESKY_ASSERT(apOk);
     if (!apOk) {
       return false;

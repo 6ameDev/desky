@@ -33,8 +33,8 @@
 // the re-trigger via its in-flight guard. URL bytes are validated by the
 // shared otamanifest grammar and never logged.
 //
-// Direction map: PAIRSHOW + PAIRDONE + EXPR ride the core->head tx domain
-// (sendUnicast). The three never share a counter.
+// Direction map: PAIRSHOW + PAIRDONE + EXPR + WIFICREDS ride the core->head tx domain
+// (sendUnicast). The four never share a counter.
 //
 // Auth: NONE beyond CRC+seq — transport-only trust, exactly like the AP
 // passphrase. Never logs payload bytes beyond counters, never touches UART.
@@ -63,6 +63,7 @@ namespace linkwrap__ {
 }  // namespace linkwrap__
 namespace linkcode = linkwrap__::link;
 
+#include "link/link_crypto.h"
 #include "link/ota_manifest.h"
 
 // Fallbacks keep the host tests + firmware compiling if config keys drift;
@@ -84,6 +85,15 @@ namespace linkcode = linkwrap__::link;
 #endif
 #ifndef CFG_LINK_LOOP_MS
 #define CFG_LINK_LOOP_MS 10
+#endif
+// Credential-push retry budget: attempts per fresh head epoch, spacing between
+// re-sends. 5 attempts ~5s; exhaustion only leaves the push unconfirmed (the
+// next head epoch re-arms).
+#ifndef CFG_LINK_CRED_MAX_ATTEMPTS
+#define CFG_LINK_CRED_MAX_ATTEMPTS 5
+#endif
+#ifndef CFG_LINK_CRED_RETRY_MS
+#define CFG_LINK_CRED_RETRY_MS 1000
 #endif
 
 namespace linkserver {
@@ -142,6 +152,8 @@ inline const char* typeName(uint8_t type) {
       return "OLED";
     case linkcode::kTypeCamCtl:
       return "CAMCTL";
+    case linkcode::kTypeWifiCreds:
+      return "WIFICREDS";
     case linkcode::kTypePairShow:
       return "PAIRSHOW";
     case linkcode::kTypePairDone:
@@ -166,6 +178,15 @@ inline const char* typeName(uint8_t type) {
 // OTA send gate (host-testable): staged && !alreadySent && haveHeadPeer.
 inline bool otaReadyToSend(bool stagedValid, bool alreadySent, bool haveHeadPeer) {
   return stagedValid && !alreadySent && haveHeadPeer;
+}
+
+// Credential-push retry policy (host-testable): attempts remain AND the
+// backoff since the last attempt elapsed. Wrap-safe via unsigned subtraction.
+constexpr uint8_t kCredMaxAttempts = CFG_LINK_CRED_MAX_ATTEMPTS;
+constexpr uint32_t kCredRetryMs = CFG_LINK_CRED_RETRY_MS;
+
+inline bool credRetryDue(uint8_t attemptsUsed, uint32_t lastTryMs, uint32_t nowMs) {
+  return attemptsUsed < kCredMaxAttempts && (nowMs - lastTryMs) >= kCredRetryMs;
 }
 
 // HB peer pin rule (host-testable): every non-stale HB refreshes the target;
@@ -271,6 +292,8 @@ class LinkServer {
   uint32_t ackTx() const { return ackTx_; }
   uint32_t hbAckTx() const { return hbAckTx_; }
   uint32_t otaTx() const { return otaTx_; }
+  uint32_t credTx() const { return credTx_; }
+  uint32_t credAck() const { return credAck_; }
   uint32_t txFail() const { return txFail_; }
   uint32_t tcpDrop() const { return tcpDrop_; }
   uint16_t lastSeq() const { return lastSeq_; }
@@ -291,6 +314,31 @@ class LinkServer {
 
   bool hasHeadPeer() const { return haveHeadPeer_; }
 
+  // Home-STA credentials for the credential push, injected by main.cpp from
+  // ConfigStore (transport owns no services types). Call once in setup()
+  // before begin(); the link task only reads. Copies bounded + NUL-terminated.
+  void attachHomeCreds(const char* ssid, const char* pass, bool valid) {
+    homeCredsValid_ = false;
+    homeSsid_[0] = '\0';
+    homePass_[0] = '\0';
+    if (!valid || ssid == nullptr || ssid[0] == '\0') {
+      return;
+    }
+    size_t i = 0;
+    while (ssid[i] != '\0' && i + 1 < sizeof(homeSsid_)) {
+      homeSsid_[i] = ssid[i];
+      ++i;
+    }
+    homeSsid_[i] = '\0';
+    i = 0;
+    while (pass != nullptr && pass[i] != '\0' && i + 1 < sizeof(homePass_)) {
+      homePass_[i] = pass[i];
+      ++i;
+    }
+    homePass_[i] = '\0';
+    homeCredsValid_ = true;
+  }
+
   // Core->head unicast for the ability pumps (PairShow/PairDone + OTA stages
   // live ability-side — this class holds no business state, only sockets +
   // framing + the pinned peer + the tx counter). Mints the frame seq under
@@ -309,6 +357,9 @@ class LinkServer {
         break;
       case linkcode::kTypePairDone:
         what = "pairdone";
+        break;
+      case linkcode::kTypeWifiCreds:
+        what = "wificreds";
         break;
       case linkcode::kTypeExpr:
         what = "expr";
@@ -343,7 +394,8 @@ class LinkServer {
     // Stack-budget guard: every UDP send on this task funnels through here,
     // so the encode buffer is capped at the largest legal link-UDP payload
     // instead of kMaxFrame. Oversize callers fail closed here (JPEG rides
-    // TCP, never this path).
+    // TCP, never this path). The sealed credential bundle (126B max) fits
+    // the same 128B cap.
     DESKY_ASSERT(payloadLen <= linkcode::kOtaUrlMaxLen);
     DESKY_ASSERT(payload != nullptr || payloadLen == 0);
     if (payloadLen > linkcode::kOtaUrlMaxLen || (payload == nullptr && payloadLen != 0)) {
@@ -381,6 +433,7 @@ class LinkServer {
       vTaskDelayUntil(&lastWake, period);
       pollUdp();
       pollTcp();
+      pollCredPush(millis());
       FaultManager::watchdogFeed();
       ++ticks;
       if (ticks % (5000u / kLoopMs) == 0) {
@@ -410,11 +463,12 @@ class LinkServer {
                static_cast<unsigned>(headPort_));
     }
     LOG_I("LINK",
-          "acct udp=%lu/%lu hb=%lu cmd=%lu ack=%lu/%lu ha=%lu ota=%lu fail=%lu frm=%lu B=%lu fps=%lu tcp=%lu "
-          "peer=%s sq=%u boot=%08lx tx=%u",
+          "acct udp=%lu/%lu hb=%lu cmd=%lu ack=%lu/%lu ha=%lu ota=%lu cred=%lu/%lu fail=%lu frm=%lu B=%lu fps=%lu "
+          "tcp=%lu peer=%s sq=%u boot=%08lx tx=%u",
           static_cast<unsigned long>(udpRx_), static_cast<unsigned long>(udpDrop_), static_cast<unsigned long>(hbRx_),
           static_cast<unsigned long>(cmdRx_), static_cast<unsigned long>(ackRx_), static_cast<unsigned long>(ackTx_),
-          static_cast<unsigned long>(hbAckTx_), static_cast<unsigned long>(otaTx_), static_cast<unsigned long>(txFail_),
+          static_cast<unsigned long>(hbAckTx_), static_cast<unsigned long>(otaTx_), static_cast<unsigned long>(credTx_),
+          static_cast<unsigned long>(credAck_), static_cast<unsigned long>(txFail_),
           static_cast<unsigned long>(framesRx_), static_cast<unsigned long>(bytesRx_),
           static_cast<unsigned long>(lastFps_), static_cast<unsigned long>(tcpDrop_), peer,
           static_cast<unsigned>(lastSeq_), static_cast<unsigned long>(lastBootId_), static_cast<unsigned>(txSeq_));
@@ -483,6 +537,7 @@ class LinkServer {
       case linkcode::kTypeHbAck:
       case linkcode::kTypeJpeg:
       case linkcode::kTypeOta:
+      case linkcode::kTypeWifiCreds:
       case linkcode::kTypePairShow:
       case linkcode::kTypePairDone:
       case linkcode::kTypeExpr:
@@ -531,6 +586,7 @@ class LinkServer {
       pinHeadPeer(rip, rport);  // (Re)pin: head rebooted or first contact.
       sendHbAck(rip, rport, channel);
       LOG_I("LINK", "hb resync boot=%08lx seq=%u", static_cast<unsigned long>(bootId), static_cast<unsigned>(f.seq));
+      pushCreds(millis());  // Fresh epoch: (re)offer the sealed home bundle, if any.
       return;
     }
     const linkserver::SeqVerdict v = linkserver::classifySeq(haveSeq_, lastSeq_, f.seq);
@@ -590,7 +646,8 @@ class LinkServer {
   }
 
   // ACK: receipt for our HB_ACK/ACK transmissions. Counted, never re-ACKed
-  // (no ACK storms), and outside the command seq domain.
+  // (no ACK storms), and outside the command seq domain. An ACK matching the
+  // pending credential push confirms it (stops the retry pump).
   void handleAck(const linkcode::Frame& f) {
     uint16_t acked = 0;
     if (!linkcode::unpackAck(f.payload, f.payloadLen, acked)) {
@@ -600,6 +657,12 @@ class LinkServer {
       return;
     }
     ++ackRx_;
+    if (credArmed_ && !credConfirmed_ && credHaveSeq_ && acked == credSeq_) {
+      credConfirmed_ = true;
+      credArmed_ = false;
+      ++credAck_;
+      LOG_I("LINK", "wificreds confirmed seq=%u", static_cast<unsigned>(acked));
+    }
     LOG_EVERY_N(20, "LINK", "ack acked=%u seq=%u", static_cast<unsigned>(acked), static_cast<unsigned>(f.seq));
   }
 
@@ -640,6 +703,104 @@ class LinkServer {
     if (sendUnicast(linkcode::kTypeHbAck, payload, sizeof(payload), seq)) {
       ++hbAckTx_;
       LOG_EVERY_N(20, "LINK", "hb_ack tx seq=%u", static_cast<unsigned>(seq));
+    }
+  }
+
+  // Seals + unicasts the injected home bundle once (fresh random nonce every
+  // call — never reused across attempts). False when unprovisioned, keyless,
+  // or peerless. seqOut carries the minted seq (0 unless sent). Counters only
+  // in logs: never SSID/pass bytes.
+  bool sendCredsOnce(uint16_t& seqOut) {
+    seqOut = 0;
+    if (!homeCredsValid_) {
+      return false;
+    }
+    const linkcrypto::Key key = linkcrypto::provisionedKey();
+    if (!key.ok) {
+      return false;
+    }
+    size_t ssidLen = 0;
+    while (homeSsid_[ssidLen] != '\0' && ssidLen < sizeof(homeSsid_)) {
+      ++ssidLen;
+    }
+    size_t passLen = 0;
+    while (homePass_[passLen] != '\0' && passLen < sizeof(homePass_)) {
+      ++passLen;
+    }
+    uint8_t plain[linkcode::kWifiCredPlainMax] = {};
+    const size_t plainLen =
+        linkcode::packWifiCreds(reinterpret_cast<const uint8_t*>(homeSsid_), ssidLen,
+                                reinterpret_cast<const uint8_t*>(homePass_), passLen, plain, sizeof(plain));
+    if (plainLen == 0) {
+      return false;
+    }
+    uint8_t nonce[linkcrypto::kNonceLen] = {};
+    linkcode::putU32BE(nonce, esp_random());
+    linkcode::putU32BE(nonce + 4, esp_random());
+    linkcode::putU32BE(nonce + 8, esp_random());
+    uint8_t sealed[linkcrypto::kNonceLen + linkcode::kWifiCredPlainMax + linkcrypto::kTagLen] = {};
+    for (size_t i = 0; i < linkcrypto::kNonceLen; ++i) {
+      sealed[i] = nonce[i];
+    }
+    const size_t bodyLen = linkcrypto::seal(key, nonce, plain, plainLen, sealed + linkcrypto::kNonceLen,
+                                            sizeof(sealed) - linkcrypto::kNonceLen);
+    for (size_t i = 0; i < sizeof(plain); ++i) {
+      plain[i] = 0;
+    }
+    if (bodyLen == 0) {
+      return false;
+    }
+    uint16_t seq = 0;
+    if (!sendUnicast(linkcode::kTypeWifiCreds, sealed, static_cast<uint16_t>(linkcrypto::kNonceLen + bodyLen), seq)) {
+      return false;
+    }
+    seqOut = seq;
+    return true;
+  }
+
+  // Arms the credential push on a fresh head epoch: first attempt now, the
+  // retry pump below owns the rest. A refused first datagram still arms (the
+  // pump retries); only a minted seq can confirm.
+  void pushCreds(uint32_t nowMs) {
+    uint16_t seq = 0;
+    const bool sent = sendCredsOnce(seq);
+    credArmed_ = true;
+    credConfirmed_ = false;
+    credHaveSeq_ = sent;
+    credSeq_ = seq;
+    credAttempts_ = 1;
+    credLastTryMs_ = nowMs;
+    if (sent) {
+      ++credTx_;
+      LOG_I("LINK", "wificreds sent seq=%u", static_cast<unsigned>(seq));
+    }
+  }
+
+  // Retry pump for the armed push (link-task tick): re-seals with a fresh
+  // nonce and resends while the backoff gate holds. Budget exhaustion only
+  // disarms as unconfirmed (NVS keeps the creds; the next head epoch
+  // re-arms). Silent without an armed push.
+  void pollCredPush(uint32_t nowMs) {
+    if (!credArmed_ || credConfirmed_) {
+      return;
+    }
+    if (credAttempts_ >= linkserver::kCredMaxAttempts) {
+      credArmed_ = false;
+      LOG_W("LINK", "wificreds unconfirmed tries=%u", static_cast<unsigned>(credAttempts_));
+      return;
+    }
+    if (!linkserver::credRetryDue(credAttempts_, credLastTryMs_, nowMs)) {
+      return;
+    }
+    uint16_t seq = 0;
+    const bool sent = sendCredsOnce(seq);
+    ++credAttempts_;
+    credLastTryMs_ = nowMs;
+    if (sent) {
+      credHaveSeq_ = true;
+      credSeq_ = seq;
+      ++credTx_;
+      LOG_I("LINK", "wificreds retry seq=%u try=%u", static_cast<unsigned>(seq), static_cast<unsigned>(credAttempts_));
     }
   }
 
@@ -785,6 +946,17 @@ class LinkServer {
   bool haveBoot_ = false;
   uint32_t lastBootId_ = 0;
   uint16_t txSeq_ = 0;
+  // Credential-push state: home bundle injected pre-begin by main.cpp;
+  // armed on a fresh head epoch, confirmed by the sequence-ACK.
+  char homeSsid_[33] = {};  // 32 + NUL, mirrors the services-side bound.
+  char homePass_[65] = {};  // 64 + NUL, mirrors the services-side bound.
+  bool homeCredsValid_ = false;
+  bool credArmed_ = false;
+  bool credConfirmed_ = false;
+  bool credHaveSeq_ = false;
+  uint16_t credSeq_ = 0;
+  uint8_t credAttempts_ = 0;
+  uint32_t credLastTryMs_ = 0;
   // Counters (task-written; getters are benign tear-tolerant reads).
   uint32_t udpRx_ = 0;
   uint32_t udpDrop_ = 0;
@@ -794,6 +966,8 @@ class LinkServer {
   uint32_t ackTx_ = 0;
   uint32_t hbAckTx_ = 0;
   uint32_t otaTx_ = 0;
+  uint32_t credTx_ = 0;
+  uint32_t credAck_ = 0;
   uint32_t txFail_ = 0;
   uint32_t framesRx_ = 0;
   uint32_t bytesRx_ = 0;
