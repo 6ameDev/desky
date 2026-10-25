@@ -44,12 +44,14 @@ cd embedded && make test
 cd embedded && make upload-monitor
 ```
 
-STA WiFi setup (robot joins the home router so the laptop keeps internet):
+Home WiFi setup (robot joins the home router so the laptop keeps internet):
 
 ```bash
-cp embedded/.env.example embedded/.env   # fill in WIFI_SSID / WIFI_PASS
-cd embedded && make build-sta
+cp embedded/.env.example embedded/.env   # fill in DESKY_LINK_SECRET only
 ```
+
+Flash any firmware, boot with the head linked, then join the robot AP and
+store the home credentials in the captive portal. No compiled WiFi secrets.
 
 ## Protocol contracts
 
