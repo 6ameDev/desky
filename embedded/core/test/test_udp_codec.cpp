@@ -494,6 +494,20 @@ void test_ota_mgr_no_storage_stops_upload();
 void test_ota_mgr_digest_fail_clears_sha();
 void test_ota_mgr_final_without_start_fails();
 
+// Dual-mode WiFi policy (services/wifi_credentials.h), defined in test_wifi_credentials.cpp.
+void test_wifi_timeout_values();
+void test_wifi_credentials_usable();
+void test_wifi_credentials_reject_no_marker();
+void test_wifi_credentials_reject_empty_or_oversize_ssid();
+void test_wifi_boot_attempts_sta_when_usable();
+void test_wifi_boot_skips_sta_when_empty();
+void test_wifi_join_window_holds_then_expires();
+void test_wifi_join_timeout_injectable();
+void test_wifi_join_window_wrap_safe();
+void test_wifi_failover_rides_then_fires();
+void test_wifi_failover_injectable_and_wrap_safe();
+void test_wifi_key_names();
+
 // Checked UDP send helper (shared/common/udp_send.h), defined in test_udp_send.cpp.
 void test_udpsend_all_ok_true();
 void test_udpsend_begin_fail_false();
@@ -873,6 +887,18 @@ int main() {
   RUN_TEST(test_udpsend_short_write_false);
   RUN_TEST(test_udpsend_end_fail_false);
   RUN_TEST(test_udpsend_all_fail_false);
+  RUN_TEST(test_wifi_timeout_values);
+  RUN_TEST(test_wifi_credentials_usable);
+  RUN_TEST(test_wifi_credentials_reject_no_marker);
+  RUN_TEST(test_wifi_credentials_reject_empty_or_oversize_ssid);
+  RUN_TEST(test_wifi_boot_attempts_sta_when_usable);
+  RUN_TEST(test_wifi_boot_skips_sta_when_empty);
+  RUN_TEST(test_wifi_join_window_holds_then_expires);
+  RUN_TEST(test_wifi_join_timeout_injectable);
+  RUN_TEST(test_wifi_join_window_wrap_safe);
+  RUN_TEST(test_wifi_failover_rides_then_fires);
+  RUN_TEST(test_wifi_failover_injectable_and_wrap_safe);
+  RUN_TEST(test_wifi_key_names);
   RUN_TEST(test_units_qr_pairing_window_order);
   RUN_TEST(test_units_telemetry_rate_product);
   RUN_TEST(test_units_alive_stale_fence);

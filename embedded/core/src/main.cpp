@@ -21,6 +21,7 @@
 #include "services/cli_manager.h"
 #include "services/config_store.h"
 #include "services/event_bus.h"
+#include "services/wifi_credentials.h"
 #include "transport/link_server.h"
 #include "transport/udp_server.h"
 // behavior/coordinator.h after transport/udp_server.h — its firmware section
@@ -103,7 +104,18 @@ void setup() {
   // (pairing seam + telemetry RX-observation report) are wired directly on
   // the coordinator.
   g_udp.setCommandPublisher([](uint32_t payload) { EventBus::publish(EVENT_UDP_COMMAND_RECEIVED, payload); });
-  const bool udpOk = g_udp.begin();
+  // Runtime network decision (transport owns the STA/AP state machine): boot
+  // honors saved home credentials only with the validity marker, else AP.
+  char wifiSsid[wificreds::kSsidMax + 1] = {};
+  char wifiPass[wificreds::kPassMax + 1] = {};
+  const bool wifiStored = ConfigStore::loadWifiCredentials(wifiSsid, sizeof(wifiSsid), wifiPass, sizeof(wifiPass));
+  UdpServer::WifiNetConfig netCfg;
+  netCfg.staSsid = wifiSsid;
+  netCfg.staPass = wifiPass;
+  netCfg.trySta = wificreds::shouldAttemptSta(wifiStored, wifiSsid);
+  netCfg.joinTimeoutMs = wificreds::kStaJoinTimeoutMs;
+  netCfg.failoverMs = wificreds::kStaFailoverMs;
+  const bool udpOk = g_udp.begin(netCfg);
   DESKY_ASSERT(udpOk);
   g_udp.attachPairing(&g_pairing);
   g_coordinator.attachPairing(&g_pairing);
