@@ -9,10 +9,12 @@
 // host tests include this header directly. Bottom half (class UdpServer) is
 // firmware-only (#ifdef ARDUINO).
 //
-// WiFi (one decision at boot): default AP "desky" 192.168.4.1;
-// DESKY_WIFI_STA=1 joins the home router via .env WIFI_SSID/WIFI_PASS (PASS
-// never logged). Both modes async: setup never blocks; the task loop retries
-// WiFi.begin() every CFG_WIFI_STA_RETRY_MS and logs the DHCP IP once.
+// WiFi (one runtime decision at boot): try saved home STA credentials for
+// kJoinTimeoutMs (skipped without valid credentials), else raise AP "desky"
+// 192.168.4.1 until reboot; a lost STA link rides kFailoverMs before AP
+// failover. mDNS answers desky.local on either interface. Both modes async:
+// setup never blocks; the task loop retries WiFi.begin() every
+// CFG_WIFI_STA_RETRY_MS and logs the DHCP IP once.
 //
 // Telemetry source (services/TelemetryTask, not here): mode/active/cliff from
 // Coordinator::snapshot(); distanceMM from ToF live; pitch/roll from fusion
@@ -233,6 +235,7 @@ inline bool shouldRedeliver(bool valid, const uint8_t* storedCode, const uint8_t
 // ── Firmware: UDP server task (WiFi + WiFiUDP, Core 0) ────────────────────
 
 #include <Arduino.h>
+#include <ESPmDNS.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <esp_system.h>
@@ -275,24 +278,6 @@ inline bool shouldRedeliver(bool valid, const uint8_t* storedCode, const uint8_t
 #ifndef CFG_WIFI_STA_RETRY_MS
 #define CFG_WIFI_STA_RETRY_MS 5000
 #endif
-#ifndef DESKY_WIFI_STA
-#define DESKY_WIFI_STA 0
-#endif
-#ifndef WIFI_SSID
-#define WIFI_SSID ""
-#endif
-#ifndef WIFI_PASS
-#define WIFI_PASS ""
-#endif
-
-// desky-sta requires real credentials from .env (build via make so the
-// values arrive shell-quoted; see platformio.ini). An empty SSID means the
-// env never reached the compiler — fail the build here with a message, not
-// on-chip in a 5s reconnect loop. AP builds skip this (their empty defines
-// are never referenced).
-#if DESKY_WIFI_STA
-static_assert(sizeof(WIFI_SSID) > 1, "desky-sta needs WIFI_SSID from .env (use make build-sta)");
-#endif
 
 class UdpServer : public transport::IUdpTransport {
  public:
@@ -308,28 +293,43 @@ class UdpServer : public transport::IUdpTransport {
   static constexpr uint32_t kTelemetryMs = 1000 / CFG_TELEMETRY_HZ;
   static constexpr uint32_t kStaleMs = CFG_COORDINATOR_STALE_MS;
   static constexpr uint32_t kStaRetryMs = CFG_WIFI_STA_RETRY_MS;
-  static constexpr bool kStaMode = DESKY_WIFI_STA != 0;
+  // Runtime network config, injected by the caller (values owned by
+  // services/wifi_credentials.h, passed through main.cpp — transport owns no
+  // services types). trySta false (or empty ssid) boots straight into AP.
+  struct WifiNetConfig {
+    const char* staSsid = nullptr;
+    const char* staPass = nullptr;
+    bool trySta = false;
+    uint32_t joinTimeoutMs = 0;
+    uint32_t failoverMs = 0;
+  };
 
-  UdpServer() : task_(nullptr), peerPort_(0), conn_(udpstatus::kAliveMs), lastRetryMs_(0) {}
+  UdpServer() : task_(nullptr), peerPort_(0), conn_(udpstatus::kAliveMs), lastRetryMs_(0) {
+    staSsid_[0] = '\0';
+    staPass_[0] = '\0';
+  }
 
   // Starts WiFi (async both modes), binds the UDP port, and pins the server
-  // task to Core 0. Call once in setup() with logging up. Logs ONE BOOT
-  // line: wifi mode + ssid + ip + udp port.
-  bool begin() {
-    if (kStaMode) {
+  // task to Core 0. Call once in setup() with logging up. With trySta and a
+  // non-empty ssid the STA join runs joinTimeoutMs, else AP raises now; the
+  // loop owns every later transition. Logs ONE BOOT line: wifi mode + ssid +
+  // ip + udp port. PASS never logged.
+  bool begin(const WifiNetConfig& net) {
+    copyCredential(staSsid_, sizeof(staSsid_), net.staSsid);
+    copyCredential(staPass_, sizeof(staPass_), net.staPass);
+    joinTimeoutMs_ = net.joinTimeoutMs;
+    failoverMs_ = net.failoverMs;
+    staStartMs_ = millis();
+    lastLinkMs_ = staStartMs_;
+    if (net.trySta && staSsid_[0] != '\0') {
+      netState_ = NetState::kJoining;
       WiFi.mode(WIFI_STA);
-      WiFi.begin(WIFI_SSID, WIFI_PASS);
-      // Non-blocking: the task loop retries + reports the link. PASS never logged.
-      const char* ip = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString().c_str() : "connecting…";
-      LOG_I("BOOT", "wifi STA ssid=%s ip=%s udp=%u", WIFI_SSID, ip, kPort);
+      WiFi.begin(staSsid_, staPass_);
+      LOG_I("BOOT", "wifi STA ssid=%s ip=connecting udp=%u", staSsid_, kPort);
     } else {
-      WiFi.mode(WIFI_AP);
-      const bool apOk = WiFi.softAP(CFG_WIFI_AP_SSID, CFG_WIFI_AP_PASS);
-      DESKY_ASSERT(apOk);
-      if (!apOk) {
+      if (!startAp()) {
         return false;
       }
-      LOG_I("BOOT", "wifi AP ssid=%s ip=%s udp=%u", CFG_WIFI_AP_SSID, WiFi.softAPIP().toString().c_str(), kPort);
     }
     const bool udpOk = udp_.begin(kPort);
     DESKY_ASSERT(udpOk);
@@ -516,24 +516,37 @@ class UdpServer : public transport::IUdpTransport {
     TickType_t lastWake = xTaskGetTickCount();
     const TickType_t period = pdMS_TO_TICKS(kLoopMs);
     uint32_t ticks = 0;
-    bool linkLogged = false;
     // Never returns / never halts: a halted WDT-subscribed task becomes a
     // panic-reboot loop.
     for (;;) {
       vTaskDelayUntil(&lastWake, period);
       const uint32_t nowMs = millis();
 
-      if (kStaMode) {
-        if (WiFi.status() != WL_CONNECTED) {
+      // Runtime network decision: STA join window -> AP until reboot; a lost
+      // STA link rides the failover grace before AP failover. AP never leaves.
+      // Windows mirror wificreds::joinTimedOut/failoverDue (services owns the
+      // tested copy; transport owns no services types).
+      if (netState_ != NetState::kAp) {
+        if (WiFi.status() == WL_CONNECTED) {
+          lastLinkMs_ = nowMs;
+          if (netState_ == NetState::kJoining) {
+            netState_ = NetState::kUp;
+            startMdns();
+            LOG_I("UDP", "STA link up ip=%s udp=%u", WiFi.localIP().toString().c_str(), kPort);
+          }
+        } else {
           // Unsigned subtraction: wrap-safe across millis() rollover.
           if (nowMs - lastRetryMs_ >= kStaRetryMs) {
             lastRetryMs_ = nowMs;
-            WiFi.begin(WIFI_SSID, WIFI_PASS);
-            LOG_D("UDP", "STA reconnect ssid=%s", WIFI_SSID);
+            WiFi.begin(staSsid_, staPass_);
+            LOG_D("UDP", "STA reconnect ssid=%s", staSsid_);
           }
-        } else if (!linkLogged) {
-          linkLogged = true;
-          LOG_I("UDP", "STA link up ip=%s udp=%u", WiFi.localIP().toString().c_str(), kPort);
+          const bool expired = (netState_ == NetState::kJoining) ? (nowMs - staStartMs_ >= joinTimeoutMs_)
+                                                                 : (nowMs - lastLinkMs_ >= failoverMs_);
+          if (expired) {
+            LOG_I("UDP", "STA lost -> AP until reboot");
+            startAp();
+          }
         }
       }
 
@@ -612,6 +625,46 @@ class UdpServer : public transport::IUdpTransport {
 
   // First occurrence per boot per class always logs at INFO; afterwards the
   // call-site LOG_EVERY_N throttle applies. No key/code/nonce material here.
+  enum class NetState : uint8_t { kJoining, kUp, kAp };
+
+  static void copyCredential(char* dst, size_t cap, const char* src) {
+    if (dst == nullptr || cap == 0) {
+      return;
+    }
+    size_t i = 0;
+    while (src != nullptr && src[i] != '\0' && i + 1 < cap) {
+      dst[i] = src[i];
+      ++i;
+    }
+    dst[i] = '\0';
+  }
+
+  void startMdns() {
+    if (mdnsUp_) {
+      MDNS.end();
+      mdnsUp_ = false;
+    }
+    mdnsUp_ = MDNS.begin("desky");
+    if (!mdnsUp_) {
+      LOG_W("UDP", "mdns start failed");
+    }
+  }
+
+  // Raises AP until reboot (no path back to STA). False when softAP fails.
+  bool startAp() {
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_AP);
+    const bool apOk = WiFi.softAP(CFG_WIFI_AP_SSID, CFG_WIFI_AP_PASS);
+    DESKY_ASSERT(apOk);
+    if (!apOk) {
+      return false;
+    }
+    netState_ = NetState::kAp;
+    startMdns();
+    LOG_I("BOOT", "wifi AP ssid=%s ip=%s udp=%u", CFG_WIFI_AP_SSID, WiFi.softAPIP().toString().c_str(), kPort);
+    return true;
+  }
+
   template <typename... Args>
   void dropFirst(bool& first, const char* fmt, Args... args) {
     if (first) {
@@ -786,6 +839,9 @@ class UdpServer : public transport::IUdpTransport {
   WiFiUDP udp_;
   IPAddress peerIp_;
   uint16_t peerPort_;
+  // Runtime network decision (boot STA join -> AP until reboot, lost-link AP
+  // failover). Credentials are begin-time copies (fixed buffers, PASS never
+  // logged); windows arrive injected in WifiNetConfig.
   // Peer slot + alive window (connection::ConnectionManager, host-pinned).
   // Refreshed by the markAlive funnel on every valid paired packet;
   // DISCONNECT/UNPAIR refresh then drop the net peer. peerIp_/peerPort_ stay
@@ -793,6 +849,14 @@ class UdpServer : public transport::IUdpTransport {
   // portable identity.
   connection::ConnectionManager conn_;
   uint32_t lastRetryMs_;
+  NetState netState_ = NetState::kAp;
+  char staSsid_[33];
+  char staPass_[65];
+  uint32_t joinTimeoutMs_ = 0;
+  uint32_t failoverMs_ = 0;
+  uint32_t staStartMs_ = 0;
+  uint32_t lastLinkMs_ = 0;
+  bool mdnsUp_ = false;
   // Pairing/auth session: owns paired/psk/counter/era. Pinned by
   // attachPairing(); every RX-path deref is null-safe until then. No
   // No isPaired mirror: the session is the single source of truth.

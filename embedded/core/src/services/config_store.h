@@ -13,6 +13,7 @@
 
 #include "common/logger.h"
 #include "pairing_receipt.h"
+#include "services/wifi_credentials.h"
 
 class ConfigStore {
  public:
@@ -32,6 +33,11 @@ class ConfigStore {
   // written before the refresh feature read back era 0).
   static constexpr const char* kEraKey = "pera";
   static constexpr size_t kPskLen = 16;
+  // Home-router STA credentials (additive keys — no version bump, absent
+  // reads back unusable). Names live in services/wifi_credentials.h.
+  static constexpr const char* kWifiSsidKey = wificreds::kSsidKey;
+  static constexpr const char* kWifiPassKey = wificreds::kPassKey;
+  static constexpr const char* kWifiValidKey = wificreds::kValidKey;
 
   // Opens NVS, enforces schema version, seeds defaults. Call once in setup().
   static void begin() {
@@ -130,6 +136,108 @@ class ConfigStore {
       LOG_E("CONFIG", "to-app counter write failed");
       return false;
     }
+    return true;
+  }
+
+  // Persists home-router STA credentials: SSID (1..32) + passphrase
+  // (0..64, empty = open network) + validity marker. False when NVS is
+  // unavailable or the inputs are out of bounds (nothing written).
+  static bool saveWifiCredentials(const char* ssid, const char* pass) {
+    if (ssid == nullptr || pass == nullptr) {
+      return false;
+    }
+    size_t ssidLen = 0;
+    while (ssid[ssidLen] != '\0') {
+      ++ssidLen;
+    }
+    size_t passLen = 0;
+    while (pass[passLen] != '\0') {
+      ++passLen;
+    }
+    if (!wificreds::credentialsUsable(true, ssidLen) || passLen > wificreds::kPassMax) {
+      return false;
+    }
+    Preferences prefs;
+    if (!prefs.begin(kNamespace, false)) {
+      LOG_E("CONFIG", "nvs open failed (saveWifi)");
+      return false;
+    }
+    const size_t ssidWritten = prefs.putString(kWifiSsidKey, ssid);
+    const size_t passWritten = prefs.putString(kWifiPassKey, pass);
+    const size_t validWritten = prefs.putUChar(kWifiValidKey, 1);
+    prefs.end();
+    if (ssidWritten == 0 || passWritten == 0 || validWritten == 0) {
+      LOG_E("CONFIG", "wifi credential write failed");
+      return false;
+    }
+    return true;
+  }
+
+  // Loads home-router STA credentials. Returns true with ssid/pass filled
+  // (NUL-terminated, truncated to the caller's buffers) only when the
+  // validity marker is present and the SSID is non-empty; false (buffers
+  // untouched) otherwise. A missing passphrase reads back empty (open net).
+  static bool loadWifiCredentials(char* ssid, size_t ssidCap, char* pass, size_t passCap) {
+    if (ssid == nullptr || pass == nullptr || ssidCap == 0 || passCap == 0) {
+      return false;
+    }
+    Preferences prefs;
+    if (!prefs.begin(kNamespace, true)) {
+      LOG_E("CONFIG", "nvs open failed (loadWifi)");
+      return false;
+    }
+    const uint8_t stored = prefs.isKey(kVersionKey) ? prefs.getUChar(kVersionKey, 0) : 0;
+    if (stored != kConfigVersion) {
+      prefs.end();
+      return false;
+    }
+    if (!prefs.isKey(kWifiValidKey) || prefs.getUChar(kWifiValidKey, 0) == 0 || !prefs.isKey(kWifiSsidKey)) {
+      prefs.end();
+      return false;
+    }
+    // putString stores the NUL terminator; content length is one less.
+    const size_t ssidStored = prefs.getBytesLength(kWifiSsidKey);
+    const size_t passStored = prefs.isKey(kWifiPassKey) ? prefs.getBytesLength(kWifiPassKey) : 1;
+    if (ssidStored < 2 || !wificreds::credentialsUsable(true, ssidStored - 1)) {
+      prefs.end();
+      return false;
+    }
+    char ssidTmp[wificreds::kSsidMax + 1];
+    char passTmp[wificreds::kPassMax + 1];
+    const size_t ssidGot = prefs.getBytes(kWifiSsidKey, ssidTmp, sizeof(ssidTmp));
+    const size_t passGot = prefs.isKey(kWifiPassKey) ? prefs.getBytes(kWifiPassKey, passTmp, sizeof(passTmp)) : 1;
+    prefs.end();
+    if (ssidGot == 0 || passGot == 0) {
+      return false;
+    }
+    ssidTmp[sizeof(ssidTmp) - 1] = '\0';
+    passTmp[sizeof(passTmp) - 1] = '\0';
+    const size_t ssidCopy = ssidGot - 1 < ssidCap - 1 ? ssidGot - 1 : ssidCap - 1;
+    for (size_t i = 0; i < ssidCopy; ++i) {
+      ssid[i] = ssidTmp[i];
+    }
+    ssid[ssidCopy] = '\0';
+    const size_t passCopy = passGot - 1 < passCap - 1 ? passGot - 1 : passCap - 1;
+    for (size_t i = 0; i < passCopy; ++i) {
+      pass[i] = passTmp[i];
+    }
+    pass[passCopy] = '\0';
+    return true;
+  }
+
+  // Forgets home-router STA credentials (removes the three keys only; schema
+  // version is preserved so no re-migration runs).
+  static bool clearWifiCredentials() {
+    Preferences prefs;
+    if (!prefs.begin(kNamespace, false)) {
+      LOG_E("CONFIG", "nvs open failed (clearWifi)");
+      return false;
+    }
+    prefs.remove(kWifiSsidKey);
+    prefs.remove(kWifiPassKey);
+    prefs.remove(kWifiValidKey);
+    prefs.end();
+    LOG_I("CONFIG", "wifi credentials cleared");
     return true;
   }
 

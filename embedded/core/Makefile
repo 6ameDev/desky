@@ -6,7 +6,7 @@ export
 export PLATFORMIO_SETTING_CHECK_PLATFORMIO_INTERVAL=7
 export PLATFORMIO_SETTING_ENABLE_TELEMETRY=No
 
-.PHONY: clean build build-release build-sta build-bench test test-verbose check check-pins check-arch upload-monitor upload-monitor-release upload-monitor-sta upload-sta upload-bench monitor-decode
+.PHONY: clean build build-release build-bench test test-verbose check check-pins check-arch upload-monitor upload-monitor-release upload-bench monitor-decode
 
 clean:
 	pio run -e desky -t clean
@@ -33,33 +33,13 @@ upload-monitor-release:
 	grep -q "Hash of data verified" /tmp/desky-release-upload.log && grep -q "Hard resetting" /tmp/desky-release-upload.log
 	pio device monitor
 
-# Verify compilation (STA test env — needs .env WIFI_SSID/WIFI_PASS, which
-# make exports from the repo root; raw `pio` without sourced env fails the
-# compile-time credential assert instead of boot-looping on-chip)
-build-sta:
-	pio run -e desky-sta
-
-# Build, upload to ESP32, and monitor serial output (STA).
-# THE blessed STA path: make exports .env verbatim (shell quotes intact, so
-# spaced SSIDs survive shlex splitting in the -D flags). Do not hand-roll
-# raw `pio` STA uploads.
-upload-monitor-sta:
-	pio run -e desky-sta -t upload > /tmp/desky-sta-upload.log 2>&1; CODE=$$?; cat /tmp/desky-sta-upload.log; test $$CODE -eq 0
-	grep -q "Hash of data verified" /tmp/desky-sta-upload.log && grep -q "Hard resetting" /tmp/desky-sta-upload.log
-	pio device monitor
-# Build + upload (STA), no monitor — for scripted captures (see docs/debugging.md).
-# Same blessed env handling as upload-monitor-sta; proves the flash with hashes.
-upload-sta:
-	pio run -e desky-sta -t upload > /tmp/desky-sta-upload.log 2>&1; CODE=$$?; cat /tmp/desky-sta-upload.log; test $$CODE -eq 0
-	grep -q "Hash of data verified" /tmp/desky-sta-upload.log && grep -q "Hard resetting" /tmp/desky-sta-upload.log
-
 # Verify compilation (bench env: WiFi off for TCRT bring-up).
 # Deliberately NOT part of `check` — the gate stays desky/desky-release.
 build-bench:
 	pio run -e desky-bench
 
 # Build + upload (bench), no monitor — for scripted TCRT calibration captures
-# (see docs/debugging.md). Same hash-verified upload pattern as the STA path.
+# (see docs/debugging.md). Same hash-verified upload pattern as the dev path.
 upload-bench:
 	pio run -e desky-bench -t upload > /tmp/desky-bench-upload.log 2>&1; CODE=$$?; cat /tmp/desky-bench-upload.log; test $$CODE -eq 0
 	grep -q "Hash of data verified" /tmp/desky-bench-upload.log && grep -q "Hard resetting" /tmp/desky-bench-upload.log

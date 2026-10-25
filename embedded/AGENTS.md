@@ -33,7 +33,7 @@ Every file in `core` and `head` must live strictly within one of these five laye
 
 ## Commands & Hardware Gotchas
 - **Build / Test:** `cd embedded/core && make check` (Focused) | `cd embedded && make check` (Holistic). New machine: install `pipx`, then `cd embedded && make setup` for the pinned Semgrep + clang-format the gates shell out to.
-- **Gate scope:** the holistic gate also covers `testbench/` plus the `desky-sta`/`desky-bench` envs; the required builds stay `desky`, `desky-release`, `desky-head`.
+- **Gate scope:** the holistic gate also covers `testbench/` plus the `desky-bench` env; the required builds stay `desky`, `desky-release`, `desky-head`.
 - **USB Serial:** Opens at **9600 baud** and **resets the chip**. Scripted captures must use `baudrate=115200`.
 - **Watchdog:** Call `esp_task_wdt_delete` before halting a task to prevent panic-reboot loops.
 - **Flash Verification:** Proven only by `Hash of data verified` + `Hard resetting`.
