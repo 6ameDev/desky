@@ -1,5 +1,6 @@
-# Include variables from .env if it exists
--include .env
+# Include variables from the shared embedded-level .env (single source for
+# core and head builds) if it exists
+-include ../.env
 export
 
 # Offline-first PlatformIO; interval is days.

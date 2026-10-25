@@ -147,6 +147,24 @@ void test_link_expr_pairing_screen_survives_command();
 void test_link_expr_ota_screen_survives_command();
 void test_link_expr_bench_path_intact();
 
+// Shared link crypto contract (shared/link/link_crypto.h), defined in
+// test_link_crypto.cpp.
+void test_linkcrypto_provision_exact_length_only();
+void test_linkcrypto_key_constants();
+void test_linkcrypto_counter_nonce_layout();
+void test_linkcrypto_gcm_zero_empty_vector();
+void test_linkcrypto_gcm_zero_16_vector();
+void test_linkcrypto_seal_deterministic_golden();
+void test_linkcrypto_round_trip_sizes();
+void test_linkcrypto_tamper_rejected();
+void test_linkcrypto_wrong_key_and_nonce_rejected();
+void test_linkcrypto_truncated_and_short_rejected();
+void test_linkcrypto_nonce_reuse_is_visible();
+void test_linkcrypto_null_and_cap_safety();
+void test_linkcrypto_open_failure_zeroes_output();
+void test_linkcrypto_passphrase_goldens();
+void test_linkcrypto_passphrase_shape();
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_face_names_match_ids);
@@ -273,5 +291,20 @@ int main() {
   RUN_TEST(test_link_expr_pairing_screen_survives_command);
   RUN_TEST(test_link_expr_ota_screen_survives_command);
   RUN_TEST(test_link_expr_bench_path_intact);
+  RUN_TEST(test_linkcrypto_provision_exact_length_only);
+  RUN_TEST(test_linkcrypto_key_constants);
+  RUN_TEST(test_linkcrypto_counter_nonce_layout);
+  RUN_TEST(test_linkcrypto_gcm_zero_empty_vector);
+  RUN_TEST(test_linkcrypto_gcm_zero_16_vector);
+  RUN_TEST(test_linkcrypto_seal_deterministic_golden);
+  RUN_TEST(test_linkcrypto_round_trip_sizes);
+  RUN_TEST(test_linkcrypto_tamper_rejected);
+  RUN_TEST(test_linkcrypto_wrong_key_and_nonce_rejected);
+  RUN_TEST(test_linkcrypto_truncated_and_short_rejected);
+  RUN_TEST(test_linkcrypto_nonce_reuse_is_visible);
+  RUN_TEST(test_linkcrypto_null_and_cap_safety);
+  RUN_TEST(test_linkcrypto_open_failure_zeroes_output);
+  RUN_TEST(test_linkcrypto_passphrase_goldens);
+  RUN_TEST(test_linkcrypto_passphrase_shape);
   return UNITY_END();
 }
