@@ -79,7 +79,7 @@ class DeviceConfigUseCasesTest {
 
 class ForgetDeviceUseCaseTest {
 
-    private val device = PairedDevice(id = "desky-1", ip = "192.168.4.1", authToken = "psk-v1")
+    private val device = PairedDevice(id = "desky-1", ip = ROBOT_HOST, authToken = "psk-v1")
 
     private fun hex(s: String): ByteArray {
         require(s.length % 2 == 0)

@@ -7,6 +7,7 @@ import com.desky.shared.domain.FromRobotCounter
 import com.desky.shared.domain.GetPairPskUseCase
 import com.desky.shared.domain.ObserveTelemetryUseCase
 import com.desky.shared.domain.RobotMode
+import com.desky.shared.domain.ROBOT_HOST
 import com.desky.shared.domain.PICKER_EXPRESSIONS
 import com.desky.shared.domain.SendSignedControlUseCase
 import com.desky.shared.domain.Telemetry
@@ -68,7 +69,7 @@ class ExpressionsViewModelTest {
             mode = RobotMode.MANUAL,
             manual = manual,
         )
-        udp.inbound.emit(UdpDatagram(TelemetryPacketCodec.encode(packet), "192.168.4.1", DEFAULT_UDP_PORT))
+        udp.inbound.emit(UdpDatagram(TelemetryPacketCodec.encode(packet), ROBOT_HOST, DEFAULT_UDP_PORT))
     }
 
     private fun trigs(udp: FakeUdpSocketManager) =
@@ -110,7 +111,7 @@ class ExpressionsViewModelTest {
         assertEquals(15, frame.size)
         assertEquals(0x5B, frame[0].unsigned())
         assertEquals(3, frame[1].unsigned())
-        assertEquals("192.168.4.1", sent[0].host)
+        assertEquals(ROBOT_HOST, sent[0].host)
         assertEquals(DEFAULT_UDP_PORT, sent[0].port)
     }
 

@@ -38,7 +38,7 @@ class PairingPacketsTest {
         assertEquals(14, PAIR_REFRESH_REQ_SIZE)
         assertEquals(0x54, PAIR_REFRESH_ACK_HEADER)
         assertEquals(10, PAIR_REFRESH_ACK_SIZE)
-        assertEquals("192.168.4.1", ROBOT_HOST)
+        assertEquals("desky.local", ROBOT_HOST)
     }
 
     @Test

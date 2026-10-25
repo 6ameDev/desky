@@ -4,9 +4,11 @@ import androidx.room3.Room
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import app.cash.turbine.test
 import com.desky.shared.data.db.DeskyDatabase
+import com.desky.shared.data.db.PairedDeviceEntity
 import com.desky.shared.data.db.toDomain
 import com.desky.shared.data.db.toEntity
 import com.desky.shared.domain.PairedDevice
+import com.desky.shared.domain.ROBOT_HOST
 import com.desky.shared.domain.RobotConfig
 import kotlinx.coroutines.test.runTest
 import kotlin.test.AfterTest
@@ -54,12 +56,12 @@ class RoomRepositoriesTest {
     @Test
     fun deviceMappingRoundTripsLastCounter() {
         val device = PairedDevice(
-            id = "desky-192.168.4.1",
-            ip = "192.168.4.1",
+            id = "desky-$ROBOT_HOST",
+            ip = ROBOT_HOST,
             port = 3333,
             authToken = "psk-v1",
             lastCounter = 128u,
-            alias = "192.168.4.1",
+            alias = ROBOT_HOST,
         )
         assertEquals(device, device.toEntity().toDomain())
     }
@@ -67,12 +69,12 @@ class RoomRepositoriesTest {
     @Test
     fun deviceMappingRoundTripsPersistEvery() {
         val device = PairedDevice(
-            id = "desky-192.168.4.1",
-            ip = "192.168.4.1",
+            id = "desky-$ROBOT_HOST",
+            ip = ROBOT_HOST,
             port = 3333,
             authToken = "psk-v1",
             lastCounter = 0u,
-            alias = "192.168.4.1",
+            alias = ROBOT_HOST,
             persistEvery = 16,
         )
         assertEquals(device, device.toEntity().toDomain())
@@ -81,12 +83,12 @@ class RoomRepositoriesTest {
     @Test
     fun deviceMappingRoundTripsEra() {
         val device = PairedDevice(
-            id = "desky-192.168.4.1",
-            ip = "192.168.4.1",
+            id = "desky-$ROBOT_HOST",
+            ip = ROBOT_HOST,
             port = 3333,
             authToken = "psk-v1",
             lastCounter = 0u,
-            alias = "192.168.4.1",
+            alias = ROBOT_HOST,
             persistEvery = 128,
             era = 7u,
         )
@@ -96,12 +98,12 @@ class RoomRepositoriesTest {
     @Test
     fun deviceMappingRoundTripsLastRobotCounter() {
         val device = PairedDevice(
-            id = "desky-192.168.4.1",
-            ip = "192.168.4.1",
+            id = "desky-$ROBOT_HOST",
+            ip = ROBOT_HOST,
             port = 3333,
             authToken = "psk-v1",
             lastCounter = 100u,
-            alias = "192.168.4.1",
+            alias = ROBOT_HOST,
             persistEvery = 128,
             era = 1u,
             lastRobotCounter = 77u,
@@ -109,9 +111,38 @@ class RoomRepositoriesTest {
         assertEquals(device, device.toEntity().toDomain())
     }
 
+    /**
+     * AP-era row (stored literal): reads resolve via mDNS like a fresh
+     * pair instead of wedging on the dead address, with the row id
+     * (vault/counter key), watermark, and port untouched. No schema change,
+     * so no migration — the next save heals the row.
+     */
     @Test
-    fun configMappingRoundTrip() {
-        val config = RobotConfig(
+    fun legacyApRowResolvesViaHostnameKeepingId() = runTest {
+        val repo = RoomDeviceRepository(db.pairedDeviceDao())
+        repo.save(
+            PairedDevice(
+                id = "desky-192.168.4.1",
+                ip = "192.168.4.1",
+                authToken = "psk-v1",
+                lastCounter = 96u,
+                alias = "192.168.4.1",
+            ),
+        )
+
+        repo.observePaired().test {
+            val device = assertNotNull(awaitItem())
+            assertEquals(ROBOT_HOST, device.ip)
+            assertEquals(ROBOT_HOST, device.alias)
+            assertEquals("desky-192.168.4.1", device.id)
+            assertEquals(96u, device.lastCounter)
+            assertEquals(3333, device.port)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun configMappingRoundTrip() {        val config = RobotConfig(
             speedLimit = 0.6f,
             ledProfile = 2,
             pidP = 1f,
@@ -177,21 +208,21 @@ class RoomRepositoriesTest {
         val repo = RoomDeviceRepository(db.pairedDeviceDao())
         repo.save(
             PairedDevice(
-                id = "desky-192.168.4.1",
-                ip = "192.168.4.1",
+                id = "desky-$ROBOT_HOST",
+                ip = ROBOT_HOST,
                 authToken = "psk-v1",
                 lastCounter = 0u,
-                alias = "192.168.4.1",
+                alias = ROBOT_HOST,
             ),
         )
 
-        repo.updateCounter("desky-192.168.4.1", 128u)
+        repo.updateCounter("desky-$ROBOT_HOST", 128u)
 
         repo.observePaired().test {
             val device = assertNotNull(awaitItem())
             assertEquals(128u, device.lastCounter)
-            assertEquals("desky-192.168.4.1", device.id)
-            assertEquals("192.168.4.1", device.ip)
+            assertEquals("desky-$ROBOT_HOST", device.id)
+            assertEquals(ROBOT_HOST, device.ip)
             assertEquals("psk-v1", device.authToken)
             cancelAndIgnoreRemainingEvents()
         }
@@ -201,11 +232,11 @@ class RoomRepositoriesTest {
     fun saveThenObserveKeepsNegotiatedPersistEvery() = runTest {
         val repo = RoomDeviceRepository(db.pairedDeviceDao())
         val device = PairedDevice(
-            id = "desky-192.168.4.1",
-            ip = "192.168.4.1",
+            id = "desky-$ROBOT_HOST",
+            ip = ROBOT_HOST,
             authToken = "psk-v1",
             lastCounter = 0u,
-            alias = "192.168.4.1",
+            alias = ROBOT_HOST,
             persistEvery = 16,
         )
 
@@ -222,18 +253,18 @@ class RoomRepositoriesTest {
         val repo = RoomDeviceRepository(db.pairedDeviceDao())
         repo.save(
             PairedDevice(
-                id = "desky-192.168.4.1",
-                ip = "192.168.4.1",
+                id = "desky-$ROBOT_HOST",
+                ip = ROBOT_HOST,
                 authToken = "psk-v1",
                 lastCounter = 100u,
-                alias = "192.168.4.1",
+                alias = ROBOT_HOST,
                 persistEvery = 128,
                 era = 0u,
                 lastRobotCounter = 77u,
             ),
         )
 
-        repo.updatePairRefresh("desky-192.168.4.1", 0u, 1u)
+        repo.updatePairRefresh("desky-$ROBOT_HOST", 0u, 1u)
 
         repo.observePaired().test {
             val device = assertNotNull(awaitItem())
@@ -250,15 +281,15 @@ class RoomRepositoriesTest {
         val repo = RoomDeviceRepository(db.pairedDeviceDao())
         repo.save(
             PairedDevice(
-                id = "desky-192.168.4.1",
-                ip = "192.168.4.1",
+                id = "desky-$ROBOT_HOST",
+                ip = ROBOT_HOST,
                 authToken = "psk-v1",
                 lastCounter = 5000u,
-                alias = "192.168.4.1",
+                alias = ROBOT_HOST,
             ),
         )
 
-        repo.updateRobotCounter("desky-192.168.4.1", 5u)
+        repo.updateRobotCounter("desky-$ROBOT_HOST", 5u)
 
         repo.observePaired().test {
             val device = assertNotNull(awaitItem())

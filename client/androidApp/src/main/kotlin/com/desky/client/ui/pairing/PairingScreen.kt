@@ -22,6 +22,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.desky.shared.domain.PairedDevice
+import com.desky.shared.domain.ROBOT_HOST
 import com.desky.shared.presentation.PairingUiState
 import com.desky.shared.presentation.PairingViewModel
 import org.koin.androidx.compose.koinViewModel
@@ -117,7 +118,7 @@ private fun PairingContentPreview() {
                 pin = "123456",
                 pairedDevice = PairedDevice(
                     id = "1",
-                    ip = "192.168.4.1",
+                    ip = ROBOT_HOST,
                     authToken = "psk-v1",
                 ),
             ),

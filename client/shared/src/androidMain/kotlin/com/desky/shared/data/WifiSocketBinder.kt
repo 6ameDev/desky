@@ -23,11 +23,11 @@ fun createWifiSocketBinder(context: Context): UdpSocketBinder = WifiSocketBinder
  * in [WifiSocketBinder.attach]) so the decision is auditable in one place.
  *
  * `TRANSPORT_WIFI` with the `NET_CAPABILITY_INTERNET` requirement REMOVED:
- * the stock `NetworkRequest` default requires INTERNET, which the robot AP
- * (`desky`, no upstream) never provides — so a default request never matches
- * and the socket stays on the default route (mobile data when active, and
- * pairing packets never reach the robot). Root-cause fix for pairing loss
- * with mobile data on.
+ * the stock `NetworkRequest` default requires INTERNET, which a
+ * phone-tethered or captive Wi-Fi link may not provide — so a default
+ * request can miss the robot's network and the socket stays on the default
+ * route (mobile data when active, and pairing packets never reach the
+ * robot). Root-cause fix for pairing loss with mobile data on.
  *
  * JVM/commonTest note: `android.net.*` does not exist on the JVM, so nothing
  * in this file runs under `:shared:jvmTest` (androidMain is not even compiled
@@ -101,7 +101,7 @@ internal class WifiSocketBinder(context: Context) : UdpSocketBinder {
         private set
 
     /**
-     * AP-rejoin debounce window: `onAvailable` flaps inside this are
+     * Rejoin debounce window: `onAvailable` flaps inside this are
      * socket re-binds only (no [networkAvailable] emit). 1 s collapses the
      * connect/re-validate burst while still knocking an order of magnitude
      * inside the robot's 5 s alive window.

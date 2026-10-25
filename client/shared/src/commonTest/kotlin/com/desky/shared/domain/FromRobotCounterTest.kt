@@ -19,12 +19,12 @@ class FromRobotCounterTest {
     @Test
     fun ensureAdoptsPeerThenNeverRewinds() = runTest {
         val holder = FromRobotCounter(FakeDeviceRepository())
-        holder.ensure("desky-192.168.4.1", 41u)
+        holder.ensure("desky-desky.local", 41u)
         assertEquals(41u, holder.current())
 
         // Mid-session re-seed (e.g. a Room row read): ignored — live
         // receive state never rewinds.
-        holder.ensure("desky-192.168.4.1", 99u)
+        holder.ensure("desky-desky.local", 99u)
         assertEquals(41u, holder.current())
     }
 
@@ -41,10 +41,10 @@ class FromRobotCounterTest {
     @Test
     fun consumeAdvancesAndPersistsPerPeer() = runTest {
         val repo = FakeDeviceRepository(
-            PairedDevice(id = "desky-192.168.4.1", ip = "192.168.4.1", authToken = "psk-v1"),
+            PairedDevice(id = "desky-desky.local", ip = "desky.local", authToken = "psk-v1"),
         )
         val holder = FromRobotCounter(repo)
-        holder.ensure("desky-192.168.4.1", 0u)
+        holder.ensure("desky-desky.local", 0u)
 
         holder.consume(1u)
         assertEquals(1u, holder.current())
@@ -52,7 +52,7 @@ class FromRobotCounterTest {
         assertEquals(2u, holder.current())
 
         assertEquals(
-            listOf("desky-192.168.4.1" to 1u, "desky-192.168.4.1" to 2u),
+            listOf("desky-desky.local" to 1u, "desky-desky.local" to 2u),
             repo.robotCounterSaves,
             "every accepted frame persists under the peer id",
         )
@@ -69,14 +69,14 @@ class FromRobotCounterTest {
     @Test
     fun resetClearsPeerToBaseline() = runTest {
         val holder = FromRobotCounter(FakeDeviceRepository())
-        holder.ensure("desky-192.168.4.1", 41u)
+        holder.ensure("desky-desky.local", 41u)
         assertEquals(41u, holder.current())
 
         holder.reset()
         assertNull(holder.current())
 
         // Same peer id re-pairs fresh: adoption (not a no-op) at 0.
-        holder.ensure("desky-192.168.4.1", 0u)
+        holder.ensure("desky-desky.local", 0u)
         assertEquals(0u, holder.current())
     }
 

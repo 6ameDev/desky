@@ -11,8 +11,21 @@ const val CONTROL_SIZE = 6
 const val TELEMETRY_SIZE = 9
 const val DEFAULT_UDP_PORT = 3333
 
-/** Fixed robot endpoint: the app never takes an IP from the user. */
-const val ROBOT_HOST = "192.168.4.1"
+/**
+ * Default robot endpoint: mDNS hostname on the shared home network,
+ * resolved per send — never cached, so a reboot onto a new address
+ * re-resolves on the next datagram. The app never takes an address from
+ * the user.
+ */
+const val ROBOT_HOST = "desky.local"
+
+/**
+ * Stored-row compat: rows written while the robot served its own AP carry
+ * this literal. [com.desky.shared.data.db.PairedDeviceEntity.toDomain] maps
+ * them to [ROBOT_HOST] on read, so old pairs re-resolve instead of wedging
+ * on a dead address. Never send to this.
+ */
+const val LEGACY_ROBOT_HOST = "192.168.4.1"
 
 /** Pairing wire headers/sizes (frozen spec: `shared/protocol/README.md` §v1). */
 const val PAIR_REQ_HEADER = 0x50

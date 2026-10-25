@@ -69,14 +69,15 @@ xcodebuild -workspace iosApp.xcworkspace -scheme iosApp -configuration Debug \
 - The drive loop must never pause: the robot failsafes ~500 ms after the
   last datagram, so the app heartbeats centered *signed* frames even with
   untouched sticks.
-- Pairing requires joining the robot AP `desky` (fixed `192.168.4.1`); the app
-  pins its UDP socket to Wi-Fi (which carries no internet capability), so
-  mobile data cannot steal the route — if it still does, airplane-mode +
-  Wi-Fi is the fallback.
+- Pairing happens on the shared home Wi-Fi the robot joined: the app
+  resolves `desky.local` (mDNS) for pairing/drive/telemetry, so no address
+  entry is needed — but the phone and the robot must be on the same
+  network, and the app pins its UDP socket to Wi-Fi so mobile data cannot
+  steal the route (if it still does, airplane-mode + Wi-Fi is the fallback).
 
 ## Deferred-run checklist (needs hardware or downloads)
 
 - [ ] Simulator runtime → xcodebuild build above, then boot + smoke all tabs.
 - [ ] Android emulator → install the debug APK, smoke: pair → drive → settings → forget.
-- [ ] Physical robot on AP `desky`: pair `192.168.4.1`, verify heartbeat +
+- [ ] Physical robot on home Wi-Fi: pair `desky.local`, verify heartbeat +
       telemetry + E-STOP + failsafe on app kill.

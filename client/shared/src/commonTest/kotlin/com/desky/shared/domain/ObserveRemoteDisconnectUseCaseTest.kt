@@ -30,7 +30,7 @@ private fun evictDevice(
     lastCounter: UInt = 100u,
     lastRobotCounter: UInt = 0u,
 ) = PairedDevice(
-    id = "desky-192.168.4.1",
+    id = "desky-$ROBOT_HOST",
     ip = ROBOT_HOST,
     port = DEFAULT_UDP_PORT,
     authToken = "psk-v1",
@@ -289,7 +289,7 @@ class ObserveRemoteDisconnectUseCaseTest {
         val vault = FakePairSecretStore()
         val udp = FakeUdpSocketManager()
         val fromRobot = FromRobotCounter(repo)
-        fromRobot.ensure("desky-192.168.4.1", 41u)
+        fromRobot.ensure("desky-$ROBOT_HOST", 41u)
         val pairUC = PairDeviceWithCodeUseCase(repo, udp, vault, fromRobot)
 
         val deferred = async { pairUC("123456") }

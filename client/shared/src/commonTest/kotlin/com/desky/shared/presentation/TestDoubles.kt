@@ -1,6 +1,7 @@
 package com.desky.shared.presentation
 
 import com.desky.shared.domain.DEFAULT_UDP_PORT
+import com.desky.shared.domain.ROBOT_HOST
 import com.desky.shared.domain.PairSecretStore
 import com.desky.shared.domain.DeviceRepository
 import com.desky.shared.domain.PairedDevice
@@ -24,7 +25,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 
-fun testDevice(ip: String = "192.168.4.1") = PairedDevice(
+fun testDevice(ip: String = ROBOT_HOST) = PairedDevice(
     id = "desky-$ip",
     ip = ip,
     port = DEFAULT_UDP_PORT,

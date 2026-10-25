@@ -2,7 +2,9 @@ package com.desky.shared.data.db
 
 import androidx.room3.Entity
 import androidx.room3.PrimaryKey
+import com.desky.shared.domain.LEGACY_ROBOT_HOST
 import com.desky.shared.domain.PairedDevice
+import com.desky.shared.domain.ROBOT_HOST
 import com.desky.shared.domain.RobotConfig
 
 /**
@@ -76,11 +78,14 @@ data class RobotConfigEntity(
 fun PairedDeviceEntity.toDomain(): PairedDevice =
     PairedDevice(
         id = id,
-        ip = ip,
+        // AP-era rows stored the fixed literal: resolve them via mDNS like
+        // fresh pairs instead of wedging on a dead address. The row id is
+        // untouched (vault/counter key), and the next save heals the row.
+        ip = if (ip == LEGACY_ROBOT_HOST) ROBOT_HOST else ip,
         port = port,
         authToken = authToken,
         lastCounter = lastCounter.toUInt(),
-        alias = alias,
+        alias = if (alias == LEGACY_ROBOT_HOST) ROBOT_HOST else alias,
         persistEvery = persistEvery,
         era = era.toUShort(),
         lastRobotCounter = lastRobotCounter.toUInt(),
