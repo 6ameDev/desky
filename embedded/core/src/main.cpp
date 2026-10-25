@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <WiFi.h>
 #include <esp_system.h>
 
 #include "abilities/audio/audio_task.h"
@@ -20,6 +21,7 @@
 #include "hal/vl53l0x_driver.h"
 // Pulls the firmware-only shared-secret check into every build.
 #include "link/link_crypto.h"
+#include "services/captive_portal.h"
 #include "services/cli_manager.h"
 #include "services/config_store.h"
 #include "services/event_bus.h"
@@ -63,6 +65,57 @@ Vl53l0xDriver g_tof(g_i2c);
 Tcrt5000Driver g_tcrtFwd(CFG_TCRT_FWD_PIN, CFG_TCRT_THRESHOLD, CFG_TCRT_HYSTERESIS, CFG_TCRT_ASSERT_HIGH);
 Tcrt5000Driver g_tcrtRev(CFG_TCRT_REV_PIN, CFG_TCRT_THRESHOLD, CFG_TCRT_HYSTERESIS, CFG_TCRT_ASSERT_HIGH);
 PairButton g_pairButton(CFG_PAIR_BUTTON_PIN, CFG_PAIR_BUTTON_DEBOUNCE_MS);
+#if !DESKY_NO_WIFI
+CaptivePortal g_portal;
+portal::Mode g_portalMode = portal::Mode::kSetup;
+bool g_portalUp = false;
+
+// Portal link sink: queries liveness and triggers the sealed relay through
+// the existing link-endpoint API only (no new transport edges). The store
+// adapter re-reads the just-written NVS so the relay proves the atomic
+// write landed; the forget adapter invalidates the injected bundle so a
+// later head epoch cannot re-offer forgotten credentials.
+bool portalLinkLive(void* ctx) {
+  const LinkServer* link = static_cast<const LinkServer*>(ctx);
+  return link != nullptr && link->hasHeadPeer();
+}
+
+bool portalRelayStore(void* ctx) {
+  LinkServer* link = static_cast<LinkServer*>(ctx);
+  if (link == nullptr) {
+    return false;
+  }
+  char ssid[wificreds::kSsidMax + 1] = {};
+  char pass[wificreds::kPassMax + 1] = {};
+  if (!ConfigStore::loadWifiCredentials(ssid, sizeof(ssid), pass, sizeof(pass))) {
+    return false;
+  }
+  link->attachHomeCreds(ssid, pass, true);
+  for (size_t i = 0; i < sizeof(pass); ++i) {
+    pass[i] = 0;
+  }
+  return link->relayStore();
+}
+
+bool portalRelayClear(void* ctx) {
+  LinkServer* link = static_cast<LinkServer*>(ctx);
+  if (link == nullptr) {
+    return false;
+  }
+  link->attachHomeCreds("", "", false);
+  return link->relayClear();
+}
+
+bool portalRelayAcked(void* ctx) {
+  const LinkServer* link = static_cast<const LinkServer*>(ctx);
+  return link != nullptr && link->credConfirmed();
+}
+
+bool startPortalNow() {
+  const PortalLinkSink sink = {&portalLinkLive, &portalRelayStore, &portalRelayClear, &portalRelayAcked, &g_link};
+  return g_portal.begin(g_portalMode, sink, WiFi.softAPIP());
+}
+#endif
 }  // namespace
 
 void setup() {
@@ -106,6 +159,14 @@ void setup() {
   // (pairing seam + telemetry RX-observation report) are wired directly on
   // the coordinator.
   g_udp.setCommandPublisher([](uint32_t payload) { EventBus::publish(EVENT_UDP_COMMAND_RECEIVED, payload); });
+  // Boot network decision order: forced-AP latch first, then the saved-STA
+  // try, then AP. The latch jumps straight to the provisioning AP until
+  // reboot; wrong passwords self-heal by failing inside the STA window back
+  // into the portal. No short-press STA retry: every transition reboots.
+  const bool forceAp = g_pairButton.pollForceApAtBoot();
+  if (forceAp) {
+    LOG_I("BOOT", "forced AP latch, provisioning until reboot");
+  }
   // Runtime network decision (transport owns the STA/AP state machine): boot
   // honors saved home credentials only with the validity marker, else AP.
   char wifiSsid[wificreds::kSsidMax + 1] = {};
@@ -114,11 +175,18 @@ void setup() {
   UdpServer::WifiNetConfig netCfg;
   netCfg.staSsid = wifiSsid;
   netCfg.staPass = wifiPass;
-  netCfg.trySta = wificreds::shouldAttemptSta(wifiStored, wifiSsid);
+  netCfg.trySta = !forceAp && wificreds::shouldAttemptSta(wifiStored, wifiSsid);
   netCfg.joinTimeoutMs = wificreds::kStaJoinTimeoutMs;
   netCfg.failoverMs = wificreds::kStaFailoverMs;
   const bool udpOk = g_udp.begin(netCfg);
   DESKY_ASSERT(udpOk);
+  // Portal landing: forced latch manages, first boot sets up, a saved-STA
+  // try that later fails over recovers. Starts now when the AP is already
+  // up; the loop starts it on the late failover raise.
+  g_portalMode = forceAp ? portal::Mode::kManage : (netCfg.trySta ? portal::Mode::kRecovery : portal::Mode::kSetup);
+  if (g_udp.apActive()) {
+    g_portalUp = startPortalNow();
+  }
   g_udp.attachPairing(&g_pairing);
   g_coordinator.attachPairing(&g_pairing);
   g_coordinator.attachTelemetry(&g_telem);
@@ -176,6 +244,14 @@ void loop() {
 #endif
   }
 #if !DESKY_NO_WIFI
+  // Captive portal lifecycle: starts on the first observed AP (covers the
+  // late STA-failover raise) and pumps DNS + the relay latch every loop.
+  if (!g_portalUp && g_udp.apActive()) {
+    g_portalUp = startPortalNow();
+  }
+  if (g_portalUp) {
+    g_portal.poll();
+  }
   // Ability link pumps: the pairing window's PIN + valid-seconds and the
   // staged `otahead` URL each unicast once to the HB-pinned head. The staged
   // expression id rides EXPR the same way (refused sends retry next loop).

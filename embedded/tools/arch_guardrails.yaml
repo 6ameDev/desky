@@ -25,6 +25,8 @@ rules:
         - '**/src/hal/camera_driver.h'
         - '**/src/abilities/ota/ota_task.h'
         - '**/src/abilities/pairing/pairing_task.h'
+        # Captive portal owns the AP-side HTTP+DNS bind (AsyncWebServer/DNSServer); link arrives via injected sink, no transport types.
+        - '**/src/services/captive_portal.h'
         - '**/src/main.cpp'
     pattern-regex: '#include\s*<(ESPAsync[^>]*|Async[^>]*|WiFi[^>]*|Update[^>]*|esp_camera[^>]*|esp_system[^>]*)>'
     languages: [generic]
