@@ -18,6 +18,8 @@
 #include "hal/pair_button.h"
 #include "hal/tcrt5000_driver.h"
 #include "hal/vl53l0x_driver.h"
+// Pulls the firmware-only shared-secret check into every build.
+#include "link/link_crypto.h"
 #include "services/cli_manager.h"
 #include "services/config_store.h"
 #include "services/event_bus.h"

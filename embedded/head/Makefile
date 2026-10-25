@@ -1,3 +1,8 @@
+# Include variables from the shared embedded-level .env (single source for
+# core and head builds) if it exists
+-include ../.env
+export
+
 # Offline-first PlatformIO; interval is days.
 export PLATFORMIO_SETTING_CHECK_PLATFORMIO_INTERVAL=7
 export PLATFORMIO_SETTING_ENABLE_TELEMETRY=No
@@ -41,4 +46,6 @@ check:
 	$(MAKE) check-arch
 	pio run -e desky-head > /tmp/check-head.log 2>&1; CODE=$$?; cat /tmp/check-head.log; test $$CODE -eq 0
 	@! grep -i "is deprecated and will be removed" /tmp/check-head.log
+	pio run -e desky-head-release > /tmp/check-head-release.log 2>&1; CODE=$$?; cat /tmp/check-head-release.log; test $$CODE -eq 0
+	@! grep -i "is deprecated and will be removed" /tmp/check-head-release.log
 	pio test -e native-test

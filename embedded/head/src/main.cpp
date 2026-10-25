@@ -13,6 +13,8 @@
 #include "hal/camera_driver.h"
 #include "hal/ssd1306_display.h"
 #include "head_context.h"
+// Pulls the firmware-only shared-secret check into every build.
+#include "link/link_crypto.h"
 #include "link/ota_manifest.h"
 #include "services/event_bus.h"
 #include "services/power_manager.h"
