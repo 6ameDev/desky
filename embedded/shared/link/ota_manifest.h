@@ -219,6 +219,20 @@ inline bool manifestUrlFor(const char* binUrl, char* out129) {
 // Pull only when the manifest version is newer.
 inline bool shouldPull(uint32_t manifestVersion, uint32_t currentVersion) { return manifestVersion > currentVersion; }
 
+// Dev images stamp this version, which never satisfies the prod gate above.
+constexpr uint32_t kDevVersion = 0;
+
+enum class Channel : uint8_t { kDev, kProd };
+
+// Channel-aware pull decision: dev skips the version comparison, prod keeps it.
+// Integrity checks downstream stay unconditional on both channels.
+inline bool shouldPullFor(uint32_t manifestVersion, uint32_t currentVersion, Channel channel) {
+  if (channel == Channel::kDev) {
+    return true;
+  }
+  return shouldPull(manifestVersion, currentVersion);
+}
+
 // ?version= upload decision: absent keeps, malformed rejects, valid u32 adopts.
 enum class VersionApply : uint8_t { kKeep, kAdopt, kReject };
 

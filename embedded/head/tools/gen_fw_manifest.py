@@ -1,9 +1,11 @@
 """gen_fw_manifest.py — build-time firmware sidecar (TRACKED build input).
 
 Runs as a PlatformIO post-action on $BUILD_DIR/firmware.bin (firmware envs
-only, never native-test). Reads HEAD_FW_VERSION from include/config.h (the
-single source — the number is never duplicated here), hashes + sizes the
-just-built firmware.bin, and writes firmware.manifest next to it in the exact
+only, never native-test). The per-env custom_fw_channel option selects the
+stamped version: dev stamps 0 without reading config, release reads
+HEAD_FW_VERSION from include/config.h (the single source — the number is
+never duplicated here), hashes + sizes the just-built firmware.bin, and writes
+firmware.manifest next to it in the exact
 manifest wire format the core staging server serves:
 
     version=<u32>
@@ -13,8 +15,8 @@ manifest wire format the core staging server serves:
 Untracked scripts/ota_head_upload.py reads this sidecar to POST version-locked
 uploads, then asserts the served manifest back — a staged version can never
 differ from the built firmware. Fail LOUD (non-zero exit fails the build)
-on: unparseable macro, missing firmware.bin, empty image, or size beyond the
-OTA slot ceiling.
+on: missing or unrecognized fw channel, unparseable macro, missing
+firmware.bin, empty image, or size beyond the OTA slot ceiling.
 
 Doubles as its own test: `python3 gen_fw_manifest.py --selftest` exercises
 the macro parse + manifest format on synthetic inputs (no hardware, no deps).
@@ -27,6 +29,9 @@ import sys
 
 MACRO_RE = re.compile(r"^\s*#\s*define\s+HEAD_FW_VERSION\s+(\d+)\s*$", re.MULTILINE)
 MAX_U32 = 0xFFFFFFFF
+DEV_VERSION = 0
+CHANNEL_DEV = "dev"
+CHANNEL_RELEASE = "release"
 
 # Must stay in sync with the OTA slot the head boots from (see
 # partitions_ota_nospiffs.csv: 0x1F0000 per slot). The firmware's own
@@ -67,8 +72,17 @@ def build_manifest_text(version, size, sha_hex):
     return "version=%d\nsize=%d\nsha256=%s\n" % (version, size, sha_hex)
 
 
-def generate_manifest(config_path, firmware_path, out_path):
-    version = read_fw_version(config_path)
+def resolve_version(channel, config_path):
+    """Version for a channel: dev stamps DEV_VERSION, release reads config.h."""
+    if channel == CHANNEL_DEV:
+        return DEV_VERSION
+    if channel == CHANNEL_RELEASE:
+        return read_fw_version(config_path)
+    raise ValueError("unrecognized fw channel %r (want %r or %r)" % (channel, CHANNEL_DEV, CHANNEL_RELEASE))
+
+
+def generate_manifest(config_path, firmware_path, out_path, channel=CHANNEL_DEV):
+    version = resolve_version(channel, config_path)
     try:
         with open(firmware_path, "rb") as fh:
             blob = fh.read()
@@ -89,10 +103,17 @@ def _scons_entry(source, target, env):
     project_dir = env.subst("$PROJECT_DIR")
     build_dir = env.subst("$BUILD_DIR")
     try:
+        channel = env.GetProjectOption("custom_fw_channel")
+    except Exception as exc:
+        print("gen_fw_manifest: FATAL: missing custom_fw_channel: %s" % exc)
+        env.Exit(1)
+        return
+    try:
         version, size, digest = generate_manifest(
             os.path.join(project_dir, "include", "config.h"),
             os.path.join(build_dir, "firmware.bin"),
             os.path.join(build_dir, "firmware.manifest"),
+            channel,
         )
     except ValueError as exc:
         print("gen_fw_manifest: FATAL: %s" % exc)
@@ -136,11 +157,27 @@ def _selftest():
     with open(fw, "wb") as fh:
         fh.write(b"\xe9" + bytes(1023))
     out = os.path.join(d, "firmware.manifest")
-    v, s, h = generate_manifest(cfg, fw, out)
+    v, s, h = generate_manifest(cfg, fw, out, "release")
     body = open(out).read()
     check("generate ok", (v, s) == (3, 1024) and len(h) == 64)
     check("wire format", body == "version=3\nsize=1024\nsha256=%s\n" % h)
     check("sha matches content", h == hashlib.sha256(b"\xe9" + bytes(1023)).hexdigest())
+    v, s, h = generate_manifest(cfg, fw, out, "dev")
+    body = open(out).read()
+    check("dev stamps zero", (v, s) == (0, 1024) and len(h) == 64)
+    check("dev wire format", body == "version=0\nsize=1024\nsha256=%s\n" % h)
+    v, s, h = generate_manifest(cfg, fw, out)
+    check("default stamps zero", v == 0)
+    try:
+        generate_manifest(cfg, fw, out, "canary")
+        check("bad channel rejects", False)
+    except ValueError:
+        check("bad channel rejects", True)
+    try:
+        generate_manifest(cfg, fw, out, "")
+        check("empty channel rejects", False)
+    except ValueError:
+        check("empty channel rejects", True)
     with open(fw, "wb") as fh:
         fh.write(b"")
     try:

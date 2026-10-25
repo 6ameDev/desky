@@ -35,6 +35,16 @@
 #define OTA_HAVE_SHA256 0
 #endif
 
+#if defined(DESKY_DEV) && defined(DESKY_RELEASE)
+#error "OTA channel ambiguous: DESKY_DEV and DESKY_RELEASE both defined"
+#elif defined(DESKY_DEV)
+constexpr otamanifest::Channel kOtaChannel = otamanifest::Channel::kDev;
+#elif defined(DESKY_RELEASE)
+constexpr otamanifest::Channel kOtaChannel = otamanifest::Channel::kProd;
+#else
+#error "OTA channel missing: define DESKY_DEV or DESKY_RELEASE"
+#endif
+
 class OtaUpdater {
  public:
   OtaUpdater()
@@ -69,7 +79,7 @@ class OtaUpdater {
       LOG_W("OTA", "no manifest, refused");
       return false;
     }
-    if (!otamanifest::shouldPull(man.version, static_cast<uint32_t>(HEAD_FW_VERSION))) {
+    if (!otamanifest::shouldPullFor(man.version, static_cast<uint32_t>(HEAD_FW_VERSION), kOtaChannel)) {
       LOG_I("OTA", "up to date version=%lu size=%lu", static_cast<unsigned long>(man.version),
             static_cast<unsigned long>(man.size));
       return false;

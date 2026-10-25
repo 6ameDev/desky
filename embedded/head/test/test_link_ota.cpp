@@ -178,3 +178,15 @@ void test_link_ota_version_vocabulary_and_gate() {
   TEST_ASSERT_TRUE(otamanifest::shouldPull(man.version, running));
   TEST_ASSERT_EQUAL_UINT32(1234567, man.size);
 }
+
+void test_link_ota_channel_policy() {
+  using otamanifest::Channel;
+  TEST_ASSERT_TRUE(otamanifest::shouldPullFor(0, 1, Channel::kDev));
+  TEST_ASSERT_TRUE(otamanifest::shouldPullFor(1, 1, Channel::kDev));
+  TEST_ASSERT_TRUE(otamanifest::shouldPullFor(2, 1, Channel::kDev));
+  TEST_ASSERT_TRUE(otamanifest::shouldPullFor(2, 1, Channel::kProd));
+  TEST_ASSERT_FALSE(otamanifest::shouldPullFor(1, 1, Channel::kProd));
+  TEST_ASSERT_FALSE(otamanifest::shouldPullFor(0, 1, Channel::kProd));
+  const uint32_t running = static_cast<uint32_t>(HEAD_FW_VERSION);
+  TEST_ASSERT_FALSE(otamanifest::shouldPullFor(otamanifest::kDevVersion, running, Channel::kProd));
+}
