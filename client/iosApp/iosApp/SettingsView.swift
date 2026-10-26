@@ -65,13 +65,22 @@ struct SettingsView: View {
                 set: { state.onLedProfile(Int32($0)) }
             ), in: 0...7)
             HStack {
-                TextField("P", text: $pidP)
+                TextField("P", text: Binding(
+                    get: { pidP },
+                    set: { if isValidFloatInput($0) { pidP = $0 } }
+                ))
                     .textFieldStyle(.roundedBorder)
                     .keyboardType(.decimalPad)
-                TextField("I", text: $pidI)
+                TextField("I", text: Binding(
+                    get: { pidI },
+                    set: { if isValidFloatInput($0) { pidI = $0 } }
+                ))
                     .textFieldStyle(.roundedBorder)
                     .keyboardType(.decimalPad)
-                TextField("D", text: $pidD)
+                TextField("D", text: Binding(
+                    get: { pidD },
+                    set: { if isValidFloatInput($0) { pidD = $0 } }
+                ))
                     .textFieldStyle(.roundedBorder)
                     .keyboardType(.decimalPad)
                 Button("Apply") { applyPid() }
@@ -108,4 +117,10 @@ struct SettingsView: View {
         guard let p = Float(pidP), let i = Float(pidI), let d = Float(pidD) else { return }
         state.onPid(p: p, i: i, d: d)
     }
+}
+
+/// Keystroke guard mirroring Android's float-input regex: partial entries
+/// like "-" or "1." stay typable, anything else never lands in the draft.
+private func isValidFloatInput(_ value: String) -> Bool {
+    value.isEmpty || value.range(of: "^-?\\d*\\.?\\d*$", options: .regularExpression) != nil
 }

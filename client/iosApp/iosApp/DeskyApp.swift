@@ -31,10 +31,49 @@ enum DeskyTab: Hashable {
     case settings
 }
 
+/// View-layer replica of the shared `SessionGateViewModel` fence. Koin
+/// exposes no typed accessor for that VM and Swift cannot mint the KClass
+/// token its generic get requires, so this replays the same rule over the
+/// pairing VM's state: the first emission only arms, later transitions to
+/// nil latch dead and non-nil latch alive.
+@MainActor
+final class SessionGateState: ObservableObject {
+    @Published private(set) var provenDead = false
+    private let vm: PairingViewModel
+
+    init(vm: PairingViewModel) {
+        self.vm = vm
+    }
+
+    func collect() async {
+        var armed = false
+        var lastId: String?
+        for await state in vm.state {
+            let id = state.pairedDevice?.id
+            guard armed else {
+                armed = true
+                lastId = id
+                continue
+            }
+            if lastId == id { continue }
+            lastId = id
+            provenDead = (id == nil)
+        }
+    }
+}
+
 @main
 struct DeskyApp: App {
-    @StateObject private var graph = SharedGraph()
+    @StateObject private var graph: SharedGraph
+    @StateObject private var gate: SessionGateState
     @State private var selection: DeskyTab = .pairing
+    @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        let graph = SharedGraph()
+        _graph = StateObject(wrappedValue: graph)
+        _gate = StateObject(wrappedValue: SessionGateState(vm: graph.pairingVM))
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -51,6 +90,25 @@ struct DeskyApp: App {
                 SettingsView(vm: graph.settingsVM, selection: $selection)
                     .tabItem { Label("Settings", systemImage: "gear") }
                     .tag(DeskyTab.settings)
+            }
+            .task { await gate.collect() }
+            // Global unpaired fence (mirrors DeskyNavHost's provenDead
+            // navigation): a pairing that dies mid-session forces pairing.
+            .onChange(of: gate.provenDead) { dead in
+                if dead { selection = .pairing }
+            }
+            // App-background pause/resume: ControlView's onDisappear covers
+            // tab leaves; this covers the home-button path while Controls
+            // is visible (both funnel into the same VM flags).
+            .onChange(of: scenePhase) { phase in
+                switch phase {
+                case .background:
+                    graph.controlVM.onBackground()
+                case .active:
+                    graph.controlVM.onForeground()
+                default:
+                    break
+                }
             }
         }
     }
