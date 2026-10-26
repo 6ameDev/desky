@@ -66,7 +66,7 @@ struct PairingView: View {
                 state.onPair()
             }
             .buttonStyle(.borderedProminent)
-            .disabled(state.snapshot.isPairing)
+            .disabled(state.snapshot.isPairing || state.snapshot.pairedDevice != nil)
             // QR shortcut next to the manual field (manual entry stays
             // forever): decoded digits feed the identical onPair path.
             Button("Scan QR") { showScan = true }

@@ -46,6 +46,8 @@ struct ScanQrView: View {
                         Text("Camera access is only used to read the Desky QR on the robot display.")
                             .font(.body)
                             .multilineTextAlignment(.center)
+                        Button("Grant camera access") { requestCamera() }
+                            .buttonStyle(.borderedProminent)
                         Text("Camera access was denied. Enable it in Settings to scan, or type the code manually.")
                             .font(.footnote)
                             .foregroundColor(.secondary)
@@ -71,11 +73,15 @@ struct ScanQrView: View {
         case .authorized:
             camera = .ready
         case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .video) { granted in
-                Task { @MainActor in camera = granted ? .ready : .denied }
-            }
+            requestCamera()
         default:
             camera = .denied
+        }
+    }
+
+    private func requestCamera() {
+        AVCaptureDevice.requestAccess(for: .video) { granted in
+            Task { @MainActor in camera = granted ? .ready : .denied }
         }
     }
 }
