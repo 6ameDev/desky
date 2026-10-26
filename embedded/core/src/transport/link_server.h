@@ -773,11 +773,11 @@ class LinkServer {
       return false;
     }
     size_t ssidLen = 0;
-    while (ssid[ssidLen] != '\0' && ssidLen < 33) {
+    while (ssid[ssidLen] != '\0' && ssidLen <= linkcode::kWifiCredSsidMax) {
       ++ssidLen;
     }
     size_t passLen = 0;
-    while (pass[passLen] != '\0' && passLen < 65) {
+    while (pass[passLen] != '\0' && passLen <= linkcode::kWifiCredPassMax) {
       ++passLen;
     }
     uint8_t plain[linkcode::kWifiCredPlainMax] = {};
@@ -1024,8 +1024,8 @@ class LinkServer {
   uint16_t txSeq_ = 0;
   // Credential-push state: home bundle injected pre-begin by main.cpp;
   // armed by the portal relay, confirmed by the sequence-ACK.
-  char homeSsid_[33] = {};  // 32 + NUL, mirrors the services-side bound.
-  char homePass_[65] = {};  // 64 + NUL, mirrors the services-side bound.
+  char homeSsid_[linkcode::kWifiCredSsidMax + 1] = {};  // mirrors the services-side bound.
+  char homePass_[linkcode::kWifiCredPassMax + 1] = {};  // mirrors the services-side bound.
   bool homeCredsValid_ = false;
   bool credArmed_ = false;
   bool credConfirmed_ = false;

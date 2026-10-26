@@ -282,7 +282,7 @@ class LinkClient {
     // uses the injected NVS bundle, the core AP uses the derived passphrase.
     // The pass buffer is wiped right after begin() copies it into the driver.
     const char* ssid = CFG_LINK_SSID;
-    char pass[65] = {};
+    char pass[linkcode::kWifiCredPassMax + 1] = {};
     switch (followTarget_) {
       case wifilink::FollowTarget::kLastGood:
         ssid = lastGoodSsid_;
@@ -643,8 +643,8 @@ class LinkClient {
   // ACK and no seq advance; a stored bundle (or CLEAR) ACKs exactly once and
   // refreshes the follow loop without a reboot. Never logs secrets.
   void handleCreds(const linkcode::Frame& f, const IPAddress& rip, uint16_t rport) {
-    char ssidTmp[33] = {};
-    char passTmp[65] = {};
+    char ssidTmp[linkcode::kWifiCredSsidMax + 1] = {};
+    char passTmp[linkcode::kWifiCredPassMax + 1] = {};
     size_t ssidLen = 0;
     size_t passLen = 0;
     {
@@ -816,17 +816,16 @@ class LinkClient {
   uint32_t attemptStartMs_;
   bool firstAttempt_;
   // Follow-loop search head + injected home bundle + last-heard snapshot.
-  // Bounds mirror the shared credential contract (32/64 + NUL).
   wifilink::FollowTarget followTarget_ = wifilink::FollowTarget::kCoreAp;
   bool cycleExhausted_ = false;
   uint32_t cycleEndMs_ = 0;
   bool haveHomeCreds_ = false;
-  char homeSsid_[33] = {};
-  char homePass_[65] = {};
+  char homeSsid_[linkcode::kWifiCredSsidMax + 1] = {};
+  char homePass_[linkcode::kWifiCredPassMax + 1] = {};
   bool haveLastGood_ = false;
   bool needLastGood_ = false;
-  char lastGoodSsid_[33] = {};
-  char lastGoodPass_[65] = {};
+  char lastGoodSsid_[linkcode::kWifiCredSsidMax + 1] = {};
+  char lastGoodPass_[linkcode::kWifiCredPassMax + 1] = {};
   IPAddress coreIp_;
   uint32_t credRx_ = 0;
   uint32_t lastHbMs_;
