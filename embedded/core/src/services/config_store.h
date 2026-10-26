@@ -197,7 +197,6 @@ class ConfigStore {
     }
     // putString/getString pair stores the NUL terminator; content length is one less.
     const size_t ssidStored = prefs.getStringLength(kWifiSsidKey);
-    const size_t passStored = prefs.isKey(kWifiPassKey) ? prefs.getStringLength(kWifiPassKey) : 1;
     if (ssidStored < 2 || !wificreds::credentialsUsable(true, ssidStored - 1)) {
       prefs.end();
       return false;
