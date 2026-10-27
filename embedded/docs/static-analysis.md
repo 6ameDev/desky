@@ -1,7 +1,8 @@
-# Static analysis — Phase 0 (report-only)
+# Static analysis — Phase 0 (report-only) + Phase 1 (advisory) + task 9 (selective)
 
-Measured 2026-10-27. Nothing here gates `make check`; promotion to hard
-gates happens in task 9.
+Measured 2026-10-27. Only clang-format + semgrep-arch gate `make check`;
+task 9 deliberately left everything else advisory — see the Task 9 section
+for the per-tool record and promotion checklist.
 
 ## Toolchain census
 
@@ -60,6 +61,37 @@ in `make check-arch`; community rules run WITHOUT `--error`.
   (`make coverage` runs both steps and greps the per-file `Lines executed`
   summary.) Spot sample 2026-10-27: shared/link/link_codec.h 84.93% of 146
   lines; expression_catalog.h partially covered — no gate, census only.
+
+## Task 9 (selective promotion, 2026-10-27) — gating vs advisory
+
+Nothing below changes `make check`: the gate stays format + pins + arch +
+both firmware builds + host tests. Promotion here is wiring-only
+(CI artifacts, install attempts) plus an explicit per-tool record:
+
+| Tool | State | Rationale |
+| --- | --- | --- |
+| clang-format / semgrep-arch | GATING (in `make check`, unchanged) | zero-tolerance formatting + layer edges |
+| clang-tidy | ADVISORY (skip-if-missing) | tool absent on bench and CI image; CI install is best-effort (`continue-on-error`), never a gate dependency |
+| cppcheck (`pio check`) | ADVISORY | baseline "No defects found" both envs; stays warn-only (no `--fail-on-defect`) |
+| semgrep-community | ADVISORY (no `--error`) | 0 findings on core src; registry needs network, skips offline |
+| ASan (`native-asan`) | ADVISORY | core 415/415 + head 145/145 green locally; CI runs `test-asan` per firmware with `continue-on-error` + log artifacts |
+| Coverage (llvm-cov) | REPORT-ONLY | census sample only, no gate |
+| Size report | REPORT-ONLY | all envs within budget; CI uploads the log, never gates |
+| `check-analyze` | REPORT-ONLY | blocked on the `-Werror` ordering issue (see below); CI uploads the log |
+
+Promotion checklist (each line flips independently when its condition holds):
+- clang-tidy: pin per CI image and promote only after a clean local baseline is triaged (same absorb-then-gate pattern as client lint/detekt).
+- cppcheck: add `--fail-on-defect` only after the backend runs green in CI with suppressions committed.
+- check-analyze: uncomment the live overlay only after the `-isystem`/pragma fix lands and `src/hal/*.h` builds clean.
+- Coverage/size: set bounds only after N releases of stable data — never invent a threshold.
+- Baselines live here: `tools/cppcheck-suppressions.txt` (hand-maintained,
+  header comment inside is the record) and the root `.clang-tidy`
+  (hand-maintained single config, header comment inside is the record).
+
+CI (`.github/workflows/ci.yml`) runs `make check-static` + `make
+size-report` + per-firmware `test-asan` as advisory steps
+(`continue-on-error`) with log artifacts, after an attempted
+clang-tidy/cppcheck install (also `continue-on-error`).
 
 ## Size budgets (measured `firmware.bin` vs OTA app-slot)
 

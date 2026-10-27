@@ -77,12 +77,12 @@ jobs:
       # Advisory until baselines are triaged (task 9 promotes to gating).
       - name: SwiftLint (report-only)
         continue-on-error: true
-        run: mint run swiftlint lint iosApp --config iosApp/.swiftlint.yml --reporter github-actions-logging
+        run: mint run swiftlint lint iosApp --config iosApp/.swiftlint.yml --reporter github-actions-logging 2>&1 | tee swiftlint.log; test ${PIPESTATUS[0]} -eq 0
 
       # --lint only: never writes in CI.
       - name: SwiftFormat check (report-only)
         continue-on-error: true
-        run: mint run swiftformat --lint iosApp --config iosApp/.swiftformat
+        run: mint run swiftformat --lint iosApp --config iosApp/.swiftformat 2>&1 | tee swiftformat.log; test ${PIPESTATUS[0]} -eq 0
 
       - name: Build iosApp (simulator)
         working-directory: client/iosApp
@@ -110,7 +110,7 @@ jobs:
           -destination 'platform=iOS Simulator,name=iPhone 16,arch=arm64'
           -parallelizeTargets -jobs $(sysctl -n hw.ncpu)
           COMPILER_INDEX_STORE_ENABLE=NO
-          analyze
+          analyze 2>&1 | tee ../../analyze.log; test ${PIPESTATUS[0]} -eq 0
 
       # Phase 0 report-only: project pins SWIFT_VERSION=5.0 so
       # SWIFT_STRICT_CONCURRENCY=complete measures the minimal-check
@@ -125,7 +125,18 @@ jobs:
           -parallelizeTargets -jobs $(sysctl -n hw.ncpu)
           COMPILER_INDEX_STORE_ENABLE=NO
           SWIFT_STRICT_CONCURRENCY=complete
-          build
+          build 2>&1 | tee ../../concurrency.log; test ${PIPESTATUS[0]} -eq 0
+
+      - name: Upload static-analysis logs (report-only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-lint-reports
+          path: |
+            client/swiftlint.log
+            client/swiftformat.log
+            client/analyze.log
+            client/concurrency.log
 
   # Periphery rides a SEPARATE job: it needs the index store, but the main
   # build above keeps COMPILER_INDEX_STORE_ENABLE=NO (local Xcode
@@ -190,8 +201,17 @@ jobs:
           -destination 'platform=iOS Simulator,name=iPhone 16,arch=arm64'
           -parallelizeTargets -jobs $(sysctl -n hw.ncpu)
           COMPILER_INDEX_STORE_ENABLE=YES
-          build
+          build 2>&1 | tee ../../periphery-build.log; test ${PIPESTATUS[0]} -eq 0
 
       - name: Periphery scan (report-only)
         continue-on-error: true
-        run: mint run periphery scan --workspace iosApp/iosApp.xcworkspace --schemes iosApp --skip-build --config iosApp/.periphery.yml
+        run: mint run periphery scan --workspace iosApp/iosApp.xcworkspace --schemes iosApp --skip-build --config iosApp/.periphery.yml 2>&1 | tee periphery.log; test ${PIPESTATUS[0]} -eq 0
+
+      - name: Upload Periphery logs (report-only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-periphery-reports
+          path: |
+            client/periphery-build.log
+            client/periphery.log

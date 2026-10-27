@@ -1,0 +1,74 @@
+# Pre-commit (issue 54, task 9) — OPT-IN ONLY. CI never runs pre-commit
+# itself; it invokes the underlying commands directly (workflows under
+# .github/workflows/). Enable locally with `pre-commit install` from the
+# repo root (one time; needs `pipx install pre-commit` first).
+#
+# Mono-repo path filters: every hook carries a `files:` regex so
+# Android-only changes skip iOS hooks and vice versa. The two generic
+# hygiene hooks (trailing-whitespace, end-of-file-fixer) stay global —
+# they are cheap and path-independent.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+
+  - repo: local
+    hooks:
+      # Embedded firmware format gate. Globs mirror the `check` target in
+      # embedded/core/Makefile (head matches modulo order): only these
+      # paths are clang-format-enforced, so only they trigger the hook.
+      - id: clang-format-embedded
+        name: clang-format (embedded firmware globs)
+        entry: clang-format --dry-run --Werror
+        language: system
+        files: '^embedded/(core|head)/(src/main\.cpp|src/(services|hal|behavior|transport)/[^/]+\.h|src/abilities/[^/]+/[^/]+\.h|include/([^/]+\.h|mcu/[^/]+\.h)|test/[^/]+\.cpp)|^embedded/shared/(common|link)/[^/]+\.h'
+        pass_filenames: true
+
+      # Android static analysis (advisory for ktlint, gating for detekt —
+      # see client/ARCHITECTURE.md section 5). Local gradlew runs; the
+      # `files:` filter limits triggering to Kotlin/Gradle edits.
+      - id: detekt-local
+        name: detekt (client, local gradlew)
+        entry: >-
+          bash -c 'cd client && ./gradlew detekt --console=plain'
+        language: system
+        files: '^client/(androidApp|shared|build-logic|gradle)/.*(\.kt|\.kts)$|^client/(settings\.gradle\.kts|build\.gradle\.kts|gradle\.properties)$'
+        pass_filenames: false
+      - id: ktlint-local
+        name: ktlintCheck (client, local gradlew, advisory)
+        entry: >-
+          bash -c 'cd client && ./gradlew ktlintCheck --console=plain'
+        language: system
+        files: '^client/(androidApp|shared|build-logic)/.*(\.kt|\.kts)$'
+        pass_filenames: false
+
+      # iOS lint/format (report-only — see client/ARCHITECTURE.md section 5).
+      # Skip-if-missing tolerant: no mint on PATH means the hook passes
+      # with a note instead of failing the commit.
+      - id: swiftlint-local
+        name: SwiftLint (mint, skip-if-missing)
+        entry: >-
+          bash -c 'command -v mint >/dev/null 2>&1 || { echo "swiftlint: SKIP — mint not installed (cd client && brew install mint && mint bootstrap)"; exit 0; }; cd client && mint run swiftlint lint iosApp --config iosApp/.swiftlint.yml'
+        language: system
+        files: '^client/iosApp/.*\.swift$'
+        pass_filenames: false
+      - id: swiftformat-local
+        name: SwiftFormat check (mint, skip-if-missing)
+        entry: >-
+          bash -c 'command -v mint >/dev/null 2>&1 || { echo "swiftformat: SKIP — mint not installed (cd client && brew install mint && mint bootstrap)"; exit 0; }; cd client && mint run swiftformat --lint iosApp --config iosApp/.swiftformat'
+        language: system
+        files: '^client/iosApp/.*\.swift$'
+        pass_filenames: false
+
+      # Secret scanning. If the binary is absent the hook passes with a
+      # pointer (install: `brew install gitleaks`); CI coverage for
+      # committed secrets is a documented follow-up, not a gate here.
+      - id: gitleaks-staged
+        name: gitleaks (staged, skip-if-missing)
+        entry: >-
+          bash -c 'command -v gitleaks >/dev/null 2>&1 || { echo "gitleaks: SKIP — binary not installed (brew install gitleaks)"; exit 0; }; gitleaks protect --staged --verbose'
+        language: system
+        pass_filenames: false

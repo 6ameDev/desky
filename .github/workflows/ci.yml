@@ -42,3 +42,40 @@ jobs:
       - name: Gate (format + firmware builds + host tests)
         working-directory: embedded
         run: make check
+
+      # Advisory only (issue 54, task 9): none of these fail the firmware
+      # gate. The required `make check` above stays untouched and gating.
+      # Tool installs are best-effort (continue-on-error) — check-static
+      # members skip gracefully when tools are absent.
+      - name: Install optional analysis tools (best-effort, never gating)
+        continue-on-error: true
+        run: sudo apt-get update && sudo apt-get install -y clang-tidy cppcheck
+
+      - name: Size report (advisory)
+        working-directory: embedded
+        continue-on-error: true
+        run: make size-report > size-report.log 2>&1; CODE=$?; cat size-report.log; exit $CODE
+
+      - name: Static analysis rollup (advisory)
+        working-directory: embedded
+        continue-on-error: true
+        run: make check-static > check-static.log 2>&1; CODE=$?; cat check-static.log; exit $CODE
+
+      - name: ASan host tests, core + head (advisory)
+        working-directory: embedded
+        continue-on-error: true
+        run: |
+          make -C core test-asan > asan-core.log 2>&1; C1=$?; cat asan-core.log
+          make -C head test-asan > asan-head.log 2>&1; C2=$?; cat asan-head.log
+          exit $((C1 || C2))
+
+      - name: Upload analysis artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: embedded-static-analysis
+          path: |
+            embedded/size-report.log
+            embedded/check-static.log
+            embedded/asan-core.log
+            embedded/asan-head.log

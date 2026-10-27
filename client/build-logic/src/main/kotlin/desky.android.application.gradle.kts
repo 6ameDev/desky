@@ -21,11 +21,11 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    // Phase 0 static analysis (issue 54): warn-only. Lint errors do not fail
-    // the build yet; violations are triaged via the checked-in baseline.
-    // Promotion to errors is a later planned phase with a clean baseline.
+    // Phase 1 gating (issue 54, task 9): errors fail the build; triaged
+    // violations are absorbed by the checked-in baseline, so only NEW
+    // issues break the gate.
     lint {
-        abortOnError = false
+        abortOnError = true
         warningsAsErrors = false
         checkReleaseBuilds = false
         baseline = file("lint-baseline.xml")

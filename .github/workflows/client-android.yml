@@ -75,3 +75,73 @@ jobs:
 
       - name: Assemble shared targets + debug APK
         run: ./gradlew :shared:assemble :androidApp:assembleDebug --console=plain
+
+      # Gating since task 9 (issue 54): baselines absorb triaged findings
+      # (lint: 3 suppressed IDs in lint-baseline.xml; detekt: 531 IDs in
+      # config/detekt/baseline.xml — both verified green locally), so only
+      # NEW issues fail these steps. Uploads use `if: always()` so reports
+      # attach even when the gate trips.
+      - name: Android Lint (gating, baselined)
+        run: ./gradlew :androidApp:lintDebug --console=plain
+
+      - name: Upload Lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-reports
+          path: |
+            client/androidApp/build/reports/lint-results-debug.*
+            client/androidApp/lint-baseline.xml
+
+      - name: detekt (gating, baselined)
+        run: ./gradlew detekt --console=plain
+
+      - name: Upload detekt reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: detekt-reports
+          path: client/**/build/reports/detekt/
+
+      # Advisory: ktlint logs ~4080 violations (format never run) — stays
+      # green via ignoreFailures. Triage plan in ARCHITECTURE.md section 5.
+      - name: ktlintCheck (advisory)
+        continue-on-error: true
+        run: ./gradlew ktlintCheck --console=plain
+
+      - name: Upload ktlint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ktlint-reports
+          path: client/**/build/reports/ktlint/
+
+      # Report-only: no verification bounds set.
+      - name: Kover XML report (report-only)
+        continue-on-error: true
+        run: ./gradlew :shared:koverXmlReport --console=plain
+
+      - name: Upload Kover report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kover-report
+          path: client/shared/build/reports/kover/
+
+      # Advisory: warn-only via the count/threshold switch in the root
+      # build file (findings land in the report, never fail the build).
+      # Ephemeral lockfiles (scan-only -PosvLocks), deleted afterwards —
+      # none committed. Scheduled-scan follow-up in ARCHITECTURE.md §5.
+      - name: OSV-Scanner (advisory, warn-only)
+        continue-on-error: true
+        run: |
+          ./gradlew dependencies :shared:dependencies :androidApp:dependencies --write-locks -PosvLocks --console=plain
+          ./gradlew osvScan --console=plain
+          rm -f gradle.lockfile settings-gradle.lockfile shared/gradle.lockfile androidApp/gradle.lockfile
+
+      - name: Upload OSV SARIF
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: osv-sarif
+          path: client/build/osv-scanner/

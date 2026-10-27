@@ -7,8 +7,8 @@ plugins {
     alias(libs.plugins.skie)
     alias(libs.plugins.mokkery)
     alias(libs.plugins.kotlin.cocoapods)
-    // Phase 1 static analysis (issue 54, task 5 — advisory only, promotion in
-    // task 9). Versions come from the root catalog.
+    // Phase 1 static analysis (issue 54, task 5 — detekt promoted to gating
+    // in task 9; ktlint stays advisory). Versions come from the root catalog.
     alias(libs.plugins.detekt)
     alias(libs.plugins.ktlint)
     // Kover: report tasks only, no verification bounds (baseline first, task 9
@@ -100,14 +100,15 @@ val kmpKotlinSources = files(provider {
         .filter { !it.invariantSeparatorsPath.startsWith(buildPath) }
 })
 
-// Phase 1 static analysis (issue 54, task 5): advisory only, promotion in
-// task 9. detekt owns analysis (formatting/ktlint sets are absent from
-// config/detekt/detekt.yml — the ktlint plugin owns format).
+// Phase 1 gating (issue 54, task 9): analysis owns failures — the checked-in
+// baseline absorbs the triaged IDs, so only NEW issues break the gate.
+// (formatting/ktlint sets are absent from config/detekt/detekt.yml — the
+// ktlint plugin owns format).
 detekt {
     toolVersion = libs.versions.detekt.get()
     config.setFrom(files("${rootProject.projectDir}/config/detekt/detekt.yml"))
     baseline = rootProject.file("config/detekt/baseline.xml")
-    ignoreFailures = true
+    ignoreFailures = false
     source = kmpKotlinSources
 }
 
