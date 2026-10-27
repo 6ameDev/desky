@@ -7,13 +7,12 @@ plugins {
     alias(libs.plugins.room3) apply false
     alias(libs.plugins.skie) apply false
     alias(libs.plugins.kotlin.cocoapods) apply false
-    // Phase 1 static analysis (issue 54, task 5 — detekt promoted to gating
-    // in task 9; ktlint stays advisory, kover report-only).
+    // Static analysis (detekt gating, ktlint advisory, kover report-only).
     alias(libs.plugins.detekt) apply false
     alias(libs.plugins.ktlint) apply false
     alias(libs.plugins.kover)
-    // Vulnerability scanning (issue 54, task 8 — advisory only, promotion in
-    // task 9): applied at root so `osvScan` covers all modules.
+    // Vulnerability scanning (advisory only): applied at root so `osvScan`
+    // covers all modules.
     alias(libs.plugins.osv.scanner)
 }
 
@@ -24,8 +23,9 @@ osvScanner {
     // Warn-only switch: `count` mode looks for JSON `results` (absent from
     // SARIF output), so the count is always 0 and this threshold never
     // trips — findings print into the report but never fail the build.
-    // Binary errors (exit >= 127) still fail loudly. Task 9 replaces this
-    // with JSON + a real threshold + SARIF upload + scheduled scan.
+    // Binary errors (exit >= 127) still fail loudly. Replacing this with
+    // JSON + a real threshold + SARIF upload + scheduled scan is a
+    // documented follow-up (see ARCHITECTURE.md).
     failOn.set("count")
     failOnThreshold.set(1000000.0)
 }

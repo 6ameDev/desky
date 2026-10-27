@@ -28,9 +28,10 @@ upload-head:
 	pio run -e desky-head --upload-port $(PORT) -t upload > /tmp/desky-head-upload.log 2>&1; CODE=$$?; cat /tmp/desky-head-upload.log; test $$CODE -eq 0
 	grep -q "Hash of data verified" /tmp/desky-head-upload.log && grep -q "Hard resetting" /tmp/desky-head-upload.log
 
-# Size budget report (Phase 0, report-only — never fails the build).
+# Size budget report (report-only — never fails the build).
 # OTA slot is 0x1F0000 (2031616B) per app leg of partitions_ota_nospiffs.csv;
-# see ../docs/static-analysis.md. Promotion to a hard gate in task 9, not here.
+# see ../docs/static-analysis.md. Promotion to a hard gate is a documented
+# follow-up, not done here.
 size-report:
 	pio run -e desky-head
 	pio run -e desky-head-release
@@ -68,10 +69,10 @@ check-arch:
 	done
 	@test $$(grep -l "int main" test/*.cpp | wc -l) -eq 1
 
-# Static analysis, Phase 1 (ALL report-only — NOT in `check`; promotion is
-# task 9, not here). Every check-static member exits 0 with tools missing or
-# findings logged, never failing the build. Custom arch rules keep --error in
-# check-arch (untouched); community rules below run WITHOUT --error.
+# Static analysis (ALL report-only — NOT in `check`). Every check-static
+# member exits 0 with tools missing or findings logged, never failing the
+# build. Custom arch rules keep --error in check-arch (untouched); community
+# rules below run WITHOUT --error.
 
 # clang-tidy census (curated checks in ../.clang-tidy, shared root covering
 # core/head/shared). Tool absent on this bench — skips gracefully with
@@ -112,7 +113,7 @@ test-asan:
 	pio test -e native-asan
 
 # Coverage run ([env:native-cov], gcov-style). Renders with the Apple-shipped
-# llvm-cov — no lcov install. See ../docs/static-analysis.md (Phase 1).
+# llvm-cov — no lcov install. See ../docs/static-analysis.md.
 coverage:
 	pio test -e native-cov
 	@if command -v xcrun >/dev/null 2>&1 && xcrun llvm-cov --version >/dev/null 2>&1; then \
@@ -122,7 +123,7 @@ coverage:
 	fi
 
 check-static: tidy check-cppcheck check-semgrep-community
-	@echo "check-static (Phase 1 advisory): log above; never fails the build."
+	@echo "check-static (advisory): log above; never fails the build."
 
 check:
 	clang-format --dry-run --Werror src/main.cpp src/hal/*.h src/services/*.h src/behavior/*.h src/transport/*.h src/abilities/*/*.h include/*.h include/mcu/*.h ../shared/common/*.h ../shared/link/*.h test/*.cpp

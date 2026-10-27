@@ -5,8 +5,8 @@ build/
 *.apk
 *.ipa
 
-# Issue 54 task 8: ephemeral OSV-Scanner inputs/outputs (scan-only, deleted
-# after `make vuln`; never committed). The downloaded binary lives here too.
+# Ephemeral OSV-Scanner inputs/outputs (scan-only, deleted after `make vuln`;
+# never committed). The downloaded binary lives here too.
 gradle.lockfile
 settings-gradle.lockfile
 .osv-scanner/

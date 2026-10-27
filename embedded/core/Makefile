@@ -91,10 +91,10 @@ check-arch:
 	done
 	@test $$(grep -l "int main" test/*.cpp | wc -l) -eq 1
 
-# Size budget report (Phase 0, report-only — never fails the build).
+# Size budget report (report-only — never fails the build).
 # OTA slot is 0x640000 (6553600B) per app leg of default_16MB.csv; see
 # ../docs/static-analysis.md for the full budget table. Promotion to a hard
-# gate happens in task 9, not here.
+# gate is a documented follow-up, not done here.
 size-report:
 	pio run -e desky
 	pio run -e desky-release
@@ -107,26 +107,25 @@ size-report:
 	  echo "$$env: firmware.bin=$$bin slot=$$slot used=$${pct}% spare=$$spare $$st"; \
 	done
 
-# Analyzer flags, warnings-only census (Phase 0, report-only — NOT in `check`).
+# Analyzer flags, warnings-only census (report-only — NOT in `check`).
 # Status: the PLATFORMIO_BUILD_FLAGS overlay below does NOT run clean, so the
 # live command stays commented until the ordering blocker is fixed (TODO).
 # Proven 2026-10-27: env build_flags land BEFORE build_src_flags -Werror on
 # the g++ line, so the later -Werror re-promotes -Wconversion hits in our own
 # src/hal/*.h to hard errors; framework WString.h leaks -Wconversion warnings
 # on top. Fixes: pass framework includes as -isystem, or wrap framework
-# headers in `#pragma GCC diagnostic ignored "-Wconversion"`. Promotion in
-# task 9, not here.
-# TODO(phase1): uncomment the live overlay once the -isystem/pragma fix lands;
+# headers in `#pragma GCC diagnostic ignored "-Wconversion"`.
+# TODO: uncomment the live overlay once the -isystem/pragma fix lands;
 # keep -Werror semantics for existing flags.
 # PLATFORMIO_BUILD_FLAGS='-Wconversion -Wdouble-promotion -fanalyzer' pio run -e desky
 check-analyze:
-	@echo "check-analyze (Phase 0 report-only): analyzer overlay blocked, see TODO above."
+	@echo "check-analyze (report-only): analyzer overlay blocked, see TODO above."
 	@echo "Manual census: PLATFORMIO_BUILD_FLAGS='-Wconversion -Wdouble-promotion -fanalyzer' pio run -e desky"
 
-# Static analysis, Phase 1 (ALL report-only — NOT in `check`; promotion is
-# task 9, not here). Every check-static member exits 0 with tools missing or
-# findings logged, never failing the build. Custom arch rules keep --error in
-# check-arch (untouched); community rules below run WITHOUT --error.
+# Static analysis (ALL report-only — NOT in `check`). Every check-static
+# member exits 0 with tools missing or findings logged, never failing the
+# build. Custom arch rules keep --error in check-arch (untouched); community
+# rules below run WITHOUT --error.
 
 # clang-tidy census (curated checks in ../.clang-tidy, shared root covering
 # core/head/shared). Tool absent on this bench — skips gracefully with
@@ -167,7 +166,7 @@ test-asan:
 	pio test -e native-asan
 
 # Coverage run ([env:native-cov], gcov-style). Renders with the Apple-shipped
-# llvm-cov — no lcov install. See ../docs/static-analysis.md (Phase 1).
+# llvm-cov — no lcov install. See ../docs/static-analysis.md.
 coverage:
 	pio test -e native-cov
 	@if command -v xcrun >/dev/null 2>&1 && xcrun llvm-cov --version >/dev/null 2>&1; then \
@@ -177,7 +176,7 @@ coverage:
 	fi
 
 check-static: tidy check-cppcheck check-semgrep-community
-	@echo "check-static (Phase 1 advisory): log above; never fails the build."
+	@echo "check-static (advisory): log above; never fails the build."
 
 # Full gate: formatting + pin lint + arch guardrails + both firmware builds (deprecation-scanned) + host tests
 check:

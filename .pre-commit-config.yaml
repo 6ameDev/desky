@@ -1,7 +1,7 @@
-# Pre-commit (issue 54, task 9) — OPT-IN ONLY. CI never runs pre-commit
-# itself; it invokes the underlying commands directly (workflows under
-# .github/workflows/). Enable locally with `pre-commit install` from the
-# repo root (one time; needs `pipx install pre-commit` first).
+# Pre-commit — OPT-IN ONLY. CI never runs pre-commit itself; it invokes
+# the underlying commands directly (workflows under .github/workflows/).
+# Enable locally with `pre-commit install` from the repo root (one time;
+# needs `pipx install pre-commit` first).
 #
 # Mono-repo path filters: every hook carries a `files:` regex so
 # Android-only changes skip iOS hooks and vice versa. The two generic

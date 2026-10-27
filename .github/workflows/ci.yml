@@ -43,10 +43,10 @@ jobs:
         working-directory: embedded
         run: make check
 
-      # Advisory only (issue 54, task 9): none of these fail the firmware
-      # gate. The required `make check` above stays untouched and gating.
-      # Tool installs are best-effort (continue-on-error) — check-static
-      # members skip gracefully when tools are absent.
+      # Advisory only: none of these fail the firmware gate. The required
+      # `make check` above stays untouched and gating. Tool installs are
+      # best-effort (continue-on-error) — check-static members skip
+      # gracefully when tools are absent.
       - name: Install optional analysis tools (best-effort, never gating)
         continue-on-error: true
         run: sudo apt-get update && sudo apt-get install -y clang-tidy cppcheck

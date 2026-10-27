@@ -1,4 +1,4 @@
-# Desky static analysis — clang-tidy (Phase 1, ADVISORY only).
+# Desky static analysis — clang-tidy (ADVISORY only).
 #
 # Location: this single file at embedded/ covers core/src, head/src, and
 # shared/ via clang-tidy's upward config discovery (each TU inherits the
@@ -6,7 +6,8 @@
 # copies; firmware dirs inherit this file.
 #
 # Status: report-only. `make check-static` runs `make tidy` warn-only and
-# never fails the build. Promotion to a hard gate happens in task 9, not here.
+# never fails the build. Promotion to a hard gate is a documented follow-up,
+# not done here.
 # clang-tidy is NOT installed in this repo's tooling (verify with
 # `which clang-tidy`); the `tidy` make targets skip gracefully when absent.
 #

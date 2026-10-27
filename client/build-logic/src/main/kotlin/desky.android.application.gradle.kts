@@ -21,9 +21,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    // Phase 1 gating (issue 54, task 9): errors fail the build; triaged
-    // violations are absorbed by the checked-in baseline, so only NEW
-    // issues break the gate.
+    // Lint gating: errors fail the build; triaged violations are absorbed
+    // by the checked-in baseline, so only NEW issues break the gate.
     lint {
         abortOnError = true
         warningsAsErrors = false
@@ -35,8 +34,8 @@ android {
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-        // Phase 0 advisory: warnings logged, build stays green.
-        // Flip to true in the later enforcement phase once clean.
+        // Advisory: warnings logged, build stays green.
+        // Flip to true in a later enforcement pass once clean.
         allWarningsAsErrors.set(false)
     }
 }

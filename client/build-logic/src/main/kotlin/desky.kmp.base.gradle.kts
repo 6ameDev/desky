@@ -17,10 +17,10 @@ kotlin {
 
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-            // Phase 0 advisory (issue 54): warnings logged, build stays green.
+            // Advisory: warnings logged, build stays green.
             // No lint{} block here by design: AGP exposes no lint tasks for
             // com.android.kotlin.multiplatform.library, shared is covered
-            // transitively via :androidApp lint plus Detekt in Phase 1.
+            // transitively via :androidApp lint plus detekt.
             allWarningsAsErrors.set(false)
         }
     }
@@ -28,7 +28,7 @@ kotlin {
     jvm {
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-            // Phase 0 advisory (issue 54): see above.
+            // Same advisory setting as above.
             allWarningsAsErrors.set(false)
         }
     }

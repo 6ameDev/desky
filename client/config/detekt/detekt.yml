@@ -1,7 +1,7 @@
-# Phase 1 static analysis (issue 54, task 5 — advisory only).
+# Static analysis config (detekt gating via checked-in baseline).
 # Version: detekt 1.23.8 (latest stable 1.x). No stable detekt runs natively
-# on Kotlin 2.4 (1.23.8 embeds Kotlin 2.0.21); promote to detekt 2.x stable in
-# task 9 once it ships — 2.0.x is alpha-only (2.0.0-alpha.6 @ Kotlin 2.4.10)
+# on Kotlin 2.4 (1.23.8 embeds Kotlin 2.0.21); promote to detekt 2.x stable
+# once it ships — 2.0.x is alpha-only (2.0.0-alpha.6 @ Kotlin 2.4.10)
 # and the locked decision forbids alphas unless stable proves incompatible.
 # Ownership split: detekt does ANALYSIS only. Formatting is owned by the
 # org.jlleitschuh.gradle.ktlint plugin (.editorconfig, ktlint_official).

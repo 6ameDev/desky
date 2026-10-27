@@ -59,10 +59,10 @@ jobs:
         working-directory: client/iosApp
         run: pod install
 
-      # Static analysis Phase 1 (issue 54, task 6): Mint pins the tool
-      # versions (client/Mintfile, same pattern as Podfile.lock). CI installs
-      # mint unpinned via brew (it only fetches the pinned binaries) and
-      # caches the built packages in ~/.mint.
+      # Static analysis: Mint pins the tool versions (client/Mintfile, same
+      # pattern as Podfile.lock). CI installs mint unpinned via brew (it
+      # only fetches the pinned binaries) and caches the built packages
+      # in ~/.mint.
       - name: Cache Mint packages (pinned lint tools)
         uses: actions/cache@v6
         with:
@@ -74,7 +74,7 @@ jobs:
           brew install mint
           mint bootstrap
 
-      # Advisory until baselines are triaged (task 9 promotes to gating).
+      # Advisory until baselines are triaged (then promotes to gating).
       - name: SwiftLint (report-only)
         continue-on-error: true
         run: mint run swiftlint lint iosApp --config iosApp/.swiftlint.yml --reporter github-actions-logging 2>&1 | tee swiftlint.log; test ${PIPESTATUS[0]} -eq 0
@@ -97,7 +97,7 @@ jobs:
           COMPILER_INDEX_STORE_ENABLE=NO
           build
 
-      # Phase 0 report-only: mirrors the simulator build above (identical
+      # Report-only: mirrors the simulator build above (identical
       # workspace/scheme/destination/flags, verb `analyze` instead of
       # `build`). continue-on-error keeps it advisory until a clean
       # baseline promotes it to gating.
@@ -112,7 +112,7 @@ jobs:
           COMPILER_INDEX_STORE_ENABLE=NO
           analyze 2>&1 | tee ../../analyze.log; test ${PIPESTATUS[0]} -eq 0
 
-      # Phase 0 report-only: project pins SWIFT_VERSION=5.0 so
+      # Report-only: project pins SWIFT_VERSION=5.0 so
       # SWIFT_STRICT_CONCURRENCY=complete measures the minimal-check
       # surface until a Swift 6 migration decision. Advisory only.
       - name: Swift concurrency assessment (report-only)
@@ -142,7 +142,7 @@ jobs:
   # build above keeps COMPILER_INDEX_STORE_ENABLE=NO (local Xcode
   # intelligence parity, faster CI). This job redoes setup through pod
   # install, builds once with the index store ON, then scans --skip-build.
-  # Advisory until baselines are triaged (task 9 promotes to gating).
+  # Advisory until baselines are triaged (then promotes to gating).
   periphery:
     runs-on: macos-15
     defaults:

@@ -1,4 +1,4 @@
-// Desky cppcheck baseline (Phase 1, advisory only).
+// Desky cppcheck baseline (advisory only).
 // File-based suppressions preferred over inline // cppcheck-suppress.
 // Format: <error-id>:<file-glob> (one per line, // comments allowed).
 
