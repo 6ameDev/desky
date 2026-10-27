@@ -12,7 +12,7 @@ export PATH := $(HOME)/Library/Android/sdk/cmdline-tools/latest/bin:$(HOME)/Libr
 
 APK = androidApp/build/outputs/apk/debug/androidApp-debug.apk
 
-.PHONY: test android install-android ios podspec lint check help
+.PHONY: test android install-android ios podspec lint detekt ktlint kover check help
 
 help:
 	@echo "test             shared unit tests (fast gate)"
@@ -21,6 +21,9 @@ help:
 	@echo "podspec          shared podspec + dummy framework (before pod install)"
 	@echo "ios              simulator build (needs CocoaPods + simulator runtime)"
 	@echo "lint             Android Lint (warn-only Phase 0, baselined)"
+	@echo "detekt           static analysis (advisory Phase 1, baselined)"
+	@echo "ktlint           format check (advisory Phase 1, violations logged)"
+	@echo "kover            coverage report (no bounds Phase 1, see build/reports/kover)"
 
 test:
 	./gradlew :shared:jvmTest --console=plain
@@ -44,6 +47,21 @@ ios: podspec
 
 lint:
 	./gradlew :androidApp:lintDebug --console=plain
+
+# Phase 1 static analysis (issue 54, task 5): advisory only — tasks stay green
+# via ignoreFailures (detekt/ktlint) and no kover bounds. NOT part of `check`;
+# promotion to gating is task 9.
+detekt:
+	./gradlew detekt --console=plain
+
+ktlint:
+	./gradlew ktlintCheck --console=plain
+
+# Kover: report tasks only, no verification bounds. Scoped to :shared (the only
+# module with unit tests); root aggregation stays empty for KMP variants —
+# revisit aggregation in task 9.
+kover:
+	./gradlew :shared:koverXmlReport --console=plain
 
 check:
 	./gradlew :shared:jvmTest :shared:assemble :androidApp:assembleDebug :androidApp:lintDebug --console=plain

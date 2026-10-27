@@ -1,0 +1,14 @@
+root = true
+
+[*.{kt,kts}]
+charset = utf-8
+end_of_line = lf
+indent_size = 4
+indent_style = space
+insert_final_newline = true
+max_line_length = 120
+trim_trailing_whitespace = true
+# Matches kotlin.code.style=official in gradle.properties; ktlint plugin owns
+# formatting (detekt formatting/ktlint rule sets stay OFF, see
+# config/detekt/detekt.yml header).
+ktlint_code_style = ktlint_official

@@ -1,0 +1,144 @@
+# Phase 1 static analysis (issue 54, task 5 — advisory only).
+# Version: detekt 1.23.8 (latest stable 1.x). No stable detekt runs natively
+# on Kotlin 2.4 (1.23.8 embeds Kotlin 2.0.21); promote to detekt 2.x stable in
+# task 9 once it ships — 2.0.x is alpha-only (2.0.0-alpha.6 @ Kotlin 2.4.10)
+# and the locked decision forbids alphas unless stable proves incompatible.
+# Ownership split: detekt does ANALYSIS only. Formatting is owned by the
+# org.jlleitschuh.gradle.ktlint plugin (.editorconfig, ktlint_official).
+# The detekt `formatting` + `ktlint` rule sets are absent here by design: their
+# rule artifacts are not applied, and an unknown key fails validation.
+
+config:
+  validation: true
+  warningsAsErrors: false
+
+build:
+  maxIssues: 0
+  excludeCorrectable: false
+
+processors:
+  active: true
+  exclude:
+
+console-reports:
+  active: true
+  exclude:
+  - 'ProjectStatisticsReport'
+  - 'ComplexityReport'
+  - 'NotificationReport'
+
+output-reports:
+  active: true
+  exclude:
+
+comments:
+  active: true
+  UndocumentedPublicClass:
+    active: false
+  UndocumentedPublicFunction:
+    active: false
+  UndocumentedPublicProperty:
+    active: false
+
+complexity:
+  active: true
+  LongParameterList:
+    active: true
+    functionThreshold: 6
+    constructorThreshold: 7
+  LongMethod:
+    active: true
+    threshold: 60
+  LargeClass:
+    active: true
+    threshold: 600
+  CyclomaticComplexMethod:
+    active: true
+    threshold: 15
+
+coroutines:
+  active: true
+  GlobalCoroutineUsage:
+    active: true
+  RedundantSuspendModifier:
+    active: true
+  SleepInsteadOfDelay:
+    active: true
+  SuspendFunWithFlowReturnType:
+    active: true
+
+empty-blocks:
+  active: true
+  EmptyCatchBlock:
+    active: true
+  EmptyClassBlock:
+    active: true
+  EmptyFunctionBlock:
+    active: true
+    ignoreOverridden: true
+
+exceptions:
+  active: true
+  TooGenericExceptionCaught:
+    active: true
+  TooGenericExceptionThrown:
+    active: true
+  PrintStackTrace:
+    active: true
+  RethrowCaughtException:
+    active: true
+
+# No `formatting` / `ktlint` sections: rule artifacts not applied (see header).
+
+naming:
+  active: true
+  FunctionNaming:
+    active: true
+    # @Composable functions are PascalCase by Compose convention, not violations.
+    ignoreAnnotated: ['Composable']
+  ClassNaming:
+    active: true
+  PackageNaming:
+    active: true
+
+performance:
+  active: true
+  ForEachOnRange:
+    active: true
+  SpreadOperator:
+    active: true
+  UnnecessaryTemporaryInstantiation:
+    active: true
+  CouldBeSequence:
+    active: true
+
+potential-bugs:
+  active: true
+  LateinitUsage:
+    active: true
+  UnsafeCast:
+    active: true
+  UnreachableCode:
+    active: true
+
+style:
+  active: true
+  MagicNumber:
+    active: true
+    ignoreNumbers: ['-1', '0', '1', '2']
+    ignoreHashCodeFunction: true
+    ignorePropertyDeclaration: true
+    ignoreCompanionObjectPropertyDeclaration: true
+    ignoreAnnotation: true
+  MaxLineLength:
+    active: false
+  WildcardImport:
+    active: true
+  ReturnCount:
+    active: true
+    max: 2
+  ThrowsCount:
+    active: true
+    max: 2
+  NewLineAtEndOfFile:
+    active: false
