@@ -1,0 +1,35 @@
+# Advisory only (issue 54, task 6). Promotion to gating is task 9.
+disabled_rules:
+  - trailing_whitespace
+opt_in_rules:
+  - force_cast
+  - force_unwrapping
+  - force_try
+  - discouraged_object_literal
+  - empty_count
+
+force_cast: error
+force_try: error
+force_unwrapping: warning
+cyclomatic_complexity:
+  warning: 15
+  error: 25
+type_body_length:
+  warning: 300
+  error: 500
+file_length:
+  warning: 500
+  error: 1000
+line_length:
+  warning: 140
+  ignores_function_declarations: true
+  ignores_comments: true
+todo:
+  warning: "TODO:|FIXME:"
+print:
+  severity: warning
+nslog:
+  severity: warning
+
+excluded:
+  - Pods

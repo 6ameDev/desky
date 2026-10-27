@@ -32,6 +32,12 @@ xcodebuild -workspace iosApp.xcworkspace -scheme iosApp \
 `Pods/`, `*.xcworkspace` and `shared/shared.podspec` are derived (gitignored);
 `Podfile` + `Podfile.lock` + the xcodeproj + Swift sources are tracked.
 
+## Lint (advisory)
+
+Pinned via Mint (`client/Mintfile`): `mint bootstrap`, then
+`mint run swiftlint lint iosApp` / `mint run swiftformat --lint iosApp`.
+Periphery runs separately with an indexed build (see `client-ios.yml`).
+
 ## Notes
 
 - Swift consumes the framework via SKIE 0.10.15: `StateFlow` as

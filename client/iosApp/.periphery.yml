@@ -1,0 +1,13 @@
+# Advisory only (issue 54, task 6). First run establishes a suppressible
+# baseline; promotion to gating is task 9.
+# Rationale: Pods/ is vendored third-party code; the `shared` framework
+# referenced below is Kotlin-generated (SKIE) — its symbols are not
+# hand-written Swift and would flood results with unactionable hits.
+# Scan with: mint run periphery scan --skip-build
+source:
+  - iosApp/**/*.swift
+exclude:
+  - "Pods/**"
+  - "*/Generated/**"
+  - "**/shared.framework/**"
+retain_public: false
