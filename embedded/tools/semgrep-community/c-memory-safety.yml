@@ -1,0 +1,311 @@
+# Desky vendored Semgrep community rules — C memory-safety set (ADVISORY only).
+#
+# Provenance: vendored 2026-10-27 from upstream semgrep-rules @
+# 16b9e6d45f10649f6a531ec4838ed9924372c3bc (develop HEAD that day), pack
+# p/security-audit. Rule bodies are byte-faithful to upstream except the
+# documented logger.h exclusion on insecure-use-string-copy-fn below.
+# Re-sync policy: manual. `make check-semgrep-community` points at this
+# directory instead of the registry, so the target works offline and no
+# longer depends on registry pack availability (p/correctness 404'd on the
+# registry as of 2026-10-27; p/cwe-top-25 stands in — see secrets-ci.yml).
+#
+# Kept-set rationale (one line per rule): every rule below is a
+# memory-safety/security signal for fixed-buffer firmware C/C++ with no
+# running-tool overlap (clang-tidy is skip-if-missing on this bench; cppcheck
+# runs pio-backend-gated). Pruned from this pack: the 2 Django-template XSS
+# rules — wrong stack, no {% %} surface in tree (see docs/static-analysis.md).
+rules:
+# KEEP: heap double-free signal (CWE-415); heap used by JSON/portal paths.
+- id: double-free
+  patterns:
+  - pattern-not: |
+      free($VAR);
+      ...
+      $VAR = NULL;
+      ...
+      free($VAR);
+  - pattern-not: |
+      free($VAR);
+      ...
+      $VAR = malloc(...);
+      ...
+      free($VAR);
+  - pattern-inside: |
+      free($VAR);
+      ...
+      $FREE($VAR);
+  - metavariable-pattern:
+      metavariable: $FREE
+      pattern: free
+  - focus-metavariable: $FREE
+  message: >-
+    Variable '$VAR' was freed twice. This can lead to undefined behavior.
+  metadata:
+    cwe:
+    - 'CWE-415: Double Free'
+    owasp:
+    - A03:2021 - Injection
+    - A01:2017 - Injection
+    - A05:2025 - Injection
+    references:
+    - https://cwe.mitre.org/data/definitions/415.html
+    - https://owasp.org/www-community/vulnerabilities/Doubly_freeing_memory
+    category: security
+    technology:
+    - c
+    confidence: LOW
+    subcategory:
+    - vuln
+    likelihood: LOW
+    impact: HIGH
+  languages: [c]
+  severity: ERROR
+# KEEP: bans gets() (removed from C11); zero-cost tripwire, no legit use.
+- id: insecure-use-gets-fn
+  pattern: gets(...)
+  message: >-
+    Avoid 'gets()'. This function does not consider buffer boundaries and can lead
+    to buffer overflows. Use 'fgets()' or 'gets_s()' instead.
+  metadata:
+    cwe:
+    - 'CWE-676: Use of Potentially Dangerous Function'
+    references:
+    - https://us-cert.cisa.gov/bsi/articles/knowledge/coding-practices/fgets-and-gets_s
+    category: security
+    technology:
+    - c
+    confidence: MEDIUM
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: HIGH
+  languages: [c]
+  severity: ERROR
+# KEEP: argv-driven format-string tripwire (CWE-134); host tests take argv.
+- id: insecure-use-printf-fn
+  message: >-
+    Avoid using user-controlled format strings passed into 'sprintf', 'printf' and
+    'vsprintf'.
+    These functions put you at risk of buffer overflow vulnerabilities through the
+    use of format string exploits.
+    Instead, use 'snprintf' and 'vsnprintf'.
+  metadata:
+    cwe:
+    - 'CWE-134: Use of Externally-Controlled Format String'
+    references:
+    - https://doc.castsoftware.com/display/SBX/Never+use+sprintf%28%29+or+vsprintf%28%29+functions
+    - https://www.cvedetails.com/cwe-details/134/Uncontrolled-Format-String.html
+    category: security
+    technology:
+    - c
+    confidence: LOW
+    subcategory:
+    - vuln
+    likelihood: MEDIUM
+    impact: HIGH
+  languages: [c]
+  severity: WARNING
+  patterns:
+  - pattern-either:
+    - pattern: |
+        $FUNC($BUFFER, argv[$NUM], ...);
+        ...
+        vsprintf(..., $BUFFER, ...);
+    - pattern: vsprintf(..., argv[$NUM], ...)
+    - pattern: |
+        $FUNC($BUFFER, argv[$NUM], ...);
+        ...
+        sprintf(..., $BUFFER, ...);
+    - pattern: sprintf(...,argv[$NUM],...)
+    - pattern: |
+        $FUNC($BUFFER, argv[$NUM], ...);
+        ...
+        printf(..., $BUFFER, ...);
+    - pattern: printf(...,argv[$NUM],...)
+  - metavariable-comparison:
+      metavariable: $NUM
+      comparison: int($NUM) > 0
+# KEEP: bans scanf(); firmware parses via codecs, scanf would be unbounded.
+- id: insecure-use-scanf-fn
+  pattern: scanf(...)
+  message: >-
+    Avoid using 'scanf()'. This function, when used improperly, does not consider
+    buffer boundaries and can lead to buffer overflows. Use 'fgets()' instead
+    for reading input.
+  metadata:
+    cwe:
+    - 'CWE-676: Use of Potentially Dangerous Function'
+    references:
+    - http://sekrit.de/webdocs/c/beginners-guide-away-from-scanf.html
+    category: security
+    technology:
+    - c
+    confidence: LOW
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: HIGH
+  languages: [c]
+  severity: WARNING
+# KEEP: strcat/strncat misuse is a classic fixed-buffer overflow source.
+- id: insecure-use-strcat-fn
+  pattern-either:
+  - pattern: strcat(...)
+  - pattern: strncat(...)
+  message: >-
+    Finding triggers whenever there is a strcat or strncat used.
+    This is an issue because strcat or strncat can lead to buffer overflow vulns.
+    Fix this by using strcat_s instead.
+  metadata:
+    cwe:
+    - 'CWE-676: Use of Potentially Dangerous Function'
+    references:
+    - https://nvd.nist.gov/vuln/detail/CVE-2019-12553
+    - https://techblog.mediaservice.net/2020/04/cve-2020-2851-stack-based-buffer-overflow-in-cde-libdtsvc/
+    category: security
+    technology:
+    - c
+    confidence: LOW
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: HIGH
+  languages: [c]
+  severity: WARNING
+# KEEP: strcpy/strncpy misuse signal. Triaged FP in shared/common/logger.h:76
+# (bounded copy + explicit NUL on the next line) suppressed via paths-exclude
+# below — file-scoped, rule stays live everywhere else. Glob assumes the
+# `src test ../shared` invocation from a firmware dir (both Makefiles).
+- id: insecure-use-string-copy-fn
+  pattern-either:
+  - pattern: strcpy(...)
+  - pattern: strncpy(...)
+  message: >-
+    Finding triggers whenever there is a strcpy or strncpy used.
+    This is an issue because strcpy does not affirm the size of the destination array
+    and strncpy will not automatically NULL-terminate strings.
+    This can lead to buffer overflows, which can cause program crashes
+    and potentially let an attacker inject code in the program.
+    Fix this by using strcpy_s instead (although note that strcpy_s is an
+    optional part of the C11 standard, and so may not be available).
+  metadata:
+    cwe:
+    - 'CWE-676: Use of Potentially Dangerous Function'
+    references:
+    - https://cwe.mitre.org/data/definitions/676
+    - https://nvd.nist.gov/vuln/detail/CVE-2019-11365
+    category: security
+    technology:
+    - c
+    confidence: LOW
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: HIGH
+  languages: [c]
+  severity: WARNING
+  paths:
+    exclude:
+    - "*/shared/common/logger.h"
+# KEEP: strtok mutates + is non-reentrant; FreeRTOS tasks need strtok_r.
+- id: insecure-use-strtok-fn
+  pattern: strtok(...)
+  message: >-
+    Avoid using 'strtok()'. This function directly modifies the first argument buffer,
+    permanently erasing the
+    delimiter character. Use 'strtok_r()' instead.
+  metadata:
+    cwe:
+    - 'CWE-676: Use of Potentially Dangerous Function'
+    references:
+    - https://wiki.sei.cmu.edu/confluence/display/c/STR06-C.+Do+not+assume+that+strtok%28%29+leaves+the+parse+string+unchanged
+    - https://man7.org/linux/man-pages/man3/strtok.3.html#BUGS
+    - https://stackoverflow.com/a/40335556
+    category: security
+    technology:
+    - c
+    confidence: LOW
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: HIGH
+  languages: [c]
+  severity: WARNING
+# KEEP: unchecked read() on /dev/urandom|random (CWE-774); host entropy paths.
+- id: random-fd-exhaustion
+  pattern-either:
+  - patterns:
+    - pattern: |
+        $FD = open("/dev/urandom", ...);
+        ...
+        read($FD, ...);
+    - pattern-not: |
+        $FD = open("/dev/urandom", ...);
+        ...
+        $BYTES_READ = read($FD, ...);
+  - patterns:
+    - pattern: |
+        $FD = open("/dev/random", ...);
+        ...
+        read($FD, ...);
+    - pattern-not: |
+        $FD = open("/dev/random", ...);
+        ...
+        $BYTES_READ = read($FD, ...);
+  message: >-
+    Call to 'read()' without error checking is susceptible to file descriptor
+    exhaustion. Consider using the 'getrandom()' function.
+  metadata:
+    cwe:
+    - 'CWE-774: Allocation of File Descriptors or Handles Without Limits or Throttling'
+    references:
+    - https://lwn.net/Articles/606141/
+    category: security
+    technology:
+    - c
+    confidence: MEDIUM
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: HIGH
+  languages: [c]
+  severity: WARNING
+# KEEP: heap use-after-free signal (CWE-416, CWE top-25 member).
+- id: use-after-free
+  patterns:
+  - pattern-either:
+    - pattern: $VAR->$ACCESSOR
+    - pattern: (*$VAR).$ACCESSOR
+    - pattern: $VAR[$NUM]
+  - pattern-inside:
+      free($VAR);
+      ...
+  - pattern-not-inside:
+      $VAR = NULL;
+      ...
+  - pattern-not-inside:
+      free($VAR);
+      ...
+      $VAR = malloc(...);
+      ...
+  message: >-
+    Variable '$VAR' was used after being freed. This can lead to undefined behavior.
+  metadata:
+    cwe:
+    - "CWE-416: Use After Free"
+    references:
+    - https://cwe.mitre.org/data/definitions/416.html
+    - https://ctf-wiki.github.io/ctf-wiki/pwn/linux/glibc-heap/use_after_free/
+    category: security
+    technology:
+    - c
+    confidence: LOW
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: LOW
+    impact: HIGH
+  languages:
+  - c
+  severity: WARNING

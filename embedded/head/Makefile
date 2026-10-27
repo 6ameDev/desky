@@ -100,13 +100,15 @@ check-cppcheck:
 
 # Semgrep community rules ALONGSIDE the custom arch rules (untouched, still
 # --error in check-arch). Runs WITHOUT --error so check-arch stays green.
-# NOTE: p/correctness does not exist on the registry (404 as of 2026-10-27);
-# p/cwe-top-25 stands in as the correctness-adjacent pack. Needs network on
-# first run (rules cache under ~/.semgrep); unreachable registry skips.
+# Vendored 2026-10-27: kept rules pinned in ../tools/semgrep-community/
+# (see headers there for provenance + per-rule keep reasons); 2 off-stack
+# Django-template rules pruned (see docs/static-analysis.md). Local dir, so
+# the target works offline — no registry dependency (p/correctness 404s;
+# p/cwe-top-25 stands in via secrets-ci.yml).
 check-semgrep-community:
-	@echo "semgrep-community (advisory, no --error): p/security-audit + p/cwe-top-25 (p/correctness 404s, see above)"
-	@semgrep --config p/security-audit --config p/cwe-top-25 src test ../shared || \
-	  (echo "check-semgrep-community: SKIP — registry unreachable offline."; true)
+	@echo "semgrep-community (advisory, no --error): vendored ../tools/semgrep-community/ (12 kept rules)"
+	@semgrep --config ../tools/semgrep-community src test ../shared || \
+	  (echo "check-semgrep-community: SKIP — semgrep unavailable."; true)
 
 # Sanitizer run of the host tests ([env:native-asan]). Strict: real test run.
 test-asan:
