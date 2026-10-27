@@ -39,9 +39,11 @@ class MotorDriver : public IActuator {
         enabled_(false) {}
 
   bool init() override {
-    pinMode(faultPin_, INPUT_PULLUP);
-    const bool ok = ledcAttach(in1_, freqHz_, resBits_) && ledcAttach(in2_, freqHz_, resBits_) &&
-                    ledcAttach(in3_, freqHz_, resBits_) && ledcAttach(in4_, freqHz_, resBits_);
+    pinMode(static_cast<uint8_t>(faultPin_), INPUT_PULLUP);
+    const bool ok = ledcAttach(static_cast<uint8_t>(in1_), freqHz_, resBits_) &&
+                    ledcAttach(static_cast<uint8_t>(in2_), freqHz_, resBits_) &&
+                    ledcAttach(static_cast<uint8_t>(in3_), freqHz_, resBits_) &&
+                    ledcAttach(static_cast<uint8_t>(in4_), freqHz_, resBits_);
     DESKY_ASSERT(ok);
     if (!ok) {
       return false;
@@ -75,20 +77,20 @@ class MotorDriver : public IActuator {
   }
 
   void brake() {
-    ledcWrite(in1_, 255);
-    ledcWrite(in2_, 255);
-    ledcWrite(in3_, 255);
-    ledcWrite(in4_, 255);
+    ledcWrite(static_cast<uint8_t>(in1_), 255);
+    ledcWrite(static_cast<uint8_t>(in2_), 255);
+    ledcWrite(static_cast<uint8_t>(in3_), 255);
+    ledcWrite(static_cast<uint8_t>(in4_), 255);
   }
 
   void coast() {
-    ledcWrite(in1_, 0);
-    ledcWrite(in2_, 0);
-    ledcWrite(in3_, 0);
-    ledcWrite(in4_, 0);
+    ledcWrite(static_cast<uint8_t>(in1_), 0);
+    ledcWrite(static_cast<uint8_t>(in2_), 0);
+    ledcWrite(static_cast<uint8_t>(in3_), 0);
+    ledcWrite(static_cast<uint8_t>(in4_), 0);
   }
 
-  bool fault() const { return digitalRead(faultPin_) == LOW; }
+  bool fault() const { return digitalRead(static_cast<uint8_t>(faultPin_)) == LOW; }
 
  private:
   static int clampDuty(int d) {
@@ -117,14 +119,14 @@ class MotorDriver : public IActuator {
 
   static void driveSide(int pinFwd, int pinRev, int duty) {
     if (duty > 0) {
-      ledcWrite(pinFwd, static_cast<uint32_t>(duty));
-      ledcWrite(pinRev, 0);
+      ledcWrite(static_cast<uint8_t>(pinFwd), static_cast<uint32_t>(duty));
+      ledcWrite(static_cast<uint8_t>(pinRev), 0);
     } else if (duty < 0) {
-      ledcWrite(pinFwd, 0);
-      ledcWrite(pinRev, static_cast<uint32_t>(-duty));
+      ledcWrite(static_cast<uint8_t>(pinFwd), 0);
+      ledcWrite(static_cast<uint8_t>(pinRev), static_cast<uint32_t>(-duty));
     } else {
-      ledcWrite(pinFwd, 0);
-      ledcWrite(pinRev, 0);
+      ledcWrite(static_cast<uint8_t>(pinFwd), 0);
+      ledcWrite(static_cast<uint8_t>(pinRev), 0);
     }
   }
 

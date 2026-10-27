@@ -130,23 +130,34 @@ each app leg is 0x1F0000 = 2,031,616 B against a ~1.16 MB image
 (spare ~871,728 B, ~43% free). `ota::fitsSlot` enforces the ceiling and
 the slot size mirrors `CFG_OTA_SLOT_BYTES`.
 
-## Analyzer flags (warnings-only census)
+## Analyzer flags (warnings-only census, 2026-10-27)
 
 `make check-analyze` (core) is report-only and intentionally does not run
-the overlay live. Proven blocker: `PLATFORMIO_BUILD_FLAGS` entries land
-BEFORE `build_src_flags -Werror` on the g++ line, so the later `-Werror`
-re-promotes `-Wconversion` hits in our own `src/hal/*.h` (motor, mpu6500,
-vl53l0x drivers) to hard errors, with framework `WString.h` leaking
-`-Wconversion` warnings on top. Fixes for Phase 1: pass framework includes
-as `-isystem`, or wrap framework headers in
-`#pragma GCC diagnostic ignored "-Wconversion"`. Existing `-Werror`
-semantics for current flags are untouched.
+the overlay live. Ordering blocker FIXED by two mechanisms (this task):
+(1) `embedded/tools/pio_isystem_fw.py` runs as `post:` extra_script on the
+firmware envs and moves every `framework-arduino*` CPPPATH entry from `-I`
+to `-isystem`, so framework headers (WString.h) no longer warn at all, while
+our `src/` + `shared/` + libdeps stay `-I` and strict. It must be `post:`
+(a `pre:` script sees an empty CPPPATH — the platform appends framework
+paths during its own setup) and must patch both `env` and `projenv`
+(separate SCons environments: framework/lib objects vs our `src/` objects).
+(2) `build_src_flags` now carries `-Wconversion -Wdouble-promotion` PLUS
+`-Wno-error=conversion -Wno-error=double-promotion` after `-Werror`, so the
+conversion family logs as visible-but-nonfatal warnings while every
+pre-existing warning stays an error. `-Wno-error=double-promotion` verified
+accepted by the xtensa toolchain (build line shows the full flag order).
+The 36 project hits from the census are fixed with behavior-preserving
+`static_cast`s (pins to `uint8_t`, `double()` for LOG `%f` varargs);
+clean `desky`/`desky-release` builds now show 0 conversion warnings, 0
+framework warnings, exit 0. Later error flip: delete the two `-Wno-error`
+lines and fix any newly surfaced hits — do NOT flip until the log is clean.
 
 `-Wstack-usage` is deferred to Phase 1: no per-task stack budgets exist yet,
 and wiring `-fstack-usage` capture plus worst-case ISR accounting is a
-Phase 1 job. Phase 0 is census-only.
+Phase 1 job. Phase 0 was census-only.
 
-`-fanalyzer` build cost unmeasured; expect 2–5x when the overlay lands.
+`-fanalyzer` stays OUT (build cost unmeasured; expect 2–5x when the overlay
+lands) and remains a `check-analyze` TODO.
 
 ## Local runs
 

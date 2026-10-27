@@ -30,7 +30,7 @@ class I2CManager {
   void busInit() {
     wire_.end();
     wire_.begin(sda_, scl_);
-    wire_.setTimeOut(timeoutMs_);
+    wire_.setTimeOut(static_cast<uint16_t>(timeoutMs_));
     wire_.setClock(freqHz_);
   }
 
@@ -54,14 +54,14 @@ class I2CManager {
 
   // 9 SCL pulses free a stuck subordinate. Leaves pins in GPIO mode: follow with reinit().
   void pulseClock() {
-    pinMode(scl_, OUTPUT);
-    pinMode(sda_, INPUT_PULLUP);
-    digitalWrite(scl_, HIGH);
+    pinMode(static_cast<uint8_t>(scl_), OUTPUT);
+    pinMode(static_cast<uint8_t>(sda_), INPUT_PULLUP);
+    digitalWrite(static_cast<uint8_t>(scl_), HIGH);
     delayMicroseconds(10);
     for (int i = 0; i < 9; ++i) {
-      digitalWrite(scl_, LOW);
+      digitalWrite(static_cast<uint8_t>(scl_), LOW);
       delayMicroseconds(5);
-      digitalWrite(scl_, HIGH);
+      digitalWrite(static_cast<uint8_t>(scl_), HIGH);
       delayMicroseconds(5);
     }
   }

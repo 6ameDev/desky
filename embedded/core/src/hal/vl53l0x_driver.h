@@ -33,8 +33,8 @@ class Vl53l0xDriver : public ISensor {
   // XSHUT HIGH -> boot wait -> begin -> trial ranging must validate.
   // Returns false (no halt here); setup() applies DESKY_ASSERT policy.
   bool init() override {
-    pinMode(xshutPin_, OUTPUT);
-    digitalWrite(xshutPin_, HIGH);
+    pinMode(static_cast<uint8_t>(xshutPin_), OUTPUT);
+    digitalWrite(static_cast<uint8_t>(xshutPin_), HIGH);
     LOG_I("TOF", "XSHUT HIGH on pin %d, booting", xshutPin_);
     delay(CFG_TOF_XSHUT_BOOT_MS);
     if (!beginSensor()) {
@@ -84,12 +84,12 @@ class Vl53l0xDriver : public ISensor {
       return;
     }
     if (!enable) {
-      digitalWrite(xshutPin_, LOW);
+      digitalWrite(static_cast<uint8_t>(xshutPin_), LOW);
       enabled_ = false;
       LOG_I("TOF", "XSHUT LOW (shutdown)");
       return;
     }
-    digitalWrite(xshutPin_, HIGH);
+    digitalWrite(static_cast<uint8_t>(xshutPin_), HIGH);
     delay(CFG_TOF_XSHUT_BOOT_MS);
     enabled_ = beginSensor();
     LOG_I("TOF", "XSHUT HIGH (wake %s)", enabled_ ? "ok" : "FAILED");
@@ -112,10 +112,10 @@ class Vl53l0xDriver : public ISensor {
   // Tier 2: XSHUT power cycle + pulse + reinit.
   bool recoverHard() {
     LOG_W("TOF", "hard recovery (XSHUT cycle)");
-    digitalWrite(xshutPin_, LOW);
+    digitalWrite(static_cast<uint8_t>(xshutPin_), LOW);
     delay(CFG_TOF_XSHUT_SHUTDOWN_MS);
     bus_.pulseClock();
-    digitalWrite(xshutPin_, HIGH);
+    digitalWrite(static_cast<uint8_t>(xshutPin_), HIGH);
     delay(CFG_TOF_XSHUT_BOOT_MS);
     bus_.reinit();
     return beginSensor() && trialUpdate();

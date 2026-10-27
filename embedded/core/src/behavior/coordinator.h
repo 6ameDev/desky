@@ -462,7 +462,8 @@ class Coordinator {
             if (telem_ != nullptr) {
               telem_->noteCommand(cmdV_, cmdOmega_, nowMs);
             }
-            LOG_EVERY_N(50, "COORD", "udp mode=%u v=%.2f w=%.2f flags=%u", mode, cmdV_, cmdOmega_, flags);
+            LOG_EVERY_N(50, "COORD", "udp mode=%u v=%.2f w=%.2f flags=%u", mode, static_cast<double>(cmdV_),
+                        static_cast<double>(cmdOmega_), flags);
             break;
           }
           case EVENT_BEHAVIOR_DONE:
