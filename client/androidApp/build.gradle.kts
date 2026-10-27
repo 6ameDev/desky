@@ -9,6 +9,13 @@ android {
     }
 }
 
+// Phase 0 static analysis (issue 54): Compose stability reports as artifact,
+// never gating. Promote to warn/error only after a baseline is triaged.
+composeCompiler {
+    reportsDestination.set(layout.buildDirectory.dir("compose-reports"))
+    metricsDestination.set(layout.buildDirectory.dir("compose-reports"))
+}
+
 dependencies {
     implementation(project(":shared"))
     implementation(platform(libs.compose.bom))

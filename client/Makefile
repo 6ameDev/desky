@@ -12,7 +12,7 @@ export PATH := $(HOME)/Library/Android/sdk/cmdline-tools/latest/bin:$(HOME)/Libr
 
 APK = androidApp/build/outputs/apk/debug/androidApp-debug.apk
 
-.PHONY: test android install-android ios podspec check help
+.PHONY: test android install-android ios podspec lint check help
 
 help:
 	@echo "test             shared unit tests (fast gate)"
@@ -20,6 +20,7 @@ help:
 	@echo "install-android  test + APK + adb install (needs phone on USB)"
 	@echo "podspec          shared podspec + dummy framework (before pod install)"
 	@echo "ios              simulator build (needs CocoaPods + simulator runtime)"
+	@echo "lint             Android Lint (warn-only Phase 0, baselined)"
 
 test:
 	./gradlew :shared:jvmTest --console=plain
@@ -41,5 +42,8 @@ ios: podspec
 	  -parallelizeTargets -jobs $$(sysctl -n hw.ncpu) \
 	  COMPILER_INDEX_STORE_ENABLE=NO build
 
+lint:
+	./gradlew :androidApp:lintDebug --console=plain
+
 check:
-	./gradlew :shared:jvmTest :shared:assemble :androidApp:assembleDebug --console=plain
+	./gradlew :shared:jvmTest :shared:assemble :androidApp:assembleDebug :androidApp:lintDebug --console=plain
