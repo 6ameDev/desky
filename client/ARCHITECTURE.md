@@ -90,6 +90,8 @@ Baseline regeneration (generated baselines are rewritten whole by their tools �
 - `client/config/detekt/baseline.xml`: `./gradlew detektBaseline` — review the diff, triage, commit.
 - Embedded baselines: see `embedded/docs/static-analysis.md`.
 
+Baseline no-growth guard (`tools/baseline-guard.sh`, `make baseline-guard`, gating in CI): caps on finding counts (lint `<issue` entries, detekt `<ID>` entries) fail the run when either baseline grows. Fix new findings first; a genuinely legacy finding earns a cap bump only as its own reviewed change alongside the regenerated baseline — never silent growth.
+
 Pre-commit is opt-in only (`pre-commit install` from the repo root; root
 `.pre-commit-config.yaml` mirrors the CI commands with mono-repo `files:`
 filters). CI does NOT run pre-commit itself — workflows invoke the

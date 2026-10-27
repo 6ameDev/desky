@@ -79,7 +79,13 @@ jobs:
       # Gating: baselines absorb triaged findings (lint: 3 suppressed IDs in
       # lint-baseline.xml; detekt: 531 IDs in config/detekt/baseline.xml —
       # both verified green locally), so only NEW issues fail these steps.
+      # The no-growth guard trips first if a baseline silently absorbed
+      # findings (caps in tools/baseline-guard.sh; `make baseline-guard`
+      # locally). Deliberately no `continue-on-error`: growth fails the run.
       # Uploads use `if: always()` so reports attach even when the gate trips.
+      - name: Baseline no-growth guard (gating)
+        run: ./tools/baseline-guard.sh
+
       - name: Android Lint (gating, baselined)
         run: ./gradlew :androidApp:lintDebug --console=plain
 
