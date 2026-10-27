@@ -7,7 +7,7 @@ export
 export PLATFORMIO_SETTING_CHECK_PLATFORMIO_INTERVAL=7
 export PLATFORMIO_SETTING_ENABLE_TELEMETRY=No
 
-.PHONY: clean build build-release build-bench test test-verbose check check-pins check-arch upload-monitor upload-monitor-release upload-bench monitor-decode
+.PHONY: clean build build-release build-bench test test-verbose check check-pins check-arch upload-monitor upload-monitor-release upload-bench monitor-decode size-report check-analyze
 
 # Default USB port for core uploads/monitors (stable modem path on this
 # bench). Override per invocation when needed: make upload-monitor
@@ -90,6 +90,38 @@ check-arch:
 	  esac; \
 	done
 	@test $$(grep -l "int main" test/*.cpp | wc -l) -eq 1
+
+# Size budget report (Phase 0, report-only — never fails the build).
+# OTA slot is 0x640000 (6553600B) per app leg of default_16MB.csv; see
+# ../docs/static-analysis.md for the full budget table. Promotion to a hard
+# gate happens in task 9, not here.
+size-report:
+	pio run -e desky
+	pio run -e desky-release
+	@for env in desky desky-release; do \
+	  bin=$$(wc -c < .pio/build/$$env/firmware.bin | tr -d ' '); \
+	  slot=6553600; \
+	  spare=$$((slot - bin)); \
+	  pct=$$((bin * 100 / slot)); \
+	  if [ $$bin -gt $$slot ]; then st="OVER BUDGET"; else st="WITHIN BUDGET"; fi; \
+	  echo "$$env: firmware.bin=$$bin slot=$$slot used=$${pct}% spare=$$spare $$st"; \
+	done
+
+# Analyzer flags, warnings-only census (Phase 0, report-only — NOT in `check`).
+# Status: the PLATFORMIO_BUILD_FLAGS overlay below does NOT run clean, so the
+# live command stays commented until the ordering blocker is fixed (TODO).
+# Proven 2026-10-27: env build_flags land BEFORE build_src_flags -Werror on
+# the g++ line, so the later -Werror re-promotes -Wconversion hits in our own
+# src/hal/*.h to hard errors; framework WString.h leaks -Wconversion warnings
+# on top. Fixes: pass framework includes as -isystem, or wrap framework
+# headers in `#pragma GCC diagnostic ignored "-Wconversion"`. Promotion in
+# task 9, not here.
+# TODO(phase1): uncomment the live overlay once the -isystem/pragma fix lands;
+# keep -Werror semantics for existing flags.
+# PLATFORMIO_BUILD_FLAGS='-Wconversion -Wdouble-promotion -fanalyzer' pio run -e desky
+check-analyze:
+	@echo "check-analyze (Phase 0 report-only): analyzer overlay blocked, see TODO above."
+	@echo "Manual census: PLATFORMIO_BUILD_FLAGS='-Wconversion -Wdouble-promotion -fanalyzer' pio run -e desky"
 
 # Full gate: formatting + pin lint + arch guardrails + both firmware builds (deprecation-scanned) + host tests
 check:
