@@ -71,3 +71,33 @@ jobs:
           -parallelizeTargets -jobs $(sysctl -n hw.ncpu)
           COMPILER_INDEX_STORE_ENABLE=NO
           build
+
+      # Phase 0 report-only: mirrors the simulator build above (identical
+      # workspace/scheme/destination/flags, verb `analyze` instead of
+      # `build`). continue-on-error keeps it advisory until a clean
+      # baseline promotes it to gating.
+      - name: Analyze iosApp (report-only)
+        working-directory: client/iosApp
+        continue-on-error: true
+        run: >
+          xcodebuild -workspace iosApp.xcworkspace -scheme iosApp
+          -configuration Debug
+          -destination 'platform=iOS Simulator,name=iPhone 16,arch=arm64'
+          -parallelizeTargets -jobs $(sysctl -n hw.ncpu)
+          COMPILER_INDEX_STORE_ENABLE=NO
+          analyze
+
+      # Phase 0 report-only: project pins SWIFT_VERSION=5.0 so
+      # SWIFT_STRICT_CONCURRENCY=complete measures the minimal-check
+      # surface until a Swift 6 migration decision. Advisory only.
+      - name: Swift concurrency assessment (report-only)
+        working-directory: client/iosApp
+        continue-on-error: true
+        run: >
+          xcodebuild -workspace iosApp.xcworkspace -scheme iosApp
+          -configuration Debug
+          -destination 'platform=iOS Simulator,name=iPhone 16,arch=arm64'
+          -parallelizeTargets -jobs $(sysctl -n hw.ncpu)
+          COMPILER_INDEX_STORE_ENABLE=NO
+          SWIFT_STRICT_CONCURRENCY=complete
+          build
