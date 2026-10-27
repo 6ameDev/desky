@@ -20,12 +20,12 @@ help:
 	@echo "install-android  test + APK + adb install (needs phone on USB)"
 	@echo "podspec          shared podspec + dummy framework (before pod install)"
 	@echo "ios              simulator build (needs CocoaPods + simulator runtime)"
-	@echo "lint             Android Lint (gating since task 9, baselined)"
-	@echo "detekt           static analysis (gating since task 9, baselined)"
-	@echo "ktlint           format check (advisory Phase 1, violations logged)"
-	@echo "kover            coverage report (no bounds Phase 1, see build/reports/kover)"
+	@echo "lint             Android Lint (gating, baselined)"
+	@echo "detekt           static analysis (gating, baselined)"
+	@echo "ktlint           format check (advisory, violations logged)"
+	@echo "kover            coverage report (no bounds, see build/reports/kover)"
 	@echo "check            shared tests + assemble + APK + lint (gating, baselined)"
-	@echo "vuln             dependency vulnerability scan (advisory Phase 1, SARIF in build/osv-scanner)"
+	@echo "vuln             dependency vulnerability scan (advisory, SARIF in build/osv-scanner)"
 
 test:
 	./gradlew :shared:jvmTest --console=plain
@@ -50,12 +50,11 @@ ios: podspec
 lint:
 	./gradlew :androidApp:lintDebug --console=plain
 
-# Phase 1 static analysis (issue 54, task 5; task 9 promoted detekt to gating
-# while ktlint stays advisory — see ARCHITECTURE.md section 5): lint + detekt
-# fail the build on NEW issues (baselines absorb triaged ones); ktlint/kover
-# stay green via ignoreFailures (ktlint) and no kover bounds. NOT part of
-# `check` except via :androidApp:lintDebug; promotion of ktlint is tracked in
-# ARCHITECTURE.md.
+# Static analysis (detekt gating, ktlint advisory — see ARCHITECTURE.md
+# section 5): lint + detekt fail the build on NEW issues (baselines absorb
+# triaged ones); ktlint/kover stay green via ignoreFailures (ktlint) and no
+# kover bounds. NOT part of `check` except via :androidApp:lintDebug;
+# promotion of ktlint is tracked in ARCHITECTURE.md.
 detekt:
 	./gradlew detekt --console=plain
 
@@ -64,19 +63,18 @@ ktlint:
 
 # Kover: report tasks only, no verification bounds. Scoped to :shared (the only
 # module with unit tests); root aggregation stays empty for KMP variants —
-# revisit aggregation in task 9.
+# revisit aggregation before setting any bound.
 kover:
 	./gradlew :shared:koverXmlReport --console=plain
 
-# Vulnerability scanning (issue 54, task 8 — advisory only, promotion in
-# task 9). Target is named `vuln` (not `osv-scan`): short name matching the
-# detekt/ktlint/kover group. Standalone by design — NOT part of `check`, and
+# Vulnerability scanning (advisory only). Target is named `vuln` (not
+# `osv-scan`): short name matching the detekt/ktlint/kover group. Standalone by design — NOT part of `check`, and
 # the scan step is `-`-tolerated so findings (or an offline CI box) never
 # fail the build; the summary line keeps counts visible instead.
 # Flow: ephemeral Gradle lockfiles (scan-only -PosvLocks, see root
 # build.gradle.kts) -> osvScan (SARIF, auto-installs the binary, warn-only
-# via count/threshold) -> print finding counts + keep a .sarif copy for the
-# task-9 upload -> delete lockfiles so none are ever committed.
+# via count/threshold) -> print finding counts + keep a .sarif copy for CI
+# upload -> delete lockfiles so none are ever committed.
 vuln:
 	./gradlew dependencies :shared:dependencies :androidApp:dependencies --write-locks -PosvLocks --console=plain
 	-./gradlew osvScan --console=plain

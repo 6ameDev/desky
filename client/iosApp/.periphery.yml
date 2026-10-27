@@ -1,5 +1,5 @@
-# Advisory only (issue 54, task 6). First run establishes a suppressible
-# baseline; promotion to gating is task 9.
+# Advisory only. First run establishes a suppressible baseline; promotion
+# to gating follows the checklist in client/ARCHITECTURE.md.
 # Rationale: Pods/ is vendored third-party code; the `shared` framework
 # referenced below is Kotlin-generated (SKIE) — its symbols are not
 # hand-written Swift and would flood results with unactionable hits.

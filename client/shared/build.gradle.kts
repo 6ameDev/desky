@@ -7,13 +7,13 @@ plugins {
     alias(libs.plugins.skie)
     alias(libs.plugins.mokkery)
     alias(libs.plugins.kotlin.cocoapods)
-    // Phase 1 static analysis (issue 54, task 5 — detekt promoted to gating
-    // in task 9; ktlint stays advisory). Versions come from the root catalog.
+    // Static analysis plugins (detekt gating, ktlint advisory).
+    // Versions come from the root catalog.
     alias(libs.plugins.detekt)
     alias(libs.plugins.ktlint)
-    // Kover: report tasks only, no verification bounds (baseline first, task 9
-    // decides enforcement). Applied at root for aggregation; applied here
-    // (version from catalog) so JVM test tasks are instrumented.
+    // Kover: report tasks only, no verification bounds. Applied at root for
+    // aggregation; applied here (version from catalog) so JVM test tasks
+    // are instrumented.
     alias(libs.plugins.kover)
 }
 
@@ -89,9 +89,9 @@ dependencies {
     add("kspIosSimulatorArm64", libs.room3.compiler)
 }
 
-// detekt 1.23.8 does not auto-detect KMP source sets under Kotlin 2.4 (task
-// runs NO-SOURCE without this), so wire every Kotlin source set explicitly —
-// commonMain/androidMain/jvmMain/iosMain plus tests — minus KSP-generated
+// detekt 1.23.8 does not auto-detect KMP source sets under Kotlin 2.4 (the
+// task runs NO-SOURCE without this), so wire every Kotlin source set
+// explicitly: commonMain/androidMain/jvmMain/iosMain plus tests — minus KSP-generated
 // output under build/ (machine output, never hand-triaged).
 val kmpKotlinSources = files(provider {
     val buildPath = project.layout.buildDirectory.get().asFile.invariantSeparatorsPath
@@ -100,10 +100,9 @@ val kmpKotlinSources = files(provider {
         .filter { !it.invariantSeparatorsPath.startsWith(buildPath) }
 })
 
-// Phase 1 gating (issue 54, task 9): analysis owns failures — the checked-in
-// baseline absorbs the triaged IDs, so only NEW issues break the gate.
-// (formatting/ktlint sets are absent from config/detekt/detekt.yml — the
-// ktlint plugin owns format).
+// Gating: the checked-in baseline absorbs triaged IDs, so only NEW issues
+// break the gate. (formatting/ktlint sets are absent from
+// config/detekt/detekt.yml — the ktlint plugin owns format).
 detekt {
     toolVersion = libs.versions.detekt.get()
     config.setFrom(files("${rootProject.projectDir}/config/detekt/detekt.yml"))
@@ -116,5 +115,5 @@ ktlint {
     ignoreFailures.set(true)
 }
 
-// Kover: report tasks only, no verification bounds (baseline first, task 9
-// decides enforcement). Applied at root; subprojects inherit instrumentation.
+// Kover: report tasks only, no verification bounds. Applied at root;
+// subprojects inherit instrumentation.

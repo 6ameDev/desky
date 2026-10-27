@@ -1,4 +1,5 @@
-# Advisory only (issue 54, task 6). Promotion to gating is task 9.
+# Advisory only. Promotion to gating follows the checklist in
+# client/ARCHITECTURE.md (after a local baseline is triaged).
 disabled_rules:
   - trailing_whitespace
 opt_in_rules:
