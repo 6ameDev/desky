@@ -1,6 +1,12 @@
 plugins {
     id("desky.android.application")
     alias(libs.plugins.kotlin.compose)
+    // Phase 1 static analysis (issue 54, task 5 — advisory only, promotion in
+    // task 9). Versions come from the root catalog.
+    alias(libs.plugins.detekt)
+    alias(libs.plugins.ktlint)
+    // Kover: see shared/build.gradle.kts — report only, no bounds.
+    alias(libs.plugins.kover)
 }
 
 android {
@@ -33,4 +39,18 @@ dependencies {
     implementation(libs.mlkit.barcode.scanning)
     implementation(libs.koin.android)
     implementation(libs.koin.androidx.compose)
+}
+
+// Phase 1 static analysis (issue 54, task 5): advisory only, promotion in
+// task 9. detekt owns analysis (formatting/ktlint sets are OFF in
+// config/detekt/detekt.yml — the ktlint plugin owns format).
+detekt {
+    toolVersion = libs.versions.detekt.get()
+    config.setFrom(files("${rootProject.projectDir}/config/detekt/detekt.yml"))
+    baseline = rootProject.file("config/detekt/baseline.xml")
+    ignoreFailures = true
+}
+
+ktlint {
+    ignoreFailures.set(true)
 }

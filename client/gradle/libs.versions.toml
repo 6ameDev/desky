@@ -18,6 +18,16 @@ camerax = "1.4.2"
 mlkitBarcodeScanning = "17.3.0"
 turbine = "1.2.1"
 mokkery = "3.5.1"
+# Phase 1 static analysis (issue 54, task 5 — advisory only):
+# - detekt 1.23.8 = latest stable 1.x (built: Kotlin 2.0.21, Gradle 8.12.1).
+#   No stable 1.x runs natively on Kotlin 2.4; 2.0.x (Kotlin 2.4 native) is
+#   alpha-only (2.0.0-alpha.6 @ Kotlin 2.4.10). Prefer stable 1.23.8 first and
+#   promote to detekt 2.x stable in task 9 once it ships.
+detekt = "1.23.8"
+# ktlint-gradle 14.2.0: latest stable, Gradle 9 + AGP 9 / new-DSL support.
+ktlintGradle = "14.2.0"
+# kover 0.9.11: latest stable, explicit Kotlin 2.4 support.
+kover = "0.9.11"
 
 [libraries]
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -77,3 +87,7 @@ ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 room3 = { id = "androidx.room3", version.ref = "room3" }
 skie = { id = "co.touchlab.skie", version.ref = "skie" }
 mokkery = { id = "dev.mokkery", version.ref = "mokkery" }
+# Phase 1 static analysis (issue 54, task 5 — all advisory, see root build file).
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
+ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlintGradle" }
+kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }
