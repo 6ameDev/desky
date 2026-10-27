@@ -61,50 +61,34 @@ Both platforms share the singleton `ioScope` (`SupervisorJob` + `Dispatchers.Def
 |Unit tests|`./gradlew :shared:jvmTest`|Runs `commonTest` suite on JVM|
 |Assemble all targets|`./gradlew :shared:assemble`|JVM, Android AAR, and iOS frameworks|
 |Android debug APK|`./gradlew :androidApp:assembleDebug`|Compose wiring and compile health|
-|Vuln scan (advisory)|`make vuln`|OSV-Scanner SARIF over resolved Gradle deps (see below)|
+|Vuln scan (advisory)|`make vuln`|Advisory dependency vuln report|
 |iOS framework sync|`./gradlew :shared:syncFramework -Pkotlin.native.cocoapods.platform=iphonesimulator -Pkotlin.native.cocoapods.archs=arm64 -Pkotlin.native.cocoapods.configuration=Debug`|Generates framework for Xcode|
 
 _Local Swift iteration tip:_ Set `COCOAPODS_SKIP_KOTLIN_BUILD=YES` in Xcode to skip Kotlin rebuilds during pure-Swift UI work. Remember to unset and rebuild after touching `shared/`.
 
-Dependency vulnerabilities (`make vuln`, issue 54 task 8 — advisory, never
-gates `check`): scans the resolved Gradle deps of `:shared` + `:androidApp`
-via ephemeral `--write-locks` lockfiles (activated scan-only by `-PosvLocks`
-in the root build file, deleted afterwards, nothing committed). Baseline
-27 Oct 2026: 110 findings / 55 distinct CVEs, 0 fixed, 0 suppressed —
-upgrades are out of scope until the task-9 gate, so no dependency version
-may change in a scan-only change. NOT scanned: the iOS `shared` pod is
-path-local (nothing for OSV to resolve — use `pod outdated` in `iosApp/`),
-and embedded PlatformIO `lib_deps` git URLs sit outside OSV Gradle-lockfile
-scope. Alternatives: autonomousapps dependency-analysis is deferred (AGP 9.3
-+ Kotlin 2.4 run ahead of its tested matrix), OWASP Dependency-Check is
-rejected (slow, needs an NVD key, noisy CPE matching), Snyk is rejected
-(needs a token). Task 9 keeps this advisory: warn-only threshold hack stays,
-plus SARIF upload + scheduled scan (see the checklist below).
+`make vuln` scans resolved Gradle deps of `:shared` + `:androidApp` via ephemeral lockfiles (created scan-only, deleted afterwards, never committed); advisory, never gates `check`. The iOS `shared` pod is path-local — use `pod outdated` in `iosApp/` instead. Live results live in the CI SARIF artifact.
 
-Static analysis gates (issue 54, task 9 — gating vs advisory):
+Static analysis gates (gating vs advisory):
 
 | Tool | State | How it gates |
 |---|---|---|
-| Android Lint | GATING (`abortOnError = true`) | `lint-baseline.xml` absorbs the 3 triaged IDs (1 error + 1 warning + 1 hint); only NEW issues fail `:androidApp:lintDebug`, which runs in `make check` and CI |
-| detekt | GATING (`ignoreFailures = false`) | `config/detekt/baseline.xml` absorbs the 531 triaged IDs (verified zero-issue run before the flip); only NEW issues fail `detekt` in CI |
-| ktlint | ADVISORY (`ignoreFailures = true`) | ~4080 violations logged, format never run — flipping now would red the build, so it stays green until triaged |
-| Kover | REPORT-ONLY | no verification bounds; `:shared:koverXmlReport` in CI uploads the report |
-| OSV-Scanner | ADVISORY | warn-only count/threshold switch; SARIF uploaded in CI, no threshold |
-| iOS analyze / concurrency / SwiftLint / SwiftFormat / Periphery | ADVISORY | all `continue-on-error` report-only in CI with log artifacts; no baselines triaged yet |
+| Android Lint | GATING | `lint-baseline.xml` absorbs triaged IDs; only new issues fail `:androidApp:lintDebug` in `make check` and CI |
+| detekt | GATING | `config/detekt/baseline.xml` absorbs triaged IDs; only new issues fail `detekt` in CI |
+| ktlint | ADVISORY | violations logged, stays green until triaged and formatted |
+| Kover | REPORT-ONLY | no verification bounds; `:shared:koverXmlReport` uploads the report |
+| OSV-Scanner | ADVISORY | warn-only; SARIF uploaded in CI, no threshold |
+| iOS analyze / concurrency / SwiftLint / SwiftFormat / Periphery | ADVISORY | `continue-on-error` report-only in CI with log artifacts |
 
 Promotion checklist (each line flips independently when its condition holds):
 - ktlint: triage the backlog → run `./gradlew ktlintFormat` → verify `ktlintCheck` clean → flip `ignoreFailures` to false in `shared/` + `androidApp/` build files.
-- Kover: set verification bounds only after N releases of stable coverage data (no invented threshold).
-- OSV: replace the warn-only hack with a JSON threshold + real bound, add a scheduled scan; do not invent a threshold before triage.
+- Kover: set verification bounds only after N releases of stable coverage data.
+- OSV: replace the warn-only switch with a JSON threshold + real bound, add a scheduled scan.
 - iOS: trip each tool to gating only after a local baseline is triaged (same absorb-then-gate pattern as lint/detekt).
-- Embedded installs (clang-tidy/cppcheck): CI installs best-effort with `continue-on-error`; the `make check` firmware gate never depends on them.
 
-Baseline regeneration (generated XML baselines are rewritten whole by their
-tools, so in-file comments would not survive — these commands are the record):
-- `client/androidApp/lint-baseline.xml`: `./gradlew :androidApp:lintDebug`, then update the baseline from the report (Android Studio: suppress-as-baseline) — never hand-edit IDs.
-- `client/config/detekt/baseline.xml`: `./gradlew detektBaseline` (merges current findings into the baseline) — review the diff, triage, commit.
-- `embedded/tools/cppcheck-suppressions.txt`: hand-maintained, header comment inside the file is the record — append `<error-id>:<file-glob>` with a justification comment per line.
-- `embedded/.clang-tidy`: hand-maintained single config (upward discovery covers core/head/shared) — header comment inside the file is the record.
+Baseline regeneration (generated baselines are rewritten whole by their tools — these commands are the record):
+- `client/androidApp/lint-baseline.xml`: `./gradlew :androidApp:updateLintBaseline` — never hand-edit IDs.
+- `client/config/detekt/baseline.xml`: `./gradlew detektBaseline` — review the diff, triage, commit.
+- Embedded baselines: see `embedded/docs/static-analysis.md`.
 
 Pre-commit is opt-in only (`pre-commit install` from the repo root; root
 `.pre-commit-config.yaml` mirrors the CI commands with mono-repo `files:`
