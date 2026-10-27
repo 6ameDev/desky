@@ -1,0 +1,35 @@
+# Desky static analysis — clang-tidy (Phase 1, ADVISORY only).
+#
+# Location: this single file at embedded/ covers core/src, head/src, and
+# shared/ via clang-tidy's upward config discovery (each TU inherits the
+# nearest .clang-tidy walking up from its own directory). No per-firmware
+# copies; firmware dirs inherit this file.
+#
+# Status: report-only. `make check-static` runs `make tidy` warn-only and
+# never fails the build. Promotion to a hard gate happens in task 9, not here.
+# clang-tidy is NOT installed in this repo's tooling (verify with
+# `which clang-tidy`); the `tidy` make targets skip gracefully when absent.
+#
+# Curated checks only (mirrors the -Wconversion census in `make check-analyze`):
+#   bugprone-*, clang-analyzer-core.*, cert-dcl*, misc-unused-*,
+#   readability-braces-around-statements,
+#   cppcoreguidelines-narrowing-conversions-only (mirrors -Wconversion).
+# Explicitly EXCLUDED:
+#   wholesale cppcoreguidelines-* (too noisy for an Arduino codebase),
+#   modernize-* (C++ standard is unpinned in platformio.ini — confirm before
+#     enabling, else modernize pins us to a standard we never declared),
+#   concurrency-mt-unsafe (FreeRTOS idioms trip it constantly; noise).
+Checks: >
+  bugprone-*,
+  clang-analyzer-core.*,
+  cert-dcl*,
+  misc-unused-*,
+  readability-braces-around-statements,
+  cppcoreguidelines-narrowing-conversions-only,
+  -modernize-*,
+  -concurrency-mt-unsafe
+WarningsAsErrors: false
+HeaderFilterRegex: '(src|../shared)/.*'
+CheckOptions:
+  - key: readability-braces-around-statements.ShortStatementLines
+    value: 1

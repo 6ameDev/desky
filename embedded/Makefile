@@ -10,12 +10,22 @@
 # Run per-firmware work inside its dir (e.g. `cd core && make check`).
 # This file only forwards, so `make check` from embedded/ still gates all.
 
-.PHONY: check check-all check-core check-head check-testbench build build-all build-core build-head build-testbench test-core clean-core setup size-report
+.PHONY: check check-all check-core check-head check-testbench build build-all build-core build-head build-testbench test-core clean-core setup size-report check-static
 
 # One-time tooling for gates (pinned to CI): pipx install pipx first if needed.
 setup:
 	pipx install semgrep==1.182.1
 	pipx install clang-format==18.1.8
+	# Phase 1 static analysis (NOT pinned — advisory only, never gating):
+	#   cppcheck: prefer the pio frontend (`make check-cppcheck` auto-downloads
+	#     tool-cppcheck on first online run); standalone: brew install cppcheck
+	#     (currently unpinned — pin when a CI image needs it) or
+	#     sudo apt install cppcheck.
+	#   clang-tidy: brew install llvm (ships clang-tidy) or
+	#     sudo apt install clang-tidy (pin per CI image when promoting in
+	#     task 9). Config lives at embedded/.clang-tidy.
+	#   CI hint: keep the two pins above exact; add cppcheck/clang-tidy pins
+	#     to the CI image (not here) when task 9 promotes them to gates.
 
 check: check-all
 
@@ -53,3 +63,9 @@ clean-core:
 size-report:
 	$(MAKE) -C core size-report
 	$(MAKE) -C head size-report
+
+# Phase 1 static analysis rollup (report-only, never gating — promotion is
+# task 9, NOT here). Forwards to core + head; every member exits 0.
+check-static:
+	$(MAKE) -C core check-static
+	$(MAKE) -C head check-static
