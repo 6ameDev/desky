@@ -10,7 +10,7 @@
 # Run per-firmware work inside its dir (e.g. `cd core && make check`).
 # This file only forwards, so `make check` from embedded/ still gates all.
 
-.PHONY: check check-all check-core check-head check-testbench build build-all build-core build-head build-testbench test-core clean-core setup
+.PHONY: check check-all check-core check-head check-testbench build build-all build-core build-head build-testbench test-core clean-core setup size-report
 
 # One-time tooling for gates (pinned to CI): pipx install pipx first if needed.
 setup:
@@ -48,3 +48,8 @@ test-core:
 
 clean-core:
 	$(MAKE) -C core clean
+
+# Phase 0 size budget census (report-only, never gating).
+size-report:
+	$(MAKE) -C core size-report
+	$(MAKE) -C head size-report

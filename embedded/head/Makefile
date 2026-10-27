@@ -7,7 +7,7 @@ export
 export PLATFORMIO_SETTING_CHECK_PLATFORMIO_INTERVAL=7
 export PLATFORMIO_SETTING_ENABLE_TELEMETRY=No
 
-.PHONY: clean build test check check-pins check-arch upload-head
+.PHONY: clean build test check check-pins check-arch upload-head size-report
 
 # Default USB port for head uploads (stable path on this bench). Override
 # per invocation when needed: make upload-head PORT=/dev/cu.usbserial-XXXX.
@@ -27,6 +27,21 @@ upload-head:
 	@test -n "$(PORT)" || (echo "usage: make upload-head PORT=/dev/cu.usbserial-XXXX"; exit 1)
 	pio run -e desky-head --upload-port $(PORT) -t upload > /tmp/desky-head-upload.log 2>&1; CODE=$$?; cat /tmp/desky-head-upload.log; test $$CODE -eq 0
 	grep -q "Hash of data verified" /tmp/desky-head-upload.log && grep -q "Hard resetting" /tmp/desky-head-upload.log
+
+# Size budget report (Phase 0, report-only — never fails the build).
+# OTA slot is 0x1F0000 (2031616B) per app leg of partitions_ota_nospiffs.csv;
+# see ../docs/static-analysis.md. Promotion to a hard gate in task 9, not here.
+size-report:
+	pio run -e desky-head
+	pio run -e desky-head-release
+	@for env in desky-head desky-head-release; do \
+	  bin=$$(wc -c < .pio/build/$$env/firmware.bin | tr -d ' '); \
+	  slot=2031616; \
+	  spare=$$((slot - bin)); \
+	  pct=$$((bin * 100 / slot)); \
+	  if [ $$bin -gt $$slot ]; then st="OVER BUDGET"; else st="WITHIN BUDGET"; fi; \
+	  echo "$$env: firmware.bin=$$bin slot=$$slot used=$${pct}% spare=$$spare $$st"; \
+	done
 
 test:
 	pio test -e native-test
