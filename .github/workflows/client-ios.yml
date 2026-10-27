@@ -59,6 +59,31 @@ jobs:
         working-directory: client/iosApp
         run: pod install
 
+      # Static analysis Phase 1 (issue 54, task 6): Mint pins the tool
+      # versions (client/Mintfile, same pattern as Podfile.lock). CI installs
+      # mint unpinned via brew (it only fetches the pinned binaries) and
+      # caches the built packages in ~/.mint.
+      - name: Cache Mint packages (pinned lint tools)
+        uses: actions/cache@v6
+        with:
+          path: ~/.mint
+          key: mint-${{ hashFiles('client/Mintfile') }}
+
+      - name: Install pinned lint tools
+        run: |
+          brew install mint
+          mint bootstrap
+
+      # Advisory until baselines are triaged (task 9 promotes to gating).
+      - name: SwiftLint (report-only)
+        continue-on-error: true
+        run: mint run swiftlint lint iosApp --config iosApp/.swiftlint.yml --reporter github-actions-logging
+
+      # --lint only: never writes in CI.
+      - name: SwiftFormat check (report-only)
+        continue-on-error: true
+        run: mint run swiftformat --lint iosApp --config iosApp/.swiftformat
+
       - name: Build iosApp (simulator)
         working-directory: client/iosApp
         # CI-only flags (never in the pbxproj: index-store off would kill
@@ -101,3 +126,72 @@ jobs:
           COMPILER_INDEX_STORE_ENABLE=NO
           SWIFT_STRICT_CONCURRENCY=complete
           build
+
+  # Periphery rides a SEPARATE job: it needs the index store, but the main
+  # build above keeps COMPILER_INDEX_STORE_ENABLE=NO (local Xcode
+  # intelligence parity, faster CI). This job redoes setup through pod
+  # install, builds once with the index store ON, then scans --skip-build.
+  # Advisory until baselines are triaged (task 9 promotes to gating).
+  periphery:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 17 (Temurin, matches client/.mise.toml)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Gradle cache + daemon tuning
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Select Xcode + show simulators
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          xcrun simctl list runtimes
+
+      - name: Generate shared podspec + dummy framework
+        run: ./gradlew :shared:podspec :shared:generateDummyFramework --console=plain
+
+      - name: Cache CocoaPods (keyed by lockfile; skip on Podfile changes)
+        uses: actions/cache@v6
+        with:
+          path: |
+            client/iosApp/Pods
+            ~/Library/Caches/CocoaPods
+          key: pods-${{ hashFiles('client/iosApp/Podfile.lock') }}
+
+      - name: CocoaPods install
+        working-directory: client/iosApp
+        run: pod install
+
+      - name: Cache Mint packages (pinned lint tools)
+        uses: actions/cache@v6
+        with:
+          path: ~/.mint
+          key: mint-${{ hashFiles('client/Mintfile') }}
+
+      - name: Install pinned lint tools
+        run: |
+          brew install mint
+          mint bootstrap
+
+      - name: Indexed build for Periphery (report-only)
+        working-directory: client/iosApp
+        continue-on-error: true
+        run: >
+          xcodebuild -workspace iosApp.xcworkspace -scheme iosApp
+          -configuration Debug
+          -destination 'platform=iOS Simulator,name=iPhone 16,arch=arm64'
+          -parallelizeTargets -jobs $(sysctl -n hw.ncpu)
+          COMPILER_INDEX_STORE_ENABLE=YES
+          build
+
+      - name: Periphery scan (report-only)
+        continue-on-error: true
+        run: mint run periphery scan --workspace iosApp/iosApp.xcworkspace --schemes iosApp --skip-build --config iosApp/.periphery.yml

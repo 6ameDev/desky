@@ -1,0 +1,14 @@
+--swiftversion 5.0
+--indent 4
+--tabwidth 4
+--maxwidth 140
+--self remove
+--importgrouping alpha
+--decimalgrouping 3-3-3
+--exponentcase lower
+--ranges spaced
+--trimwhitespace always
+--indentcase true
+--semicolons never
+--commas always
+--voidtype void
