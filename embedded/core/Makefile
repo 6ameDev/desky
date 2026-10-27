@@ -7,7 +7,7 @@ export
 export PLATFORMIO_SETTING_CHECK_PLATFORMIO_INTERVAL=7
 export PLATFORMIO_SETTING_ENABLE_TELEMETRY=No
 
-.PHONY: clean build build-release build-bench test test-verbose check check-pins check-arch upload-monitor upload-monitor-release upload-bench monitor-decode size-report check-analyze
+.PHONY: clean build build-release build-bench test test-verbose check check-pins check-arch upload-monitor upload-monitor-release upload-bench monitor-decode size-report check-analyze tidy check-cppcheck check-semgrep-community test-asan coverage check-static
 
 # Default USB port for core uploads/monitors (stable modem path on this
 # bench). Override per invocation when needed: make upload-monitor
@@ -122,6 +122,62 @@ size-report:
 check-analyze:
 	@echo "check-analyze (Phase 0 report-only): analyzer overlay blocked, see TODO above."
 	@echo "Manual census: PLATFORMIO_BUILD_FLAGS='-Wconversion -Wdouble-promotion -fanalyzer' pio run -e desky"
+
+# Static analysis, Phase 1 (ALL report-only — NOT in `check`; promotion is
+# task 9, not here). Every check-static member exits 0 with tools missing or
+# findings logged, never failing the build. Custom arch rules keep --error in
+# check-arch (untouched); community rules below run WITHOUT --error.
+
+# clang-tidy census (curated checks in ../.clang-tidy, shared root covering
+# core/head/shared). Tool absent on this bench — skips gracefully with
+# install notes. If present, the run is warn-only (|| true).
+tidy:
+	@if command -v clang-tidy >/dev/null 2>&1; then \
+	  clang-tidy --version; \
+	  echo "tidy (advisory): findings logged, never failing:"; \
+	  clang-tidy src/main.cpp -- -I../shared -I../head/include -I../head/src || true; \
+	else \
+	  echo "tidy: SKIP — clang-tidy not installed (config at ../.clang-tidy)."; \
+	  echo "  install: brew install llvm  |  sudo apt install clang-tidy"; \
+	fi
+
+# cppcheck via the pio frontend (backend auto-downloaded on the first online
+# run — verified 2026-10-27 as tool-cppcheck@1.21100.241030). Baseline
+# suppressions in ../tools/cppcheck-suppressions.txt. Warn-only: pio check
+# exits 0 without --fail-on-defect; backend/network failure skips gracefully.
+check-cppcheck:
+	@echo "cppcheck (advisory, baseline ../tools/cppcheck-suppressions.txt):"
+	@pio check -e desky --flags "--suppressions-list=../tools/cppcheck-suppressions.txt" || \
+	  (echo "check-cppcheck: SKIP — pio check backend unavailable offline."; \
+	   echo "  manual: cppcheck --enable=warning,style,performance,portability,unusedFunction --suppressions-list=../tools/cppcheck-suppressions.txt src ../shared"; \
+	   true)
+
+# Semgrep community rules ALONGSIDE the custom arch rules (untouched, still
+# --error in check-arch). Runs WITHOUT --error so check-arch stays green.
+# NOTE: p/correctness does not exist on the registry (404 as of 2026-10-27);
+# p/cwe-top-25 stands in as the correctness-adjacent pack. Needs network on
+# first run (rules cache under ~/.semgrep); unreachable registry skips.
+check-semgrep-community:
+	@echo "semgrep-community (advisory, no --error): p/security-audit + p/cwe-top-25 (p/correctness 404s, see above)"
+	@semgrep --config p/security-audit --config p/cwe-top-25 src test ../shared || \
+	  (echo "check-semgrep-community: SKIP — registry unreachable offline."; true)
+
+# Sanitizer run of the host tests ([env:native-asan]). Strict: real test run.
+test-asan:
+	pio test -e native-asan
+
+# Coverage run ([env:native-cov], gcov-style). Renders with the Apple-shipped
+# llvm-cov — no lcov install. See ../docs/static-analysis.md (Phase 1).
+coverage:
+	pio test -e native-cov
+	@if command -v xcrun >/dev/null 2>&1 && xcrun llvm-cov --version >/dev/null 2>&1; then \
+	  cd .pio/build/native-cov && xcrun llvm-cov gcov $$(find . -name '*.o') 2>/dev/null | grep -E "^File|executed" | grep -v Creating; \
+	else \
+	  echo "coverage: tests ran; SKIP render — xcrun llvm-cov not installed."; \
+	fi
+
+check-static: tidy check-cppcheck check-semgrep-community
+	@echo "check-static (Phase 1 advisory): log above; never fails the build."
 
 # Full gate: formatting + pin lint + arch guardrails + both firmware builds (deprecation-scanned) + host tests
 check:

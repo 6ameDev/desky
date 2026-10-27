@@ -1,0 +1,17 @@
+// Desky cppcheck baseline (Phase 1, advisory only).
+// File-based suppressions preferred over inline // cppcheck-suppress.
+// Format: <error-id>:<file-glob> (one per line, // comments allowed).
+
+// .pio/libdeps headers are third-party (Adafruit VL53L0X vl53l0x_types.h
+// deliberately #errors without its port include; our src includes it via the
+// library's own umbrella header). Observed 2026-10-27 via
+// `pio check -e desky`: 1 high preprocessorErrorDirective in libdeps, 0 in src.
+preprocessorErrorDirective:.pio/libdeps/*
+
+// cppcheck parses shared/ headers without FreeRTOS macro expansion, so
+// port macros it cannot see through (e.g. portYIELD_FROM_ISR() in
+// shared/common/event_bus.h) report syntaxError. False positive: the header
+// compiles cleanly under both firmware envs (-Wall -Wextra -Werror) and
+// native-test, which are the real syntax gates. Advisory only; revisit if a
+// genuine shared/ parse failure appears under a host-env cppcheck run.
+syntaxError:*shared/*

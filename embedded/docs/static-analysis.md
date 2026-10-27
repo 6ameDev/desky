@@ -10,9 +10,56 @@ gates happens in task 9.
 | clang-format | 18.1.8 | present, enforced in `check` |
 | semgrep | 1.182.1 | present, enforced in `check` |
 | pio Core | 6.1.19 | present (prints an "obsolete" notice, harmless) |
-| clang-tidy | — | missing |
-| cppcheck | — | missing |
-| llvm-cov | — | missing |
+| clang-tidy | — | missing → Phase 1: config lands, tool still absent (skip-if-missing) |
+| cppcheck | — (pio backend tool-cppcheck@1.21100.241030 auto-downloaded) | Phase 1: via `pio check` frontend, advisory |
+| llvm-cov | Apple LLVM 21.0.0 (via `xcrun`) | Phase 1: present, coverage renders locally |
+
+## Phase 1 (advisory, 2026-10-27) — `make check-static`, never in `check`
+
+All members exit 0 with tools missing or findings logged. Custom arch rules
+(`arch_guardrails.yaml` + `arch_ideal.yaml`) are untouched and keep `--error`
+in `make check-arch`; community rules run WITHOUT `--error`.
+
+- clang-tidy: single config at `embedded/.clang-tidy` (covers core/head/shared
+  via upward discovery — no per-firmware copies). Curated checks only:
+  bugprone-*, clang-analyzer-core.*, cert-dcl*, misc-unused-*,
+  readability-braces-around-statements,
+  cppcoreguidelines-narrowing-conversions-only (mirrors the `-Wconversion`
+  census). Excluded: wholesale cppcoreguidelines-*, modernize-* (C++
+  standard unpinned in platformio.ini — confirm before enabling),
+  concurrency-mt-unsafe (FreeRTOS noise). `make tidy` skips gracefully while
+  the tool is absent (this bench); install: `brew install llvm` /
+  `sudo apt install clang-tidy`.
+- cppcheck: via the `pio check` frontend scoped to the firmware env
+  (`pio check -e desky` / `-e desky-head` with
+  `--flags "--suppressions-list=../tools/cppcheck-suppressions.txt"`).
+  Backend auto-downloads on first online run (no network/tool install needed
+  after that); offline backend failure prints the manual invocation and skips.
+  Baseline 2026-10-27: desky + desky-head both "No defects found" (one
+  third-party `preprocessorErrorDirective` in Adafruit libdeps + one
+  `syntaxError` false positive on `portYIELD_FROM_ISR()` in shared/common
+  suppressed in `tools/cppcheck-suppressions.txt` with justification each).
+- Semgrep community: `p/security-audit` + `p/cwe-top-25`, no `--error`, over
+  `src test ../shared`. NOTE: `p/correctness` does not exist on the registry
+  (HTTP 404 as of 2026-10-27); `p/cwe-top-25` stands in as the
+  correctness-adjacent pack. Baseline: 11 + 3 rules run, 0 findings on core
+  src (registry needs network on first run; cached under `~/.semgrep`).
+- ASan/UBSan: `[env:native-asan]` in core + head platformio.ini (extends
+  native-test, `test_build_src=false` kept, `-fsanitize=address,undefined
+  -fno-omit-frame-pointer -g3`). `make test-asan` per firmware. Verified
+  2026-10-27 on this Mac (Apple clang 21.0.0): core 415/415 passed,
+  head 145/145 passed — no Linux-CI-only caveat needed.
+- Coverage (llvm-cov, no lcov): `[env:native-cov]` (extends native-test,
+  `--coverage -g3 -O0` + `../tools/pio_native_cov.py` pre-script restating
+  `--coverage` on the native link line — without it the link fails with
+  undefined `_llvm_gcda_emit_arcs`). Exact render invocation:
+  ```
+  cd core && pio test -e native-cov
+  cd .pio/build/native-cov && xcrun llvm-cov gcov $(find . -name '*.o')
+  ```
+  (`make coverage` runs both steps and greps the per-file `Lines executed`
+  summary.) Spot sample 2026-10-27: shared/link/link_codec.h 84.93% of 146
+  lines; expression_catalog.h partially covered — no gate, census only.
 
 ## Size budgets (measured `firmware.bin` vs OTA app-slot)
 
