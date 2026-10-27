@@ -40,11 +40,18 @@ in `make check-arch`; community rules run WITHOUT `--error`.
   third-party `preprocessorErrorDirective` in Adafruit libdeps + one
   `syntaxError` false positive on `portYIELD_FROM_ISR()` in shared/common
   suppressed in `tools/cppcheck-suppressions.txt` with justification each).
-- Semgrep community: `p/security-audit` + `p/cwe-top-25`, no `--error`, over
-  `src test ../shared`. NOTE: `p/correctness` does not exist on the registry
-  (HTTP 404 as of 2026-10-27); `p/cwe-top-25` stands in as the
-  correctness-adjacent pack. Baseline: 11 + 3 rules run, 0 findings on core
-  src (registry needs network on first run; cached under `~/.semgrep`).
+- Semgrep community: vendored 2026-10-27 as 12 kept rules in
+  `tools/semgrep-community/` (`c-memory-safety.yml`: 9 C rules from
+  `p/security-audit`; `secrets-ci.yml`: 3 generic secrets/CI rules from
+  `p/cwe-top-25`), no `--error`, over `src test ../shared`. Vendoring pins
+  the set (upstream semgrep-rules @ `16b9e6d4`), works offline, and drops
+  the registry dependency. Audit 2026-10-27: 14 rules ran (11 + 3);
+  disposition below. NOTE: `p/correctness` 404s on the registry (retried
+  2026-10-27, still HTTP 404); `p/cwe-top-25` stands in. Baseline: 0
+  findings on core + head src with the pruned set (the single prior
+  `strncpy` hit in `shared/common/logger.h:76` is a triaged false positive
+  — bounded copy + explicit NUL on the next line — suppressed file-scoped
+  via `paths: exclude` in the vendored rule, no source touched).
 - ASan/UBSan: `[env:native-asan]` in core + head platformio.ini (extends
   native-test, `test_build_src=false` kept, `-fsanitize=address,undefined
   -fno-omit-frame-pointer -g3`). `make test-asan` per firmware. Verified
@@ -73,7 +80,47 @@ both firmware builds + host tests. Promotion here is wiring-only
 | clang-format / semgrep-arch | GATING (in `make check`, unchanged) | zero-tolerance formatting + layer edges |
 | clang-tidy | ADVISORY (skip-if-missing) | tool absent on bench and CI image; CI install is best-effort (`continue-on-error`), never a gate dependency |
 | cppcheck (`pio check`) | ADVISORY | baseline "No defects found" both envs; stays warn-only (no `--fail-on-defect`) |
-| semgrep-community | ADVISORY (no `--error`) | 0 findings on core src; registry needs network, skips offline |
+| semgrep-community | ADVISORY (no `--error`) | 0 findings on core + head src; vendored local dir, works offline |
+
+### Semgrep community audit (2026-10-27) — 14 ran, 12 kept, 2 pruned
+
+Registry run (`p/security-audit` + `p/cwe-top-25`, `--verbose` + canary
+probes): security-audit contributes 9 C + 2 Django-template-generic rules
+(11); cwe-top-25 contributes 3 generic/regex rules. `p/correctness` retried
+2026-10-27, still HTTP 404 — `p/cwe-top-25` stands in.
+
+Kept (vendored in `tools/semgrep-community/`, bodies byte-faithful to
+upstream @ `16b9e6d4`, per-rule one-liner in each file header):
+
+| Rule | Pack | Keep reason |
+| --- | --- | --- |
+| `double-free` | security-audit | heap double-free signal (CWE-415); heap on JSON/portal paths |
+| `insecure-use-gets-fn` | security-audit | bans `gets()` (removed from C11); zero-cost tripwire |
+| `insecure-use-printf-fn` | security-audit | argv-driven format-string tripwire (CWE-134); host tests take argv |
+| `insecure-use-scanf-fn` | security-audit | bans `scanf()`; firmware parses via codecs, scanf unbounded |
+| `insecure-use-strcat-fn` | security-audit | `strcat`/`strncat` misuse is a classic fixed-buffer overflow source |
+| `insecure-use-string-copy-fn` | security-audit | `strcpy`/`strncpy` signal; logger.h FP suppressed file-scoped (below) |
+| `insecure-use-strtok-fn` | security-audit | `strtok` mutates + non-reentrant; FreeRTOS tasks need `strtok_r` |
+| `random-fd-exhaustion` | security-audit | unchecked `read()` on `/dev/urandom`/`random` (CWE-774) |
+| `use-after-free` | security-audit | heap use-after-free signal (CWE-416, top-25 member) |
+| `bash_reverse_shell` | cwe-top-25 | reverse-shell payload tripwire (CWE-94); no shell in tree |
+| `detected-stripe-restricted-api-key` | cwe-top-25 | hardcoded-credential tripwire (CWE-798); secrets live in `.env` |
+| `detected-username-and-password-in-uri` | cwe-top-25 | credential-in-URI tripwire (CWE-798); portal/HTTP strings carry none |
+
+Pruned (not vendored; would run as generic over C sources with no stack to match):
+
+| Rule | Prune reason |
+| --- | --- |
+| `python.django.security.audit.xss.template-translate-as-no-escape` | Django-template XSS concept; no `{% %}` surface in tree — unactionable |
+| `python.django.security.audit.xss.template-blocktranslate-no-escape` | same: wrong stack, generic-language matching over C is pure noise |
+
+`strncpy` logger.h disposition: `shared/common/logger.h:76` (`strncpy` +
+explicit NUL next line) is a textbook false positive. Suppressed via
+`paths: exclude: ["*/shared/common/logger.h"]` on the vendored
+`insecure-use-string-copy-fn` (file-scoped; rule stays live everywhere
+else; no source touched). Parity check: vendored set fires identically to
+upstream on a canary (`strcpy`/`strcat`/`gets`/`scanf`/`strtok`/
+double-free/use-after-free + stripe-key/URI-creds/reverse-shell probes).
 | ASan (`native-asan`) | ADVISORY | core 415/415 + head 145/145 green locally; CI runs `test-asan` per firmware with `continue-on-error` + log artifacts |
 | Coverage (llvm-cov) | REPORT-ONLY | census sample only, no gate |
 | Size report | REPORT-ONLY | all envs within budget; CI uploads the log, never gates |
