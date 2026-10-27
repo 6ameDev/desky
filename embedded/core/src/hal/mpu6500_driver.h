@@ -139,7 +139,7 @@ class Mpu6500Driver : public ISensor {
     wire.beginTransmission(addr);
     wire.write(kWhoAmIReg);
     if (wire.endTransmission(false) == 0 && wire.requestFrom(addr, static_cast<uint8_t>(1)) == 1) {
-      who = wire.read();
+      who = static_cast<uint8_t>(wire.read());
     }
     bus_.release();
     return who;

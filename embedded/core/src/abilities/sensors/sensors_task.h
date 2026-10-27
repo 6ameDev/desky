@@ -160,8 +160,8 @@ class SensorTask {
         EventBus::publish(EVENT_GROUND_CHANGED, payload);
         LOG_I("SENSOR", "CLIFF %s tcrtF=%u(%u) tcrtR=%u(%u) obs=%umm pitch=%+.1f gndFwd=%u gndRev=%u",
               gndFwdNow ? "cleared" : "asserted", tcrtFwd_->rawCount(), tcrtFwd_->groundPresent() ? 1u : 0u,
-              tcrtRev_->rawCount(), tcrtRev_->groundPresent() ? 1u : 0u, distMm, pitchDeg, gndFwdNow ? 1u : 0u,
-              gndRevNow ? 1u : 0u);
+              tcrtRev_->rawCount(), tcrtRev_->groundPresent() ? 1u : 0u, distMm, static_cast<double>(pitchDeg),
+              gndFwdNow ? 1u : 0u, gndRevNow ? 1u : 0u);
       }
       // Obstacle assert/clear edges (forward ToF only): the transition helper
       // fires once per edge; the pre-call latch tells assert from clear.
