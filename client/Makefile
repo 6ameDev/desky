@@ -20,10 +20,11 @@ help:
 	@echo "install-android  test + APK + adb install (needs phone on USB)"
 	@echo "podspec          shared podspec + dummy framework (before pod install)"
 	@echo "ios              simulator build (needs CocoaPods + simulator runtime)"
-	@echo "lint             Android Lint (warn-only Phase 0, baselined)"
-	@echo "detekt           static analysis (advisory Phase 1, baselined)"
+	@echo "lint             Android Lint (gating since task 9, baselined)"
+	@echo "detekt           static analysis (gating since task 9, baselined)"
 	@echo "ktlint           format check (advisory Phase 1, violations logged)"
 	@echo "kover            coverage report (no bounds Phase 1, see build/reports/kover)"
+	@echo "check            shared tests + assemble + APK + lint (gating, baselined)"
 	@echo "vuln             dependency vulnerability scan (advisory Phase 1, SARIF in build/osv-scanner)"
 
 test:
@@ -49,9 +50,12 @@ ios: podspec
 lint:
 	./gradlew :androidApp:lintDebug --console=plain
 
-# Phase 1 static analysis (issue 54, task 5): advisory only — tasks stay green
-# via ignoreFailures (detekt/ktlint) and no kover bounds. NOT part of `check`;
-# promotion to gating is task 9.
+# Phase 1 static analysis (issue 54, task 5; task 9 promoted detekt to gating
+# while ktlint stays advisory — see ARCHITECTURE.md section 5): lint + detekt
+# fail the build on NEW issues (baselines absorb triaged ones); ktlint/kover
+# stay green via ignoreFailures (ktlint) and no kover bounds. NOT part of
+# `check` except via :androidApp:lintDebug; promotion of ktlint is tracked in
+# ARCHITECTURE.md.
 detekt:
 	./gradlew detekt --console=plain
 

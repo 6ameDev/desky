@@ -78,8 +78,38 @@ and embedded PlatformIO `lib_deps` git URLs sit outside OSV Gradle-lockfile
 scope. Alternatives: autonomousapps dependency-analysis is deferred (AGP 9.3
 + Kotlin 2.4 run ahead of its tested matrix), OWASP Dependency-Check is
 rejected (slow, needs an NVD key, noisy CPE matching), Snyk is rejected
-(needs a token). Task 9 promotes this to a gate: JSON threshold + SARIF
-upload + scheduled scan.
+(needs a token). Task 9 keeps this advisory: warn-only threshold hack stays,
+plus SARIF upload + scheduled scan (see the checklist below).
+
+Static analysis gates (issue 54, task 9 — gating vs advisory):
+
+| Tool | State | How it gates |
+|---|---|---|
+| Android Lint | GATING (`abortOnError = true`) | `lint-baseline.xml` absorbs the 3 triaged IDs (1 error + 1 warning + 1 hint); only NEW issues fail `:androidApp:lintDebug`, which runs in `make check` and CI |
+| detekt | GATING (`ignoreFailures = false`) | `config/detekt/baseline.xml` absorbs the 531 triaged IDs (verified zero-issue run before the flip); only NEW issues fail `detekt` in CI |
+| ktlint | ADVISORY (`ignoreFailures = true`) | ~4080 violations logged, format never run — flipping now would red the build, so it stays green until triaged |
+| Kover | REPORT-ONLY | no verification bounds; `:shared:koverXmlReport` in CI uploads the report |
+| OSV-Scanner | ADVISORY | warn-only count/threshold switch; SARIF uploaded in CI, no threshold |
+| iOS analyze / concurrency / SwiftLint / SwiftFormat / Periphery | ADVISORY | all `continue-on-error` report-only in CI with log artifacts; no baselines triaged yet |
+
+Promotion checklist (each line flips independently when its condition holds):
+- ktlint: triage the backlog → run `./gradlew ktlintFormat` → verify `ktlintCheck` clean → flip `ignoreFailures` to false in `shared/` + `androidApp/` build files.
+- Kover: set verification bounds only after N releases of stable coverage data (no invented threshold).
+- OSV: replace the warn-only hack with a JSON threshold + real bound, add a scheduled scan; do not invent a threshold before triage.
+- iOS: trip each tool to gating only after a local baseline is triaged (same absorb-then-gate pattern as lint/detekt).
+- Embedded installs (clang-tidy/cppcheck): CI installs best-effort with `continue-on-error`; the `make check` firmware gate never depends on them.
+
+Baseline regeneration (generated XML baselines are rewritten whole by their
+tools, so in-file comments would not survive — these commands are the record):
+- `client/androidApp/lint-baseline.xml`: `./gradlew :androidApp:lintDebug`, then update the baseline from the report (Android Studio: suppress-as-baseline) — never hand-edit IDs.
+- `client/config/detekt/baseline.xml`: `./gradlew detektBaseline` (merges current findings into the baseline) — review the diff, triage, commit.
+- `embedded/tools/cppcheck-suppressions.txt`: hand-maintained, header comment inside the file is the record — append `<error-id>:<file-glob>` with a justification comment per line.
+- `embedded/.clang-tidy`: hand-maintained single config (upward discovery covers core/head/shared) — header comment inside the file is the record.
+
+Pre-commit is opt-in only (`pre-commit install` from the repo root; root
+`.pre-commit-config.yaml` mirrors the CI commands with mono-repo `files:`
+filters). CI does NOT run pre-commit itself — workflows invoke the
+underlying commands directly.
 
 ## 6. Where to look next
 

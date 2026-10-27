@@ -10,7 +10,15 @@
 # Run per-firmware work inside its dir (e.g. `cd core && make check`).
 # This file only forwards, so `make check` from embedded/ still gates all.
 
-.PHONY: check check-all check-core check-head check-testbench build build-all build-core build-head build-testbench test-core clean-core setup size-report check-static
+.PHONY: check check-all check-core check-head check-testbench build build-all build-core build-head build-testbench test-core clean-core setup size-report check-static help
+
+# Target pointers (see client/ARCHITECTURE.md section 5 + docs/static-analysis.md
+# Task 9 section for the gating-vs-advisory record).
+help:
+	@echo "check            firmware gates (format + pins + arch + builds + host tests)"
+	@echo "check-static     advisory rollup (tidy + cppcheck + semgrep-community, never gating)"
+	@echo "size-report      OTA budget census (report-only, never gating)"
+	@echo "setup            pinned gate tooling (semgrep + clang-format)"
 
 # One-time tooling for gates (pinned to CI): pipx install pipx first if needed.
 setup:

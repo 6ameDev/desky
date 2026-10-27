@@ -7,9 +7,8 @@ plugins {
     alias(libs.plugins.room3) apply false
     alias(libs.plugins.skie) apply false
     alias(libs.plugins.kotlin.cocoapods) apply false
-    // Phase 1 static analysis (issue 54, task 5 — all advisory, promotion in
-    // task 9): detekt + ktlint are declared here but applied per-module (see
-    // shared/androidApp build files); kover is applied at root for aggregation.
+    // Phase 1 static analysis (issue 54, task 5 — detekt promoted to gating
+    // in task 9; ktlint stays advisory, kover report-only).
     alias(libs.plugins.detekt) apply false
     alias(libs.plugins.ktlint) apply false
     alias(libs.plugins.kover)
