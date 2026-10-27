@@ -28,6 +28,9 @@ detekt = "1.23.8"
 ktlintGradle = "14.2.0"
 # kover 0.9.11: latest stable, explicit Kotlin 2.4 support.
 kover = "0.9.11"
+# osv-scanner plugin 6.3.0: latest stable 6.x (portal, 18 Oct 2026). SARIF-native
+# output, no NVD key, no token (issue 54, task 8 — advisory only).
+osvScanner = "6.3.0"
 
 [libraries]
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -91,3 +94,4 @@ mokkery = { id = "dev.mokkery", version.ref = "mokkery" }
 detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
 ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlintGradle" }
 kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }
+osv-scanner = { id = "com.fizzpod.osv-scanner", version.ref = "osvScanner" }

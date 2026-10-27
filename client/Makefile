@@ -12,7 +12,7 @@ export PATH := $(HOME)/Library/Android/sdk/cmdline-tools/latest/bin:$(HOME)/Libr
 
 APK = androidApp/build/outputs/apk/debug/androidApp-debug.apk
 
-.PHONY: test android install-android ios podspec lint detekt ktlint kover check help
+.PHONY: test android install-android ios podspec lint detekt ktlint kover vuln check help
 
 help:
 	@echo "test             shared unit tests (fast gate)"
@@ -24,6 +24,7 @@ help:
 	@echo "detekt           static analysis (advisory Phase 1, baselined)"
 	@echo "ktlint           format check (advisory Phase 1, violations logged)"
 	@echo "kover            coverage report (no bounds Phase 1, see build/reports/kover)"
+	@echo "vuln             dependency vulnerability scan (advisory Phase 1, SARIF in build/osv-scanner)"
 
 test:
 	./gradlew :shared:jvmTest --console=plain
@@ -62,6 +63,21 @@ ktlint:
 # revisit aggregation in task 9.
 kover:
 	./gradlew :shared:koverXmlReport --console=plain
+
+# Vulnerability scanning (issue 54, task 8 — advisory only, promotion in
+# task 9). Target is named `vuln` (not `osv-scan`): short name matching the
+# detekt/ktlint/kover group. Standalone by design — NOT part of `check`, and
+# the scan step is `-`-tolerated so findings (or an offline CI box) never
+# fail the build; the summary line keeps counts visible instead.
+# Flow: ephemeral Gradle lockfiles (scan-only -PosvLocks, see root
+# build.gradle.kts) -> osvScan (SARIF, auto-installs the binary, warn-only
+# via count/threshold) -> print finding counts + keep a .sarif copy for the
+# task-9 upload -> delete lockfiles so none are ever committed.
+vuln:
+	./gradlew dependencies :shared:dependencies :androidApp:dependencies --write-locks -PosvLocks --console=plain
+	-./gradlew osvScan --console=plain
+	python3 -c "import json,pathlib,shutil; p=pathlib.Path('build/osv-scanner/osv-scanner-scan.txt'); r=json.loads(p.read_text()); res=r['runs'][0].get('results',[]); print(f\"osv-scan: {len(res)} findings, {len(set(x['ruleId'] for x in res))} distinct rules (advisory — see ARCHITECTURE.md section 5)\"); shutil.copy(p, p.with_suffix('.sarif'))" || echo "osv-scan: no report (scan step failed - offline?); wiring intact, rerun with network"
+	rm -f gradle.lockfile settings-gradle.lockfile shared/gradle.lockfile androidApp/gradle.lockfile
 
 check:
 	./gradlew :shared:jvmTest :shared:assemble :androidApp:assembleDebug :androidApp:lintDebug --console=plain

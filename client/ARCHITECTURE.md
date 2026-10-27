@@ -61,6 +61,30 @@ Both platforms share the singleton `ioScope` (`SupervisorJob` + `Dispatchers.Def
 |Unit tests|`./gradlew :shared:jvmTest`|Runs `commonTest` suite on JVM|
 |Assemble all targets|`./gradlew :shared:assemble`|JVM, Android AAR, and iOS frameworks|
 |Android debug APK|`./gradlew :androidApp:assembleDebug`|Compose wiring and compile health|
+|Vuln scan (advisory)|`make vuln`|OSV-Scanner SARIF over resolved Gradle deps (see below)|
 |iOS framework sync|`./gradlew :shared:syncFramework -Pkotlin.native.cocoapods.platform=iphonesimulator -Pkotlin.native.cocoapods.archs=arm64 -Pkotlin.native.cocoapods.configuration=Debug`|Generates framework for Xcode|
 
 _Local Swift iteration tip:_ Set `COCOAPODS_SKIP_KOTLIN_BUILD=YES` in Xcode to skip Kotlin rebuilds during pure-Swift UI work. Remember to unset and rebuild after touching `shared/`.
+
+Dependency vulnerabilities (`make vuln`, issue 54 task 8 — advisory, never
+gates `check`): scans the resolved Gradle deps of `:shared` + `:androidApp`
+via ephemeral `--write-locks` lockfiles (activated scan-only by `-PosvLocks`
+in the root build file, deleted afterwards, nothing committed). Baseline
+27 Oct 2026: 110 findings / 55 distinct CVEs, 0 fixed, 0 suppressed —
+upgrades are out of scope until the task-9 gate, so no dependency version
+may change in a scan-only change. NOT scanned: the iOS `shared` pod is
+path-local (nothing for OSV to resolve — use `pod outdated` in `iosApp/`),
+and embedded PlatformIO `lib_deps` git URLs sit outside OSV Gradle-lockfile
+scope. Alternatives: autonomousapps dependency-analysis is deferred (AGP 9.3
++ Kotlin 2.4 run ahead of its tested matrix), OWASP Dependency-Check is
+rejected (slow, needs an NVD key, noisy CPE matching), Snyk is rejected
+(needs a token). Task 9 promotes this to a gate: JSON threshold + SARIF
+upload + scheduled scan.
+
+## 6. Where to look next
+
+- Wire truth: `shared/protocol/README.md` → `embedded/.../udp_codec.h` → `domain/Codec.kt` (+`Models.kt`).
+- Byte order: `data/Ipv4.kt` KDoc first. Socket contract: `domain/UdpSocketManager.kt` + platform actuals.
+- State machines: `presentation/RobotControlViewModel.kt` (heartbeat/estop/unpair), `PairingViewModel.kt`, `SettingsViewModel.kt`.
+- Wiring: `di/AppModules.kt`, Android `DeskyApp.kt` + `ui/DeskyNavHost.kt`, iOS `Kotlin/IosKoin.kt` + `DeskyApp.swift`.
+- UI pattern: stateful `XScreen` + stateless `XContent` + `@Preview` (Android); `ObservableObject` wrapper + `.task { for await }` (iOS).
