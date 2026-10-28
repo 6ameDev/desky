@@ -17,7 +17,10 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-15
+    # macos-26: Xcode 26.6 / Swift 6.3.3, matching the dev machine. The
+    # select step below asserts the version — a future image update that
+    # moves the default fails loudly instead of silently drifting the gate.
+    runs-on: macos-26
     defaults:
       run:
         working-directory: client
@@ -37,6 +40,8 @@ jobs:
         run: |
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -version
+          xcodebuild -version | head -1 | grep -q "^Xcode 26.6$" || { echo "Pinned Xcode 26.6 missing — bump runs-on and this assertion together, then triage any new diagnostics"; exit 1; }
+          swift --version
           xcrun simctl list runtimes
 
       # podspec is gitignored; pod install needs it present AND its guard
@@ -112,9 +117,8 @@ jobs:
           COMPILER_INDEX_STORE_ENABLE=NO
           analyze 2>&1 | tee ../../analyze.log; test ${PIPESTATUS[0]} -eq 0
 
-      # Report-only: project pins SWIFT_VERSION=5.0 so
-      # SWIFT_STRICT_CONCURRENCY=complete measures the minimal-check
-      # surface until a Swift 6 migration decision. Advisory only.
+      # Report-only: project is on Swift 6, which implies complete checking,
+      # so this step is a guard rather than a probe now. Advisory only.
       - name: Swift concurrency assessment (report-only)
         working-directory: client/iosApp
         continue-on-error: true
@@ -144,7 +148,9 @@ jobs:
   # install, builds once with the index store ON, then scans --skip-build.
   # Advisory until baselines are triaged (then promotes to gating).
   periphery:
-    runs-on: macos-15
+    # Same pinned image as build above — Periphery results must come from
+    # the same toolchain as the build they annotate.
+    runs-on: macos-26
     defaults:
       run:
         working-directory: client
@@ -164,6 +170,8 @@ jobs:
         run: |
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -version
+          xcodebuild -version | head -1 | grep -q "^Xcode 26.6$" || { echo "Pinned Xcode 26.6 missing — bump runs-on and this assertion together, then triage any new diagnostics"; exit 1; }
+          swift --version
           xcrun simctl list runtimes
 
       - name: Generate shared podspec + dummy framework
