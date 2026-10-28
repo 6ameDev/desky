@@ -16,6 +16,9 @@ env:
 
 jobs:
   check:
+    strategy:
+      matrix:
+        leg: [core, head, testbench]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -25,6 +28,8 @@ jobs:
         with:
           python-version: "3.11"
 
+      # Shared key across legs (safe: identical key restores identical
+      # content; concurrent leg writes race but each snapshot is equivalent).
       - name: Cache PlatformIO
         uses: actions/cache@v6
         with:
@@ -39,29 +44,34 @@ jobs:
       - name: Install lint tools (pinned to local gates)
         run: pip install clang-format==18.1.8 semgrep==1.182.1
 
-      - name: Gate (format + firmware builds + host tests)
+      - name: Gate ${{ matrix.leg }} (format + firmware build + host tests)
         working-directory: embedded
-        run: make check
+        run: make check-${{ matrix.leg }}
 
-      # Advisory only: none of these fail the firmware gate. The required
-      # `make check` above stays untouched and gating. Tool installs are
-      # best-effort (continue-on-error) — check-static members skip
-      # gracefully when tools are absent.
+      # Advisory only: none of these fail the firmware gate. Each leg's
+      # `make check-<leg>` above stays untouched and gating. Run once
+      # (core leg) instead of per leg. Tool installs are best-effort
+      # (continue-on-error) — check-static members skip gracefully when
+      # tools are absent.
       - name: Install optional analysis tools (best-effort, never gating)
+        if: matrix.leg == 'core'
         continue-on-error: true
         run: sudo apt-get update && sudo apt-get install -y clang-tidy cppcheck
 
       - name: Size report (advisory)
+        if: matrix.leg == 'core'
         working-directory: embedded
         continue-on-error: true
         run: make size-report > size-report.log 2>&1; CODE=$?; cat size-report.log; exit $CODE
 
       - name: Static analysis rollup (advisory)
+        if: matrix.leg == 'core'
         working-directory: embedded
         continue-on-error: true
         run: make check-static > check-static.log 2>&1; CODE=$?; cat check-static.log; exit $CODE
 
       - name: ASan host tests, core + head (advisory)
+        if: matrix.leg == 'core'
         working-directory: embedded
         continue-on-error: true
         run: |
@@ -70,7 +80,7 @@ jobs:
           exit $((C1 || C2))
 
       - name: Upload analysis artifacts
-        if: always()
+        if: always() && matrix.leg == 'core'
         uses: actions/upload-artifact@v4
         with:
           name: embedded-static-analysis
