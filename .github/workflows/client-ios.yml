@@ -96,6 +96,9 @@ jobs:
         # IndexStore. Generic platform destination: this job only compiles,
         # never launches, so it must not depend on whichever named devices
         # the image happens to ship (e.g. no iPhone 16 on macos-26 runners).
+        # ARCHS=arm64: the Kotlin-built shared framework ships only the
+        # arm64 slice, so an x86_64 compile would fall back to ObjC headers
+        # and lose SKIE's AsyncSequence support.
         # Local `make ios` keeps the explicit iPhone 16 destination.
         run: >
           xcodebuild -workspace iosApp.xcworkspace -scheme iosApp
@@ -103,6 +106,8 @@ jobs:
           -destination 'generic/platform=iOS Simulator'
           -parallelizeTargets -jobs $(sysctl -n hw.ncpu)
           COMPILER_INDEX_STORE_ENABLE=NO
+          ARCHS=arm64
+          ONLY_ACTIVE_ARCH=YES
           build
 
       # Report-only: mirrors the simulator build above (identical
@@ -118,6 +123,8 @@ jobs:
           -destination 'generic/platform=iOS Simulator'
           -parallelizeTargets -jobs $(sysctl -n hw.ncpu)
           COMPILER_INDEX_STORE_ENABLE=NO
+          ARCHS=arm64
+          ONLY_ACTIVE_ARCH=YES
           analyze 2>&1 | tee ../../analyze.log; test ${PIPESTATUS[0]} -eq 0
 
       # Report-only: project is on Swift 6, which implies complete checking,
@@ -131,6 +138,8 @@ jobs:
           -destination 'generic/platform=iOS Simulator'
           -parallelizeTargets -jobs $(sysctl -n hw.ncpu)
           COMPILER_INDEX_STORE_ENABLE=NO
+          ARCHS=arm64
+          ONLY_ACTIVE_ARCH=YES
           SWIFT_STRICT_CONCURRENCY=complete
           build 2>&1 | tee ../../concurrency.log; test ${PIPESTATUS[0]} -eq 0
 
@@ -212,6 +221,8 @@ jobs:
           -destination 'generic/platform=iOS Simulator'
           -parallelizeTargets -jobs $(sysctl -n hw.ncpu)
           COMPILER_INDEX_STORE_ENABLE=YES
+          ARCHS=arm64
+          ONLY_ACTIVE_ARCH=YES
           build 2>&1 | tee ../../periphery-build.log; test ${PIPESTATUS[0]} -eq 0
 
       - name: Periphery scan (report-only)
