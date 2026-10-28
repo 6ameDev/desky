@@ -4,8 +4,10 @@ name: CI
 on:
   push:
     branches: [v2]
+    paths: [embedded/**, .github/workflows/ci.yml]
   pull_request:
     branches: [v2]
+    paths: [embedded/**, .github/workflows/ci.yml]
 
 env:
   # platformio.ini injects this as a build macro; a dummy keeps CI hermetic.
