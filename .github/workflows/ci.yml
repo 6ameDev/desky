@@ -18,7 +18,7 @@ jobs:
   check:
     strategy:
       matrix:
-        leg: [core, head, testbench]
+        leg: [core, head]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

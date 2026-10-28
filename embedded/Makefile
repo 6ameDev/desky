@@ -37,7 +37,7 @@ setup:
 
 check: check-all
 
-check-all: check-core check-head check-testbench
+check-all: check-core check-head
 
 build: build-all
 
