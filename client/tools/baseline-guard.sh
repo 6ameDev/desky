@@ -30,7 +30,7 @@ check() {
         fail=1
         return
     fi
-    count=$(grep -c "$pattern" "$file")
+    count=$(grep -c "$pattern" "$file" || true)
     echo "baseline-guard: $name $count (cap $cap) $file"
     if [ "$count" -gt "$cap" ]; then
         echo "baseline-guard: FAIL $name baseline grew ($count > cap $cap)" >&2
