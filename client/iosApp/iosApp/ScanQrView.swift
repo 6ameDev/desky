@@ -124,7 +124,7 @@ private struct QrCameraView: UIViewControllerRepresentable {
     }
 }
 
-private final class QrCameraController: UIViewController, AVCaptureVideoDataOutputSampleBufferDelegate {
+private final class QrCameraController: UIViewController {
     var onDecode: ((String) -> Void)?
 
     private let session = AVCaptureSession()
@@ -211,3 +211,9 @@ private final class QrCameraController: UIViewController, AVCaptureVideoDataOutp
         onDecode?(raw)
     }
 }
+
+// The SDK marks this delegate nonisolated while UIKit infers the class
+// MainActor-isolated; @preconcurrency keeps Swift 5 checking for the
+// crossing. Sound by queue confinement: the delegate fires only on the
+// serial scan queue, UI state hops to main via onDecode's Task.
+extension QrCameraController: @preconcurrency AVCaptureVideoDataOutputSampleBufferDelegate {}

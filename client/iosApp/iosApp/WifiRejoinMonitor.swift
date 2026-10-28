@@ -29,7 +29,11 @@ extension Notification.Name {
 /// monitor typically never reports `.satisfied` there, so the "not on
 /// Wi-Fi" hint stays visible under sim — untested on simulator, verify
 /// on device.
-final class WifiRejoinMonitor: ObservableObject {
+/// Concurrency: `@unchecked Sendable` is sound here by confinement, not by
+/// locking — `lastFire` is touched only on the serial monitor `queue`,
+/// `isOnWifi` only on main (`@Published` requirement), `started` once at
+/// startup, the rest is immutable. Keep it that way if this class changes.
+final class WifiRejoinMonitor: ObservableObject, @unchecked Sendable {
     static let shared = WifiRejoinMonitor()
 
     /// Matches `WifiSocketBinder.REJOIN_DEBOUNCE_MS`: flaps inside this
