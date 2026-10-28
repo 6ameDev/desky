@@ -12,7 +12,7 @@ export PATH := $(HOME)/Library/Android/sdk/cmdline-tools/latest/bin:$(HOME)/Libr
 
 APK = androidApp/build/outputs/apk/debug/androidApp-debug.apk
 
-.PHONY: test android install-android ios podspec lint detekt ktlint kover vuln baseline-guard check help
+.PHONY: test android install-android ios podspec lint detekt ktlint kover vuln baseline-guard check check-android help
 
 help:
 	@echo "test             shared unit tests (fast gate)"
@@ -25,6 +25,7 @@ help:
 	@echo "ktlint           format check (advisory, violations logged)"
 	@echo "kover            coverage report (no bounds, see build/reports/kover)"
 	@echo "check            shared tests + assemble + APK + lint (gating, baselined)"
+	@echo "check-android    fast Android iteration gate (jvmTest + lintDebug + assembleDebug)"
 	@echo "vuln             dependency vulnerability scan (advisory, SARIF in build/osv-scanner)"
 	@echo "baseline-guard no-growth gate on lint/detekt baselines (caps in tools/baseline-guard.sh)"
 
@@ -90,3 +91,6 @@ baseline-guard:
 
 check:
 	./gradlew :shared:jvmTest :shared:assemble :androidApp:assembleDebug :androidApp:lintDebug --console=plain
+
+check-android:
+	./gradlew :shared:jvmTest :androidApp:lintDebug :androidApp:assembleDebug --console=plain
