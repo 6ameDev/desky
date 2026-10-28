@@ -43,11 +43,7 @@ jobs:
       run:
         working-directory: client
     steps:
-      # Full history: the Kover delta step diffs origin/<base>...HEAD, which
-      # needs the base branch present (default checkout is depth 1).
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - name: Set up JDK 17 (Temurin, matches client/.mise.toml)
         uses: actions/setup-java@v5
@@ -136,23 +132,6 @@ jobs:
         with:
           name: kover-report
           path: client/shared/build/reports/kover/
-
-      # Advisory: changed-lines coverage for this PR (tools/kover_delta.py).
-      # Report-only like the Kover report above — never fails the build;
-      # gating waits for triaged delta data.
-      - name: Kover delta coverage (advisory)
-        continue-on-error: true
-        run: |
-          python3 tools/kover_delta.py
-          echo "--- delta report ---"
-          cat build/kover-delta/delta.txt
-
-      - name: Upload Kover delta report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: kover-delta
-          path: client/build/kover-delta/
 
       # Advisory: warn-only via the count/threshold switch in the root
       # build file (findings land in the report, never fail the build).
