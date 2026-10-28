@@ -93,11 +93,14 @@ jobs:
         working-directory: client/iosApp
         # CI-only flags (never in the pbxproj: index-store off would kill
         # local Xcode intelligence): parallelize targets, all cores, skip
-        # IndexStore, arm64-only destination.
+        # IndexStore. Generic platform destination: this job only compiles,
+        # never launches, so it must not depend on whichever named devices
+        # the image happens to ship (e.g. no iPhone 16 on macos-26 runners).
+        # Local `make ios` keeps the explicit iPhone 16 destination.
         run: >
           xcodebuild -workspace iosApp.xcworkspace -scheme iosApp
           -configuration Debug
-          -destination 'platform=iOS Simulator,name=iPhone 16,arch=arm64'
+          -destination 'generic/platform=iOS Simulator'
           -parallelizeTargets -jobs $(sysctl -n hw.ncpu)
           COMPILER_INDEX_STORE_ENABLE=NO
           build
@@ -112,7 +115,7 @@ jobs:
         run: >
           xcodebuild -workspace iosApp.xcworkspace -scheme iosApp
           -configuration Debug
-          -destination 'platform=iOS Simulator,name=iPhone 16,arch=arm64'
+          -destination 'generic/platform=iOS Simulator'
           -parallelizeTargets -jobs $(sysctl -n hw.ncpu)
           COMPILER_INDEX_STORE_ENABLE=NO
           analyze 2>&1 | tee ../../analyze.log; test ${PIPESTATUS[0]} -eq 0
@@ -125,7 +128,7 @@ jobs:
         run: >
           xcodebuild -workspace iosApp.xcworkspace -scheme iosApp
           -configuration Debug
-          -destination 'platform=iOS Simulator,name=iPhone 16,arch=arm64'
+          -destination 'generic/platform=iOS Simulator'
           -parallelizeTargets -jobs $(sysctl -n hw.ncpu)
           COMPILER_INDEX_STORE_ENABLE=NO
           SWIFT_STRICT_CONCURRENCY=complete
@@ -206,7 +209,7 @@ jobs:
         run: >
           xcodebuild -workspace iosApp.xcworkspace -scheme iosApp
           -configuration Debug
-          -destination 'platform=iOS Simulator,name=iPhone 16,arch=arm64'
+          -destination 'generic/platform=iOS Simulator'
           -parallelizeTargets -jobs $(sysctl -n hw.ncpu)
           COMPILER_INDEX_STORE_ENABLE=YES
           build 2>&1 | tee ../../periphery-build.log; test ${PIPESTATUS[0]} -eq 0

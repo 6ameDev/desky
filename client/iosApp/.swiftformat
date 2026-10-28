@@ -4,7 +4,6 @@
 --maxwidth 140
 --self remove
 --importgrouping alpha
---decimalgrouping 3-3-3
 --exponentcase lower
 --ranges spaced
 --trimwhitespace always
