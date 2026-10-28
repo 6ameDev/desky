@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
   push:
     branches: [v2]
-    paths: [client/iosApp/**, client/shared/**, client/gradle/libs.versions.toml, .github/workflows/client-ios-periphery.yml]
+    paths: [client/iosApp/**, client/shared/**, client/gradle/**, client/build-logic/**, client/settings.gradle.kts, client/build.gradle.kts, client/gradle.properties, .github/workflows/client-ios-periphery.yml]
 
 # A second push cancels the stale run instead of queueing behind it.
 concurrency:
