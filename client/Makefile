@@ -12,7 +12,7 @@ export PATH := $(HOME)/Library/Android/sdk/cmdline-tools/latest/bin:$(HOME)/Libr
 
 APK = androidApp/build/outputs/apk/debug/androidApp-debug.apk
 
-.PHONY: test android install-android ios podspec lint detekt ktlint kover vuln baseline-guard check help
+.PHONY: test android install-android ios podspec lint detekt ktlint kover kover-delta vuln baseline-guard check help
 
 help:
 	@echo "test             shared unit tests (fast gate)"
@@ -24,6 +24,7 @@ help:
 	@echo "detekt           static analysis (gating, baselined)"
 	@echo "ktlint           format check (advisory, violations logged)"
 	@echo "kover            coverage report (no bounds, see build/reports/kover)"
+	@echo "kover-delta      changed-lines coverage for this diff (advisory, never gates)"
 	@echo "check            shared tests + assemble + APK + lint (gating, baselined)"
 	@echo "vuln             dependency vulnerability scan (advisory, SARIF in build/osv-scanner)"
 	@echo "baseline-guard no-growth gate on lint/detekt baselines (caps in tools/baseline-guard.sh)"
@@ -67,6 +68,13 @@ ktlint:
 # revisit aggregation before setting any bound.
 kover:
 	./gradlew :shared:koverXmlReport --console=plain
+
+# Kover delta: changed-lines coverage for this diff (tools/kover_delta.py),
+# advisory only — standalone, deliberately NOT part of `check` (no gate
+# until delta data is triaged; the script always exits 0).
+kover-delta:
+	./gradlew :shared:koverXmlReport --console=plain
+	python3 tools/kover_delta.py
 
 # Vulnerability scanning (advisory only). Target is named `vuln` (not
 # `osv-scan`): short name matching the detekt/ktlint/kover group. Standalone by design — NOT part of `check`, and

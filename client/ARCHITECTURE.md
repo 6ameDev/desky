@@ -81,7 +81,7 @@ Static analysis gates (gating vs advisory):
 
 Promotion checklist (each line flips independently when its condition holds):
 - ktlint: triage the backlog → run `./gradlew ktlintFormat` → verify `ktlintCheck` clean → flip `ignoreFailures` to false in `shared/` + `androidApp/` build files.
-- Kover: set verification bounds only after N releases of stable coverage data.
+- Kover: set verification bounds only after N releases of stable coverage data. Delta coverage (`make kover-delta`, `tools/kover_delta.py`) reports the line coverage of added/modified `shared/src` lines per diff against the Kover XML, with an informational 80% floor for new code that never fails the build; the text report lands in `build/kover-delta/` locally and as a CI artifact.
 - OSV: replace the warn-only switch with a JSON threshold + real bound, add a scheduled scan.
 - iOS: trip each tool to gating only after a local baseline is triaged (same absorb-then-gate pattern as lint/detekt).
 
