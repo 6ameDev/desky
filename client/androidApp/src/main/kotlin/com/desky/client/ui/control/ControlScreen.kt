@@ -30,6 +30,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -178,7 +179,7 @@ private fun ExpressionPicker(
     ) {
         Text("Expressions")
         if (entries.isEmpty()) return@Column
-        var selectedIndex by remember { mutableStateOf(0) }
+        var selectedIndex by remember { mutableIntStateOf(0) }
         val selected = selectedIndex.coerceIn(entries.indices)
         // Circular strip: large virtual count with modulo indexing, parked
         // in the middle so both directions scroll seamlessly (no edge).
