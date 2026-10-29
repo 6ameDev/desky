@@ -4,7 +4,7 @@
 # Caps (recounted from the current tree; caps only ever decrease):
 #   LINT_CAP=0     ("^ *<issue$" entries in androidApp/lint-baseline.xml;
 #                   the "<issues" root tag is excluded by the anchor)
-#   DETEKT_SHARED_CAP=191  ("<ID>...</ID>" in config/detekt/baseline-shared.xml)
+#   DETEKT_SHARED_CAP=190  ("<ID>...</ID>" in config/detekt/baseline-shared.xml)
 #   DETEKT_ANDROID_CAP=7   ("<ID>...</ID>" in config/detekt/baseline-android.xml)
 #   (Detekt keeps one baseline per module: a single shared file made
 #   :shared:detektBaseline and :androidApp:detektBaseline race last-wins,
@@ -25,7 +25,7 @@ LINT_BASELINE="$CLIENT/androidApp/lint-baseline.xml"
 DETEKT_SHARED_BASELINE="$CLIENT/config/detekt/baseline-shared.xml"
 DETEKT_ANDROID_BASELINE="$CLIENT/config/detekt/baseline-android.xml"
 LINT_CAP=0
-DETEKT_SHARED_CAP=191
+DETEKT_SHARED_CAP=190
 DETEKT_ANDROID_CAP=7
 
 fail=0
