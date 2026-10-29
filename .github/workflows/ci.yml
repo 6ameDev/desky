@@ -60,11 +60,14 @@ jobs:
         continue-on-error: true
         run: sudo apt-get update && sudo apt-get install -y clang-tidy cppcheck
 
+      # Per-leg census: each leg reuses the firmware its own gate step
+      # just built (SCons skips up-to-date work in seconds), instead of one
+      # leg rebuilding the other firmware. Local `make size-report` still
+      # covers everything at once.
       - name: Size report (advisory)
-        if: matrix.leg == 'core'
         working-directory: embedded
         continue-on-error: true
-        run: make size-report > size-report.log 2>&1; CODE=$?; cat size-report.log; exit $CODE
+        run: make -C ${{ matrix.leg }} size-report > size-report-${{ matrix.leg }}.log 2>&1; CODE=$?; cat size-report-${{ matrix.leg }}.log; exit $CODE
 
       - name: Static analysis rollup (advisory)
         if: matrix.leg == 'core'
@@ -82,12 +85,12 @@ jobs:
           exit $((C1 || C2))
 
       - name: Upload analysis artifacts
-        if: always() && matrix.leg == 'core'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: embedded-static-analysis
+          name: embedded-static-analysis-${{ matrix.leg }}
           path: |
-            embedded/size-report.log
+            embedded/size-report-${{ matrix.leg }}.log
             embedded/check-static.log
             embedded/asan-core.log
             embedded/asan-head.log
