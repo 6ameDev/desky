@@ -59,9 +59,9 @@ class SettingsViewModelTest {
 
         // Gate the save so the in-flight window is observable.
         repo.saveGate = CompletableDeferred()
-        viewModel.onSpeedLimit(0.5f)
+        viewModel.onSpeedLimit(TEST_SPEED_LIMIT)
         // State updates synchronously; the save is parked on the gate.
-        assertEquals(0.5f, viewModel.state.value.config.speedLimit)
+        assertEquals(TEST_SPEED_LIMIT, viewModel.state.value.config.speedLimit)
         main.runCurrent()
         assertTrue(viewModel.state.value.isSaving)
         assertTrue(repo.saved.isEmpty())
@@ -72,7 +72,7 @@ class SettingsViewModelTest {
         assertFalse(viewModel.state.value.isSaving)
         assertNull(viewModel.state.value.error)
         assertEquals(1, repo.saved.size)
-        assertEquals(0.5f, repo.saved.last().speedLimit)
+        assertEquals(TEST_SPEED_LIMIT, repo.saved.last().speedLimit)
     }
 
     @Test
@@ -81,19 +81,19 @@ class SettingsViewModelTest {
         val viewModel = vm(repo)
         main.runCurrent()
 
-        viewModel.onLedProfile(3)
-        viewModel.onPid(1f, 0.5f, 0.1f)
+        viewModel.onLedProfile(TEST_LED_PROFILE)
+        viewModel.onPid(1f, TEST_PID_I, TEST_PID_D)
         viewModel.onWifiSsid("desky-bench")
         main.advanceUntilIdle()
 
         val config = viewModel.state.value.config
-        assertEquals(3, config.ledProfile)
+        assertEquals(TEST_LED_PROFILE, config.ledProfile)
         assertEquals(1f, config.pidP)
-        assertEquals(0.5f, config.pidI)
-        assertEquals(0.1f, config.pidD)
+        assertEquals(TEST_PID_I, config.pidI)
+        assertEquals(TEST_PID_D, config.pidD)
         assertEquals("desky-bench", config.wifiSsid)
         // Every edit persisted (serialized, none dropped).
-        assertEquals(3, repo.saved.size)
+        assertEquals(EXPECTED_SAVE_COUNT, repo.saved.size)
         assertEquals(config, repo.saved.last())
         assertFalse(viewModel.state.value.isSaving)
     }
@@ -106,11 +106,11 @@ class SettingsViewModelTest {
         val viewModel = vm(repo)
         main.runCurrent()
 
-        viewModel.onSpeedLimit(0.4f)
+        viewModel.onSpeedLimit(FAILING_SPEED_LIMIT)
         main.advanceUntilIdle()
 
         // State still reflects the edit; the error reports the failed save.
-        assertEquals(0.4f, viewModel.state.value.config.speedLimit)
+        assertEquals(FAILING_SPEED_LIMIT, viewModel.state.value.config.speedLimit)
         assertFalse(viewModel.state.value.isSaving)
         assertTrue(viewModel.state.value.error!!.contains("db locked"))
     }
@@ -120,7 +120,7 @@ class SettingsViewModelTest {
         val viewModel = vm(FakeSettingsRepository())
         main.runCurrent()
 
-        viewModel.onSpeedLimit(9f)
+        viewModel.onSpeedLimit(INVALID_SPEED_LIMIT)
         main.advanceUntilIdle()
 
         // Rejected by model validation: config untouched, error set.
@@ -156,5 +156,15 @@ class SettingsViewModelTest {
 
         assertFalse(viewModel.state.value.unpaired)
         assertNotNull(viewModel.state.value.error)
+    }
+
+    private companion object {
+        const val TEST_SPEED_LIMIT = 0.5f
+        const val FAILING_SPEED_LIMIT = 0.4f
+        const val INVALID_SPEED_LIMIT = 9f
+        const val TEST_LED_PROFILE = 3
+        const val EXPECTED_SAVE_COUNT = 3
+        const val TEST_PID_I = 0.5f
+        const val TEST_PID_D = 0.1f
     }
 }

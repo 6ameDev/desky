@@ -8,7 +8,31 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-private fun Byte.unsigned(): Int = this.toInt() and 0xFF
+private const val BYTE_MASK = 0xFF
+private const val HEX_RADIX = 16
+private const val PSK_BYTE_LENGTH = 16
+private const val AUTH_TAG_SIZE = 6
+private const val SHORT_PSK_SIZE = 8
+private const val ROBOT_ERROR_REASON = 4
+private const val LOCKED_RETRY_SECONDS = 30
+private const val EXPECTED_PAIR_REQ_HEADER = 0x50
+private const val EXPECTED_PAIR_OK_HEADER = 0x51
+private const val EXPECTED_PAIR_ERR_HEADER = 0x52
+private const val EXPECTED_PAIR_REQ_SIZE = 12
+private const val EXPECTED_PAIR_OK_SIZE = 38
+private const val EXPECTED_PAIR_OK_SIZE_V11 = 39
+private const val EXPECTED_PAIR_ERR_SIZE = 4
+private const val EXPECTED_PAIR_REFRESH_REQ_HEADER = 0x53
+private const val EXPECTED_PAIR_REFRESH_REQ_SIZE = 14
+private const val EXPECTED_PAIR_REFRESH_ACK_HEADER = 0x54
+private const val EXPECTED_PAIR_REFRESH_ACK_SIZE = 10
+private const val EXPECTED_UNPAIR_HEADER = 0xAD
+private const val EXPECTED_UNPAIR_SIZE = 12
+private const val TOO_SHORT_FRAME_SIZE = 3
+private const val UNPAIR_HMAC_MSG_SIZE = 10
+private const val REFRESH_HMAC_MSG_SIZE = 17
+
+private fun Byte.unsigned(): Int = this.toInt() and BYTE_MASK
 
 private fun xorOf(bytes: ByteArray, len: Int): Int {
     var sum = 0
@@ -19,7 +43,7 @@ private fun xorOf(bytes: ByteArray, len: Int): Int {
 private fun hex(s: String): ByteArray {
     require(s.length % 2 == 0)
     return ByteArray(s.length / 2) { i ->
-        s.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        s.substring(i * 2, i * 2 + 2).toInt(HEX_RADIX).toByte()
     }
 }
 
@@ -27,17 +51,17 @@ class PairingPacketsTest {
 
     @Test
     fun constants() {
-        assertEquals(0x50, PAIR_REQ_HEADER)
-        assertEquals(0x51, PAIR_OK_HEADER)
-        assertEquals(0x52, PAIR_ERR_HEADER)
-        assertEquals(12, PAIR_REQ_SIZE)
-        assertEquals(38, PAIR_OK_SIZE)
-        assertEquals(39, PAIR_OK_SIZE_V11)
-        assertEquals(4, PAIR_ERR_SIZE)
-        assertEquals(0x53, PAIR_REFRESH_REQ_HEADER)
-        assertEquals(14, PAIR_REFRESH_REQ_SIZE)
-        assertEquals(0x54, PAIR_REFRESH_ACK_HEADER)
-        assertEquals(10, PAIR_REFRESH_ACK_SIZE)
+        assertEquals(EXPECTED_PAIR_REQ_HEADER, PAIR_REQ_HEADER)
+        assertEquals(EXPECTED_PAIR_OK_HEADER, PAIR_OK_HEADER)
+        assertEquals(EXPECTED_PAIR_ERR_HEADER, PAIR_ERR_HEADER)
+        assertEquals(EXPECTED_PAIR_REQ_SIZE, PAIR_REQ_SIZE)
+        assertEquals(EXPECTED_PAIR_OK_SIZE, PAIR_OK_SIZE)
+        assertEquals(EXPECTED_PAIR_OK_SIZE_V11, PAIR_OK_SIZE_V11)
+        assertEquals(EXPECTED_PAIR_ERR_SIZE, PAIR_ERR_SIZE)
+        assertEquals(EXPECTED_PAIR_REFRESH_REQ_HEADER, PAIR_REFRESH_REQ_HEADER)
+        assertEquals(EXPECTED_PAIR_REFRESH_REQ_SIZE, PAIR_REFRESH_REQ_SIZE)
+        assertEquals(EXPECTED_PAIR_REFRESH_ACK_HEADER, PAIR_REFRESH_ACK_HEADER)
+        assertEquals(EXPECTED_PAIR_REFRESH_ACK_SIZE, PAIR_REFRESH_ACK_SIZE)
         assertEquals("desky.local", ROBOT_HOST)
     }
 
@@ -74,7 +98,7 @@ class PairingPacketsTest {
         val tag = hex("dd497abf431870b75f5722754aa2a105")
         val body = byteArrayOf(PAIR_OK_HEADER.toByte()) + serverNonce + ct + tag
         var xor = 0
-        for (b in body) xor = xor xor (b.toInt() and 0xFF)
+        for (b in body) xor = xor xor (b.toInt() and BYTE_MASK)
         val pkt = body + byteArrayOf(xor.toByte())
 
         assertEquals(PAIR_OK_SIZE, pkt.size)
@@ -93,7 +117,7 @@ class PairingPacketsTest {
         val tag = hex("e211690852a899b6d4062fbf1058876c")
         val body = byteArrayOf(PAIR_OK_HEADER.toByte()) + serverNonce + ct + tag
         var xor = 0
-        for (b in body) xor = xor xor (b.toInt() and 0xFF)
+        for (b in body) xor = xor xor (b.toInt() and BYTE_MASK)
         val pkt = body + byteArrayOf(xor.toByte())
 
         assertEquals(PAIR_OK_SIZE_V11, pkt.size)
@@ -106,9 +130,9 @@ class PairingPacketsTest {
     @Test
     fun decodePairOkRejects() {
         val good = run {
-            val body = byteArrayOf(PAIR_OK_HEADER.toByte()) + ByteArray(36) { it.toByte() }
+            val body = byteArrayOf(PAIR_OK_HEADER.toByte()) + ByteArray(PAIR_OK_SIZE - 2) { it.toByte() }
             var xor = 0
-            for (b in body) xor = xor xor (b.toInt() and 0xFF)
+            for (b in body) xor = xor xor (b.toInt() and BYTE_MASK)
             body + byteArrayOf(xor.toByte())
         }
         assertNull(PairingPacketCodec.decodePairOk(byteArrayOf()))
@@ -132,12 +156,12 @@ class PairingPacketsTest {
         // reason=locked(1), retry_s=30: bytes 52 01 1E, XOR 0x4D.
         val pkt = byteArrayOf(0x52.toByte(), 0x01.toByte(), 0x1E.toByte(), 0x4D.toByte())
         assertEquals(xorOf(pkt, PAIR_ERR_SIZE - 1), pkt[PAIR_ERR_SIZE - 1].unsigned())
-        assertEquals(1 to 30, PairingPacketCodec.decodePairErr(pkt))
+        assertEquals(1 to LOCKED_RETRY_SECONDS, PairingPacketCodec.decodePairErr(pkt))
         // Every documented reason round-trips (0-3 frozen, 4 M11 additive).
-        for (reason in 0..4) {
+        for (reason in 0..ROBOT_ERROR_REASON) {
             val body = byteArrayOf(PAIR_ERR_HEADER.toByte(), reason.toByte(), 0x00.toByte())
             var xor = 0
-            for (b in body) xor = xor xor (b.toInt() and 0xFF)
+            for (b in body) xor = xor xor (b.toInt() and BYTE_MASK)
             val framed = body + byteArrayOf(xor.toByte())
             assertEquals(reason to 0, PairingPacketCodec.decodePairErr(framed), "reason=$reason")
         }
@@ -150,17 +174,17 @@ class PairingPacketsTest {
         // wrapPsk fail after tryCode kOk); old 0-3 vectors still decode above.
         val pkt = byteArrayOf(0x52.toByte(), 0x04.toByte(), 0x00.toByte(), 0x56.toByte())
         assertEquals(xorOf(pkt, PAIR_ERR_SIZE - 1), pkt[PAIR_ERR_SIZE - 1].unsigned())
-        assertEquals(4 to 0, PairingPacketCodec.decodePairErr(pkt))
+        assertEquals(ROBOT_ERROR_REASON to 0, PairingPacketCodec.decodePairErr(pkt))
     }
     @Test
     fun decodePairErrRejects() {
         val good = byteArrayOf(0x52.toByte(), 0x00.toByte(), 0x00.toByte(), 0x52.toByte())
         assertNull(PairingPacketCodec.decodePairErr(byteArrayOf()))
-        assertNull(PairingPacketCodec.decodePairErr(good.copyOf(3)))
+        assertNull(PairingPacketCodec.decodePairErr(good.copyOf(TOO_SHORT_FRAME_SIZE)))
         assertNull(PairingPacketCodec.decodePairErr(good + byteArrayOf(0x00)))
         val badHeader = good.copyOf().also { it[0] = PAIR_OK_HEADER.toByte() }
         assertNull(PairingPacketCodec.decodePairErr(badHeader))
-        val badChecksum = good.copyOf().also { it[3] = (it[3] + 1).toByte() }
+        val badChecksum = good.copyOf().also { it[PAIR_ERR_SIZE - 1] = (it[PAIR_ERR_SIZE - 1] + 1).toByte() }
         assertNull(PairingPacketCodec.decodePairErr(badChecksum))
         val badPayload = good.copyOf().also { it[1] = (it[1] + 1).toByte() }
         assertNull(PairingPacketCodec.decodePairErr(badPayload))
@@ -171,8 +195,8 @@ class UnpairPacketTest {
 
     @Test
     fun constants() {
-        assertEquals(0xAD, UNPAIR_HEADER)
-        assertEquals(12, UNPAIR_SIZE)
+        assertEquals(EXPECTED_UNPAIR_HEADER, UNPAIR_HEADER)
+        assertEquals(EXPECTED_UNPAIR_SIZE, UNPAIR_SIZE)
     }
 
     /**
@@ -188,11 +212,11 @@ class UnpairPacketTest {
         val counter = 1u
 
         val hmacInput = "UNPAIR".encodeToByteArray() + byteArrayOf(0x00, 0x00, 0x00, 0x01)
-        assertEquals(10, hmacInput.size)
-        val tag = hmacSha256(psk, hmacInput).copyOfRange(0, 6)
+        assertEquals(UNPAIR_HMAC_MSG_SIZE, hmacInput.size)
+        val tag = hmacSha256(psk, hmacInput).copyOfRange(0, AUTH_TAG_SIZE)
 
         val body = byteArrayOf(0xAD.toByte(), 0x00, 0x00, 0x00, 0x01) + tag
-        assertEquals(11, body.size)
+        assertEquals(UNPAIR_SIZE - 1, body.size)
         val expected = body + byteArrayOf(xorOf(body, body.size).toByte())
 
         val actual = encodeUnpair(psk, counter)
@@ -211,7 +235,7 @@ class UnpairPacketTest {
 
     @Test
     fun counterLaysOutBigEndian() = kotlinx.coroutines.test.runTest {
-        val psk = ByteArray(16) { it.toByte() }
+        val psk = ByteArray(PSK_BYTE_LENGTH) { it.toByte() }
         val pkt = encodeUnpair(psk, 0x01020304u)
         assertEquals(0xAD, pkt[0].unsigned())
         assertEquals(0x01, pkt[1].unsigned())
@@ -225,7 +249,7 @@ class UnpairPacketTest {
     fun rejectsShortPsk() = kotlinx.coroutines.test.runTest {
         var threw = false
         try {
-            encodeUnpair(ByteArray(8), 1u)
+            encodeUnpair(ByteArray(SHORT_PSK_SIZE), 1u)
         } catch (e: IllegalArgumentException) {
             threw = true
         }
@@ -247,12 +271,12 @@ class PairRefreshPacketTest {
         val oldPsk = hex("00112233445566778899aabbccddeeff")
 
         val hmacInput = "PAIRREFRESH".encodeToByteArray() + byteArrayOf(0x00, 0x01, 0x00, 0x00, 0x00, 0x64)
-        assertEquals(17, hmacInput.size)
-        val tag = hmacSha256(oldPsk, hmacInput).copyOfRange(0, 6)
+        assertEquals(REFRESH_HMAC_MSG_SIZE, hmacInput.size)
+        val tag = hmacSha256(oldPsk, hmacInput).copyOfRange(0, AUTH_TAG_SIZE)
         assertContentEquals(hex("ecac8eb7c93c"), tag)
 
         val body = byteArrayOf(0x53.toByte(), 0x00, 0x01, 0x00, 0x00, 0x00, 0x64) + tag
-        assertEquals(13, body.size)
+        assertEquals(PAIR_REFRESH_REQ_SIZE - 1, body.size)
         val expected = body + byteArrayOf(xorOf(body, body.size).toByte())
 
         val actual = encodePairRefreshReq(oldPsk, 1u, 100u)
@@ -266,7 +290,7 @@ class PairRefreshPacketTest {
 
     @Test
     fun reqEraAndCounterLayOutBigEndian() = kotlinx.coroutines.test.runTest {
-        val psk = ByteArray(16) { it.toByte() }
+        val psk = ByteArray(PSK_BYTE_LENGTH) { it.toByte() }
         val pkt = encodePairRefreshReq(psk, 0x0102u, 0x01020304u)
         assertEquals(0x53, pkt[0].unsigned())
         assertEquals(0x01, pkt[1].unsigned())
@@ -282,7 +306,7 @@ class PairRefreshPacketTest {
     fun reqRejectsShortPsk() = kotlinx.coroutines.test.runTest {
         var threw = false
         try {
-            encodePairRefreshReq(ByteArray(8), 1u, 1u)
+            encodePairRefreshReq(ByteArray(SHORT_PSK_SIZE), 1u, 1u)
         } catch (e: IllegalArgumentException) {
             threw = true
         }

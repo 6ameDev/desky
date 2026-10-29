@@ -53,6 +53,8 @@ import com.desky.shared.presentation.RobotControlViewModel
 import org.koin.androidx.compose.koinViewModel
 import kotlin.math.roundToInt
 
+private const val VIRTUAL_COUNT_MULTIPLIER = 1000
+
 @Composable
 fun ControlScreen(
     onOpenSettings: () -> Unit,
@@ -183,7 +185,7 @@ private fun ExpressionPicker(
         val selected = selectedIndex.coerceIn(entries.indices)
         // Circular strip: large virtual count with modulo indexing, parked
         // in the middle so both directions scroll seamlessly (no edge).
-        val virtualCount = entries.size * 1000
+        val virtualCount = entries.size * VIRTUAL_COUNT_MULTIPLIER
         val startIndex = virtualCount / 2 - (virtualCount / 2 % entries.size)
         val listState = rememberLazyListState(initialFirstVisibleItemIndex = startIndex)
         LazyRow(

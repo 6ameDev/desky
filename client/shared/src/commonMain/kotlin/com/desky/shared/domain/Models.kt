@@ -1,5 +1,9 @@
 package com.desky.shared.domain
 
+private const val MAX_ROBOT_MODE_BITS = 3
+private const val MAX_BYTE_VALUE = 255
+private const val MAX_DISTANCE_MM = 65535
+
 /**
  * Robot operating mode. Wire values mirror the firmware
  * (`SystemState::RobotMode` / `udpstatus` mode bits 2-3): 0..3.
@@ -8,14 +12,14 @@ enum class RobotMode(val bits: Int) {
     MANUAL(0),
     AUTONOMOUS(1),
     LOW_POWER(2),
-    EMERGENCY(3);
+    EMERGENCY(MAX_ROBOT_MODE_BITS);
 
     fun toBits(): Int = bits
 
     companion object {
         /** Strict 0..3 mapping; throws [IllegalArgumentException] otherwise. */
         fun fromBits(bits: Int): RobotMode {
-            require(bits in 0..3) { "RobotMode bits out of range: $bits" }
+            require(bits in 0..MAX_ROBOT_MODE_BITS) { "RobotMode bits out of range: $bits" }
             return entries.first { it.bits == bits }
         }
     }
@@ -34,7 +38,7 @@ data class ControlCommand(
     init {
         require(throttle in -1f..1f) { "throttle out of range: $throttle" }
         require(steering in -1f..1f) { "steering out of range: $steering" }
-        require(flags in 0..255) { "flags out of range: $flags" }
+        require(flags in 0..MAX_BYTE_VALUE) { "flags out of range: $flags" }
     }
 }
 
@@ -55,7 +59,7 @@ data class Telemetry(
     val manual: Boolean = false,
 ) {
     init {
-        require(distanceMm in 0..65535) { "distanceMm out of range: $distanceMm" }
+        require(distanceMm in 0..MAX_DISTANCE_MM) { "distanceMm out of range: $distanceMm" }
     }
 }
 
@@ -127,8 +131,8 @@ data class ExpressionEntry(
     val name: String,
 ) {
     init {
-        require(id in 0..255) { "expression id out of range: $id" }
-        require(flags in 0..255) { "expression flags out of range: $flags" }
+        require(id in 0..MAX_BYTE_VALUE) { "expression id out of range: $id" }
+        require(flags in 0..MAX_BYTE_VALUE) { "expression flags out of range: $flags" }
     }
 
     /** True while the entry-flags play-once bit (bit 0) is set. */

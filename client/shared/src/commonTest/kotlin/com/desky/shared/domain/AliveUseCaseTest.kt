@@ -11,7 +11,10 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
-private fun Byte.unsigned(): Int = this.toInt() and 0xFF
+private const val BYTE_MASK = 0xFF
+private const val HEX_RADIX = 16
+
+private fun Byte.unsigned(): Int = this.toInt() and BYTE_MASK
 
 private fun xorOf(bytes: ByteArray, len: Int): Int {
     var sum = 0
@@ -22,7 +25,7 @@ private fun xorOf(bytes: ByteArray, len: Int): Int {
 private fun hex(s: String): ByteArray {
     require(s.length % 2 == 0)
     return ByteArray(s.length / 2) { i ->
-        s.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        s.substring(i * 2, i * 2 + 2).toInt(HEX_RADIX).toByte()
     }
 }
 
@@ -37,12 +40,24 @@ private const val DISCONNECT_FRAME_HEX = "56000100000064ca90ca03904070"
 
 class AliveUseCaseTest {
 
+    private companion object {
+        const val EXPECTED_ALIVE_HEADER = 0x55
+        const val EXPECTED_DISCONNECT_HEADER = 0x56
+        const val EXPECTED_ALIVE_SIZE = 14
+        const val EXPECTED_DISCONNECT_SIZE = 14
+        const val ALIVE_HMAC_MSG_SIZE = 11
+        const val DISCONNECT_HMAC_MSG_SIZE = 16
+        const val AUTH_TAG_SIZE = 6
+        const val SHORT_PSK_SIZE = 8
+        const val PSK_BYTE_LENGTH = 16
+    }
+
     @Test
     fun constants() {
-        assertEquals(0x55, ALIVE_HEADER)
-        assertEquals(14, ALIVE_SIZE)
-        assertEquals(0x56, DISCONNECT_HEADER)
-        assertEquals(14, DISCONNECT_SIZE)
+        assertEquals(EXPECTED_ALIVE_HEADER, ALIVE_HEADER)
+        assertEquals(EXPECTED_ALIVE_SIZE, ALIVE_SIZE)
+        assertEquals(EXPECTED_DISCONNECT_HEADER, DISCONNECT_HEADER)
+        assertEquals(EXPECTED_DISCONNECT_SIZE, DISCONNECT_SIZE)
     }
 
     @Test
@@ -69,12 +84,12 @@ class AliveUseCaseTest {
     @Test
     fun aliveFrameGolden() = runTest {
         val hmacInput = "ALIVE".encodeToByteArray() + hex("000100000064")
-        assertEquals(11, hmacInput.size)
-        val tag = hmacSha256(PSK, hmacInput).copyOfRange(0, 6)
+        assertEquals(ALIVE_HMAC_MSG_SIZE, hmacInput.size)
+        val tag = hmacSha256(PSK, hmacInput).copyOfRange(0, AUTH_TAG_SIZE)
         assertContentEquals(hex(ALIVE_TAG_HEX), tag)
 
         val body = byteArrayOf(0x55.toByte(), 0x00, 0x01, 0x00, 0x00, 0x00, 0x64) + tag
-        assertEquals(13, body.size)
+        assertEquals(ALIVE_SIZE - 1, body.size)
         val expected = body + byteArrayOf(xorOf(body, body.size).toByte())
 
         val actual = encodeAlive(PSK, 1u, 100u)
@@ -95,12 +110,12 @@ class AliveUseCaseTest {
     @Test
     fun disconnectFrameGolden() = runTest {
         val hmacInput = "DISCONNECT".encodeToByteArray() + hex("000100000064")
-        assertEquals(16, hmacInput.size)
-        val tag = hmacSha256(PSK, hmacInput).copyOfRange(0, 6)
+        assertEquals(DISCONNECT_HMAC_MSG_SIZE, hmacInput.size)
+        val tag = hmacSha256(PSK, hmacInput).copyOfRange(0, AUTH_TAG_SIZE)
         assertContentEquals(hex(DISCONNECT_TAG_HEX), tag)
 
         val body = byteArrayOf(0x56.toByte(), 0x00, 0x01, 0x00, 0x00, 0x00, 0x64) + tag
-        assertEquals(13, body.size)
+        assertEquals(DISCONNECT_SIZE - 1, body.size)
         val expected = body + byteArrayOf(xorOf(body, body.size).toByte())
 
         val actual = encodeDisconnect(PSK, 1u, 100u)
@@ -114,7 +129,7 @@ class AliveUseCaseTest {
 
     @Test
     fun eraAndCounterLayOutBigEndian() = runTest {
-        val psk = ByteArray(16) { it.toByte() }
+        val psk = ByteArray(PSK_BYTE_LENGTH) { it.toByte() }
         val alive = encodeAlive(psk, 0x0102u, 0x01020304u)
         assertEquals(0x55, alive[0].unsigned())
         assertEquals(0x01, alive[1].unsigned())
@@ -139,16 +154,16 @@ class AliveUseCaseTest {
     @Test
     fun rejectsShortPsk() = runTest {
         assertFailsWith<IllegalArgumentException> {
-            encodeAlive(ByteArray(8), 1u, 1u)
+            encodeAlive(ByteArray(SHORT_PSK_SIZE), 1u, 1u)
         }
         assertFailsWith<IllegalArgumentException> {
-            encodeDisconnect(ByteArray(8), 1u, 1u)
+            encodeDisconnect(ByteArray(SHORT_PSK_SIZE), 1u, 1u)
         }
         assertFailsWith<IllegalArgumentException> {
-            aliveTag(ByteArray(8), 1u, 1u)
+            aliveTag(ByteArray(SHORT_PSK_SIZE), 1u, 1u)
         }
         assertFailsWith<IllegalArgumentException> {
-            disconnectTag(ByteArray(8), 1u, 1u)
+            disconnectTag(ByteArray(SHORT_PSK_SIZE), 1u, 1u)
         }
     }
 

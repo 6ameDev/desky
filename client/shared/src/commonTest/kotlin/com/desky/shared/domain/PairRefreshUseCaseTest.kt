@@ -19,11 +19,14 @@ import kotlin.test.assertTrue
 
 private const val OLD_PSK_HEX = "00112233445566778899aabbccddeeff"
 private const val NEXT_PSK_HEX = "2ecca11e7638cb50bd4c9dd96ff9da1b"
+private const val HEX_RADIX = 16
+private const val BYTE_MASK = 0xFF
+private const val ERA_HIGH_BYTE_SHIFT = 8
 
 private fun hex(s: String): ByteArray {
     require(s.length % 2 == 0)
     return ByteArray(s.length / 2) { i ->
-        s.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        s.substring(i * 2, i * 2 + 2).toInt(HEX_RADIX).toByte()
     }
 }
 
@@ -54,14 +57,22 @@ private fun pairedDevice(era: UShort = 0u, lastCounter: UInt = 99u) = PairedDevi
 /** `PAIR_REFRESH_ACK` for [era] under [newPsk] (real crypto), framed with XOR. */
 private suspend fun pairRefreshAckFor(era: UShort, newPsk: ByteArray): ByteArray {
     val tag = pairRefreshAckTag(newPsk, era)
-    val body = byteArrayOf(PAIR_REFRESH_ACK_HEADER.toByte(), ((era.toInt() shr 8) and 0xFF).toByte(), (era.toInt() and 0xFF).toByte()) + tag
+    val body = byteArrayOf(PAIR_REFRESH_ACK_HEADER.toByte(), ((era.toInt() shr ERA_HIGH_BYTE_SHIFT) and BYTE_MASK).toByte(), (era.toInt() and BYTE_MASK).toByte()) + tag
     var xor = 0
-    for (b in body) xor = xor xor (b.toInt() and 0xFF)
+    for (b in body) xor = xor xor (b.toInt() and BYTE_MASK)
     return body + byteArrayOf(xor.toByte())
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PairRefreshUseCaseTest {
+
+    private companion object {
+        const val RETRY_BUDGET_MS = 50L
+        const val EXTENDED_RETRY_BUDGET_MS = 1000L
+        const val FIRST_BUDGET_LAPSE_MS = 60L
+        const val ALL_BUDGETS_LAPSE_MS = 200L
+        const val ACK_TAG_SIZE = 6
+    }
 
     private fun useCase(
         repo: FakeDeviceRepository,
@@ -116,14 +127,14 @@ class PairRefreshUseCaseTest {
         val vault = FakePairSecretStore().also { it.seed(device.id, OLD_PSK_HEX) }
         val udp = FakePairRefreshUdp()
         val holder = ToRobotCounter(repo)
-        val deferred = async { useCase(repo, vault, udp, holder, attemptTimeoutsMs = listOf(50, 50, 50))() }
+        val deferred = async { useCase(repo, vault, udp, holder, attemptTimeoutsMs = listOf(RETRY_BUDGET_MS, RETRY_BUDGET_MS, RETRY_BUDGET_MS))() }
         runCurrent()
 
         assertEquals(1, udp.sent.size)
         // Silence past the first budget: exactly one retry, byte-identical
         // (same counter — the robot's idempotent re-ACK path, not a fresh
         // allocation that would burn the counter sequence).
-        advanceTimeBy(60)
+        advanceTimeBy(FIRST_BUDGET_LAPSE_MS)
         runCurrent()
         assertEquals(2, udp.sent.size, "one retry after silence")
         assertContentEquals(udp.sent[0].bytes, udp.sent[1].bytes)
@@ -141,7 +152,7 @@ class PairRefreshUseCaseTest {
         val vault = FakePairSecretStore().also { it.seed(device.id, OLD_PSK_HEX) }
         val udp = FakePairRefreshUdp()
         val holder = ToRobotCounter(repo)
-        val deferred = async { useCase(repo, vault, udp, holder, attemptTimeoutsMs = listOf(50, 1000))() }
+        val deferred = async { useCase(repo, vault, udp, holder, attemptTimeoutsMs = listOf(RETRY_BUDGET_MS, EXTENDED_RETRY_BUDGET_MS))() }
         runCurrent()
 
         // An ACK for a foreign era is not our reply: the exchange waits on.
@@ -166,9 +177,9 @@ class PairRefreshUseCaseTest {
 
         // Well-formed ACK (right era, valid checksum) but forged tag: fail
         // immediately — never retry a forgery, never persist.
-        val body = byteArrayOf(PAIR_REFRESH_ACK_HEADER.toByte(), 0x00, 0x01) + ByteArray(6) { 0x00 }
+        val body = byteArrayOf(PAIR_REFRESH_ACK_HEADER.toByte(), 0x00, 0x01) + ByteArray(ACK_TAG_SIZE) { 0x00 }
         var xor = 0
-        for (b in body) xor = xor xor (b.toInt() and 0xFF)
+        for (b in body) xor = xor xor (b.toInt() and BYTE_MASK)
         udp.inbound.emit(UdpDatagram(body + byteArrayOf(xor.toByte()), ROBOT_HOST, DEFAULT_UDP_PORT))
         val result = deferred.await()
 
@@ -192,10 +203,10 @@ class PairRefreshUseCaseTest {
         val vault = FakePairSecretStore().also { it.seed(device.id, OLD_PSK_HEX) }
         val udp = FakePairRefreshUdp()
         val holder = ToRobotCounter(repo)
-        val deferred = async { useCase(repo, vault, udp, holder, attemptTimeoutsMs = listOf(50, 50))() }
+        val deferred = async { useCase(repo, vault, udp, holder, attemptTimeoutsMs = listOf(RETRY_BUDGET_MS, RETRY_BUDGET_MS))() }
         runCurrent()
 
-        advanceTimeBy(200)
+        advanceTimeBy(ALL_BUDGETS_LAPSE_MS)
         val result = deferred.await()
 
         val failure = assertIs<Outcome.Failure>(result)

@@ -37,7 +37,7 @@ class ObserveTelemetryUseCaseTest {
 
         val good1 = TelemetryPacketCodec.encode(t1)
         val wrongHeader = ControlPacketCodec.encode(ControlCommand(RobotMode.MANUAL, 0f, 0f))
-        val badChecksum = TelemetryPacketCodec.encode(t2).also { it[8] = (it[8] + 1).toByte() }
+        val badChecksum = TelemetryPacketCodec.encode(t2).also { it[TELEMETRY_SIZE - 1] = (it[TELEMETRY_SIZE - 1] + 1).toByte() }
         val good2 = TelemetryPacketCodec.encode(t2)
 
         useCase().test {

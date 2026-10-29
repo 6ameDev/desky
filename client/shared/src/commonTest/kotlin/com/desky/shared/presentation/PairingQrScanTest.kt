@@ -2,6 +2,8 @@ package com.desky.shared.presentation
 
 import com.desky.shared.domain.DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS
 import com.desky.shared.domain.DEFAULT_UDP_PORT
+import com.desky.shared.domain.PAIR_CODE_SIZE
+import com.desky.shared.domain.PAIR_NONCE_SIZE
 import com.desky.shared.domain.ForgetDeviceUseCase
 import com.desky.shared.domain.FromRobotCounter
 import com.desky.shared.domain.DeviceRepository
@@ -21,10 +23,15 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+private const val HEX_RADIX = 16
+private const val KEK_BYTE_LENGTH = 16
+private const val NONCE12_ZERO_PAD_BYTES = 4
+private const val BYTE_MASK = 0xFF
+
 private fun qrHex(s: String): ByteArray {
     require(s.length % 2 == 0)
     return ByteArray(s.length / 2) { i ->
-        s.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        s.substring(i * 2, i * 2 + 2).toInt(HEX_RADIX).toByte()
     }
 }
 
@@ -33,13 +40,13 @@ private suspend fun qrPairOkFor(clientNonce: ByteArray): ByteArray {
     val serverNonce = qrHex("05060708")
     val psk = qrHex("00112233445566778899aabbccddeeff")
     val code = "123456".encodeToByteArray()
-    val kek = hkdfSha256(clientNonce + serverNonce, code, "desky-pair-v1", 16)
-    val nonce12 = serverNonce + clientNonce + ByteArray(4)
+    val kek = hkdfSha256(clientNonce + serverNonce, code, "desky-pair-v1", KEK_BYTE_LENGTH)
+    val nonce12 = serverNonce + clientNonce + ByteArray(NONCE12_ZERO_PAD_BYTES)
     val aad = byteArrayOf(PAIR_OK_HEADER.toByte()) + clientNonce + serverNonce
     val (ct, tag) = aesGcmEncrypt(kek, nonce12, aad, psk)
     val body = byteArrayOf(PAIR_OK_HEADER.toByte()) + serverNonce + ct + tag
     var xor = 0
-    for (b in body) xor = xor xor (b.toInt() and 0xFF)
+    for (b in body) xor = xor xor (b.toInt() and BYTE_MASK)
     return body + byteArrayOf(xor.toByte())
 }
 
@@ -69,7 +76,7 @@ class PairingQrScanTest {
         main.runCurrent()
         assertEquals(1, udp.sent.size, "valid scan fires exactly one PAIR_REQ")
 
-        val clientNonce = udp.sent[0].bytes.copyOfRange(7, 11)
+        val clientNonce = udp.sent[0].bytes.copyOfRange(1 + PAIR_CODE_SIZE, 1 + PAIR_CODE_SIZE + PAIR_NONCE_SIZE)
         udp.inbound.emit(UdpDatagram(qrPairOkFor(clientNonce), ROBOT_HOST, DEFAULT_UDP_PORT))
         main.advanceUntilIdle()
 
@@ -121,7 +128,7 @@ class PairingQrScanTest {
         main.runCurrent()
         assertEquals(1, udp.sent.size, "duplicate scans while pairing send once")
 
-        val clientNonce = udp.sent[0].bytes.copyOfRange(7, 11)
+        val clientNonce = udp.sent[0].bytes.copyOfRange(1 + PAIR_CODE_SIZE, 1 + PAIR_CODE_SIZE + PAIR_NONCE_SIZE)
         udp.inbound.emit(UdpDatagram(qrPairOkFor(clientNonce), ROBOT_HOST, DEFAULT_UDP_PORT))
         main.advanceUntilIdle()
 

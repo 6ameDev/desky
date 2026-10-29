@@ -10,6 +10,17 @@ import kotlin.test.assertTrue
 
 class ToRobotCounterTest {
 
+    private companion object {
+        const val SMALL_TEST_CADENCE = 16
+        const val MID_TEST_CADENCE = 64
+        const val MIN_PERSIST_CADENCE = 8
+        const val MAX_PERSIST_CADENCE = 1024
+        const val BELOW_MIN_CADENCE = 7
+        const val ABOVE_MAX_CADENCE = 1025
+        const val POST_PERSIST_EXTRA_ALLOCS = 4
+        const val CADENCE_OVERHANG = 5
+    }
+
     @Test
     fun nextWithoutEraReturnsNull() = runTest {
         assertNull(ToRobotCounter(FakeDeviceRepository()).next())
@@ -57,13 +68,13 @@ class ToRobotCounterTest {
         val holder = ToRobotCounter(repo)
         holder.ensure("desky-1", 0u)
 
-        repeat(127) { holder.next() }
+        repeat(ToRobotCounter.COUNTER_PERSIST_EVERY - 1) { holder.next() }
         assertEquals(emptyList(), repo.counterSaves)
         // Write-ahead: the 128th allocation persists 128 + 128, not 128.
         assertEquals(128u, holder.next())
         assertEquals(listOf("desky-1" to 256u), repo.counterSaves)
 
-        repeat(127) { holder.next() }
+        repeat(ToRobotCounter.COUNTER_PERSIST_EVERY - 1) { holder.next() }
         assertEquals(256u, holder.next())
         assertEquals(listOf("desky-1" to 256u, "desky-1" to 384u), repo.counterSaves)
     }
@@ -72,16 +83,16 @@ class ToRobotCounterTest {
     fun persistsAtNegotiatedCadence() = runTest {
         val repo = FakeDeviceRepository()
         val holder = ToRobotCounter(repo)
-        holder.ensure("desky-1", 0u, persistEvery = 16)
-        assertEquals(16, holder.persistEvery())
+        holder.ensure("desky-1", 0u, persistEvery = SMALL_TEST_CADENCE)
+        assertEquals(SMALL_TEST_CADENCE, holder.persistEvery())
 
-        repeat(15) { holder.next() }
+        repeat(SMALL_TEST_CADENCE - 1) { holder.next() }
         assertEquals(emptyList(), repo.counterSaves)
         // Write-ahead: allocation 16 persists 16 + 16.
         assertEquals(16u, holder.next())
         assertEquals(listOf("desky-1" to 32u), repo.counterSaves)
 
-        repeat(15) { holder.next() }
+        repeat(SMALL_TEST_CADENCE - 1) { holder.next() }
         assertEquals(32u, holder.next())
         assertEquals(listOf("desky-1" to 32u, "desky-1" to 48u), repo.counterSaves)
     }
@@ -89,24 +100,24 @@ class ToRobotCounterTest {
     @Test
     fun cadenceAcceptedOnceAtPairOnly() = runTest {
         val holder = ToRobotCounter(FakeDeviceRepository())
-        holder.ensure("desky-1", 0u, persistEvery = 16)
+        holder.ensure("desky-1", 0u, persistEvery = SMALL_TEST_CADENCE)
         assertEquals(1u, holder.next())
         // Same era re-seeded (e.g. a Room row read mid-session): starting
         // AND cadence are both ignored — the live era never rewinds.
-        holder.ensure("desky-1", 50u, persistEvery = 64)
+        holder.ensure("desky-1", 50u, persistEvery = MID_TEST_CADENCE)
         assertEquals(2u, holder.next())
-        assertEquals(16, holder.persistEvery())
+        assertEquals(SMALL_TEST_CADENCE, holder.persistEvery())
     }
 
     @Test
     fun cadenceGuardFallsBackTo128() = runTest {
-        for (bad in listOf(0, 1, 7, 1025, -1)) {
+        for (bad in listOf(0, 1, BELOW_MIN_CADENCE, ABOVE_MAX_CADENCE, -1)) {
             val holder = ToRobotCounter(FakeDeviceRepository())
             holder.ensure("desky-1", 0u, persistEvery = bad)
-            assertEquals(128, holder.persistEvery(), "persistEvery=$bad")
+            assertEquals(ToRobotCounter.COUNTER_PERSIST_EVERY, holder.persistEvery(), "persistEvery=$bad")
         }
         // Boundary values pass through.
-        for (good in listOf(8, 64, 1024)) {
+        for (good in listOf(MIN_PERSIST_CADENCE, MID_TEST_CADENCE, MAX_PERSIST_CADENCE)) {
             val holder = ToRobotCounter(FakeDeviceRepository())
             holder.ensure("desky-1", 0u, persistEvery = good)
             assertEquals(good, holder.persistEvery(), "persistEvery=$good")
@@ -116,11 +127,11 @@ class ToRobotCounterTest {
     @Test
     fun eraSwitchAdoptsNewCadence() = runTest {
         val holder = ToRobotCounter(FakeDeviceRepository())
-        holder.ensure("desky-a", 0u, persistEvery = 16)
-        assertEquals(16, holder.persistEvery())
+        holder.ensure("desky-a", 0u, persistEvery = SMALL_TEST_CADENCE)
+        assertEquals(SMALL_TEST_CADENCE, holder.persistEvery())
 
-        holder.ensure("desky-b", 100u, persistEvery = 64)
-        assertEquals(64, holder.persistEvery())
+        holder.ensure("desky-b", 100u, persistEvery = MID_TEST_CADENCE)
+        assertEquals(MID_TEST_CADENCE, holder.persistEvery())
         assertEquals(101u, holder.next())
     }
 
@@ -153,7 +164,7 @@ class ToRobotCounterTest {
     @Test
     fun resetClearsEra() = runTest {
         val holder = ToRobotCounter(FakeDeviceRepository())
-        holder.ensure("desky-1", 0u, persistEvery = 16)
+        holder.ensure("desky-1", 0u, persistEvery = SMALL_TEST_CADENCE)
         assertEquals(1u, holder.next())
 
         holder.reset()
@@ -163,7 +174,7 @@ class ToRobotCounterTest {
 
         holder.ensure("desky-1", 0u)
         assertEquals(1u, holder.next())
-        assertEquals(128, holder.persistEvery())
+        assertEquals(ToRobotCounter.COUNTER_PERSIST_EVERY, holder.persistEvery())
     }
 
     /**
@@ -298,7 +309,7 @@ class ToRobotCounterTest {
      */
     @Test
     fun writeAheadUsesLivePersistEvery() = runTest {
-        for (cadence in listOf(8, 16, 64, 128, 1024)) {
+        for (cadence in listOf(MIN_PERSIST_CADENCE, SMALL_TEST_CADENCE, MID_TEST_CADENCE, ToRobotCounter.COUNTER_PERSIST_EVERY, MAX_PERSIST_CADENCE)) {
             val repo = FakeDeviceRepository()
             val holder = ToRobotCounter(repo)
             holder.ensure("desky-1", 0u, persistEvery = cadence)
@@ -319,12 +330,12 @@ class ToRobotCounterTest {
      */
     @Test
     fun killSimRestartHasZeroDrops() = runTest {
-        for (cadence in listOf(16, 128, 1024)) {
+        for (cadence in listOf(SMALL_TEST_CADENCE, ToRobotCounter.COUNTER_PERSIST_EVERY, MAX_PERSIST_CADENCE)) {
             val repo = FakeDeviceRepository()
             val holder = ToRobotCounter(repo)
             holder.ensure("desky-1", 0u, persistEvery = cadence)
             // Drive past the first cadence persist plus a few unpersisted frames.
-            repeat(cadence + 5) { holder.next() }
+            repeat(cadence + CADENCE_OVERHANG) { holder.next() }
             val disk = repo.counterSaves.last().second
             val robotLastSeen = holder.current()!!
             assertTrue(disk >= robotLastSeen, "cadence=$cadence: disk leads live")
@@ -346,7 +357,7 @@ class ToRobotCounterTest {
      */
     @Test
     fun writeAheadClampsAtGate() = runTest {
-        for (cadence in listOf(16, 1024)) {
+        for (cadence in listOf(SMALL_TEST_CADENCE, MAX_PERSIST_CADENCE)) {
             val repo = FakeDeviceRepository()
             val holder = ToRobotCounter(repo)
             // Seed so the first cadence persist lands past the gate.
@@ -381,10 +392,10 @@ class ToRobotCounterTest {
     fun flushAfterWriteAheadPersistsExact() = runTest {
         val repo = FakeDeviceRepository()
         val holder = ToRobotCounter(repo)
-        holder.ensure("desky-1", 0u, persistEvery = 16)
-        repeat(16) { holder.next() }
+        holder.ensure("desky-1", 0u, persistEvery = SMALL_TEST_CADENCE)
+        repeat(SMALL_TEST_CADENCE) { holder.next() }
         assertEquals(listOf("desky-1" to 32u), repo.counterSaves, "write-ahead first")
-        repeat(4) { holder.next() }
+        repeat(POST_PERSIST_EXTRA_ALLOCS) { holder.next() }
         assertEquals(20u, holder.current())
         holder.flush()
         assertEquals(

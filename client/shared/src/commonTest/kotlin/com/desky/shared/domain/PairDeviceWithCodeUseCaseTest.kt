@@ -27,11 +27,15 @@ import kotlinx.coroutines.test.runTest
 private val CODE = "123456".encodeToByteArray()
 private val SERVER_NONCE = byteArrayOf(0x05, 0x06, 0x07, 0x08)
 private const val PSK_HEX = "00112233445566778899aabbccddeeff"
+private const val BYTE_MASK = 0xFF
+private const val HEX_RADIX = 16
+private const val KEK_BYTE_LENGTH = 16
+private const val NONCE12_ZERO_PAD_BYTES = 4
 
 private fun hex(s: String): ByteArray {
     require(s.length % 2 == 0)
     return ByteArray(s.length / 2) { i ->
-        s.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        s.substring(i * 2, i * 2 + 2).toInt(HEX_RADIX).toByte()
     }
 }
 
@@ -62,10 +66,10 @@ private suspend fun pairOkFor(
      */
     persistEvery: Int? = 128,
 ): ByteArray {
-    val kek = hkdfSha256(clientNonce + serverNonce, code, "desky-pair-v1", 16)
-    val nonce12 = serverNonce + clientNonce + ByteArray(4)
+    val kek = hkdfSha256(clientNonce + serverNonce, code, "desky-pair-v1", KEK_BYTE_LENGTH)
+    val nonce12 = serverNonce + clientNonce + ByteArray(NONCE12_ZERO_PAD_BYTES)
     val aad = byteArrayOf(PAIR_OK_HEADER.toByte()) + clientNonce + serverNonce
-    val plain = if (persistEvery == null) psk else psk + byteArrayOf((persistEvery and 0xFF).toByte())
+    val plain = if (persistEvery == null) psk else psk + byteArrayOf((persistEvery and BYTE_MASK).toByte())
     val (ct, tag) = aesGcmEncrypt(kek, nonce12, aad, plain)
     return framePairOk(serverNonce, ct, tag)
 }
@@ -73,19 +77,43 @@ private suspend fun pairOkFor(
 private fun framePairOk(serverNonce: ByteArray, ct: ByteArray, tag: ByteArray): ByteArray {
     val body = byteArrayOf(PAIR_OK_HEADER.toByte()) + serverNonce + ct + tag
     var xor = 0
-    for (b in body) xor = xor xor (b.toInt() and 0xFF)
+    for (b in body) xor = xor xor (b.toInt() and BYTE_MASK)
     return body + byteArrayOf(xor.toByte())
 }
 
 private fun pairErr(reason: Int, retryS: Int): ByteArray {
     val body = byteArrayOf(PAIR_ERR_HEADER.toByte(), reason.toByte(), retryS.toByte())
     var xor = 0
-    for (b in body) xor = xor xor (b.toInt() and 0xFF)
+    for (b in body) xor = xor xor (b.toInt() and BYTE_MASK)
     return body + byteArrayOf(xor.toByte())
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PairDeviceWithCodeUseCaseTest {
+
+    private companion object {
+        const val CLIENT_NONCE_OFFSET = 7
+        const val CT_START_INDEX = 5
+        const val DEFAULT_ATTEMPT_COUNT = 5
+        const val SHORT_SCHEDULE_SENDS = 3
+        const val FIRST_RETRY_WINDOW_MS = 1000L
+        const val ALREADY_PAIRED_REASON = 3
+        const val ROBOT_ERROR_REASON = 4
+        const val UNKNOWN_ERR_REASON = 9
+        const val LOCKED_RETRY_SECONDS = 30
+        const val SMALL_TEST_CADENCE = 16
+        const val BELOW_MIN_CADENCE = 7
+        const val FIRST_ATTEMPT_TIMEOUT_MS = 50L
+        const val SECOND_ATTEMPT_TIMEOUT_MS = 100L
+        const val THIRD_ATTEMPT_TIMEOUT_MS = 150L
+        const val SINGLE_RETRY_TIMEOUT_MS = 10L
+        const val VALID_PROBE_BUDGET_MS = 10L
+        const val NEGATIVE_TIMEOUT_MS = -5L
+        const val MALFORMED_TRAILING_BYTE = 0xFF
+
+        // Six ascending budgets over the 5-entry cap: only the count matters.
+        private val OVERSIZED_SCHEDULE: List<Long> = listOf(10, 20, 30, 40, 50, 60)
+    }
 
     private fun repo() = mock<DeviceRepository>()
 
@@ -133,8 +161,8 @@ class PairDeviceWithCodeUseCaseTest {
         assertEquals(ROBOT_HOST, req.host)
         assertEquals(DEFAULT_UDP_PORT, req.port)
         assertEquals(PAIR_REQ_SIZE, req.bytes.size)
-        assertContentEquals(CODE, req.bytes.copyOfRange(1, 7))
-        return req.bytes.copyOfRange(7, 11)
+        assertContentEquals(CODE, req.bytes.copyOfRange(1, CLIENT_NONCE_OFFSET))
+        return req.bytes.copyOfRange(CLIENT_NONCE_OFFSET, CLIENT_NONCE_OFFSET + PAIR_NONCE_SIZE)
     }
 
     @Test
@@ -158,7 +186,7 @@ class PairDeviceWithCodeUseCaseTest {
         // the counter resets so the first drive packet is 1; the vault
         // holds the key. Default pairOkFor carries interval byte 128.
         assertEquals(0u, outcome.data.lastCounter)
-        assertEquals(128, outcome.data.persistEvery)
+        assertEquals(ToRobotCounter.COUNTER_PERSIST_EVERY, outcome.data.persistEvery)
         assertEquals(PSK_HEX, vault.loadPsk(outcome.data.id))
         assertEquals(ROBOT_HOST, outcome.data.alias)
         verifySuspend { deviceRepo.save(outcome.data) }
@@ -168,7 +196,7 @@ class PairDeviceWithCodeUseCaseTest {
 
     @Test
     fun successCarriesNegotiatedPersistEvery() = runTest {
-        for ((wire, expected) in listOf(16 to 16, 128 to 128, 0 to 128, 7 to 128)) {
+        for ((wire, expected) in listOf(SMALL_TEST_CADENCE to SMALL_TEST_CADENCE, ToRobotCounter.COUNTER_PERSIST_EVERY to ToRobotCounter.COUNTER_PERSIST_EVERY, 0 to ToRobotCounter.COUNTER_PERSIST_EVERY, BELOW_MIN_CADENCE to ToRobotCounter.COUNTER_PERSIST_EVERY)) {
             val deviceRepo = repo()
             everySuspend { deviceRepo.save(any()) } returns Unit
             val udp = FakePairingUdp()
@@ -201,7 +229,7 @@ class PairDeviceWithCodeUseCaseTest {
         val result = deferred.await()
 
         val outcome = assertIs<Outcome.Success<PairedDevice>>(result)
-        assertEquals(128, outcome.data.persistEvery)
+        assertEquals(ToRobotCounter.COUNTER_PERSIST_EVERY, outcome.data.persistEvery)
         assertEquals(0u, outcome.data.lastCounter)
         assertEquals(PSK_HEX, vault.loadPsk(outcome.data.id))
     }
@@ -216,8 +244,8 @@ class PairDeviceWithCodeUseCaseTest {
 
         val clientNonce = clientNonceOf(udp)
         // Telemetry-shaped traffic and junk share the hot flow; none match.
-        udp.inbound.emit(UdpDatagram(ByteArray(9) { 0xBB.toByte() }, ROBOT_HOST, DEFAULT_UDP_PORT))
-        udp.inbound.emit(UdpDatagram(byteArrayOf(0x51, 0x01), ROBOT_HOST, DEFAULT_UDP_PORT))
+        udp.inbound.emit(UdpDatagram(ByteArray(TELEMETRY_SIZE) { 0xBB.toByte() }, ROBOT_HOST, DEFAULT_UDP_PORT))
+        udp.inbound.emit(UdpDatagram(byteArrayOf(PAIR_OK_HEADER.toByte(), 0x01), ROBOT_HOST, DEFAULT_UDP_PORT))
         runCurrent()
         udp.inbound.emit(UdpDatagram(pairOkFor(clientNonce), ROBOT_HOST, DEFAULT_UDP_PORT))
 
@@ -231,10 +259,10 @@ class PairDeviceWithCodeUseCaseTest {
     fun pairErrReasonsMapToMessages() = runTest {
         val cases = listOf(
             Triple(0, 0, "incorrect code"),
-            Triple(1, 30, "locked"),
+            Triple(1, LOCKED_RETRY_SECONDS, "locked"),
             Triple(2, 0, "expired"),
-            Triple(3, 0, "already paired"),
-            Triple(4, 0, "robot error, try a fresh code"),
+            Triple(ALREADY_PAIRED_REASON, 0, "already paired"),
+            Triple(ROBOT_ERROR_REASON, 0, "robot error, try a fresh code"),
         )
         for ((reason, retryS, fragment) in cases) {
             val deviceRepo = repo()
@@ -252,7 +280,7 @@ class PairDeviceWithCodeUseCaseTest {
     fun lockedMessageIncludesRetrySeconds() = runTest {
         val udp = FakePairingUdp()
 
-        val result = pairWithReply(udp, useCase(repo(), udp), pairErr(1, 30))
+        val result = pairWithReply(udp, useCase(repo(), udp), pairErr(1, LOCKED_RETRY_SECONDS))
 
         val failure = assertIs<Outcome.Failure>(result)
         assertTrue(failure.reason.contains("30"), failure.reason)
@@ -262,7 +290,7 @@ class PairDeviceWithCodeUseCaseTest {
     fun unknownReasonSurfacesCode() = runTest {
         val udp = FakePairingUdp()
 
-        val result = pairWithReply(udp, useCase(repo(), udp), pairErr(9, 0))
+        val result = pairWithReply(udp, useCase(repo(), udp), pairErr(UNKNOWN_ERR_REASON, 0))
 
         val failure = assertIs<Outcome.Failure>(result)
         assertTrue(failure.reason.contains("reason=9"), failure.reason)
@@ -272,7 +300,7 @@ class PairDeviceWithCodeUseCaseTest {
     fun reason4CopyDistinctFromExpired() = runTest {
         // Direct pair: reason 4 (burn-failure) vs reason 2 (genuine expiry).
         val udp4 = FakePairingUdp()
-        val r4 = pairWithReply(udp4, useCase(repo(), udp4), pairErr(4, 0))
+        val r4 = pairWithReply(udp4, useCase(repo(), udp4), pairErr(ROBOT_ERROR_REASON, 0))
         val f4 = assertIs<Outcome.Failure>(r4)
         assertTrue(f4.reason.contains("robot error, try a fresh code"), f4.reason)
         assertTrue(!f4.reason.contains("expired"), "reason 4 must not read as expired: ${f4.reason}")
@@ -295,11 +323,11 @@ class PairDeviceWithCodeUseCaseTest {
             3 -> "Pairing failed: robot already paired"
             else -> "Pairing failed: robot rejected pairing (reason=$reason)"
         }
-        val frame = pairErr(4, 0)
+        val frame = pairErr(ROBOT_ERROR_REASON, 0)
         val decoded = PairingPacketCodec.decodePairErr(frame)
         assertTrue(decoded != null, "old app decodes the 4B frame")
         val (reason, retryS) = requireNotNull(decoded)
-        assertEquals(4, reason)
+        assertEquals(ROBOT_ERROR_REASON, reason)
         val copy = oldMap(reason, retryS)
         assertTrue(copy.contains("reason=4"), copy)
         assertTrue(!copy.contains("robot error"), "old app has no reason-4 copy: $copy")
@@ -316,7 +344,7 @@ class PairDeviceWithCodeUseCaseTest {
         // Default schedule is 5 sends (1s+2s+4s+4s+4s = 15s total, well
         // inside the firmware 60s redelivery window): never more, or the
         // firmware 5-try lockout could trip on our own retries.
-        assertEquals(5, udp.sent.size)
+        assertEquals(DEFAULT_ATTEMPT_COUNT, udp.sent.size)
         for (i in 1 until udp.sent.size) {
             assertContentEquals(udp.sent[0].bytes, udp.sent[i].bytes)
         }
@@ -330,25 +358,25 @@ class PairDeviceWithCodeUseCaseTest {
             PairDeviceWithCodeUseCase(repo(), udp, vault, FromRobotCounter(repo()), emptyList())
         }
         assertFailsWith<IllegalArgumentException> {
-            PairDeviceWithCodeUseCase(repo(), udp, vault, FromRobotCounter(repo()), listOf(10, 20, 30, 40, 50, 60))
+            PairDeviceWithCodeUseCase(repo(), udp, vault, FromRobotCounter(repo()), OVERSIZED_SCHEDULE)
         }
         assertFailsWith<IllegalArgumentException> {
-            PairDeviceWithCodeUseCase(repo(), udp, vault, FromRobotCounter(repo()), listOf(10, 0))
+            PairDeviceWithCodeUseCase(repo(), udp, vault, FromRobotCounter(repo()), listOf(VALID_PROBE_BUDGET_MS, 0))
         }
         assertFailsWith<IllegalArgumentException> {
-            PairDeviceWithCodeUseCase(repo(), udp, vault, FromRobotCounter(repo()), listOf(-5))
+            PairDeviceWithCodeUseCase(repo(), udp, vault, FromRobotCounter(repo()), listOf(NEGATIVE_TIMEOUT_MS))
         }
     }
 
     @Test
     fun errRepliesNeverRetryAndReportProgressOnce() = runTest {
-        val malformedErr = byteArrayOf(PAIR_ERR_HEADER.toByte(), 0, 0, 0xFF.toByte())
+        val malformedErr = byteArrayOf(PAIR_ERR_HEADER.toByte(), 0, 0, MALFORMED_TRAILING_BYTE.toByte())
         val replies = listOf(
             pairErr(0, 0),
-            pairErr(1, 30),
+            pairErr(1, LOCKED_RETRY_SECONDS),
             pairErr(2, 0),
-            pairErr(3, 0),
-            pairErr(4, 0),
+            pairErr(ALREADY_PAIRED_REASON, 0),
+            pairErr(ROBOT_ERROR_REASON, 0),
             malformedErr,
         )
         for (reply in replies) {
@@ -370,7 +398,7 @@ class PairDeviceWithCodeUseCaseTest {
 
     @Test
     fun silenceRetriesShortScheduleWithByteIdenticalSends() = runTest {
-        val schedule = listOf(50L, 100L, 150L)
+        val schedule = listOf(FIRST_ATTEMPT_TIMEOUT_MS, SECOND_ATTEMPT_TIMEOUT_MS, THIRD_ATTEMPT_TIMEOUT_MS)
         val udp = FakePairingUdp()
         val progress = mutableListOf<Int>()
         val uc = useCase(repo(), udp, attemptTimeoutsMs = schedule)
@@ -379,17 +407,17 @@ class PairDeviceWithCodeUseCaseTest {
 
         val failure = assertIs<Outcome.Failure>(result)
         assertEquals("No response from robot", failure.reason)
-        assertEquals(3, udp.sent.size)
+        assertEquals(SHORT_SCHEDULE_SENDS, udp.sent.size)
         assertContentEquals(udp.sent[0].bytes, udp.sent[1].bytes)
         assertContentEquals(udp.sent[1].bytes, udp.sent[2].bytes)
-        assertEquals(listOf(1, 2, 3), progress)
+        assertEquals(listOf(1, 2, SHORT_SCHEDULE_SENDS), progress)
     }
 
     @Test
     fun singleEntryScheduleSendsOnce() = runTest {
         val udp = FakePairingUdp()
         val progress = mutableListOf<Int>()
-        val uc = useCase(repo(), udp, attemptTimeoutsMs = listOf(10L))
+        val uc = useCase(repo(), udp, attemptTimeoutsMs = listOf(SINGLE_RETRY_TIMEOUT_MS))
 
         val result = uc("123456", onProgress = { a, _ -> progress += a })
 
@@ -409,7 +437,7 @@ class PairDeviceWithCodeUseCaseTest {
         assertEquals(1, udp.sent.size, "exactly one PAIR_REQ before any reply")
 
         // First 1s window expires with no reply -> exactly one re-send.
-        advanceTimeBy(1000)
+        advanceTimeBy(FIRST_RETRY_WINDOW_MS)
         runCurrent()
         assertEquals(2, udp.sent.size, "one re-send after the first timeout")
         // The re-send is byte-identical (same code+nonce): idempotent, so a
@@ -417,7 +445,7 @@ class PairDeviceWithCodeUseCaseTest {
         // same reply and can never burn an extra pairing try.
         assertContentEquals(udp.sent[0].bytes, udp.sent[1].bytes)
 
-        val clientNonce = udp.sent[0].bytes.copyOfRange(7, 11)
+        val clientNonce = udp.sent[0].bytes.copyOfRange(CLIENT_NONCE_OFFSET, CLIENT_NONCE_OFFSET + PAIR_NONCE_SIZE)
         udp.inbound.emit(UdpDatagram(pairOkFor(clientNonce), ROBOT_HOST, DEFAULT_UDP_PORT))
         val result = deferred.await()
 
@@ -439,9 +467,9 @@ class PairDeviceWithCodeUseCaseTest {
         val tampered = pairOkFor(clientNonce).copyOf().also {
             // Flip a ct byte, then repair the XOR so the frame decodes and
             // the failure lands in GCM authentication, not the checksum.
-            it[5] = (it[5].toInt() xor 0xFF).toByte()
+            it[CT_START_INDEX] = (it[CT_START_INDEX].toInt() xor BYTE_MASK).toByte()
             var xor = 0
-            for (i in 0 until it.size - 1) xor = xor xor (it[i].toInt() and 0xFF)
+            for (i in 0 until it.size - 1) xor = xor xor (it[i].toInt() and BYTE_MASK)
             it[it.size - 1] = xor.toByte()
         }
         udp.inbound.emit(UdpDatagram(tampered, ROBOT_HOST, DEFAULT_UDP_PORT))

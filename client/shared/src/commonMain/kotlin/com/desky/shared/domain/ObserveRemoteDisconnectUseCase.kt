@@ -5,6 +5,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
 
+private const val BYTE_MASK = 0xFF
+private const val PSK_BYTE_LENGTH = 16
+
 /**
  * Core-originated `DISCONNECT` eviction observer (physical pair-button
  * press: the robot sends exactly one authenticated `DISCONNECT`
@@ -71,7 +74,7 @@ class ObserveRemoteDisconnectUseCase(
      * go through [observe]).
      */
     internal suspend fun handle(bytes: ByteArray): Unit? {
-        if (bytes.size != DISCONNECT_SIZE || (bytes[0].toInt() and 0xFF) != DISCONNECT_HEADER) {
+        if (bytes.size != DISCONNECT_SIZE || (bytes[0].toInt() and BYTE_MASK) != DISCONNECT_HEADER) {
             return null
         }
         // Entry log for every eviction-shaped frame (debug only, no key/tag bytes).
@@ -86,7 +89,7 @@ class ObserveRemoteDisconnectUseCase(
             } catch (_: Exception) {
                 null
             }
-            if (psk == null || psk.size != 16) return null
+            if (psk == null || psk.size != PSK_BYTE_LENGTH) return null
             if (era != device.era) return null
             // Freshness against the LIVE receive sequence, not the send
             // sequence and not the Room watermark: the watermark is the
@@ -137,7 +140,7 @@ class ObserveRemoteDisconnectUseCase(
             if (a.size != b.size) return false
             var diff = 0
             for (i in a.indices) {
-                diff = diff or ((a[i].toInt() xor b[i].toInt()) and 0xFF)
+                diff = diff or ((a[i].toInt() xor b[i].toInt()) and BYTE_MASK)
             }
             return diff == 0
         }

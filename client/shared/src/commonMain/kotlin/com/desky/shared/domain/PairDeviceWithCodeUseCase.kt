@@ -8,6 +8,12 @@ import kotlinx.coroutines.withTimeout
 /** Default per-send wait schedule (ms): 1s, 2s, 4s, 4s, 4s (5 sends, 15s total). */
 val DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS: List<Long> = listOf(1000, 2000, 4000, 4000, 4000)
 
+private const val BYTE_MASK = 0xFF
+private const val MAX_PAIR_ATTEMPTS = 5
+private const val NONCE12_ZERO_PAD_BYTES = 4
+private const val PAIR_ERR_ALREADY_PAIRED = 3
+private const val PAIR_ERR_ROBOT_ERROR = 4
+
 /**
  * Pair with the robot at ([ROBOT_HOST]:[DEFAULT_UDP_PORT], resolved via
  * mDNS on the shared home network) using the 6-digit code shown on its
@@ -55,7 +61,7 @@ class PairDeviceWithCodeUseCase(
     private val attemptTimeoutsMs: List<Long> = DEFAULT_PAIR_ATTEMPT_TIMEOUTS_MS,
 ) {
     init {
-        require(attemptTimeoutsMs.size in 1..5) {
+        require(attemptTimeoutsMs.size in 1..MAX_PAIR_ATTEMPTS) {
             "attemptTimeoutsMs must hold 1..5 entries (got ${attemptTimeoutsMs.size})"
         }
         require(attemptTimeoutsMs.all { it > 0 }) {
@@ -116,7 +122,7 @@ class PairDeviceWithCodeUseCase(
 
     private fun isPairingReply(bytes: ByteArray): Boolean {
         if (bytes.isEmpty()) return false
-        val header = bytes[0].toInt() and 0xFF
+        val header = bytes[0].toInt() and BYTE_MASK
         return ((bytes.size == PAIR_OK_SIZE || bytes.size == PAIR_OK_SIZE_V11) && header == PAIR_OK_HEADER) ||
             (bytes.size == PAIR_ERR_SIZE && header == PAIR_ERR_HEADER)
     }
@@ -143,7 +149,7 @@ class PairDeviceWithCodeUseCase(
             info = "desky-pair-v1",
             length = 16,
         )
-        val nonce12 = serverNonce + clientNonce + ByteArray(4)
+        val nonce12 = serverNonce + clientNonce + ByteArray(NONCE12_ZERO_PAD_BYTES)
         val aad = byteArrayOf(PAIR_OK_HEADER.toByte()) + clientNonce + serverNonce
         val (psk, persistEvery) = try {
             unwrapPairPlaintext(aesGcmDecrypt(kek, nonce12, aad, ct, tag))
@@ -187,10 +193,10 @@ class PairDeviceWithCodeUseCase(
         // Reason 2 is genuine window expiry (tryCode != kOk); the single-use
         // code is spent, so pair again with the fresh display code.
         2 -> "Pairing failed: code expired"
-        3 -> "Pairing failed: robot already paired"
+        PAIR_ERR_ALREADY_PAIRED -> "Pairing failed: robot already paired"
         // M11 additive reason 4 (internal_retry_fresh): NVS/crypto failure
         // after tryCode kOk (code already burned) — distinct from expired.
-        4 -> "Pairing failed: robot error, try a fresh code"
+        PAIR_ERR_ROBOT_ERROR -> "Pairing failed: robot error, try a fresh code"
         // Unknown reasons (incl. old-app × new-robot reason 4): generic,
         // non-retryable (any PAIR_ERR terminates the send loop), raw int
         // preserved for logs.

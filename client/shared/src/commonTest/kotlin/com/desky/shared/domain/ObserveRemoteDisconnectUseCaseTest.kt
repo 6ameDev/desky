@@ -17,11 +17,16 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 private const val EVICT_PSK_HEX = "00112233445566778899aabbccddeeff"
+private const val BYTE_MASK = 0xFF
+private const val HEX_RADIX = 16
+private const val HEX_NIBBLE_SHIFT = 4
+private const val KEK_BYTE_LENGTH = 16
+private const val NONCE12_ZERO_PAD_BYTES = 4
 
 private fun evictHex(s: String): ByteArray {
     require(s.length % 2 == 0)
     return ByteArray(s.length / 2) { i ->
-        s.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        s.substring(i * 2, i * 2 + 2).toInt(HEX_RADIX).toByte()
     }
 }
 
@@ -44,7 +49,7 @@ private fun evictDevice(
 /** Recompute the trailing XOR after mutating a frame (so shape passes, HMAC must fail). */
 private fun fixXor(frame: ByteArray): ByteArray {
     var xor = 0
-    for (i in 0 until frame.size - 1) xor = xor xor (frame[i].toInt() and 0xFF)
+    for (i in 0 until frame.size - 1) xor = xor xor (frame[i].toInt() and BYTE_MASK)
     frame[frame.size - 1] = xor.toByte()
     return frame
 }
@@ -52,14 +57,14 @@ private fun fixXor(frame: ByteArray): ByteArray {
 /** `PAIR_OK` built with REAL crypto (hkdf + aesGcmEncrypt) for [clientNonce]. */
 private suspend fun evictPairOkFor(clientNonce: ByteArray): ByteArray {
     val serverNonce = byteArrayOf(0x05, 0x06, 0x07, 0x08)
-    val kek = hkdfSha256(clientNonce + serverNonce, "123456".encodeToByteArray(), "desky-pair-v1", 16)
-    val nonce12 = serverNonce + clientNonce + ByteArray(4)
+    val kek = hkdfSha256(clientNonce + serverNonce, "123456".encodeToByteArray(), "desky-pair-v1", KEK_BYTE_LENGTH)
+    val nonce12 = serverNonce + clientNonce + ByteArray(NONCE12_ZERO_PAD_BYTES)
     val aad = byteArrayOf(PAIR_OK_HEADER.toByte()) + clientNonce + serverNonce
     val plain = evictHex(EVICT_PSK_HEX) + byteArrayOf(128.toByte())
     val (ct, tag) = aesGcmEncrypt(kek, nonce12, aad, plain)
     val body = byteArrayOf(PAIR_OK_HEADER.toByte()) + serverNonce + ct + tag
     var xor = 0
-    for (b in body) xor = xor xor (b.toInt() and 0xFF)
+    for (b in body) xor = xor xor (b.toInt() and BYTE_MASK)
     return body + byteArrayOf(xor.toByte())
 }
 
@@ -131,7 +136,7 @@ class ObserveRemoteDisconnectUseCaseTest {
         val s = setup(device)
         // Busy drive loop: the send domain runs 5000 frames past the stamp.
         s.toRobot.ensure(device.id, 0u)
-        repeat(5000) { s.toRobot.next() }
+        repeat(PAST_STAMP_DRIVE_FRAMES) { s.toRobot.next() }
         // The eviction stamp (5, on the robot's own sequence) is fresh
         // against the receive baseline 0 regardless of the send domain.
         val frame = encodeDisconnect(evictHex(EVICT_PSK_HEX), 1u, 5u)
@@ -196,7 +201,7 @@ class ObserveRemoteDisconnectUseCaseTest {
         val device = evictDevice(era = 1u, lastCounter = 100u, lastRobotCounter = 0u)
         val s = setup(device)
         val frame = encodeDisconnect(evictHex(EVICT_PSK_HEX), 1u, 101u)
-        frame[7] = (frame[7] + 1).toByte()
+        frame[FIRST_TAG_BYTE_INDEX] = (frame[FIRST_TAG_BYTE_INDEX] + 1).toByte()
         fixXor(frame)
 
         s.useCase.observe().test {
@@ -248,7 +253,7 @@ class ObserveRemoteDisconnectUseCaseTest {
         val device = evictDevice()
         val s = setup(device)
         val telemetry = TelemetryPacketCodec.encode(
-            Telemetry(0f, 0f, 100, cliff = false, driving = false, mode = RobotMode.MANUAL),
+            Telemetry(0f, 0f, TEST_DISTANCE_MM, cliff = false, driving = false, mode = RobotMode.MANUAL),
         )
 
         s.useCase.observe().test {
@@ -294,7 +299,7 @@ class ObserveRemoteDisconnectUseCaseTest {
 
         val deferred = async { pairUC("123456") }
         runCurrent()
-        val clientNonce = udp.sent[0].bytes.copyOfRange(7, 11)
+        val clientNonce = udp.sent[0].bytes.copyOfRange(CLIENT_NONCE_OFFSET, CLIENT_NONCE_OFFSET + PAIR_NONCE_SIZE)
         udp.inbound.emit(UdpDatagram(evictPairOkFor(clientNonce), ROBOT_HOST, DEFAULT_UDP_PORT))
         val result = deferred.await()
 
@@ -364,24 +369,32 @@ class ObserveRemoteDisconnectUseCaseTest {
 
     @Test
     fun decodeDisconnectRejectsShape() {
-        assertNull(decodeDisconnect(ByteArray(13)))
-        assertNull(decodeDisconnect(ByteArray(15)))
+        assertNull(decodeDisconnect(ByteArray(TOO_SHORT_FRAME_SIZE)))
+        assertNull(decodeDisconnect(ByteArray(TOO_LONG_FRAME_SIZE)))
         val wrongHeader = encodeAliveForShape()
         assertNull(decodeDisconnect(wrongHeader))
-        val corrupt = evictHex(DISCONNECT_FRAME_HEX).also { it[3] = (it[3] + 1).toByte() }
+        val corrupt = evictHex(DISCONNECT_FRAME_HEX).also { it[FIRST_COUNTER_BYTE_INDEX] = (it[FIRST_COUNTER_BYTE_INDEX] + 1).toByte() }
         assertNull(decodeDisconnect(corrupt), "bad XOR drops")
     }
 
     companion object {
         private const val DISCONNECT_FRAME_HEX = "56000100000064ca90ca03904070"
         private const val DISCONNECT_TAG_HEX = "ca90ca039040"
+        private const val CLIENT_NONCE_OFFSET = 7
+        private const val FIRST_TAG_BYTE_INDEX = 7
+        private const val FIRST_COUNTER_BYTE_INDEX = 3
+        private const val TOO_SHORT_FRAME_SIZE = 13
+        private const val TOO_LONG_FRAME_SIZE = 15
+        private const val TEST_DISTANCE_MM = 100
+        private const val SHORT_PSK_SIZE = 8
+        private const val PAST_STAMP_DRIVE_FRAMES = 5000
 
         private fun ByteArray.toHex(): String {
             val digits = "0123456789abcdef"
             val chars = CharArray(size * 2)
             for (i in indices) {
-                val v = this[i].toInt() and 0xFF
-                chars[i * 2] = digits[v ushr 4]
+                val v = this[i].toInt() and BYTE_MASK
+                chars[i * 2] = digits[v ushr HEX_NIBBLE_SHIFT]
                 chars[i * 2 + 1] = digits[v and 0x0F]
             }
             return chars.concatToString()
@@ -391,7 +404,7 @@ class ObserveRemoteDisconnectUseCaseTest {
             // 14B ALIVE frame: right size, wrong header for a DISCONNECT decode.
             val body = byteArrayOf(0x55.toByte(), 0, 1, 0, 0, 0, 100, 1, 2, 3, 4, 5, 6)
             var xor = 0
-            for (b in body) xor = xor xor (b.toInt() and 0xFF)
+            for (b in body) xor = xor xor (b.toInt() and BYTE_MASK)
             return body + byteArrayOf(xor.toByte())
         }
     }
