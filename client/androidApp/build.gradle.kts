@@ -47,7 +47,7 @@ dependencies {
 detekt {
     toolVersion = libs.versions.detekt.get()
     config.setFrom(files("${rootProject.projectDir}/config/detekt/detekt.yml"))
-    baseline = rootProject.file("config/detekt/baseline.xml")
+    baseline = rootProject.file("config/detekt/baseline-android.xml")
     ignoreFailures = false
 }
 
