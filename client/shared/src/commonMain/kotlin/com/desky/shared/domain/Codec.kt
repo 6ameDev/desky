@@ -278,15 +278,20 @@ object ControlPacketCodec {
      * byte value decodes instead of rejecting.
      */
     fun decode(bytes: ByteArray): ControlCommand? {
-        if (bytes.size != CONTROL_SIZE) return null
-        if ((bytes[0].toInt() and BYTE_MASK) != CONTROL_HEADER) return null
-        if (xorChecksum(bytes, CONTROL_SIZE - 1) != bytes[CONTROL_SIZE - 1]) return null
-        return ControlCommand(
-            mode = RobotMode.fromBits(bytes[1].toInt() and MODE_MASK),
-            throttle = byteToUnit(bytes[2]),
-            steering = byteToUnit(bytes[STEERING_INDEX]),
-            flags = bytes[FLAGS_INDEX].toInt() and BYTE_MASK,
-        )
+        return if (bytes.size != CONTROL_SIZE) {
+            null
+        } else if ((bytes[0].toInt() and BYTE_MASK) != CONTROL_HEADER) {
+            null
+        } else if (xorChecksum(bytes, CONTROL_SIZE - 1) != bytes[CONTROL_SIZE - 1]) {
+            null
+        } else {
+            ControlCommand(
+                mode = RobotMode.fromBits(bytes[1].toInt() and MODE_MASK),
+                throttle = byteToUnit(bytes[2]),
+                steering = byteToUnit(bytes[STEERING_INDEX]),
+                flags = bytes[FLAGS_INDEX].toInt() and BYTE_MASK,
+            )
+        }
     }
 }
 
@@ -371,14 +376,19 @@ object PairingPacketCodec {
      * interval to [ToRobotCounter.COUNTER_PERSIST_EVERY]).
      */
     fun decodePairOk(bytes: ByteArray): Triple<ByteArray, ByteArray, ByteArray>? {
-        if (bytes.size != PAIR_OK_SIZE && bytes.size != PAIR_OK_SIZE_V11) return null
-        if ((bytes[0].toInt() and BYTE_MASK) != PAIR_OK_HEADER) return null
-        if (xorChecksum(bytes, bytes.size - 1) != bytes[bytes.size - 1]) return null
-        val ctLen = bytes.size - /* header + nonce + tag + xor */ (1 + PAIR_NONCE_SIZE + GCM_TAG_SIZE + 1)
-        val serverNonce = bytes.copyOfRange(1, 1 + PAIR_NONCE_SIZE)
-        val ct = bytes.copyOfRange(CT_OFFSET, CT_OFFSET + ctLen)
-        val tag = bytes.copyOfRange(CT_OFFSET + ctLen, CT_OFFSET + ctLen + GCM_TAG_SIZE)
-        return Triple(serverNonce, ct, tag)
+        return if (bytes.size != PAIR_OK_SIZE && bytes.size != PAIR_OK_SIZE_V11) {
+            null
+        } else if ((bytes[0].toInt() and BYTE_MASK) != PAIR_OK_HEADER) {
+            null
+        } else if (xorChecksum(bytes, bytes.size - 1) != bytes[bytes.size - 1]) {
+            null
+        } else {
+            val ctLen = bytes.size - /* header + nonce + tag + xor */ (1 + PAIR_NONCE_SIZE + GCM_TAG_SIZE + 1)
+            val serverNonce = bytes.copyOfRange(1, 1 + PAIR_NONCE_SIZE)
+            val ct = bytes.copyOfRange(CT_OFFSET, CT_OFFSET + ctLen)
+            val tag = bytes.copyOfRange(CT_OFFSET + ctLen, CT_OFFSET + ctLen + GCM_TAG_SIZE)
+            Triple(serverNonce, ct, tag)
+        }
     }
 
     /**
@@ -386,10 +396,15 @@ object PairingPacketCodec {
      * `Pair` is `(reason, retry_s)` as unsigned ints.
      */
     fun decodePairErr(bytes: ByteArray): Pair<Int, Int>? {
-        if (bytes.size != PAIR_ERR_SIZE) return null
-        if ((bytes[0].toInt() and BYTE_MASK) != PAIR_ERR_HEADER) return null
-        if (xorChecksum(bytes, PAIR_ERR_SIZE - 1) != bytes[PAIR_ERR_SIZE - 1]) return null
-        return (bytes[1].toInt() and BYTE_MASK) to (bytes[2].toInt() and BYTE_MASK)
+        return if (bytes.size != PAIR_ERR_SIZE) {
+            null
+        } else if ((bytes[0].toInt() and BYTE_MASK) != PAIR_ERR_HEADER) {
+            null
+        } else if (xorChecksum(bytes, PAIR_ERR_SIZE - 1) != bytes[PAIR_ERR_SIZE - 1]) {
+            null
+        } else {
+            (bytes[1].toInt() and BYTE_MASK) to (bytes[2].toInt() and BYTE_MASK)
+        }
     }
 }
 
@@ -461,12 +476,17 @@ suspend fun encodePairRefreshReq(oldPsk: ByteArray, nextEra: UShort, counter: UI
  * [pairRefreshAckTag] under the derived [pairRefreshPsk] before trusting the era.
  */
 fun decodePairRefreshAck(bytes: ByteArray): Pair<UShort, ByteArray>? {
-    if (bytes.size != PAIR_REFRESH_ACK_SIZE) return null
-    if ((bytes[0].toInt() and BYTE_MASK) != PAIR_REFRESH_ACK_HEADER) return null
-    if (xorChecksum(bytes, PAIR_REFRESH_ACK_SIZE - 1) != bytes[PAIR_REFRESH_ACK_SIZE - 1]) return null
-    val era = (((bytes[1].toInt() and BYTE_MASK) shl BE_BYTE1_SHIFT) or (bytes[2].toInt() and BYTE_MASK)).toUShort()
-    val tag = bytes.copyOfRange(3, 3 + 6)
-    return era to tag
+    return if (bytes.size != PAIR_REFRESH_ACK_SIZE) {
+        null
+    } else if ((bytes[0].toInt() and BYTE_MASK) != PAIR_REFRESH_ACK_HEADER) {
+        null
+    } else if (xorChecksum(bytes, PAIR_REFRESH_ACK_SIZE - 1) != bytes[PAIR_REFRESH_ACK_SIZE - 1]) {
+        null
+    } else {
+        val era = (((bytes[1].toInt() and BYTE_MASK) shl BE_BYTE1_SHIFT) or (bytes[2].toInt() and BYTE_MASK)).toUShort()
+        val tag = bytes.copyOfRange(3, 3 + 6)
+        era to tag
+    }
 }
 
 /**
@@ -647,16 +667,22 @@ suspend fun encodeExprTrigger(psk: ByteArray, id: Int, era: UShort, counter: UIn
  * [disconnectTag] under the vault PSK (constant-time) before trusting it.
  * See `shared/protocol/README.md` §"ALIVE + DISCONNECT + robot alive rule".
  */
-fun decodeDisconnect(bytes: ByteArray): Triple<UShort, UInt, ByteArray>? {    if (bytes.size != DISCONNECT_SIZE) return null
-    if ((bytes[0].toInt() and BYTE_MASK) != DISCONNECT_HEADER) return null
-    if (xorChecksum(bytes, DISCONNECT_SIZE - 1) != bytes[DISCONNECT_SIZE - 1]) return null
-    val era = (((bytes[1].toInt() and BYTE_MASK) shl BE_BYTE1_SHIFT) or (bytes[2].toInt() and BYTE_MASK)).toUShort()
-    val counter = (((bytes[3].toUInt() and 0xFFu) shl BE_BYTE3_SHIFT) or
-        ((bytes[4].toUInt() and 0xFFu) shl BE_BYTE2_SHIFT) or
-        ((bytes[5].toUInt() and 0xFFu) shl BE_BYTE1_SHIFT) or
-        (bytes[6].toUInt() and 0xFFu))
-    val tag = bytes.copyOfRange(7, 7 + 6)
-    return Triple(era, counter, tag)
+fun decodeDisconnect(bytes: ByteArray): Triple<UShort, UInt, ByteArray>? {
+    return if (bytes.size != DISCONNECT_SIZE) {
+        null
+    } else if ((bytes[0].toInt() and BYTE_MASK) != DISCONNECT_HEADER) {
+        null
+    } else if (xorChecksum(bytes, DISCONNECT_SIZE - 1) != bytes[DISCONNECT_SIZE - 1]) {
+        null
+    } else {
+        val era = (((bytes[1].toInt() and BYTE_MASK) shl BE_BYTE1_SHIFT) or (bytes[2].toInt() and BYTE_MASK)).toUShort()
+        val counter = (((bytes[3].toUInt() and 0xFFu) shl BE_BYTE3_SHIFT) or
+            ((bytes[4].toUInt() and 0xFFu) shl BE_BYTE2_SHIFT) or
+            ((bytes[5].toUInt() and 0xFFu) shl BE_BYTE1_SHIFT) or
+            (bytes[6].toUInt() and 0xFFu))
+        val tag = bytes.copyOfRange(7, 7 + 6)
+        Triple(era, counter, tag)
+    }
 }
 /**
  * Telemetry packet codec: Robot -> App, 9 bytes
@@ -685,21 +711,26 @@ object TelemetryPacketCodec {
 
     /** Null on wrong header, wrong length, or bad checksum. */
     fun decode(bytes: ByteArray): Telemetry? {
-        if (bytes.size != TELEMETRY_SIZE) return null
-        if ((bytes[0].toInt() and BYTE_MASK) != TELEMETRY_HEADER) return null
-        if (xorChecksum(bytes, TELEMETRY_SIZE - 1) != bytes[TELEMETRY_SIZE - 1]) return null
-        val pitch = getI16BE(bytes, 1)
-        val roll = getI16BE(bytes, ROLL_OFFSET)
-        val distance = ((bytes[DIST_HIGH_OFFSET].toInt() and BYTE_MASK) shl BE_BYTE1_SHIFT) or (bytes[DIST_LOW_OFFSET].toInt() and BYTE_MASK)
-        val flags = bytes[FLAGS_OFFSET].toInt() and BYTE_MASK
-        return Telemetry(
-            pitchDeg = decidegToDeg(pitch),
-            rollDeg = decidegToDeg(roll),
-            distanceMm = distance,
-            cliff = statusCliff(flags),
-            driving = statusDriving(flags),
-            mode = statusMode(flags),
-            manual = statusManual(flags),
-        )
+        return if (bytes.size != TELEMETRY_SIZE) {
+            null
+        } else if ((bytes[0].toInt() and BYTE_MASK) != TELEMETRY_HEADER) {
+            null
+        } else if (xorChecksum(bytes, TELEMETRY_SIZE - 1) != bytes[TELEMETRY_SIZE - 1]) {
+            null
+        } else {
+            val pitch = getI16BE(bytes, 1)
+            val roll = getI16BE(bytes, ROLL_OFFSET)
+            val distance = ((bytes[DIST_HIGH_OFFSET].toInt() and BYTE_MASK) shl BE_BYTE1_SHIFT) or (bytes[DIST_LOW_OFFSET].toInt() and BYTE_MASK)
+            val flags = bytes[FLAGS_OFFSET].toInt() and BYTE_MASK
+            Telemetry(
+                pitchDeg = decidegToDeg(pitch),
+                rollDeg = decidegToDeg(roll),
+                distanceMm = distance,
+                cliff = statusCliff(flags),
+                driving = statusDriving(flags),
+                mode = statusMode(flags),
+                manual = statusManual(flags),
+            )
+        }
     }
 }
