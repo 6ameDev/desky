@@ -134,9 +134,13 @@ class PairRefreshUseCase(
     }
 
     private fun isPairRefreshAckFor(bytes: ByteArray, era: UShort): Boolean {
-        if (bytes.size != PAIR_REFRESH_ACK_SIZE) return false
-        if ((bytes[0].toInt() and BYTE_MASK) != PAIR_REFRESH_ACK_HEADER) return false
-        val got = (((bytes[1].toInt() and BYTE_MASK) shl BITS_PER_BYTE) or (bytes[2].toInt() and BYTE_MASK)).toUShort()
-        return got == era
+        return if (bytes.size != PAIR_REFRESH_ACK_SIZE) {
+            false
+        } else if ((bytes[0].toInt() and BYTE_MASK) != PAIR_REFRESH_ACK_HEADER) {
+            false
+        } else {
+            val got = (((bytes[1].toInt() and BYTE_MASK) shl BITS_PER_BYTE) or (bytes[2].toInt() and BYTE_MASK)).toUShort()
+            got == era
+        }
     }
 }

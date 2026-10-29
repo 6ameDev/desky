@@ -42,18 +42,11 @@
     <ID>MagicNumber:Sha256.kt$7</ID>
     <ID>MagicNumber:Sha256.kt$8</ID>
     <ID>MagicNumber:Sha256.kt$8L</ID>
-    <ID>ReturnCount:Codec.kt$ControlPacketCodec$fun decode(bytes: ByteArray): ControlCommand?</ID>
-    <ID>ReturnCount:Codec.kt$PairingPacketCodec$fun decodePairErr(bytes: ByteArray): Pair&lt;Int, Int&gt;?</ID>
-    <ID>ReturnCount:Codec.kt$PairingPacketCodec$fun decodePairOk(bytes: ByteArray): Triple&lt;ByteArray, ByteArray, ByteArray&gt;?</ID>
-    <ID>ReturnCount:Codec.kt$TelemetryPacketCodec$fun decode(bytes: ByteArray): Telemetry?</ID>
-    <ID>ReturnCount:Codec.kt$fun decodeDisconnect(bytes: ByteArray): Triple&lt;UShort, UInt, ByteArray&gt;?</ID>
-    <ID>ReturnCount:Codec.kt$fun decodePairRefreshAck(bytes: ByteArray): Pair&lt;UShort, ByteArray&gt;?</ID>
     <ID>ReturnCount:KeychainPairSecretStore.kt$KeychainPairSecretStore$override suspend fun loadPsk(deviceId: String): String?</ID>
     <ID>ReturnCount:ObserveRemoteDisconnectUseCase.kt$ObserveRemoteDisconnectUseCase$internal suspend fun handle(bytes: ByteArray): Unit?</ID>
     <ID>ReturnCount:PairDeviceWithCodeUseCase.kt$PairDeviceWithCodeUseCase$private fun validateCode(code: String): Outcome.Failure?</ID>
     <ID>ReturnCount:PairDeviceWithCodeUseCase.kt$PairDeviceWithCodeUseCase$private suspend fun handleReply( reply: ByteArray, code: ByteArray, clientNonce: ByteArray, ): Outcome&lt;PairedDevice&gt;</ID>
     <ID>ReturnCount:PairDeviceWithCodeUseCase.kt$PairDeviceWithCodeUseCase$suspend operator fun invoke( code: String, onProgress: (attempt: Int, maxSends: Int) -&gt; Unit = { _, _ -&gt; }, ): Outcome&lt;PairedDevice&gt;</ID>
-    <ID>ReturnCount:PairRefreshUseCase.kt$PairRefreshUseCase$private fun isPairRefreshAckFor(bytes: ByteArray, era: UShort): Boolean</ID>
     <ID>ReturnCount:PairRefreshUseCase.kt$PairRefreshUseCase$suspend operator fun invoke(): Outcome&lt;UShort&gt;</ID>
     <ID>ReturnCount:RobotControlViewModel.kt$RobotControlViewModel$fun onTakeManual()</ID>
     <ID>ReturnCount:RobotControlViewModel.kt$RobotControlViewModel$fun onTriggerExpression(id: Int)</ID>
