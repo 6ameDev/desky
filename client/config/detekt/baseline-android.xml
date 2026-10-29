@@ -1,0 +1,13 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>LongMethod:DeskyNavHost.kt$@Composable fun DeskyNavHost( navController: NavHostController = rememberNavController(), gateVm: SessionGateViewModel = koinViewModel(), )</ID>
+    <ID>LongMethod:ScanQrScreen.kt$@Composable private fun CameraPreview( modifier: Modifier = Modifier, onQrResult: (String) -&gt; Unit, )</ID>
+    <ID>LongMethod:SettingsScreen.kt$@OptIn(ExperimentalMaterial3Api::class) @Composable fun SettingsContent( state: SettingsUiState, onSpeedLimit: (Float) -&gt; Unit, onLedProfile: (Int) -&gt; Unit, onPid: (Float, Float, Float) -&gt; Unit, onWifiSsid: (String) -&gt; Unit, onForgetDevice: () -&gt; Unit, onBack: () -&gt; Unit, )</ID>
+    <ID>LongParameterList:ControlScreen.kt$( state: RobotControlUiState, onStick: (Float, Float) -&gt; Unit, onEmergencyStop: () -&gt; Unit, onReleaseEmergency: () -&gt; Unit, onOpenSettings: () -&gt; Unit, onTakeManual: () -&gt; Unit = {}, onReleaseManual: () -&gt; Unit = {}, onTriggerExpression: (Int) -&gt; Unit = {}, )</ID>
+    <ID>LongParameterList:PairingScreen.kt$( state: PairingUiState, onPinChange: (String) -&gt; Unit, onPair: () -&gt; Unit, onUnpair: () -&gt; Unit, onOpenControls: () -&gt; Unit, onOpenScan: () -&gt; Unit, )</ID>
+    <ID>LongParameterList:SettingsScreen.kt$( state: SettingsUiState, onSpeedLimit: (Float) -&gt; Unit, onLedProfile: (Int) -&gt; Unit, onPid: (Float, Float, Float) -&gt; Unit, onWifiSsid: (String) -&gt; Unit, onForgetDevice: () -&gt; Unit, onBack: () -&gt; Unit, )</ID>
+    <ID>TooGenericExceptionCaught:ScanQrScreen.kt$e: Exception</ID>
+  </CurrentIssues>
+</SmellBaseline>

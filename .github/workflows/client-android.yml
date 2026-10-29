@@ -113,8 +113,9 @@ jobs:
           yes | "$CMDLINE_BIN/sdkmanager" --licenses > /dev/null
           "$CMDLINE_BIN/sdkmanager" "platforms;android-36" "build-tools;36.1.0" "platform-tools"
 
-      # Gating: baselines absorb triaged findings (lint: 3 suppressed IDs in
-      # lint-baseline.xml; detekt: 531 IDs in config/detekt/baseline.xml —
+      # Gating: baselines absorb triaged findings (lint: 0 suppressed IDs in
+      # lint-baseline.xml; detekt: 191 IDs in config/detekt/baseline-shared.xml
+      # plus 7 in config/detekt/baseline-android.xml — one baseline per module,
       # both verified green locally), so only NEW issues fail these steps.
       # The no-growth guard trips first if a baseline silently absorbed
       # findings (caps in tools/baseline-guard.sh; `make baseline-guard`

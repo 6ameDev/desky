@@ -1,11 +1,15 @@
 #!/bin/sh
-# Baseline no-growth guard: fails when either static-analysis baseline grows.
+# Baseline no-growth guard: fails when any static-analysis baseline grows.
 #
 # Caps (recounted from the current tree; caps only ever decrease):
 #   LINT_CAP=0     ("^ *<issue$" entries in androidApp/lint-baseline.xml;
 #                   the "<issues" root tag is excluded by the anchor)
-#   DETEKT_CAP=531 ("<ID>...</ID>" entries in config/detekt/baseline.xml;
-#                   the "<SmellBaseline>" root tag carries no per-finding count)
+#   DETEKT_SHARED_CAP=191  ("<ID>...</ID>" in config/detekt/baseline-shared.xml)
+#   DETEKT_ANDROID_CAP=7   ("<ID>...</ID>" in config/detekt/baseline-android.xml)
+#   (Detekt keeps one baseline per module: a single shared file made
+#   :shared:detektBaseline and :androidApp:detektBaseline race last-wins,
+#   silently dropping the other module. Caps cover the sum 198, down from
+#   the 531 single-file era.)
 #
 # Triage: fix new findings (preferred); a genuinely legacy finding earns a cap
 # bump only as its own reviewed change alongside the regenerated baseline.
@@ -18,9 +22,11 @@ set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 CLIENT=$(CDPATH= cd -- "$HERE/.." && pwd)
 LINT_BASELINE="$CLIENT/androidApp/lint-baseline.xml"
-DETEKT_BASELINE="$CLIENT/config/detekt/baseline.xml"
+DETEKT_SHARED_BASELINE="$CLIENT/config/detekt/baseline-shared.xml"
+DETEKT_ANDROID_BASELINE="$CLIENT/config/detekt/baseline-android.xml"
 LINT_CAP=0
-DETEKT_CAP=531
+DETEKT_SHARED_CAP=191
+DETEKT_ANDROID_CAP=7
 
 fail=0
 check() {
@@ -39,7 +45,8 @@ check() {
 }
 
 check "lint" "$LINT_BASELINE" '^ *<issue$' "$LINT_CAP"
-check "detekt" "$DETEKT_BASELINE" '<ID>.*</ID>' "$DETEKT_CAP"
+check "detekt-shared" "$DETEKT_SHARED_BASELINE" '<ID>.*</ID>' "$DETEKT_SHARED_CAP"
+check "detekt-android" "$DETEKT_ANDROID_BASELINE" '<ID>.*</ID>' "$DETEKT_ANDROID_CAP"
 
 if [ "$fail" -ne 0 ]; then
     echo "baseline-guard: FAILED — fix findings or bump the cap as a reviewed change" >&2
