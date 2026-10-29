@@ -5,7 +5,9 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -195,15 +197,11 @@ private fun CameraPreview(
                             proxy.close()
                             return@setAnalyzer
                         }
-                        val mediaImage = proxy.image
-                        if (mediaImage == null) {
+                        val image = imageProxyToInputImage(proxy)
+                        if (image == null) {
                             proxy.close()
                             return@setAnalyzer
                         }
-                        val image = InputImage.fromMediaImage(
-                            mediaImage,
-                            proxy.imageInfo.rotationDegrees,
-                        )
                         scanner.process(image)
                             .addOnSuccessListener { barcodes ->
                                 val raw = barcodes.firstOrNull()?.rawValue
@@ -231,4 +229,10 @@ private fun CameraPreview(
             scanner.close()
         }
     }
+}
+
+@androidx.annotation.OptIn(ExperimentalGetImage::class)
+private fun imageProxyToInputImage(proxy: ImageProxy): InputImage? {
+    val mediaImage = proxy.image ?: return null
+    return InputImage.fromMediaImage(mediaImage, proxy.imageInfo.rotationDegrees)
 }
