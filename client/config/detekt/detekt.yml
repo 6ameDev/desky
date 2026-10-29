@@ -130,6 +130,10 @@ style:
     ignorePropertyDeclaration: true
     ignoreCompanionObjectPropertyDeclaration: true
     ignoreAnnotation: true
+    # Test sources read clearest with literal vectors (golden frames, wire
+    # bytes, round-trip probes), so MagicNumber stays a main-source rule.
+    # One generic path exclusion, no per-file upkeep, future tests inherit it.
+    excludes: ['**/commonTest/**', '**/jvmTest/**', '**/androidTest/**', '**/test/**', '**/*Test.kt']
   MaxLineLength:
     active: false
   WildcardImport:
