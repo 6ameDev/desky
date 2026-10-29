@@ -2,17 +2,6 @@
 <issues format="6" by="lint 9.3.3" type="baseline" client="gradle" dependencies="false" name="AGP (9.3.3)" variant="all" version="9.3.3">
 
     <issue
-        id="UnsafeOptInUsageError"
-        message="This declaration is opt-in and its usage should be marked with `@androidx.camera.core.ExperimentalGetImage` or `@OptIn(markerClass = androidx.camera.core.ExperimentalGetImage.class)`"
-        errorLine1="                        val mediaImage = proxy.image"
-        errorLine2="                                               ~~~~~">
-        <location
-            file="src/main/kotlin/com/desky/client/ui/scan/ScanQrScreen.kt"
-            line="198"
-            column="48"/>
-    </issue>
-
-    <issue
         id="MissingApplicationIcon"
         message="Should explicitly set `android:icon`, there is no default"
         errorLine1="    &lt;application"
