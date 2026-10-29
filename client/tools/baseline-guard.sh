@@ -2,7 +2,7 @@
 # Baseline no-growth guard: fails when either static-analysis baseline grows.
 #
 # Caps (recounted from the current tree; caps only ever decrease):
-#   LINT_CAP=1     ("^ *<issue$" entries in androidApp/lint-baseline.xml;
+#   LINT_CAP=0     ("^ *<issue$" entries in androidApp/lint-baseline.xml;
 #                   the "<issues" root tag is excluded by the anchor)
 #   DETEKT_CAP=531 ("<ID>...</ID>" entries in config/detekt/baseline.xml;
 #                   the "<SmellBaseline>" root tag carries no per-finding count)
@@ -19,7 +19,7 @@ HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 CLIENT=$(CDPATH= cd -- "$HERE/.." && pwd)
 LINT_BASELINE="$CLIENT/androidApp/lint-baseline.xml"
 DETEKT_BASELINE="$CLIENT/config/detekt/baseline.xml"
-LINT_CAP=1
+LINT_CAP=0
 DETEKT_CAP=531
 
 fail=0

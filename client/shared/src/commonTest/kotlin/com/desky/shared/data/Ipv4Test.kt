@@ -40,13 +40,20 @@ class Ipv4Test {
 
     @Test
     fun portByteSwapRoundTrip() {
-        listOf(0, 1, 3333, 8080, 65535).forEach { port ->
+        listOf(0, 1, TYPICAL_PORT_A, TYPICAL_PORT_B, MAX_PORT_VALUE).forEach { port ->
             val wire = hostPortToNetworkOrder(port)
             assertEquals(port, networkOrderToHostPort(wire))
         }
         // 3333 = 0x0D05 -> wire 0x050D.
-        assertEquals(0x050Du.toUShort(), hostPortToNetworkOrder(3333))
-        assertFailsWith<IllegalArgumentException> { hostPortToNetworkOrder(65536) }
+        assertEquals(0x050Du.toUShort(), hostPortToNetworkOrder(TYPICAL_PORT_A))
+        assertFailsWith<IllegalArgumentException> { hostPortToNetworkOrder(OVER_MAX_PORT) }
         assertFailsWith<IllegalArgumentException> { hostPortToNetworkOrder(-1) }
+    }
+
+    private companion object {
+        const val TYPICAL_PORT_A = 3333
+        const val TYPICAL_PORT_B = 8080
+        const val MAX_PORT_VALUE = 65535
+        const val OVER_MAX_PORT = 65536
     }
 }

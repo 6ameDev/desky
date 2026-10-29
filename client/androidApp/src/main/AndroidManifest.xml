@@ -20,6 +20,7 @@
     <application
         android:name=".DeskyApp"
         android:label="Desky"
+        android:icon="@drawable/ic_launcher"
         android:theme="@android:style/Theme.Material.NoActionBar">
         <!-- Bundled ML Kit barcode model ships in the APK: no Play
              module download, scans work offline (incl. on the no-internet

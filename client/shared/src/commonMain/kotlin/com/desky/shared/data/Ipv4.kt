@@ -23,28 +23,39 @@ package com.desky.shared.data
 /** Dotted quad (e.g. `192.168.4.1`) to network-order UInt32. */
 internal fun parseIpv4ToNetworkOrder(host: String): UInt {
     val parts = host.split('.')
-    require(parts.size == 4) { "Invalid IPv4 address: $host" }
+    require(parts.size == OCTET_COUNT) { "Invalid IPv4 address: $host" }
     var addr = 0u
     for ((i, part) in parts.withIndex()) {
         val octet = part.toUIntOrNull()
-        require(octet != null && octet <= 255u) { "Invalid IPv4 address: $host" }
-        addr = addr or (octet shl (i * 8))
+        require(octet != null && octet <= MAX_OCTET) { "Invalid IPv4 address: $host" }
+        addr = addr or (octet shl (i * BITS_PER_OCTET))
     }
     return addr
 }
 
 /** Network-order UInt32 to dotted quad. */
 internal fun formatIpv4FromNetworkOrder(addr: UInt): String =
-    "${addr and 0xFFu}.${(addr shr 8) and 0xFFu}.${(addr shr 16) and 0xFFu}.${(addr shr 24) and 0xFFu}"
+    "${addr and OCTET_MASK_U}.${(addr shr SECOND_OCTET_SHIFT) and OCTET_MASK_U}.${(addr shr THIRD_OCTET_SHIFT) and OCTET_MASK_U}.${(addr shr FOURTH_OCTET_SHIFT) and OCTET_MASK_U}"
 
 /** Host-order port (0..65535) to network-order 16-bit. Manual `htons`. */
 internal fun hostPortToNetworkOrder(port: Int): UShort {
-    require(port in 0..65535) { "port out of range: $port" }
-    return (((port and 0xFF) shl 8) or ((port ushr 8) and 0xFF)).toUShort()
+    require(port in MIN_PORT..MAX_PORT) { "port out of range: $port" }
+    return (((port and BYTE_MASK) shl BITS_PER_OCTET) or ((port ushr BITS_PER_OCTET) and BYTE_MASK)).toUShort()
 }
 
 /** Network-order 16-bit to host-order port. Manual `ntohs`. */
 internal fun networkOrderToHostPort(raw: UShort): Int {
     val v = raw.toInt()
-    return ((v and 0xFF) shl 8) or ((v ushr 8) and 0xFF)
+    return ((v and BYTE_MASK) shl BITS_PER_OCTET) or ((v ushr BITS_PER_OCTET) and BYTE_MASK)
 }
+
+private const val OCTET_COUNT = 4
+private const val BITS_PER_OCTET = 8
+private const val SECOND_OCTET_SHIFT = 8
+private const val THIRD_OCTET_SHIFT = 16
+private const val FOURTH_OCTET_SHIFT = 24
+private const val BYTE_MASK = 0xFF
+private const val MIN_PORT = 0
+private const val MAX_PORT = 65535
+private val OCTET_MASK_U = 0xFFu
+private val MAX_OCTET = 255u
