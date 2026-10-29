@@ -39,6 +39,9 @@ import org.koin.androidx.compose.koinViewModel
 
 private val FloatInputRegex = Regex("^-?\\d*\\.?\\d*$")
 
+private const val PERCENT_SCALE = 100
+private const val MAX_LED_PROFILE = 7
+
 private fun String.isValidFloatInput(): Boolean = isEmpty() || matches(FloatInputRegex)
 
 @Composable
@@ -102,7 +105,7 @@ fun SettingsContent(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (state.isSaving) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            Text("Speed limit: ${(config.speedLimit * 100).toInt()}%")
+            Text("Speed limit: ${(config.speedLimit * PERCENT_SCALE).toInt()}%")
             Slider(
                 value = config.speedLimit,
                 onValueChange = onSpeedLimit,
@@ -111,12 +114,12 @@ fun SettingsContent(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("LED profile: ${config.ledProfile}")
                 OutlinedButton(
-                    onClick = { onLedProfile((config.ledProfile - 1).coerceIn(0, 7)) },
+                    onClick = { onLedProfile((config.ledProfile - 1).coerceIn(0, MAX_LED_PROFILE)) },
                     enabled = config.ledProfile > 0,
                 ) { Text("−") }
                 OutlinedButton(
-                    onClick = { onLedProfile((config.ledProfile + 1).coerceIn(0, 7)) },
-                    enabled = config.ledProfile < 7,
+                    onClick = { onLedProfile((config.ledProfile + 1).coerceIn(0, MAX_LED_PROFILE)) },
+                    enabled = config.ledProfile < MAX_LED_PROFILE,
                 ) { Text("+") }
             }
             val pidKeys = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done)

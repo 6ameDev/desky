@@ -141,6 +141,21 @@ const val EXPR_TRIGGER_SIZE = 15
 /** Failsafe window: the robot stops ~500 ms after the last control datagram. */
 const val STALE_MS = 500
 
+private const val BYTE_MASK = 0xFF
+private const val BE_BYTE1_SHIFT = 8
+private const val BE_BYTE2_SHIFT = 16
+private const val BE_BYTE3_SHIFT = 24
+private const val PSK_BYTE_LENGTH = 16
+private const val STICK_CENTER = 128
+private const val STICK_CENTER_F = 128f
+private const val STICK_HALF_RANGE = 127f
+private const val STICK_BYTE_MAX = 255
+private const val ROUND_HALF = 0.5f
+private const val DECIDEGREE_FACTOR = 10f
+private const val INT16_MAX_F = 32767f
+private const val INT16_MIN_F = -32768f
+private const val MAX_EXPRESSION_ID = 255
+
 /** statusFlags bit map (mirror of `udpstatus` in `udp_server.h`). */
 const val CLIFF_BIT = 0
 const val DRIVING_BIT = 1
@@ -161,8 +176,8 @@ const val MANUAL_BIT = 4
  * @param raw raw wire byte (Kotlin [Byte] is signed; treated as 0..255).
  */
 fun byteToUnit(raw: Byte): Float {
-    val unsigned = raw.toInt() and 0xFF
-    val f = (unsigned - 128).toFloat() / 127f
+    val unsigned = raw.toInt() and BYTE_MASK
+    val f = (unsigned - STICK_CENTER).toFloat() / STICK_HALF_RANGE
     return f.coerceIn(-1f, 1f)
 }
 
@@ -172,8 +187,8 @@ fun byteToUnit(raw: Byte): Float {
  */
 fun unitToByte(v: Float): Byte {
     val clamped = v.coerceIn(-1f, 1f)
-    val b = (clamped * 127f + 128f + if (clamped >= 0f) 0.5f else -0.5f).toInt()
-    return b.coerceIn(0, 255).toByte()
+    val b = (clamped * STICK_HALF_RANGE + STICK_CENTER_F + if (clamped >= 0f) ROUND_HALF else -ROUND_HALF).toInt()
+    return b.coerceIn(0, STICK_BYTE_MAX).toByte()
 }
 
 /**
@@ -181,14 +196,14 @@ fun unitToByte(v: Float): Byte {
  * Mirror of `udpstatus::degToDecideg`.
  */
 fun degToDecideg(deg: Float): Short {
-    val d = deg * 10f
-    if (d >= 32767f) return 32767
-    if (d <= -32768f) return -32768
-    return (d + if (d >= 0f) 0.5f else -0.5f).toInt().toShort()
+    val d = deg * DECIDEGREE_FACTOR
+    if (d >= INT16_MAX_F) return Short.MAX_VALUE
+    if (d <= INT16_MIN_F) return Short.MIN_VALUE
+    return (d + if (d >= 0f) ROUND_HALF else -ROUND_HALF).toInt().toShort()
 }
 
 /** Decidegrees -> degrees. */
-fun decidegToDeg(raw: Short): Float = raw.toFloat() / 10f
+fun decidegToDeg(raw: Short): Float = raw.toFloat() / DECIDEGREE_FACTOR
 
 /** Pack cliff/driving/mode/manual into the telemetry statusFlags byte (0..255). */
 fun packStatusFlags(cliff: Boolean, driving: Boolean, mode: RobotMode, manual: Boolean = false): Int {
@@ -212,19 +227,19 @@ fun statusManual(flags: Int): Boolean = (flags and (1 shl MANUAL_BIT)) != 0
 private fun xorChecksum(bytes: ByteArray, len: Int): Byte {
     var sum = 0
     for (i in 0 until len) {
-        sum = sum xor (bytes[i].toInt() and 0xFF)
+        sum = sum xor (bytes[i].toInt() and BYTE_MASK)
     }
     return sum.toByte()
 }
 
 private fun putI16BE(out: ByteArray, at: Int, v: Short) {
     val i = v.toInt()
-    out[at] = ((i shr 8) and 0xFF).toByte()
-    out[at + 1] = (i and 0xFF).toByte()
+    out[at] = ((i shr BE_BYTE1_SHIFT) and BYTE_MASK).toByte()
+    out[at + 1] = (i and BYTE_MASK).toByte()
 }
 
 private fun getI16BE(bytes: ByteArray, at: Int): Short {
-    return (((bytes[at].toInt() and 0xFF) shl 8) or (bytes[at + 1].toInt() and 0xFF)).toShort()
+    return (((bytes[at].toInt() and BYTE_MASK) shl BE_BYTE1_SHIFT) or (bytes[at + 1].toInt() and BYTE_MASK)).toShort()
 }
 
 /**
@@ -238,14 +253,18 @@ private fun getI16BE(bytes: ByteArray, at: Int): Short {
  * All drive traffic goes through [encodeSigned].
  */
 object ControlPacketCodec {
+    private const val STEERING_INDEX = 3
+    private const val FLAGS_INDEX = 4
+    private const val XOR_INDEX = 5
+
     internal fun encode(cmd: ControlCommand): ByteArray {
         val out = ByteArray(CONTROL_SIZE)
         out[0] = CONTROL_HEADER.toByte()
         out[1] = cmd.mode.toBits().toByte()
         out[2] = unitToByte(cmd.throttle)
-        out[3] = unitToByte(cmd.steering)
-        out[4] = cmd.flags.toByte()
-        out[5] = xorChecksum(out, CONTROL_SIZE - 1)
+        out[STEERING_INDEX] = unitToByte(cmd.steering)
+        out[FLAGS_INDEX] = cmd.flags.toByte()
+        out[XOR_INDEX] = xorChecksum(out, CONTROL_SIZE - 1)
         return out
     }
 
@@ -256,13 +275,13 @@ object ControlPacketCodec {
      */
     fun decode(bytes: ByteArray): ControlCommand? {
         if (bytes.size != CONTROL_SIZE) return null
-        if ((bytes[0].toInt() and 0xFF) != CONTROL_HEADER) return null
+        if ((bytes[0].toInt() and BYTE_MASK) != CONTROL_HEADER) return null
         if (xorChecksum(bytes, CONTROL_SIZE - 1) != bytes[CONTROL_SIZE - 1]) return null
         return ControlCommand(
             mode = RobotMode.fromBits(bytes[1].toInt() and MODE_MASK),
             throttle = byteToUnit(bytes[2]),
-            steering = byteToUnit(bytes[3]),
-            flags = bytes[4].toInt() and 0xFF,
+            steering = byteToUnit(bytes[STEERING_INDEX]),
+            flags = bytes[FLAGS_INDEX].toInt() and BYTE_MASK,
         )
     }
 }
@@ -288,7 +307,7 @@ object ControlPacketCodec {
  * @param psk 16-byte pair PSK.
  */
 suspend fun encodeSigned(cmd: ControlCommand, counter: UInt, psk: ByteArray): ByteArray {
-    require(psk.size == 16) { "encodeSigned: psk must be 16 bytes" }
+    require(psk.size == PSK_BYTE_LENGTH) { "encodeSigned: psk must be 16 bytes" }
     val out = ByteArray(DRIVE_SIZE)
     out[0] = DRIVE_HEADER.toByte()
     val mode = cmd.mode.toBits().toByte()
@@ -299,9 +318,9 @@ suspend fun encodeSigned(cmd: ControlCommand, counter: UInt, psk: ByteArray): By
     out[2] = thr
     out[3] = str
     out[4] = flags
-    out[5] = (counter shr 24).toByte()
-    out[6] = (counter shr 16).toByte()
-    out[7] = (counter shr 8).toByte()
+    out[5] = (counter shr BE_BYTE3_SHIFT).toByte()
+    out[6] = (counter shr BE_BYTE2_SHIFT).toByte()
+    out[7] = (counter shr BE_BYTE1_SHIFT).toByte()
     out[8] = counter.toByte()
     driveTag(psk, counter, mode, thr, str, flags).copyInto(out, destinationOffset = 9)
     out[DRIVE_SIZE - 1] = xorChecksum(out, DRIVE_SIZE - 1)
@@ -326,6 +345,8 @@ suspend fun encodeSigned(cmd: ControlCommand, counter: UInt, psk: ByteArray): By
  * Pure byte math mirroring the firmware `middleware/pairing.h` layout.
  */
 object PairingPacketCodec {
+    private const val GCM_TAG_SIZE = 16
+    private const val CT_OFFSET = 5
     /** Throws [IllegalArgumentException] unless [code] is 6B and [clientNonce] 4B. */
     fun encodePairReq(code: ByteArray, clientNonce: ByteArray): ByteArray {
         require(code.size == PAIR_CODE_SIZE) { "encodePairReq: code must be 6 ASCII digits" }
@@ -347,12 +368,12 @@ object PairingPacketCodec {
      */
     fun decodePairOk(bytes: ByteArray): Triple<ByteArray, ByteArray, ByteArray>? {
         if (bytes.size != PAIR_OK_SIZE && bytes.size != PAIR_OK_SIZE_V11) return null
-        if ((bytes[0].toInt() and 0xFF) != PAIR_OK_HEADER) return null
+        if ((bytes[0].toInt() and BYTE_MASK) != PAIR_OK_HEADER) return null
         if (xorChecksum(bytes, bytes.size - 1) != bytes[bytes.size - 1]) return null
-        val ctLen = bytes.size - /* header + nonce + tag + xor */ (1 + PAIR_NONCE_SIZE + 16 + 1)
+        val ctLen = bytes.size - /* header + nonce + tag + xor */ (1 + PAIR_NONCE_SIZE + GCM_TAG_SIZE + 1)
         val serverNonce = bytes.copyOfRange(1, 1 + PAIR_NONCE_SIZE)
-        val ct = bytes.copyOfRange(5, 5 + ctLen)
-        val tag = bytes.copyOfRange(5 + ctLen, 5 + ctLen + 16)
+        val ct = bytes.copyOfRange(CT_OFFSET, CT_OFFSET + ctLen)
+        val tag = bytes.copyOfRange(CT_OFFSET + ctLen, CT_OFFSET + ctLen + GCM_TAG_SIZE)
         return Triple(serverNonce, ct, tag)
     }
 
@@ -362,9 +383,9 @@ object PairingPacketCodec {
      */
     fun decodePairErr(bytes: ByteArray): Pair<Int, Int>? {
         if (bytes.size != PAIR_ERR_SIZE) return null
-        if ((bytes[0].toInt() and 0xFF) != PAIR_ERR_HEADER) return null
+        if ((bytes[0].toInt() and BYTE_MASK) != PAIR_ERR_HEADER) return null
         if (xorChecksum(bytes, PAIR_ERR_SIZE - 1) != bytes[PAIR_ERR_SIZE - 1]) return null
-        return (bytes[1].toInt() and 0xFF) to (bytes[2].toInt() and 0xFF)
+        return (bytes[1].toInt() and BYTE_MASK) to (bytes[2].toInt() and BYTE_MASK)
     }
 }
 
@@ -386,12 +407,12 @@ object PairingPacketCodec {
  *   like every other signed frame).
  */
 suspend fun encodeUnpair(psk: ByteArray, counter: UInt): ByteArray {
-    require(psk.size == 16) { "encodeUnpair: psk must be 16 bytes" }
+    require(psk.size == PSK_BYTE_LENGTH) { "encodeUnpair: psk must be 16 bytes" }
     val out = ByteArray(UNPAIR_SIZE)
     out[0] = UNPAIR_HEADER.toByte()
-    out[1] = (counter shr 24).toByte()
-    out[2] = (counter shr 16).toByte()
-    out[3] = (counter shr 8).toByte()
+    out[1] = (counter shr BE_BYTE3_SHIFT).toByte()
+    out[2] = (counter shr BE_BYTE2_SHIFT).toByte()
+    out[3] = (counter shr BE_BYTE1_SHIFT).toByte()
     out[4] = counter.toByte()
     unpairTag(psk, counter).copyInto(out, destinationOffset = 5)
     out[UNPAIR_SIZE - 1] = xorChecksum(out, UNPAIR_SIZE - 1)
@@ -416,14 +437,14 @@ suspend fun encodeUnpair(psk: ByteArray, counter: UInt): ByteArray {
  * `client/ARCHITECTURE.md` (same reason as [encodeSigned]/[encodeUnpair]).
  */
 suspend fun encodePairRefreshReq(oldPsk: ByteArray, nextEra: UShort, counter: UInt): ByteArray {
-    require(oldPsk.size == 16) { "encodePairRefreshReq: oldPsk must be 16 bytes" }
+    require(oldPsk.size == PSK_BYTE_LENGTH) { "encodePairRefreshReq: oldPsk must be 16 bytes" }
     val out = ByteArray(PAIR_REFRESH_REQ_SIZE)
     out[0] = PAIR_REFRESH_REQ_HEADER.toByte()
-    out[1] = ((nextEra.toInt() shr 8) and 0xFF).toByte()
-    out[2] = (nextEra.toInt() and 0xFF).toByte()
-    out[3] = (counter shr 24).toByte()
-    out[4] = (counter shr 16).toByte()
-    out[5] = (counter shr 8).toByte()
+    out[1] = ((nextEra.toInt() shr BE_BYTE1_SHIFT) and BYTE_MASK).toByte()
+    out[2] = (nextEra.toInt() and BYTE_MASK).toByte()
+    out[3] = (counter shr BE_BYTE3_SHIFT).toByte()
+    out[4] = (counter shr BE_BYTE2_SHIFT).toByte()
+    out[5] = (counter shr BE_BYTE1_SHIFT).toByte()
     out[6] = counter.toByte()
     pairRefreshTag(oldPsk, nextEra, counter).copyInto(out, destinationOffset = 7)
     out[PAIR_REFRESH_REQ_SIZE - 1] = xorChecksum(out, PAIR_REFRESH_REQ_SIZE - 1)
@@ -437,9 +458,9 @@ suspend fun encodePairRefreshReq(oldPsk: ByteArray, nextEra: UShort, counter: UI
  */
 fun decodePairRefreshAck(bytes: ByteArray): Pair<UShort, ByteArray>? {
     if (bytes.size != PAIR_REFRESH_ACK_SIZE) return null
-    if ((bytes[0].toInt() and 0xFF) != PAIR_REFRESH_ACK_HEADER) return null
+    if ((bytes[0].toInt() and BYTE_MASK) != PAIR_REFRESH_ACK_HEADER) return null
     if (xorChecksum(bytes, PAIR_REFRESH_ACK_SIZE - 1) != bytes[PAIR_REFRESH_ACK_SIZE - 1]) return null
-    val era = (((bytes[1].toInt() and 0xFF) shl 8) or (bytes[2].toInt() and 0xFF)).toUShort()
+    val era = (((bytes[1].toInt() and BYTE_MASK) shl BE_BYTE1_SHIFT) or (bytes[2].toInt() and BYTE_MASK)).toUShort()
     val tag = bytes.copyOfRange(3, 3 + 6)
     return era to tag
 }
@@ -466,14 +487,14 @@ fun decodePairRefreshAck(bytes: ByteArray): Pair<UShort, ByteArray>? {
  *   (strictly increasing like every other signed frame).
  */
 suspend fun encodeAlive(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
-    require(psk.size == 16) { "encodeAlive: psk must be 16 bytes" }
+    require(psk.size == PSK_BYTE_LENGTH) { "encodeAlive: psk must be 16 bytes" }
     val out = ByteArray(ALIVE_SIZE)
     out[0] = ALIVE_HEADER.toByte()
-    out[1] = ((era.toInt() shr 8) and 0xFF).toByte()
-    out[2] = (era.toInt() and 0xFF).toByte()
-    out[3] = (counter shr 24).toByte()
-    out[4] = (counter shr 16).toByte()
-    out[5] = (counter shr 8).toByte()
+    out[1] = ((era.toInt() shr BE_BYTE1_SHIFT) and BYTE_MASK).toByte()
+    out[2] = (era.toInt() and BYTE_MASK).toByte()
+    out[3] = (counter shr BE_BYTE3_SHIFT).toByte()
+    out[4] = (counter shr BE_BYTE2_SHIFT).toByte()
+    out[5] = (counter shr BE_BYTE1_SHIFT).toByte()
     out[6] = counter.toByte()
     aliveTag(psk, era, counter).copyInto(out, destinationOffset = 7)
     out[ALIVE_SIZE - 1] = xorChecksum(out, ALIVE_SIZE - 1)
@@ -503,14 +524,14 @@ suspend fun encodeAlive(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
  * @param counter next drive counter from the shared [ToRobotCounter].
  */
 suspend fun encodeDisconnect(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
-    require(psk.size == 16) { "encodeDisconnect: psk must be 16 bytes" }
+    require(psk.size == PSK_BYTE_LENGTH) { "encodeDisconnect: psk must be 16 bytes" }
     val out = ByteArray(DISCONNECT_SIZE)
     out[0] = DISCONNECT_HEADER.toByte()
-    out[1] = ((era.toInt() shr 8) and 0xFF).toByte()
-    out[2] = (era.toInt() and 0xFF).toByte()
-    out[3] = (counter shr 24).toByte()
-    out[4] = (counter shr 16).toByte()
-    out[5] = (counter shr 8).toByte()
+    out[1] = ((era.toInt() shr BE_BYTE1_SHIFT) and BYTE_MASK).toByte()
+    out[2] = (era.toInt() and BYTE_MASK).toByte()
+    out[3] = (counter shr BE_BYTE3_SHIFT).toByte()
+    out[4] = (counter shr BE_BYTE2_SHIFT).toByte()
+    out[5] = (counter shr BE_BYTE1_SHIFT).toByte()
     out[6] = counter.toByte()
     disconnectTag(psk, era, counter).copyInto(out, destinationOffset = 7)
     out[DISCONNECT_SIZE - 1] = xorChecksum(out, DISCONNECT_SIZE - 1)
@@ -529,11 +550,11 @@ private fun encodeSessionFrame(header: Int, id: Int?, era: UShort, counter: UInt
     out[0] = header.toByte()
     var at = 1
     if (id != null) out[at++] = id.toByte()
-    out[at++] = ((era.toInt() shr 8) and 0xFF).toByte()
-    out[at++] = (era.toInt() and 0xFF).toByte()
-    out[at++] = (counter shr 24).toByte()
-    out[at++] = (counter shr 16).toByte()
-    out[at++] = (counter shr 8).toByte()
+    out[at++] = ((era.toInt() shr BE_BYTE1_SHIFT) and BYTE_MASK).toByte()
+    out[at++] = (era.toInt() and BYTE_MASK).toByte()
+    out[at++] = (counter shr BE_BYTE3_SHIFT).toByte()
+    out[at++] = (counter shr BE_BYTE2_SHIFT).toByte()
+    out[at++] = (counter shr BE_BYTE1_SHIFT).toByte()
     out[at++] = counter.toByte()
     tag.copyInto(out, destinationOffset = at)
     out[size - 1] = xorChecksum(out, size - 1)
@@ -560,7 +581,7 @@ private fun encodeSessionFrame(header: Int, id: Int?, era: UShort, counter: UInt
  * @param counter next drive counter from the shared [ToRobotCounter].
  */
 suspend fun encodeManualTake(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
-    require(psk.size == 16) { "encodeManualTake: psk must be 16 bytes" }
+    require(psk.size == PSK_BYTE_LENGTH) { "encodeManualTake: psk must be 16 bytes" }
     return encodeSessionFrame(MANUAL_TAKE_HEADER, null, era, counter, manualTakeTag(psk, era, counter))
 }
 
@@ -584,7 +605,7 @@ suspend fun encodeManualTake(psk: ByteArray, era: UShort, counter: UInt): ByteAr
  * @param counter next drive counter from the shared [ToRobotCounter].
  */
 suspend fun encodeManualRelease(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
-    require(psk.size == 16) { "encodeManualRelease: psk must be 16 bytes" }
+    require(psk.size == PSK_BYTE_LENGTH) { "encodeManualRelease: psk must be 16 bytes" }
     return encodeSessionFrame(MANUAL_RELEASE_HEADER, null, era, counter, manualReleaseTag(psk, era, counter))
 }
 
@@ -609,8 +630,8 @@ suspend fun encodeManualRelease(psk: ByteArray, era: UShort, counter: UInt): Byt
  * @param counter next drive counter from the shared [ToRobotCounter].
  */
 suspend fun encodeExprTrigger(psk: ByteArray, id: Int, era: UShort, counter: UInt): ByteArray {
-    require(psk.size == 16) { "encodeExprTrigger: psk must be 16 bytes" }
-    require(id in 0..255) { "encodeExprTrigger: id out of range: $id" }
+    require(psk.size == PSK_BYTE_LENGTH) { "encodeExprTrigger: psk must be 16 bytes" }
+    require(id in 0..MAX_EXPRESSION_ID) { "encodeExprTrigger: id out of range: $id" }
     return encodeSessionFrame(EXPR_TRIGGER_HEADER, id, era, counter, exprTriggerTag(psk, id, era, counter))
 }
 
@@ -623,12 +644,12 @@ suspend fun encodeExprTrigger(psk: ByteArray, id: Int, era: UShort, counter: UIn
  * See `shared/protocol/README.md` §"ALIVE + DISCONNECT + robot alive rule".
  */
 fun decodeDisconnect(bytes: ByteArray): Triple<UShort, UInt, ByteArray>? {    if (bytes.size != DISCONNECT_SIZE) return null
-    if ((bytes[0].toInt() and 0xFF) != DISCONNECT_HEADER) return null
+    if ((bytes[0].toInt() and BYTE_MASK) != DISCONNECT_HEADER) return null
     if (xorChecksum(bytes, DISCONNECT_SIZE - 1) != bytes[DISCONNECT_SIZE - 1]) return null
-    val era = (((bytes[1].toInt() and 0xFF) shl 8) or (bytes[2].toInt() and 0xFF)).toUShort()
-    val counter = (((bytes[3].toUInt() and 0xFFu) shl 24) or
-        ((bytes[4].toUInt() and 0xFFu) shl 16) or
-        ((bytes[5].toUInt() and 0xFFu) shl 8) or
+    val era = (((bytes[1].toInt() and BYTE_MASK) shl BE_BYTE1_SHIFT) or (bytes[2].toInt() and BYTE_MASK)).toUShort()
+    val counter = (((bytes[3].toUInt() and 0xFFu) shl BE_BYTE3_SHIFT) or
+        ((bytes[4].toUInt() and 0xFFu) shl BE_BYTE2_SHIFT) or
+        ((bytes[5].toUInt() and 0xFFu) shl BE_BYTE1_SHIFT) or
         (bytes[6].toUInt() and 0xFFu))
     val tag = bytes.copyOfRange(7, 7 + 6)
     return Triple(era, counter, tag)
@@ -639,28 +660,34 @@ fun decodeDisconnect(bytes: ByteArray): Triple<UShort, UInt, ByteArray>? {    if
  * Pure byte math mirroring `udp::encodeTelemetry` / `udp::decodeTelemetry`.
  */
 object TelemetryPacketCodec {
+    private const val ROLL_OFFSET = 3
+    private const val DIST_HIGH_OFFSET = 5
+    private const val DIST_LOW_OFFSET = 6
+    private const val FLAGS_OFFSET = 7
+    private const val XOR_OFFSET = 8
+
     /** Provided for tests/fakes; the robot is the real producer on the wire. */
     fun encode(t: Telemetry): ByteArray {
         val out = ByteArray(TELEMETRY_SIZE)
         out[0] = TELEMETRY_HEADER.toByte()
         putI16BE(out, 1, degToDecideg(t.pitchDeg))
-        putI16BE(out, 3, degToDecideg(t.rollDeg))
-        out[5] = ((t.distanceMm shr 8) and 0xFF).toByte()
-        out[6] = (t.distanceMm and 0xFF).toByte()
-        out[7] = packStatusFlags(t.cliff, t.driving, t.mode, t.manual).toByte()
-        out[8] = xorChecksum(out, TELEMETRY_SIZE - 1)
+        putI16BE(out, ROLL_OFFSET, degToDecideg(t.rollDeg))
+        out[DIST_HIGH_OFFSET] = ((t.distanceMm shr BE_BYTE1_SHIFT) and BYTE_MASK).toByte()
+        out[DIST_LOW_OFFSET] = (t.distanceMm and BYTE_MASK).toByte()
+        out[FLAGS_OFFSET] = packStatusFlags(t.cliff, t.driving, t.mode, t.manual).toByte()
+        out[XOR_OFFSET] = xorChecksum(out, TELEMETRY_SIZE - 1)
         return out
     }
 
     /** Null on wrong header, wrong length, or bad checksum. */
     fun decode(bytes: ByteArray): Telemetry? {
         if (bytes.size != TELEMETRY_SIZE) return null
-        if ((bytes[0].toInt() and 0xFF) != TELEMETRY_HEADER) return null
+        if ((bytes[0].toInt() and BYTE_MASK) != TELEMETRY_HEADER) return null
         if (xorChecksum(bytes, TELEMETRY_SIZE - 1) != bytes[TELEMETRY_SIZE - 1]) return null
         val pitch = getI16BE(bytes, 1)
-        val roll = getI16BE(bytes, 3)
-        val distance = ((bytes[5].toInt() and 0xFF) shl 8) or (bytes[6].toInt() and 0xFF)
-        val flags = bytes[7].toInt() and 0xFF
+        val roll = getI16BE(bytes, ROLL_OFFSET)
+        val distance = ((bytes[DIST_HIGH_OFFSET].toInt() and BYTE_MASK) shl BE_BYTE1_SHIFT) or (bytes[DIST_LOW_OFFSET].toInt() and BYTE_MASK)
+        val flags = bytes[FLAGS_OFFSET].toInt() and BYTE_MASK
         return Telemetry(
             pitchDeg = decidegToDeg(pitch),
             rollDeg = decidegToDeg(roll),

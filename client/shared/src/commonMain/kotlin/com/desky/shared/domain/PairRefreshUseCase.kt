@@ -8,6 +8,12 @@ import kotlinx.coroutines.withTimeout
 /** Default per-send wait schedule for the silent pair-refresh exchange (ms): 3x 1s. */
 val DEFAULT_PAIR_REFRESH_ATTEMPT_TIMEOUTS_MS: List<Long> = listOf(1000, 1000, 1000)
 
+private const val BYTE_MASK = 0xFF
+private const val U16_MASK = 0xFFFF
+private const val BITS_PER_BYTE = 8
+private const val PSK_BYTE_LENGTH = 16
+private const val MAX_PAIR_REFRESH_ATTEMPTS = 5
+
 /**
  * Tier-1 silent auto-pair-refresh: rotate the pair era + PSK under the old PSK,
  * reset the counter to the pair baseline, and resume gapless — with no user
@@ -49,7 +55,7 @@ class PairRefreshUseCase(
     private val attemptTimeoutsMs: List<Long> = DEFAULT_PAIR_REFRESH_ATTEMPT_TIMEOUTS_MS,
 ) {
     init {
-        require(attemptTimeoutsMs.size in 1..5) {
+        require(attemptTimeoutsMs.size in 1..MAX_PAIR_REFRESH_ATTEMPTS) {
             "attemptTimeoutsMs must hold 1..5 entries (got ${attemptTimeoutsMs.size})"
         }
         require(attemptTimeoutsMs.all { it > 0 }) {
@@ -75,10 +81,10 @@ class PairRefreshUseCase(
             } catch (e: Exception) {
                 return Outcome.Failure("PairRefresh failed: undecodable pair key", e)
             }
-            if (oldPsk.size != 16) return Outcome.Failure("PairRefresh failed: undecodable pair key")
+            if (oldPsk.size != PSK_BYTE_LENGTH) return Outcome.Failure("PairRefresh failed: undecodable pair key")
             toRobotCounter.ensure(device.id, device.lastCounter, device.persistEvery, device.era)
             val counter = toRobotCounter.next() ?: return Outcome.Failure("PairRefresh failed: counter exhausted")
-            val nextEra: UShort = ((device.era.toInt() + 1) and 0xFFFF).toUShort()
+            val nextEra: UShort = ((device.era.toInt() + 1) and U16_MASK).toUShort()
             val nextPsk = pairRefreshPsk(oldPsk, nextEra)
             val req = encodePairRefreshReq(oldPsk, nextEra, counter)
 
@@ -129,8 +135,8 @@ class PairRefreshUseCase(
 
     private fun isPairRefreshAckFor(bytes: ByteArray, era: UShort): Boolean {
         if (bytes.size != PAIR_REFRESH_ACK_SIZE) return false
-        if ((bytes[0].toInt() and 0xFF) != PAIR_REFRESH_ACK_HEADER) return false
-        val got = (((bytes[1].toInt() and 0xFF) shl 8) or (bytes[2].toInt() and 0xFF)).toUShort()
+        if ((bytes[0].toInt() and BYTE_MASK) != PAIR_REFRESH_ACK_HEADER) return false
+        val got = (((bytes[1].toInt() and BYTE_MASK) shl BITS_PER_BYTE) or (bytes[2].toInt() and BYTE_MASK)).toUShort()
         return got == era
     }
 }

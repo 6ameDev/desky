@@ -11,7 +11,10 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
-private fun Byte.unsigned(): Int = this.toInt() and 0xFF
+private const val BYTE_MASK = 0xFF
+private const val HEX_RADIX = 16
+
+private fun Byte.unsigned(): Int = this.toInt() and BYTE_MASK
 
 private fun xorOf(bytes: ByteArray, len: Int): Int {
     var sum = 0
@@ -22,7 +25,7 @@ private fun xorOf(bytes: ByteArray, len: Int): Int {
 private fun hex(s: String): ByteArray {
     require(s.length % 2 == 0)
     return ByteArray(s.length / 2) { i ->
-        s.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        s.substring(i * 2, i * 2 + 2).toInt(HEX_RADIX).toByte()
     }
 }
 
@@ -37,12 +40,24 @@ private const val RELEASE_FRAME_HEX = "58000100000064e2ce426715b594"
 
 class ManualModeUseCasesTest {
 
+    private companion object {
+        const val EXPECTED_MANUAL_TAKE_HEADER = 0x57
+        const val EXPECTED_MANUAL_RELEASE_HEADER = 0x58
+        const val EXPECTED_MANUAL_TAKE_SIZE = 14
+        const val EXPECTED_MANUAL_RELEASE_SIZE = 14
+        const val TAKE_HMAC_MSG_SIZE = 16
+        const val RELEASE_HMAC_MSG_SIZE = 19
+        const val AUTH_TAG_SIZE = 6
+        const val SHORT_PSK_SIZE = 8
+        const val PSK_BYTE_LENGTH = 16
+    }
+
     @Test
     fun constants() {
-        assertEquals(0x57, MANUAL_TAKE_HEADER)
-        assertEquals(14, MANUAL_TAKE_SIZE)
-        assertEquals(0x58, MANUAL_RELEASE_HEADER)
-        assertEquals(14, MANUAL_RELEASE_SIZE)
+        assertEquals(EXPECTED_MANUAL_TAKE_HEADER, MANUAL_TAKE_HEADER)
+        assertEquals(EXPECTED_MANUAL_TAKE_SIZE, MANUAL_TAKE_SIZE)
+        assertEquals(EXPECTED_MANUAL_RELEASE_HEADER, MANUAL_RELEASE_HEADER)
+        assertEquals(EXPECTED_MANUAL_RELEASE_SIZE, MANUAL_RELEASE_SIZE)
     }
 
     @Test
@@ -69,12 +84,12 @@ class ManualModeUseCasesTest {
     @Test
     fun takeFrameGolden() = runTest {
         val hmacInput = "MANUALTAKE".encodeToByteArray() + hex("000100000064")
-        assertEquals(16, hmacInput.size)
-        val tag = hmacSha256(PSK, hmacInput).copyOfRange(0, 6)
+        assertEquals(TAKE_HMAC_MSG_SIZE, hmacInput.size)
+        val tag = hmacSha256(PSK, hmacInput).copyOfRange(0, AUTH_TAG_SIZE)
         assertContentEquals(hex(TAKE_TAG_HEX), tag)
 
         val body = byteArrayOf(0x57.toByte(), 0x00, 0x01, 0x00, 0x00, 0x00, 0x64) + tag
-        assertEquals(13, body.size)
+        assertEquals(MANUAL_TAKE_SIZE - 1, body.size)
         val expected = body + byteArrayOf(xorOf(body, body.size).toByte())
 
         val actual = encodeManualTake(PSK, 1u, 100u)
@@ -95,12 +110,12 @@ class ManualModeUseCasesTest {
     @Test
     fun releaseFrameGolden() = runTest {
         val hmacInput = "MANUALRELEASE".encodeToByteArray() + hex("000100000064")
-        assertEquals(19, hmacInput.size)
-        val tag = hmacSha256(PSK, hmacInput).copyOfRange(0, 6)
+        assertEquals(RELEASE_HMAC_MSG_SIZE, hmacInput.size)
+        val tag = hmacSha256(PSK, hmacInput).copyOfRange(0, AUTH_TAG_SIZE)
         assertContentEquals(hex(RELEASE_TAG_HEX), tag)
 
         val body = byteArrayOf(0x58.toByte(), 0x00, 0x01, 0x00, 0x00, 0x00, 0x64) + tag
-        assertEquals(13, body.size)
+        assertEquals(MANUAL_RELEASE_SIZE - 1, body.size)
         val expected = body + byteArrayOf(xorOf(body, body.size).toByte())
 
         val actual = encodeManualRelease(PSK, 1u, 100u)
@@ -114,7 +129,7 @@ class ManualModeUseCasesTest {
 
     @Test
     fun eraAndCounterLayOutBigEndian() = runTest {
-        val psk = ByteArray(16) { it.toByte() }
+        val psk = ByteArray(PSK_BYTE_LENGTH) { it.toByte() }
         val take = encodeManualTake(psk, 0x0102u, 0x01020304u)
         assertEquals(0x57, take[0].unsigned())
         assertEquals(0x01, take[1].unsigned())
@@ -139,16 +154,16 @@ class ManualModeUseCasesTest {
     @Test
     fun rejectsShortPsk() = runTest {
         assertFailsWith<IllegalArgumentException> {
-            encodeManualTake(ByteArray(8), 1u, 1u)
+            encodeManualTake(ByteArray(SHORT_PSK_SIZE), 1u, 1u)
         }
         assertFailsWith<IllegalArgumentException> {
-            encodeManualRelease(ByteArray(8), 1u, 1u)
+            encodeManualRelease(ByteArray(SHORT_PSK_SIZE), 1u, 1u)
         }
         assertFailsWith<IllegalArgumentException> {
-            manualTakeTag(ByteArray(8), 1u, 1u)
+            manualTakeTag(ByteArray(SHORT_PSK_SIZE), 1u, 1u)
         }
         assertFailsWith<IllegalArgumentException> {
-            manualReleaseTag(ByteArray(8), 1u, 1u)
+            manualReleaseTag(ByteArray(SHORT_PSK_SIZE), 1u, 1u)
         }
     }
 

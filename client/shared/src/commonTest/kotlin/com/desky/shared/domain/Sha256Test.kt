@@ -27,7 +27,7 @@ class Sha256Test {
     fun outputIsAlways64LowerHex() {
         for (input in listOf("", "a", "desky", "192.168.4.1|1234|desky-v1")) {
             val hex = sha256Hex(input.encodeToByteArray())
-            assertEquals(64, hex.length, input)
+            assertEquals(SHA256_HEX_LENGTH, hex.length, input)
             assertTrue(hex.all { it in '0'..'9' || it in 'a'..'f' }, input)
         }
     }
@@ -41,5 +41,9 @@ class Sha256Test {
         // just that the token actually binds the PIN).
         val c = sha256Hex("192.168.4.1|1235|desky-v1".encodeToByteArray())
         assertTrue(a != c)
+    }
+
+    private companion object {
+        const val SHA256_HEX_LENGTH = 64
     }
 }

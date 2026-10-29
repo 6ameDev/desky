@@ -10,6 +10,7 @@ import com.desky.shared.domain.FromRobotCounter
 import com.desky.shared.domain.GetPairPskUseCase
 import com.desky.shared.domain.PairDeviceWithCodeUseCase
 import com.desky.shared.domain.PAIR_ERR_HEADER
+import com.desky.shared.domain.PAIR_NONCE_SIZE
 import com.desky.shared.domain.PAIR_OK_HEADER
 import com.desky.shared.domain.ROBOT_HOST
 import com.desky.shared.domain.UdpDatagram
@@ -31,10 +32,15 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+private const val HEX_RADIX = 16
+private const val BYTE_MASK = 0xFF
+private const val KEK_BYTE_LENGTH = 16
+private const val NONCE12_ZERO_PAD_BYTES = 4
+
 private fun hex(s: String): ByteArray {
     require(s.length % 2 == 0)
     return ByteArray(s.length / 2) { i ->
-        s.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        s.substring(i * 2, i * 2 + 2).toInt(HEX_RADIX).toByte()
     }
 }
 
@@ -43,25 +49,34 @@ private suspend fun pairOkFor(clientNonce: ByteArray): ByteArray {
     val serverNonce = hex("05060708")
     val psk = hex("00112233445566778899aabbccddeeff")
     val code = "123456".encodeToByteArray()
-    val kek = hkdfSha256(clientNonce + serverNonce, code, "desky-pair-v1", 16)
-    val nonce12 = serverNonce + clientNonce + ByteArray(4)
+    val kek = hkdfSha256(clientNonce + serverNonce, code, "desky-pair-v1", KEK_BYTE_LENGTH)
+    val nonce12 = serverNonce + clientNonce + ByteArray(NONCE12_ZERO_PAD_BYTES)
     val aad = byteArrayOf(PAIR_OK_HEADER.toByte()) + clientNonce + serverNonce
     val (ct, tag) = aesGcmEncrypt(kek, nonce12, aad, psk)
     val body = byteArrayOf(PAIR_OK_HEADER.toByte()) + serverNonce + ct + tag
     var xor = 0
-    for (b in body) xor = xor xor (b.toInt() and 0xFF)
+    for (b in body) xor = xor xor (b.toInt() and BYTE_MASK)
     return body + byteArrayOf(xor.toByte())
 }
 
 private fun pairErr(reason: Int, retryS: Int): ByteArray {
     val body = byteArrayOf(PAIR_ERR_HEADER.toByte(), reason.toByte(), retryS.toByte())
     var xor = 0
-    for (b in body) xor = xor xor (b.toInt() and 0xFF)
+    for (b in body) xor = xor xor (b.toInt() and BYTE_MASK)
     return body + byteArrayOf(xor.toByte())
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PairingViewModelTest {
+
+    private companion object {
+        const val CLIENT_NONCE_OFFSET = 7
+        const val FIRST_ATTEMPT_TIMEOUT_MS = 50L
+        const val SECOND_ATTEMPT_TIMEOUT_MS = 100L
+        const val THIRD_ATTEMPT_TIMEOUT_MS = 150L
+        const val THIRD_PAIRING_ATTEMPT = 3
+        const val RETRIED_PAIR_REQ_SENDS = 3
+    }
 
     private fun vm(
         repo: DeviceRepository,
@@ -77,7 +92,7 @@ class PairingViewModelTest {
     /** Pumps until the VM's initial PAIR_REQ is on the wire; returns its client nonce. */
     private fun clientNonceOf(udp: FakeUdpSocketManager): ByteArray {
         assertEquals(1, udp.sent.size, "exactly one PAIR_REQ before any reply")
-        return udp.sent[0].bytes.copyOfRange(7, 11)
+        return udp.sent[0].bytes.copyOfRange(CLIENT_NONCE_OFFSET, CLIENT_NONCE_OFFSET + PAIR_NONCE_SIZE)
     }
 
     @Test
@@ -279,7 +294,7 @@ class PairingViewModelTest {
     @Test
     fun silentPairingWalksAttemptsThenResets() = runVmTest { main ->
         val udp = FakeUdpSocketManager()
-        val viewModel = vm(FakeDeviceRepository(), udp, attemptTimeoutsMs = listOf(50L, 100L, 150L))
+        val viewModel = vm(FakeDeviceRepository(), udp, attemptTimeoutsMs = listOf(FIRST_ATTEMPT_TIMEOUT_MS, SECOND_ATTEMPT_TIMEOUT_MS, THIRD_ATTEMPT_TIMEOUT_MS))
         main.runCurrent()
         viewModel.onPinChange("123456")
 
@@ -292,25 +307,25 @@ class PairingViewModelTest {
             main.runCurrent()
             assertEquals(1, udp.sent.size)
 
-            main.advanceTimeBy(50)
+            main.advanceTimeBy(FIRST_ATTEMPT_TIMEOUT_MS)
             main.runCurrent()
             s = awaitItem()
             assertTrue(s.isPairing)
             assertEquals(2, s.pairingAttempt)
 
-            main.advanceTimeBy(100)
+            main.advanceTimeBy(SECOND_ATTEMPT_TIMEOUT_MS)
             main.runCurrent()
             s = awaitItem()
             assertTrue(s.isPairing)
-            assertEquals(3, s.pairingAttempt)
+            assertEquals(THIRD_PAIRING_ATTEMPT, s.pairingAttempt)
 
-            main.advanceTimeBy(150)
+            main.advanceTimeBy(THIRD_ATTEMPT_TIMEOUT_MS)
             main.runCurrent()
             s = awaitItem()
             assertFalse(s.isPairing)
             assertEquals(1, s.pairingAttempt)
             assertNotNull(s.error)
-            assertEquals(3, udp.sent.size)
+            assertEquals(RETRIED_PAIR_REQ_SENDS, udp.sent.size)
             cancelAndIgnoreRemainingEvents()
         }
     }

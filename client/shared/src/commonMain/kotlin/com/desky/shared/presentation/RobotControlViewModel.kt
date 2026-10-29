@@ -111,6 +111,8 @@ const val ALIVE_INTERVAL_MS = 500L
  */
 const val STICK_ACTIVE_THRESHOLD = 0.02f
 
+private const val PAIR_PSK_BYTE_LENGTH = 16
+
 /** Drive-screen state (UDF: single [StateFlow] + explicit intents below). */
 data class RobotControlUiState(
     val throttle: Float = 0f,
@@ -748,7 +750,7 @@ class RobotControlViewModel(
             } catch (_: Exception) {
                 null
             }
-            if (decoded == null || decoded.size != 16) {
+            if (decoded == null || decoded.size != PAIR_PSK_BYTE_LENGTH) {
                 logMarker("sessionPskUndecodable")
                 pskMissingFor = dev.id
                 return null

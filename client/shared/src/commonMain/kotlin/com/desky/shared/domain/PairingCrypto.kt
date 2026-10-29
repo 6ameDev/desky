@@ -16,6 +16,32 @@ import dev.whyoleg.cryptography.random.CryptographyRandom
  * hand-rolled crypto ([Sha256.kt] stays for the legacy token only).
  */
 
+private const val BYTE_MASK = 0xFF
+private const val HEX_RADIX = 16
+private const val HEX_NIBBLE_SHIFT = 4
+private const val BITS_PER_BYTE = 8
+private const val AES_KEY_SIZE = 16
+private const val PSK_BYTE_LENGTH = 16
+private const val GCM_NONCE_SIZE = 12
+private const val GCM_AAD_SIZE = 9
+private const val GCM_TAG_SIZE = 16
+private const val AUTH_TAG_SIZE = 6
+private const val V11_PLAINTEXT_SIZE = 17
+private const val DRIVE_MSG_SIZE = 8
+private const val DRIVE_MSG_COUNTER_LSB_INDEX = 3
+private const val DRIVE_MSG_MODE_INDEX = 4
+private const val DRIVE_MSG_THROTTLE_INDEX = 5
+private const val DRIVE_MSG_STEERING_INDEX = 6
+private const val DRIVE_MSG_FLAGS_INDEX = 7
+private const val BE_BYTE1_SHIFT = 8
+private const val BE_BYTE2_SHIFT = 16
+private const val BE_BYTE3_SHIFT = 24
+private const val HKDF_MAX_OUTPUT_BLOCKS = 255
+private const val SHA256_DIGEST_SIZE = 32
+private const val MIN_PERSIST_CADENCE = 8
+private const val MAX_PERSIST_CADENCE = 1024
+private const val MAX_EXPRESSION_ID = 255
+
 /**
  * Full 32-byte `HMAC-SHA256(key, data)`.
  *
@@ -40,13 +66,13 @@ suspend fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray {
  * @param length output length in bytes (spec: 16).
  */
 suspend fun hkdfSha256(salt: ByteArray, ikm: ByteArray, info: String, length: Int): ByteArray {
-    require(salt.size == 8) { "hkdfSha256: salt must be 8 bytes (client_nonce||server_nonce)" }
-    require(ikm.size == 6) { "hkdfSha256: IKM must be 6 ASCII code digits" }
-    require(length in 1..255 * 32) { "hkdfSha256: invalid output length" }
+    require(salt.size == PAIR_NONCE_SIZE * 2) { "hkdfSha256: salt must be 8 bytes (client_nonce||server_nonce)" }
+    require(ikm.size == PAIR_CODE_SIZE) { "hkdfSha256: IKM must be 6 ASCII code digits" }
+    require(length in 1..HKDF_MAX_OUTPUT_BLOCKS * SHA256_DIGEST_SIZE) { "hkdfSha256: invalid output length" }
     val hkdf = CryptographyProvider.Default.get(HKDF)
     return hkdf.secretDerivation(
         digest = SHA256,
-        outputSize = (length * 8).bits,
+        outputSize = (length * BITS_PER_BYTE).bits,
         salt = salt,
         info = info.encodeToByteArray(),
     ).deriveSecretToByteArray(ikm)
@@ -76,10 +102,10 @@ suspend fun aesGcmEncrypt(
     aad: ByteArray,
     plaintext: ByteArray,
 ): Pair<ByteArray, ByteArray> {
-    require(key.size == 16) { "aesGcmEncrypt: key must be 16 bytes (AES-128)" }
-    require(nonce12.size == 12) { "aesGcmEncrypt: nonce must be 12 bytes" }
-    require(aad.size == 9) { "aesGcmEncrypt: AAD must be 9 bytes (0x51||nonces)" }
-    require(plaintext.size == 16 || plaintext.size == 17) {
+    require(key.size == AES_KEY_SIZE) { "aesGcmEncrypt: key must be 16 bytes (AES-128)" }
+    require(nonce12.size == GCM_NONCE_SIZE) { "aesGcmEncrypt: nonce must be 12 bytes" }
+    require(aad.size == GCM_AAD_SIZE) { "aesGcmEncrypt: AAD must be 9 bytes (0x51||nonces)" }
+    require(plaintext.size == PSK_BYTE_LENGTH || plaintext.size == V11_PLAINTEXT_SIZE) {
         "aesGcmEncrypt: plaintext must be 16 bytes (PSK) or 17 (PSK||persist_u8)"
     }
     val aesGcm = CryptographyProvider.Default.get(AES.GCM)
@@ -89,8 +115,8 @@ suspend fun aesGcmEncrypt(
         plaintext = plaintext,
         associatedData = aad,
     )
-    require(ctAndTag.size == plaintext.size + 16) { "aesGcmEncrypt: expected ct + 16B tag" }
-    return ctAndTag.copyOfRange(0, plaintext.size) to ctAndTag.copyOfRange(plaintext.size, plaintext.size + 16)
+    require(ctAndTag.size == plaintext.size + GCM_TAG_SIZE) { "aesGcmEncrypt: expected ct + 16B tag" }
+    return ctAndTag.copyOfRange(0, plaintext.size) to ctAndTag.copyOfRange(plaintext.size, plaintext.size + GCM_TAG_SIZE)
 }
 
 /**
@@ -119,11 +145,11 @@ suspend fun aesGcmDecrypt(
     ct: ByteArray,
     tag: ByteArray,
 ): ByteArray {
-    require(key.size == 16) { "aesGcmDecrypt: key must be 16 bytes (AES-128)" }
-    require(nonce12.size == 12) { "aesGcmDecrypt: nonce must be 12 bytes" }
-    require(aad.size == 9) { "aesGcmDecrypt: AAD must be 9 bytes (0x51||nonces)" }
-    require(ct.size == 16 || ct.size == 17) { "aesGcmDecrypt: ct must be 16 or 17 bytes" }
-    require(tag.size == 16) { "aesGcmDecrypt: tag must be 16 bytes" }
+    require(key.size == AES_KEY_SIZE) { "aesGcmDecrypt: key must be 16 bytes (AES-128)" }
+    require(nonce12.size == GCM_NONCE_SIZE) { "aesGcmDecrypt: nonce must be 12 bytes" }
+    require(aad.size == GCM_AAD_SIZE) { "aesGcmDecrypt: AAD must be 9 bytes (0x51||nonces)" }
+    require(ct.size == PSK_BYTE_LENGTH || ct.size == V11_PLAINTEXT_SIZE) { "aesGcmDecrypt: ct must be 16 or 17 bytes" }
+    require(tag.size == GCM_TAG_SIZE) { "aesGcmDecrypt: tag must be 16 bytes" }
     val aesGcm = CryptographyProvider.Default.get(AES.GCM)
     val cryptoKey = aesGcm.keyDecoder().decodeFromByteArray(AES.Key.Format.RAW, key)
     return cryptoKey.cipher().decryptWithIv(
@@ -143,7 +169,7 @@ suspend fun aesGcmDecrypt(
  * 256..1024 are reserved for a future u16 field and map to 128 on wire).
  */
 fun sanitizePersistEvery(n: Int): Int =
-    if (n in 8..1024) n else ToRobotCounter.COUNTER_PERSIST_EVERY
+    if (n in MIN_PERSIST_CADENCE..MAX_PERSIST_CADENCE) n else ToRobotCounter.COUNTER_PERSIST_EVERY
 
 /**
  * Split unwrapped `PAIR_OK` plaintext into `(psk16, persistEvery)`: 17
@@ -152,11 +178,11 @@ fun sanitizePersistEvery(n: Int): Int =
  * to [ToRobotCounter.COUNTER_PERSIST_EVERY].
  */
 fun unwrapPairPlaintext(plain: ByteArray): Pair<ByteArray, Int> {
-    require(plain.size == 16 || plain.size == 17) {
+    require(plain.size == PSK_BYTE_LENGTH || plain.size == V11_PLAINTEXT_SIZE) {
         "unwrapPairPlaintext: plain must be 16 or 17 bytes (got ${plain.size})"
     }
-    return if (plain.size == 17) {
-        plain.copyOfRange(0, 16) to sanitizePersistEvery(plain[16].toInt() and 0xFF)
+    return if (plain.size == V11_PLAINTEXT_SIZE) {
+        plain.copyOfRange(0, PSK_BYTE_LENGTH) to sanitizePersistEvery(plain[PSK_BYTE_LENGTH].toInt() and BYTE_MASK)
     } else {
         plain to ToRobotCounter.COUNTER_PERSIST_EVERY
     }
@@ -178,15 +204,15 @@ fun unwrapPairPlaintext(plain: ByteArray): Pair<ByteArray, Int> {
  * @return 16-byte next PSK.
  */
 suspend fun pairRefreshPsk(oldPsk: ByteArray, nextEra: UShort): ByteArray {
-    require(oldPsk.size == 16) { "pairRefreshPsk: oldPsk must be 16 bytes" }
+    require(oldPsk.size == PSK_BYTE_LENGTH) { "pairRefreshPsk: oldPsk must be 16 bytes" }
     val hkdf = CryptographyProvider.Default.get(HKDF)
     val eraBE = byteArrayOf(
-        ((nextEra.toInt() shr 8) and 0xFF).toByte(),
-        (nextEra.toInt() and 0xFF).toByte(),
+        ((nextEra.toInt() shr BE_BYTE1_SHIFT) and BYTE_MASK).toByte(),
+        (nextEra.toInt() and BYTE_MASK).toByte(),
     )
     return hkdf.secretDerivation(
         digest = SHA256,
-        outputSize = (16 * 8).bits,
+        outputSize = (PSK_BYTE_LENGTH * BITS_PER_BYTE).bits,
         salt = PAIR_REFRESH_SALT,
         info = eraBE,
     ).deriveSecretToByteArray(oldPsk)
@@ -209,16 +235,16 @@ val PAIR_REFRESH_SALT: ByteArray = "desky-pair-refresh-v1".encodeToByteArray()
  * @return 6-byte tag.
  */
 suspend fun pairRefreshTag(oldPsk: ByteArray, nextEra: UShort, counter: UInt): ByteArray {
-    require(oldPsk.size == 16) { "pairRefreshTag: oldPsk must be 16 bytes" }
+    require(oldPsk.size == PSK_BYTE_LENGTH) { "pairRefreshTag: oldPsk must be 16 bytes" }
     val msg = "PAIRREFRESH".encodeToByteArray() + byteArrayOf(
-        ((nextEra.toInt() shr 8) and 0xFF).toByte(),
-        (nextEra.toInt() and 0xFF).toByte(),
-        (counter shr 24).toByte(),
-        (counter shr 16).toByte(),
-        (counter shr 8).toByte(),
+        ((nextEra.toInt() shr BE_BYTE1_SHIFT) and BYTE_MASK).toByte(),
+        (nextEra.toInt() and BYTE_MASK).toByte(),
+        (counter shr BE_BYTE3_SHIFT).toByte(),
+        (counter shr BE_BYTE2_SHIFT).toByte(),
+        (counter shr BE_BYTE1_SHIFT).toByte(),
         counter.toByte(),
     )
-    return hmacSha256(oldPsk, msg).copyOfRange(0, 6)
+    return hmacSha256(oldPsk, msg).copyOfRange(0, AUTH_TAG_SIZE)
 }
 
 /**
@@ -233,12 +259,12 @@ suspend fun pairRefreshTag(oldPsk: ByteArray, nextEra: UShort, counter: UInt): B
  * @return 6-byte tag.
  */
 suspend fun pairRefreshAckTag(newPsk: ByteArray, nextEra: UShort): ByteArray {
-    require(newPsk.size == 16) { "pairRefreshAckTag: newPsk must be 16 bytes" }
+    require(newPsk.size == PSK_BYTE_LENGTH) { "pairRefreshAckTag: newPsk must be 16 bytes" }
     val msg = "PAIRREFRESHACK".encodeToByteArray() + byteArrayOf(
-        ((nextEra.toInt() shr 8) and 0xFF).toByte(),
-        (nextEra.toInt() and 0xFF).toByte(),
+        ((nextEra.toInt() shr BE_BYTE1_SHIFT) and BYTE_MASK).toByte(),
+        (nextEra.toInt() and BYTE_MASK).toByte(),
     )
-    return hmacSha256(newPsk, msg).copyOfRange(0, 6)
+    return hmacSha256(newPsk, msg).copyOfRange(0, AUTH_TAG_SIZE)
 }
 
 /**
@@ -251,14 +277,14 @@ suspend fun pairRefreshAckTag(newPsk: ByteArray, nextEra: UShort): ByteArray {
  * @return 6-byte tag.
  */
 suspend fun unpairTag(psk: ByteArray, counter: UInt): ByteArray {
-    require(psk.size == 16) { "unpairTag: psk must be 16 bytes" }
+    require(psk.size == PSK_BYTE_LENGTH) { "unpairTag: psk must be 16 bytes" }
     val msg = "UNPAIR".encodeToByteArray() + byteArrayOf(
-        (counter shr 24).toByte(),
-        (counter shr 16).toByte(),
-        (counter shr 8).toByte(),
+        (counter shr BE_BYTE3_SHIFT).toByte(),
+        (counter shr BE_BYTE2_SHIFT).toByte(),
+        (counter shr BE_BYTE1_SHIFT).toByte(),
         counter.toByte(),
     )
-    return hmacSha256(psk, msg).copyOfRange(0, 6)
+    return hmacSha256(psk, msg).copyOfRange(0, AUTH_TAG_SIZE)
 }
 
 /**
@@ -276,16 +302,16 @@ suspend fun unpairTag(psk: ByteArray, counter: UInt): ByteArray {
  * @return 6-byte tag.
  */
 suspend fun aliveTag(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
-    require(psk.size == 16) { "aliveTag: psk must be 16 bytes" }
+    require(psk.size == PSK_BYTE_LENGTH) { "aliveTag: psk must be 16 bytes" }
     val msg = "ALIVE".encodeToByteArray() + byteArrayOf(
-        ((era.toInt() shr 8) and 0xFF).toByte(),
-        (era.toInt() and 0xFF).toByte(),
-        (counter shr 24).toByte(),
-        (counter shr 16).toByte(),
-        (counter shr 8).toByte(),
+        ((era.toInt() shr BE_BYTE1_SHIFT) and BYTE_MASK).toByte(),
+        (era.toInt() and BYTE_MASK).toByte(),
+        (counter shr BE_BYTE3_SHIFT).toByte(),
+        (counter shr BE_BYTE2_SHIFT).toByte(),
+        (counter shr BE_BYTE1_SHIFT).toByte(),
         counter.toByte(),
     )
-    return hmacSha256(psk, msg).copyOfRange(0, 6)
+    return hmacSha256(psk, msg).copyOfRange(0, AUTH_TAG_SIZE)
 }
 
 /**
@@ -302,16 +328,16 @@ suspend fun aliveTag(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
  * @return 6-byte tag.
  */
 suspend fun disconnectTag(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
-    require(psk.size == 16) { "disconnectTag: psk must be 16 bytes" }
+    require(psk.size == PSK_BYTE_LENGTH) { "disconnectTag: psk must be 16 bytes" }
     val msg = "DISCONNECT".encodeToByteArray() + byteArrayOf(
-        ((era.toInt() shr 8) and 0xFF).toByte(),
-        (era.toInt() and 0xFF).toByte(),
-        (counter shr 24).toByte(),
-        (counter shr 16).toByte(),
-        (counter shr 8).toByte(),
+        ((era.toInt() shr BE_BYTE1_SHIFT) and BYTE_MASK).toByte(),
+        (era.toInt() and BYTE_MASK).toByte(),
+        (counter shr BE_BYTE3_SHIFT).toByte(),
+        (counter shr BE_BYTE2_SHIFT).toByte(),
+        (counter shr BE_BYTE1_SHIFT).toByte(),
         counter.toByte(),
     )
-    return hmacSha256(psk, msg).copyOfRange(0, 6)
+    return hmacSha256(psk, msg).copyOfRange(0, AUTH_TAG_SIZE)
 }
 
 /**
@@ -327,16 +353,16 @@ suspend fun disconnectTag(psk: ByteArray, era: UShort, counter: UInt): ByteArray
  * @return 6-byte tag.
  */
 suspend fun manualTakeTag(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
-    require(psk.size == 16) { "manualTakeTag: psk must be 16 bytes" }
+    require(psk.size == PSK_BYTE_LENGTH) { "manualTakeTag: psk must be 16 bytes" }
     val msg = "MANUALTAKE".encodeToByteArray() + byteArrayOf(
-        ((era.toInt() shr 8) and 0xFF).toByte(),
-        (era.toInt() and 0xFF).toByte(),
-        (counter shr 24).toByte(),
-        (counter shr 16).toByte(),
-        (counter shr 8).toByte(),
+        ((era.toInt() shr BE_BYTE1_SHIFT) and BYTE_MASK).toByte(),
+        (era.toInt() and BYTE_MASK).toByte(),
+        (counter shr BE_BYTE3_SHIFT).toByte(),
+        (counter shr BE_BYTE2_SHIFT).toByte(),
+        (counter shr BE_BYTE1_SHIFT).toByte(),
         counter.toByte(),
     )
-    return hmacSha256(psk, msg).copyOfRange(0, 6)
+    return hmacSha256(psk, msg).copyOfRange(0, AUTH_TAG_SIZE)
 }
 
 /**
@@ -352,16 +378,16 @@ suspend fun manualTakeTag(psk: ByteArray, era: UShort, counter: UInt): ByteArray
  * @return 6-byte tag.
  */
 suspend fun manualReleaseTag(psk: ByteArray, era: UShort, counter: UInt): ByteArray {
-    require(psk.size == 16) { "manualReleaseTag: psk must be 16 bytes" }
+    require(psk.size == PSK_BYTE_LENGTH) { "manualReleaseTag: psk must be 16 bytes" }
     val msg = "MANUALRELEASE".encodeToByteArray() + byteArrayOf(
-        ((era.toInt() shr 8) and 0xFF).toByte(),
-        (era.toInt() and 0xFF).toByte(),
-        (counter shr 24).toByte(),
-        (counter shr 16).toByte(),
-        (counter shr 8).toByte(),
+        ((era.toInt() shr BE_BYTE1_SHIFT) and BYTE_MASK).toByte(),
+        (era.toInt() and BYTE_MASK).toByte(),
+        (counter shr BE_BYTE3_SHIFT).toByte(),
+        (counter shr BE_BYTE2_SHIFT).toByte(),
+        (counter shr BE_BYTE1_SHIFT).toByte(),
         counter.toByte(),
     )
-    return hmacSha256(psk, msg).copyOfRange(0, 6)
+    return hmacSha256(psk, msg).copyOfRange(0, AUTH_TAG_SIZE)
 }
 
 /**
@@ -378,18 +404,18 @@ suspend fun manualReleaseTag(psk: ByteArray, era: UShort, counter: UInt): ByteAr
  * @return 6-byte tag.
  */
 suspend fun exprTriggerTag(psk: ByteArray, id: Int, era: UShort, counter: UInt): ByteArray {
-    require(psk.size == 16) { "exprTriggerTag: psk must be 16 bytes" }
-    require(id in 0..255) { "exprTriggerTag: id out of range: $id" }
+    require(psk.size == PSK_BYTE_LENGTH) { "exprTriggerTag: psk must be 16 bytes" }
+    require(id in 0..MAX_EXPRESSION_ID) { "exprTriggerTag: id out of range: $id" }
     val msg = "EXPRTRIG".encodeToByteArray() + byteArrayOf(
         id.toByte(),
-        ((era.toInt() shr 8) and 0xFF).toByte(),
-        (era.toInt() and 0xFF).toByte(),
-        (counter shr 24).toByte(),
-        (counter shr 16).toByte(),
-        (counter shr 8).toByte(),
+        ((era.toInt() shr BE_BYTE1_SHIFT) and BYTE_MASK).toByte(),
+        (era.toInt() and BYTE_MASK).toByte(),
+        (counter shr BE_BYTE3_SHIFT).toByte(),
+        (counter shr BE_BYTE2_SHIFT).toByte(),
+        (counter shr BE_BYTE1_SHIFT).toByte(),
         counter.toByte(),
     )
-    return hmacSha256(psk, msg).copyOfRange(0, 6)
+    return hmacSha256(psk, msg).copyOfRange(0, AUTH_TAG_SIZE)
 }
 
 /**
@@ -406,8 +432,8 @@ fun ByteArray.toHex(): String {
     val chars = CharArray(size * 2)
     val digits = "0123456789abcdef"
     for (i in indices) {
-        val v = this[i].toInt() and 0xFF
-        chars[i * 2] = digits[v ushr 4]
+        val v = this[i].toInt() and BYTE_MASK
+        chars[i * 2] = digits[v ushr HEX_NIBBLE_SHIFT]
         chars[i * 2 + 1] = digits[v and 0x0F]
     }
     return chars.concatToString()
@@ -423,10 +449,10 @@ fun ByteArray.toHex(): String {
 fun hexToBytes(hex: String): ByteArray {
     require(hex.length % 2 == 0) { "hexToBytes: odd length (${hex.length})" }
     return ByteArray(hex.length / 2) { i ->
-        val hi = hex[i * 2].digitToIntOrNull(16)
-        val lo = hex[i * 2 + 1].digitToIntOrNull(16)
+        val hi = hex[i * 2].digitToIntOrNull(HEX_RADIX)
+        val lo = hex[i * 2 + 1].digitToIntOrNull(HEX_RADIX)
         require(hi != null && lo != null) { "hexToBytes: non-hex digits at byte $i" }
-        ((hi shl 4) or lo).toByte()
+        ((hi shl HEX_NIBBLE_SHIFT) or lo).toByte()
     }
 }
 /**
@@ -449,15 +475,15 @@ suspend fun driveTag(
     str: Byte,
     flags: Byte,
 ): ByteArray {
-    require(psk.size == 16) { "driveTag: psk must be 16 bytes" }
-    val msg = ByteArray(8)
-    msg[0] = (counter shr 24).toByte()
-    msg[1] = (counter shr 16).toByte()
-    msg[2] = (counter shr 8).toByte()
-    msg[3] = counter.toByte()
-    msg[4] = mode
-    msg[5] = thr
-    msg[6] = str
-    msg[7] = flags
-    return hmacSha256(psk, msg).copyOfRange(0, 6)
+    require(psk.size == PSK_BYTE_LENGTH) { "driveTag: psk must be 16 bytes" }
+    val msg = ByteArray(DRIVE_MSG_SIZE)
+    msg[0] = (counter shr BE_BYTE3_SHIFT).toByte()
+    msg[1] = (counter shr BE_BYTE2_SHIFT).toByte()
+    msg[2] = (counter shr BE_BYTE1_SHIFT).toByte()
+    msg[DRIVE_MSG_COUNTER_LSB_INDEX] = counter.toByte()
+    msg[DRIVE_MSG_MODE_INDEX] = mode
+    msg[DRIVE_MSG_THROTTLE_INDEX] = thr
+    msg[DRIVE_MSG_STEERING_INDEX] = str
+    msg[DRIVE_MSG_FLAGS_INDEX] = flags
+    return hmacSha256(psk, msg).copyOfRange(0, AUTH_TAG_SIZE)
 }

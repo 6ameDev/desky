@@ -7,6 +7,7 @@ import com.desky.shared.data.db.DeskyDatabase
 import com.desky.shared.data.db.PairedDeviceEntity
 import com.desky.shared.data.db.toDomain
 import com.desky.shared.data.db.toEntity
+import com.desky.shared.domain.DEFAULT_UDP_PORT
 import com.desky.shared.domain.PairedDevice
 import com.desky.shared.domain.ROBOT_HOST
 import com.desky.shared.domain.RobotConfig
@@ -46,7 +47,7 @@ class RoomRepositoriesTest {
         val device = PairedDevice(
             id = "desky-01",
             ip = "192.168.4.2",
-            port = 3333,
+            port = DEFAULT_UDP_PORT,
             authToken = "tok",
             alias = "bench",
         )
@@ -58,9 +59,9 @@ class RoomRepositoriesTest {
         val device = PairedDevice(
             id = "desky-$ROBOT_HOST",
             ip = ROBOT_HOST,
-            port = 3333,
+            port = DEFAULT_UDP_PORT,
             authToken = "psk-v1",
-            lastCounter = 128u,
+            lastCounter = TEST_COUNTER_WATERMARK,
             alias = ROBOT_HOST,
         )
         assertEquals(device, device.toEntity().toDomain())
@@ -71,7 +72,7 @@ class RoomRepositoriesTest {
         val device = PairedDevice(
             id = "desky-$ROBOT_HOST",
             ip = ROBOT_HOST,
-            port = 3333,
+            port = DEFAULT_UDP_PORT,
             authToken = "psk-v1",
             lastCounter = 0u,
             alias = ROBOT_HOST,
@@ -85,11 +86,11 @@ class RoomRepositoriesTest {
         val device = PairedDevice(
             id = "desky-$ROBOT_HOST",
             ip = ROBOT_HOST,
-            port = 3333,
+            port = DEFAULT_UDP_PORT,
             authToken = "psk-v1",
             lastCounter = 0u,
             alias = ROBOT_HOST,
-            persistEvery = 128,
+            persistEvery = TEST_PERSIST_EVERY,
             era = 7u,
         )
         assertEquals(device, device.toEntity().toDomain())
@@ -100,11 +101,11 @@ class RoomRepositoriesTest {
         val device = PairedDevice(
             id = "desky-$ROBOT_HOST",
             ip = ROBOT_HOST,
-            port = 3333,
+            port = DEFAULT_UDP_PORT,
             authToken = "psk-v1",
             lastCounter = 100u,
             alias = ROBOT_HOST,
-            persistEvery = 128,
+            persistEvery = TEST_PERSIST_EVERY,
             era = 1u,
             lastRobotCounter = 77u,
         )
@@ -136,7 +137,7 @@ class RoomRepositoriesTest {
             assertEquals(ROBOT_HOST, device.alias)
             assertEquals("desky-192.168.4.1", device.id)
             assertEquals(96u, device.lastCounter)
-            assertEquals(3333, device.port)
+            assertEquals(DEFAULT_UDP_PORT, device.port)
             cancelAndIgnoreRemainingEvents()
         }
     }
@@ -216,11 +217,11 @@ class RoomRepositoriesTest {
             ),
         )
 
-        repo.updateCounter("desky-$ROBOT_HOST", 128u)
+        repo.updateCounter("desky-$ROBOT_HOST", TEST_COUNTER_WATERMARK)
 
         repo.observePaired().test {
             val device = assertNotNull(awaitItem())
-            assertEquals(128u, device.lastCounter)
+            assertEquals(TEST_COUNTER_WATERMARK, device.lastCounter)
             assertEquals("desky-$ROBOT_HOST", device.id)
             assertEquals(ROBOT_HOST, device.ip)
             assertEquals("psk-v1", device.authToken)
@@ -258,7 +259,7 @@ class RoomRepositoriesTest {
                 authToken = "psk-v1",
                 lastCounter = 100u,
                 alias = ROBOT_HOST,
-                persistEvery = 128,
+                persistEvery = TEST_PERSIST_EVERY,
                 era = 0u,
                 lastRobotCounter = 77u,
             ),
@@ -270,7 +271,7 @@ class RoomRepositoriesTest {
             val device = assertNotNull(awaitItem())
             assertEquals(0u, device.lastCounter)
             assertEquals(1u, device.era)
-            assertEquals(128, device.persistEvery, "rotation keeps the negotiated cadence")
+            assertEquals(TEST_PERSIST_EVERY, device.persistEvery, "rotation keeps the negotiated cadence")
             assertEquals(0u, device.lastRobotCounter, "rotation resets the receive domain")
             cancelAndIgnoreRemainingEvents()
         }
@@ -320,5 +321,10 @@ class RoomRepositoriesTest {
             assertEquals(config, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    private companion object {
+        const val TEST_PERSIST_EVERY = 128
+        val TEST_COUNTER_WATERMARK = 128u
     }
 }

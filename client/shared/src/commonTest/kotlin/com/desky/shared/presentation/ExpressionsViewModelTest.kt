@@ -2,6 +2,7 @@ package com.desky.shared.presentation
 
 import com.desky.shared.domain.DEFAULT_UDP_PORT
 import com.desky.shared.domain.EXPR_TRIGGER_HEADER
+import com.desky.shared.domain.EXPR_TRIGGER_SIZE
 import com.desky.shared.domain.EmergencyStopUseCase
 import com.desky.shared.domain.FromRobotCounter
 import com.desky.shared.domain.GetPairPskUseCase
@@ -23,11 +24,21 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 private const val PSK_HEX = "00112233445566778899aabbccddeeff"
+private const val BYTE_MASK = 0xFF
 
-private fun Byte.unsigned(): Int = this.toInt() and 0xFF
+private fun Byte.unsigned(): Int = this.toInt() and BYTE_MASK
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ExpressionsViewModelTest {
+
+    private companion object {
+        const val TEST_TICK_MS = 20L
+        const val PICKER_STABILITY_ADVANCE_MS = 2000L
+        const val LEGACY_GRAPH_SETTLE_MS = 500L
+        const val BLINK_EXPRESSION_ID = 3
+        const val ALERT_EXPRESSION_ID = 4
+        const val UNKNOWN_EXPRESSION_ID = 5
+    }
 
     private data class Setup(
         val vm: RobotControlViewModel,
@@ -36,7 +47,7 @@ class ExpressionsViewModelTest {
         val holder: ToRobotCounter,
     )
 
-    private fun setup(tickMs: Long = 20): Setup {
+    private fun setup(tickMs: Long = TEST_TICK_MS): Setup {
         val repo = FakeDeviceRepository(testDevice())
         val udp = FakeUdpSocketManager()
         val vault = FakePairSecretStore().apply { seed(testDevice().id, PSK_HEX) }
@@ -84,9 +95,9 @@ class ExpressionsViewModelTest {
             listOf("Neutral", "happy", "sad", "curious", "surprised", "angry", "scared", "excited", "confused"),
             s.vm.state.value.expressions.map { it.name },
         )
-        assertTrue(s.vm.state.value.expressions.none { it.id == 3 || it.id == 4 }, "blink/alert left the picker")
+        assertTrue(s.vm.state.value.expressions.none { it.id == BLINK_EXPRESSION_ID || it.id == ALERT_EXPRESSION_ID }, "blink/alert left the picker")
 
-        main.advanceTimeBy(2000)
+        main.advanceTimeBy(PICKER_STABILITY_ADVANCE_MS)
         main.runCurrent()
         assertEquals(PICKER_EXPRESSIONS, s.vm.state.value.expressions)
         assertTrue(trigs(s.udp).isEmpty(), "listing never transmits")
@@ -102,15 +113,15 @@ class ExpressionsViewModelTest {
         assertTrue(s.vm.state.value.manualMode)
 
         // Blink left the picker but validation stays open: still triggers.
-        s.vm.onTriggerExpression(3)
+        s.vm.onTriggerExpression(BLINK_EXPRESSION_ID)
         main.runCurrent()
         main.runCurrent()
         val sent = trigs(s.udp)
         assertEquals(1, sent.size, "single send per tap")
         val frame = sent[0].bytes
-        assertEquals(15, frame.size)
-        assertEquals(0x5B, frame[0].unsigned())
-        assertEquals(3, frame[1].unsigned())
+        assertEquals(EXPR_TRIGGER_SIZE, frame.size)
+        assertEquals(EXPR_TRIGGER_HEADER, frame[0].unsigned())
+        assertEquals(BLINK_EXPRESSION_ID, frame[1].unsigned())
         assertEquals(ROBOT_HOST, sent[0].host)
         assertEquals(DEFAULT_UDP_PORT, sent[0].port)
     }
@@ -126,7 +137,7 @@ class ExpressionsViewModelTest {
         assertEquals(Connectivity.Connected, s.vm.state.value.connectivity)
         assertFalse(s.vm.state.value.manualMode)
 
-        s.vm.onTriggerExpression(3)
+        s.vm.onTriggerExpression(BLINK_EXPRESSION_ID)
         main.runCurrent()
         main.runCurrent()
         assertTrue(trigs(s.udp).isEmpty(), "no trigger without the MANUAL hold")
@@ -139,7 +150,7 @@ class ExpressionsViewModelTest {
         main.runCurrent()
         assertEquals(Connectivity.Disconnected, s.vm.state.value.connectivity)
 
-        s.vm.onTriggerExpression(3)
+        s.vm.onTriggerExpression(BLINK_EXPRESSION_ID)
         main.runCurrent()
         main.runCurrent()
         assertTrue(trigs(s.udp).isEmpty(), "no trigger while link-down")
@@ -153,7 +164,7 @@ class ExpressionsViewModelTest {
         promote(s.udp, manual = true)
         main.runCurrent()
 
-        s.vm.onTriggerExpression(5)
+        s.vm.onTriggerExpression(UNKNOWN_EXPRESSION_ID)
         main.runCurrent()
         main.runCurrent()
         assertTrue(trigs(s.udp).isEmpty(), "stale taps never reach the wire")
@@ -175,14 +186,14 @@ class ExpressionsViewModelTest {
             udp,
             ToRobotCounter(repo),
             FromRobotCounter(repo),
-            20,
+            TEST_TICK_MS,
             socketBinder = FakeUdpSocketBinder(),
         )
         main.runCurrent()
-        main.advanceTimeBy(500)
+        main.advanceTimeBy(LEGACY_GRAPH_SETTLE_MS)
         main.runCurrent()
         assertEquals(PICKER_EXPRESSIONS, vm.state.value.expressions)
-        vm.onTriggerExpression(3)
+        vm.onTriggerExpression(BLINK_EXPRESSION_ID)
         main.runCurrent()
         assertTrue(udp.sent.isEmpty())
     }

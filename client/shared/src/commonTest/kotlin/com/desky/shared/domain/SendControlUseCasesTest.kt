@@ -33,7 +33,7 @@ class SendSignedControlUseCaseTest {
         val udp = mock<UdpSocketManager>()
         everySuspend { udp.send(any(), any(), any()) } returns Unit
         val device = testDevice()
-        val cmd = ControlCommand(RobotMode.AUTONOMOUS, 0.5f, -0.25f)
+        val cmd = ControlCommand(RobotMode.AUTONOMOUS, TEST_THROTTLE, TEST_STEERING)
         val expected = encodeSigned(cmd, 7u, psk())
 
         val result = SendSignedControlUseCase(udp)(device, cmd, psk(), 7u)
@@ -58,8 +58,8 @@ class SendSignedControlUseCaseTest {
             udp.send(
                 matches { actual: ByteArray ->
                     actual.size == DRIVE_SIZE &&
-                        actual[5] == 0.toByte() && actual[6] == 0.toByte() &&
-                        actual[7] == 0.toByte() && actual[8] == 1.toByte()
+                        actual.slice(COUNTER_BYTE_RANGE) ==
+                        listOf(0.toByte(), 0.toByte(), 0.toByte(), 1.toByte())
                 },
                 any(),
                 any(),
@@ -77,7 +77,7 @@ class SendSignedControlUseCaseTest {
         val result = SendSignedControlUseCase(udp)(
             testDevice(),
             ControlCommand(RobotMode.MANUAL, 0f, 0f),
-            ByteArray(8),
+            ByteArray(SHORT_PSK_SIZE),
             1u,
         )
 
@@ -117,6 +117,13 @@ class SendSignedControlUseCaseTest {
             )
         }
     }
+
+    private companion object {
+        const val TEST_THROTTLE = 0.5f
+        const val TEST_STEERING = -0.25f
+        const val SHORT_PSK_SIZE = 8
+        val COUNTER_BYTE_RANGE = 5..8
+    }
 }
 
 class EmergencyStopUseCaseTest {
@@ -143,8 +150,8 @@ class EmergencyStopUseCaseTest {
         // only the layout is pinned here — CodecTest pins the tag bytes).
         val sent = expected
         assertTrue(sent.size == DRIVE_SIZE)
-        assertTrue((sent[0].toInt() and 0xFF) == DRIVE_HEADER)
-        assertTrue((sent[4].toInt() and 0xFF) == ESTOP_FLAG)
+        assertTrue((sent[0].toInt() and BYTE_MASK) == DRIVE_HEADER)
+        assertTrue((sent[FLAGS_BYTE_INDEX].toInt() and BYTE_MASK) == ESTOP_FLAG)
     }
 
     @Test
@@ -191,5 +198,10 @@ class EmergencyStopUseCaseTest {
             udp.send(matches { actual: ByteArray -> actual.contentEquals(direct) }, device.ip, device.port)
         }
         assertContentEquals(direct, encodeSigned(cmd, 9u, psk()))
+    }
+
+    private companion object {
+        const val BYTE_MASK = 0xFF
+        const val FLAGS_BYTE_INDEX = 4
     }
 }

@@ -84,7 +84,7 @@ class ForgetDeviceUseCaseTest {
     private fun hex(s: String): ByteArray {
         require(s.length % 2 == 0)
         return ByteArray(s.length / 2) { i ->
-            s.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+            s.substring(i * 2, i * 2 + 2).toInt(HEX_RADIX).toByte()
         }
     }
 
@@ -141,7 +141,7 @@ class ForgetDeviceUseCaseTest {
 
         assertIs<Outcome.Success<Unit>>(result)
         // Fire-and-forget x3 at the stored endpoint, counter = lastCounter+1.
-        assertEquals(3, udp.sent.size)
+        assertEquals(EXPECTED_UNPAIR_SENDS, udp.sent.size)
         val expected = encodeUnpair(hex(pskHex), 6u)
         for (sent in udp.sent) {
             assertContentEquals(expected, sent.bytes)
@@ -163,12 +163,12 @@ class ForgetDeviceUseCaseTest {
         // Ten drive sends since the last persist: live is 15, watermark 5.
         val holder = ToRobotCounter(repo)
         holder.ensure(paired.id, paired.lastCounter)
-        repeat(10) { holder.next() }
+        repeat(UNSAVED_DRIVE_SENDS) { holder.next() }
 
         val result = useCase(repo, vault, udp, holder)()
 
         assertIs<Outcome.Success<Unit>>(result)
-        assertEquals(3, udp.sent.size)
+        assertEquals(EXPECTED_UNPAIR_SENDS, udp.sent.size)
         val expected = encodeUnpair(hex(pskHex), 16u)
         for (sent in udp.sent) {
             assertContentEquals(expected, sent.bytes)
@@ -239,5 +239,11 @@ class ForgetDeviceUseCaseTest {
         assertTrue(udp.sent.isEmpty())
         assertEquals(1, repo.clearCalls)
         assertEquals(0, vault.clearCalls)
+    }
+
+    private companion object {
+        const val HEX_RADIX = 16
+        const val UNSAVED_DRIVE_SENDS = 10
+        const val EXPECTED_UNPAIR_SENDS = 3
     }
 }

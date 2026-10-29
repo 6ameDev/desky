@@ -5,10 +5,12 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertFailsWith
 
+private const val HEX_RADIX = 16
+
 private fun hex(s: String): ByteArray {
     require(s.length % 2 == 0)
     return ByteArray(s.length / 2) { i ->
-        s.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        s.substring(i * 2, i * 2 + 2).toInt(HEX_RADIX).toByte()
     }
 }
 
@@ -40,6 +42,17 @@ private const val PAIR_REFRESH_TAG_HEX = "ecac8eb7c93c"
 private const val PAIR_REFRESH_ACK_TAG_HEX = "62c29ea4d181"
 
 class PairingCryptoTest {
+
+    private companion object {
+        const val PSK_BYTE_LENGTH = 16
+        const val SMALL_TEST_CADENCE = 16
+        const val BELOW_MIN_CADENCE = 7
+        const val MIN_PERSIST_CADENCE = 8
+        const val MAX_PERSIST_CADENCE = 1024
+        const val ABOVE_MAX_CADENCE = 1025
+        const val SHORT_KEY_SIZE = 8
+        const val UNDERSIZED_PROBE_SIZE = 15
+    }
 
     @Test
     fun hkdfDerivesKek() = runTest {
@@ -108,7 +121,7 @@ class PairingCryptoTest {
         assertContentEquals(PSK + byteArrayOf(0x80.toByte()), plain)
         val (psk, persistEvery) = unwrapPairPlaintext(plain)
         assertContentEquals(PSK, psk)
-        kotlin.test.assertEquals(128, persistEvery)
+        kotlin.test.assertEquals(ToRobotCounter.COUNTER_PERSIST_EVERY, persistEvery)
     }
 
     @Test
@@ -123,7 +136,7 @@ class PairingCryptoTest {
         assertContentEquals(plain, back)
         val (psk, persistEvery) = unwrapPairPlaintext(back)
         assertContentEquals(PSK, psk)
-        kotlin.test.assertEquals(16, persistEvery)
+        kotlin.test.assertEquals(SMALL_TEST_CADENCE, persistEvery)
     }
 
     @Test
@@ -137,12 +150,12 @@ class PairingCryptoTest {
     fun unwrapSanitizesIntervalByte() {
         // Custom cadence passes through.
         val (_, sixteen) = unwrapPairPlaintext(PSK + byteArrayOf(0x10))
-        kotlin.test.assertEquals(16, sixteen)
+        kotlin.test.assertEquals(SMALL_TEST_CADENCE, sixteen)
         // 0 (div-zero) and sub-minimum values fall back to 128.
         val (_, zero) = unwrapPairPlaintext(PSK + byteArrayOf(0x00))
-        kotlin.test.assertEquals(128, zero)
+        kotlin.test.assertEquals(ToRobotCounter.COUNTER_PERSIST_EVERY, zero)
         val (_, seven) = unwrapPairPlaintext(PSK + byteArrayOf(0x07))
-        kotlin.test.assertEquals(128, seven)
+        kotlin.test.assertEquals(ToRobotCounter.COUNTER_PERSIST_EVERY, seven)
         // Wire max (255, inside the 8..1024 app guard) passes.
         val (_, max) = unwrapPairPlaintext(PSK + byteArrayOf(0xFF.toByte()))
         kotlin.test.assertEquals(255, max)
@@ -150,14 +163,14 @@ class PairingCryptoTest {
 
     @Test
     fun sanitizePersistEveryBounds() {
-        kotlin.test.assertEquals(128, sanitizePersistEvery(0))
-        kotlin.test.assertEquals(128, sanitizePersistEvery(7))
-        kotlin.test.assertEquals(8, sanitizePersistEvery(8))
-        kotlin.test.assertEquals(16, sanitizePersistEvery(16))
-        kotlin.test.assertEquals(128, sanitizePersistEvery(128))
-        kotlin.test.assertEquals(1024, sanitizePersistEvery(1024))
-        kotlin.test.assertEquals(128, sanitizePersistEvery(1025))
-        kotlin.test.assertEquals(128, sanitizePersistEvery(-1))
+        kotlin.test.assertEquals(ToRobotCounter.COUNTER_PERSIST_EVERY, sanitizePersistEvery(0))
+        kotlin.test.assertEquals(ToRobotCounter.COUNTER_PERSIST_EVERY, sanitizePersistEvery(BELOW_MIN_CADENCE))
+        kotlin.test.assertEquals(MIN_PERSIST_CADENCE, sanitizePersistEvery(MIN_PERSIST_CADENCE))
+        kotlin.test.assertEquals(SMALL_TEST_CADENCE, sanitizePersistEvery(SMALL_TEST_CADENCE))
+        kotlin.test.assertEquals(ToRobotCounter.COUNTER_PERSIST_EVERY, sanitizePersistEvery(ToRobotCounter.COUNTER_PERSIST_EVERY))
+        kotlin.test.assertEquals(MAX_PERSIST_CADENCE, sanitizePersistEvery(MAX_PERSIST_CADENCE))
+        kotlin.test.assertEquals(ToRobotCounter.COUNTER_PERSIST_EVERY, sanitizePersistEvery(ABOVE_MAX_CADENCE))
+        kotlin.test.assertEquals(ToRobotCounter.COUNTER_PERSIST_EVERY, sanitizePersistEvery(-1))
     }
 
     @Test
@@ -180,8 +193,8 @@ class PairingCryptoTest {
 
     @Test
     fun pairingNonceIsFourBytes() = runTest {
-        kotlin.test.assertEquals(4, pairingNonce().size)
-        kotlin.test.assertEquals(4, pairingNonce().size)
+        kotlin.test.assertEquals(PAIR_NONCE_SIZE, pairingNonce().size)
+        kotlin.test.assertEquals(PAIR_NONCE_SIZE, pairingNonce().size)
     }
 
     /**
@@ -201,7 +214,7 @@ class PairingCryptoTest {
         // Era 2 chains under the era-1 key (never reuses the old PSK).
         val era1 = pairRefreshPsk(oldPsk = PSK, nextEra = 1u)
         val era2 = pairRefreshPsk(oldPsk = era1, nextEra = 2u)
-        kotlin.test.assertEquals(16, era2.size)
+        kotlin.test.assertEquals(PSK_BYTE_LENGTH, era2.size)
         kotlin.test.assertFalse(era2.contentEquals(PSK), "rotation must change the key")
         kotlin.test.assertFalse(era2.contentEquals(era1), "each era must differ")
     }
@@ -239,14 +252,14 @@ class PairingCryptoTest {
             hkdfSha256(salt = ByteArray(4), ikm = CODE, info = "desky-pair-v1", length = 16)
         }
         assertFailsWith<IllegalArgumentException> {
-            aesGcmEncrypt(key = ByteArray(8), nonce12 = NONCE12, aad = AAD, plaintext = PSK)
+            aesGcmEncrypt(key = ByteArray(SHORT_KEY_SIZE), nonce12 = NONCE12, aad = AAD, plaintext = PSK)
         }
         assertFailsWith<IllegalArgumentException> {
-            aesGcmEncrypt(key = hex(KEK_HEX), nonce12 = NONCE12, aad = AAD, plaintext = ByteArray(15))
+            aesGcmEncrypt(key = hex(KEK_HEX), nonce12 = NONCE12, aad = AAD, plaintext = ByteArray(UNDERSIZED_PROBE_SIZE))
         }
         assertFailsWith<IllegalArgumentException> {
             aesGcmDecrypt(
-                key = ByteArray(8),
+                key = ByteArray(SHORT_KEY_SIZE),
                 nonce12 = NONCE12,
                 aad = AAD,
                 ct = hex(CT_HEX),
@@ -259,7 +272,7 @@ class PairingCryptoTest {
                 nonce12 = NONCE12,
                 aad = AAD,
                 ct = hex(CT_HEX),
-                tag = ByteArray(8),
+                tag = ByteArray(SHORT_KEY_SIZE),
             )
         }
         assertFailsWith<IllegalArgumentException> {
@@ -267,27 +280,27 @@ class PairingCryptoTest {
                 key = hex(KEK_HEX),
                 nonce12 = NONCE12,
                 aad = AAD,
-                ct = ByteArray(15),
+                ct = ByteArray(UNDERSIZED_PROBE_SIZE),
                 tag = hex(GCM_TAG_HEX),
             )
         }
         assertFailsWith<IllegalArgumentException> {
-            unwrapPairPlaintext(ByteArray(15))
+            unwrapPairPlaintext(ByteArray(UNDERSIZED_PROBE_SIZE))
         }
         assertFailsWith<IllegalArgumentException> {
-            pairRefreshPsk(oldPsk = ByteArray(8), nextEra = 1u)
+            pairRefreshPsk(oldPsk = ByteArray(SHORT_KEY_SIZE), nextEra = 1u)
         }
         assertFailsWith<IllegalArgumentException> {
-            pairRefreshTag(oldPsk = ByteArray(8), nextEra = 1u, counter = 1u)
+            pairRefreshTag(oldPsk = ByteArray(SHORT_KEY_SIZE), nextEra = 1u, counter = 1u)
         }
         assertFailsWith<IllegalArgumentException> {
-            pairRefreshAckTag(newPsk = ByteArray(8), nextEra = 1u)
+            pairRefreshAckTag(newPsk = ByteArray(SHORT_KEY_SIZE), nextEra = 1u)
         }
         assertFailsWith<IllegalArgumentException> {
-            driveTag(psk = ByteArray(8), counter = 1u, mode = 0, thr = 0, str = 0, flags = 0)
+            driveTag(psk = ByteArray(SHORT_KEY_SIZE), counter = 1u, mode = 0, thr = 0, str = 0, flags = 0)
         }
         assertFailsWith<IllegalArgumentException> {
-            unpairTag(psk = ByteArray(8), counter = 1u)
+            unpairTag(psk = ByteArray(SHORT_KEY_SIZE), counter = 1u)
         }
     }
 }
