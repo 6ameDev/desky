@@ -165,7 +165,6 @@
     <ID>ReturnCount:Codec.kt$TelemetryPacketCodec$fun decode(bytes: ByteArray): Telemetry?</ID>
     <ID>ReturnCount:Codec.kt$fun decodeDisconnect(bytes: ByteArray): Triple&lt;UShort, UInt, ByteArray&gt;?</ID>
     <ID>ReturnCount:Codec.kt$fun decodePairRefreshAck(bytes: ByteArray): Pair&lt;UShort, ByteArray&gt;?</ID>
-    <ID>ReturnCount:Codec.kt$fun degToDecideg(deg: Float): Short</ID>
     <ID>ReturnCount:KeychainPairSecretStore.kt$KeychainPairSecretStore$override suspend fun loadPsk(deviceId: String): String?</ID>
     <ID>ReturnCount:ObserveRemoteDisconnectUseCase.kt$ObserveRemoteDisconnectUseCase$internal suspend fun handle(bytes: ByteArray): Unit?</ID>
     <ID>ReturnCount:PairDeviceWithCodeUseCase.kt$PairDeviceWithCodeUseCase$private fun validateCode(code: String): Outcome.Failure?</ID>

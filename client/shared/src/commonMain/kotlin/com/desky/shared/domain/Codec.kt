@@ -197,9 +197,13 @@ fun unitToByte(v: Float): Byte {
  */
 fun degToDecideg(deg: Float): Short {
     val d = deg * DECIDEGREE_FACTOR
-    if (d >= INT16_MAX_F) return Short.MAX_VALUE
-    if (d <= INT16_MIN_F) return Short.MIN_VALUE
-    return (d + if (d >= 0f) ROUND_HALF else -ROUND_HALF).toInt().toShort()
+    return if (d >= INT16_MAX_F) {
+        Short.MAX_VALUE
+    } else if (d <= INT16_MIN_F) {
+        Short.MIN_VALUE
+    } else {
+        (d + if (d >= 0f) ROUND_HALF else -ROUND_HALF).toInt().toShort()
+    }
 }
 
 /** Decidegrees -> degrees. */
