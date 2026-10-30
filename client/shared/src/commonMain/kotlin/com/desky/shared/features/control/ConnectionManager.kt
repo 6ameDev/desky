@@ -94,6 +94,7 @@ class ConnectionManager(
         maxOf(1, (REFRESH_RETRY_BACKOFF_MS / tickMs.coerceAtLeast(1)).toInt())
 
     private var sessionScope: CoroutineScope? = null
+    private var backgrounded = false
 
     init {
         start()
@@ -117,6 +118,35 @@ class ConnectionManager(
     fun stop() {
         sessionScope?.cancel()
         sessionScope = null
+    }
+
+    /**
+     * App backgrounded: goodbye without unpairing. One `DISCONNECT` frame
+     * allocated once and sent twice byte-identical, then ALIVE and refresh
+     * pause until [onForeground] while the loops keep collecting. No pair
+     * means no-op. Fed by one platform lifecycle observer — never by screens.
+     */
+    fun onBackground() {
+        backgrounded = true
+        val dev = currentDevice.value ?: return
+        val session = sessionScope ?: return
+        session.launch {
+            val prepared = sessionMutex.withLock { pskCache.allocate(dev) } ?: return@launch
+            val (psk, counter) = prepared
+            aliveUC.sendDisconnect(dev, psk, dev.era, counter)
+            aliveUC.sendDisconnect(dev, psk, dev.era, counter)
+        }
+    }
+
+    /**
+     * App foregrounded: ALIVE goes due immediately instead of waiting out
+     * the cadence. Watchdog time frozen during background is simply skipped —
+     * ticks never advanced while [backgrounded], so there is no catch-up
+     * demotion. No pair means no-op beyond clearing the flag.
+     */
+    fun onForeground() {
+        backgrounded = false
+        ticksSinceAlive = aliveTickEvery
     }
 
     private suspend fun collectPaired() {
@@ -167,7 +197,7 @@ class ConnectionManager(
     private suspend fun runTickLoop() {
         while (true) {
             val dev = currentDevice.value
-            if (dev == null) {
+            if (dev == null || backgrounded) {
                 delay(tickMs)
                 continue
             }

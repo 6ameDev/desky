@@ -2,6 +2,7 @@ package com.desky.shared.di
 
 import com.desky.shared.core.createPairSecretStore
 import com.desky.shared.core.createDeskyDatabase
+import com.desky.shared.features.control.ConnectionManager
 import com.desky.shared.features.control.DrivingViewModel
 import com.desky.shared.features.control.ExpressionsViewModel
 import com.desky.shared.features.home.HomeViewModel
@@ -93,6 +94,7 @@ private var sharedPairingVm: PairingViewModel? = null
 private var sharedControlVm: RobotControlViewModel? = null
 private var sharedSettingsVm: SettingsViewModel? = null
 private var sharedHomeVm: HomeViewModel? = null
+private var sharedConnectionManager: ConnectionManager? = null
 private var sharedDrivingVm: DrivingViewModel? = null
 private var sharedExpressionsVm: ExpressionsViewModel? = null
 
@@ -114,6 +116,11 @@ fun Koin.settingsViewModel(): SettingsViewModel = guarded {
 fun Koin.homeViewModel(): HomeViewModel = guarded {
     sharedHomeVm?.let { return@guarded it }
     return@guarded get<HomeViewModel>().also { sharedHomeVm = it }
+}
+
+fun Koin.connectionManager(): ConnectionManager = guarded {
+    sharedConnectionManager?.let { return@guarded it }
+    return@guarded get<ConnectionManager>().also { sharedConnectionManager = it }
 }
 
 fun Koin.drivingViewModel(): DrivingViewModel = guarded {

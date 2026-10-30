@@ -26,12 +26,14 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 private const val PSK_HEX = "00112233445566778899aabbccddeeff"
 private const val BYTE_MASK = 0xFF
 private const val ALIVE_HEADER = 0x55
+private const val DISCONNECT_HEADER = 0x56
 private const val PAIR_REFRESH_REQ_HEADER = 0x53
 
 private fun pairedDevice() = PairedDevice(
@@ -206,6 +208,79 @@ class ConnectionManagerTest {
             testScheduler.advanceTimeBy(3500)
             val reqs = s.udp.sent.count { headerOf(it.bytes) == PAIR_REFRESH_REQ_HEADER }
             assertEquals(3, reqs)
+        } finally {
+            s.manager.stop()
+        }
+    }
+
+    @Test
+    fun backgroundSendsGoodbyeAndFreezesLoop() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val s = scope.setup()
+        try {
+            runCurrent()
+            assertEquals(1, s.udp.sent.count { headerOf(it.bytes) == ALIVE_HEADER })
+            s.udp.inbound.emit(telemetryDatagram())
+            runCurrent()
+            assertEquals(Aliveness.Connected, s.manager.aliveness.value)
+
+            s.manager.onBackground()
+            runCurrent()
+            testScheduler.advanceTimeBy(500)
+
+            val disconnects = s.udp.sent.filter { headerOf(it.bytes) == DISCONNECT_HEADER }
+            assertEquals(2, disconnects.size, "exactly one goodbye, sent twice byte-identical")
+            assertContentEquals(disconnects[0].bytes, disconnects[1].bytes)
+            assertEquals(
+                1,
+                s.udp.sent.count { headerOf(it.bytes) == ALIVE_HEADER },
+                "no ALIVE while backgrounded",
+            )
+            assertEquals(
+                Aliveness.Connected,
+                s.manager.aliveness.value,
+                "watchdog frozen instead of demoted past the dead mark",
+            )
+        } finally {
+            s.manager.stop()
+        }
+    }
+
+    @Test
+    fun foregroundKnocksAliveImmediately() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val s = scope.setup()
+        try {
+            runCurrent()
+            s.manager.onBackground()
+            runCurrent()
+            testScheduler.advanceTimeBy(500)
+            assertEquals(1, s.udp.sent.count { headerOf(it.bytes) == ALIVE_HEADER })
+
+            s.manager.onForeground()
+            runCurrent()
+            testScheduler.advanceTimeBy(20)
+            assertEquals(2, s.udp.sent.count { headerOf(it.bytes) == ALIVE_HEADER })
+        } finally {
+            s.manager.stop()
+        }
+    }
+
+    @Test
+    fun backgroundWhenUnpairedIsNoOp() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val s = scope.setup(device = null)
+        try {
+            s.manager.onBackground()
+            runCurrent()
+            testScheduler.advanceTimeBy(500)
+            assertTrue(s.udp.sent.isEmpty())
+
+            s.manager.onForeground()
+            runCurrent()
+            testScheduler.advanceTimeBy(500)
+            assertTrue(s.udp.sent.isEmpty())
+            assertEquals(Aliveness.Unpaired, s.manager.aliveness.value)
         } finally {
             s.manager.stop()
         }

@@ -11,6 +11,7 @@ final class SharedGraph: ObservableObject {
     let controlVM: RobotControlViewModel
     let settingsVM: SettingsViewModel
     let homeVM: HomeViewModel
+    let connectionManager: ConnectionManager
     let drivingVM: DrivingViewModel
     let expressionsVM: ExpressionsViewModel
 
@@ -22,6 +23,7 @@ final class SharedGraph: ObservableObject {
         controlVM = koin.robotControlViewModel()
         settingsVM = koin.settingsViewModel()
         homeVM = koin.homeViewModel()
+        connectionManager = koin.connectionManager()
         drivingVM = koin.drivingViewModel()
         expressionsVM = koin.expressionsViewModel()
         // App-scope Wi-Fi rejoin monitor (TASK 4.ii): started once here so
@@ -122,8 +124,10 @@ struct DeskyApp: App {
                 switch phase {
                 case .background:
                     graph.controlVM.onBackground()
+                    graph.connectionManager.onBackground()
                 case .active:
                     graph.controlVM.onForeground()
+                    graph.connectionManager.onForeground()
                 default:
                     break
                 }
