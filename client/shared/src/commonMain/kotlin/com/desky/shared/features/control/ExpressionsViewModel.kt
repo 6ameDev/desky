@@ -7,9 +7,7 @@ import com.desky.shared.core.ExpressionEntry
 import com.desky.shared.core.Outcome
 import com.desky.shared.core.Telemetry
 import com.desky.shared.core.ToRobotCounter
-import com.desky.shared.core.hexToBytes
 import com.desky.shared.features.pairing.GetPairPskUseCase
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -56,8 +54,7 @@ class ExpressionsViewModel(
     val state: StateFlow<ExpressionsUiState> = _state.asStateFlow()
 
     private val sessionMutex = Mutex()
-    private var sessionPsk: ByteArray? = null
-    private var pskMissingFor: String? = null
+    private val pskCache = SessionPskCache(getPairPsk, toRobotCounter)
     private var entered = false
 
     init {
@@ -85,10 +82,8 @@ class ExpressionsViewModel(
         viewModelScope.launch {
             val device = deviceRepo.observePaired().first() ?: return@launch
             val prepared = sessionMutex.withLock {
-                val psk = loadSessionPskLocked(device.id) ?: return@withLock null
-                toRobotCounter.ensure(device.id, device.lastCounter, device.persistEvery, device.era)
-                val counter = toRobotCounter.next() ?: return@withLock null
-                Triple(device, psk, counter)
+                val allocated = pskCache.allocate(device) ?: return@withLock null
+                Triple(device, allocated.first, allocated.second)
             } ?: return@launch
             take(prepared.first, prepared.second, prepared.first.era, prepared.third)
         }
@@ -108,10 +103,7 @@ class ExpressionsViewModel(
         viewModelScope.launch {
             val device = deviceRepo.observePaired().first() ?: return@launch
             val prepared = sessionMutex.withLock {
-                val psk = loadSessionPskLocked(device.id) ?: return@withLock null
-                toRobotCounter.ensure(device.id, device.lastCounter, device.persistEvery, device.era)
-                val counter = toRobotCounter.next() ?: return@withLock null
-                psk to counter
+                pskCache.allocate(device)
             } ?: return@launch
             val (psk, counter) = prepared
             when (val result = trigger(device, psk, device.era, counter, id)) {
@@ -134,34 +126,5 @@ class ExpressionsViewModel(
     fun confirmExit() {
         entered = false
         _state.update { it.copy(pendingExit = false) }
-    }
-
-    private suspend fun loadSessionPskLocked(deviceId: String): ByteArray? {
-        var psk = sessionPsk
-        if (psk == null) {
-            if (pskMissingFor == deviceId) return null
-            val hex = getPairPsk() ?: run {
-                pskMissingFor = deviceId
-                return null
-            }
-            val decoded = try {
-                hexToBytes(hex)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                null
-            }
-            if (decoded == null || decoded.size != PAIR_PSK_BYTE_LENGTH) {
-                pskMissingFor = deviceId
-                return null
-            }
-            psk = decoded
-            sessionPsk = psk
-        }
-        return psk
-    }
-
-    private companion object {
-        const val PAIR_PSK_BYTE_LENGTH = 16
     }
 }

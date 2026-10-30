@@ -45,13 +45,8 @@
     <ID>MagicNumber:Sha256.kt$7</ID>
     <ID>MagicNumber:Sha256.kt$8</ID>
     <ID>MagicNumber:Sha256.kt$8L</ID>
-    <ID>ReturnCount:ConnectionManager.kt$ConnectionManager$private suspend fun loadSessionPskLocked(dev: PairedDevice): ByteArray?</ID>
-    <ID>ReturnCount:ConnectionManager.kt$ConnectionManager$private suspend fun sessionCounterLocked(dev: PairedDevice): Pair&lt;ByteArray, UInt&gt;?</ID>
     <ID>ReturnCount:DriveController.kt$DriveController$private fun dueForSend(throttle: Float, steering: Float): Boolean</ID>
-    <ID>ReturnCount:DriveController.kt$DriveController$private suspend fun loadSessionPskLocked(dev: PairedDevice): ByteArray?</ID>
-    <ID>ReturnCount:DriveController.kt$DriveController$private suspend fun sessionCounterLocked(dev: PairedDevice): Pair&lt;ByteArray, UInt&gt;?</ID>
     <ID>ReturnCount:ExpressionsViewModel.kt$ExpressionsViewModel$fun onTriggerExpression(id: Int)</ID>
-    <ID>ReturnCount:ExpressionsViewModel.kt$ExpressionsViewModel$private suspend fun loadSessionPskLocked(deviceId: String): ByteArray?</ID>
     <ID>ReturnCount:KeychainPairSecretStore.kt$KeychainPairSecretStore$override suspend fun loadPsk(deviceId: String): String?</ID>
     <ID>ReturnCount:ObserveRemoteDisconnectUseCase.kt$ObserveRemoteDisconnectUseCase$internal suspend fun handle(bytes: ByteArray): Unit?</ID>
     <ID>ReturnCount:PairDeviceWithCodeUseCase.kt$PairDeviceWithCodeUseCase$private fun validateCode(code: String): Outcome.Failure?</ID>
@@ -65,6 +60,8 @@
     <ID>ReturnCount:RobotControlViewModel.kt$RobotControlViewModel$private suspend fun probeSessionLocked(dev: PairedDevice): SessionHealth</ID>
     <ID>ReturnCount:RobotControlViewModel.kt$RobotControlViewModel$private suspend fun sendDisconnectBestEffort()</ID>
     <ID>ReturnCount:RobotControlViewModel.kt$RobotControlViewModel$private suspend fun sessionCounterLocked(dev: PairedDevice): Pair&lt;ByteArray, UInt&gt;?</ID>
+    <ID>ReturnCount:SessionPskCache.kt$SessionPskCache$suspend fun allocate(dev: PairedDevice): Pair&lt;ByteArray, UInt&gt;?</ID>
+    <ID>ReturnCount:SessionPskCache.kt$SessionPskCache$suspend fun pskFor(deviceId: String): ByteArray?</ID>
     <ID>ThrowsCount:ForgetDeviceUseCase.kt$ForgetDeviceUseCase$private suspend fun sendUnpairBestEffort(device: PairedDevice)</ID>
     <ID>ThrowsCount:PosixUdpSocketManager.kt$private fun createBoundSocket(): Int</ID>
     <ID>TooGenericExceptionCaught:AliveUseCase.kt$AliveUseCase$e: Exception</ID>

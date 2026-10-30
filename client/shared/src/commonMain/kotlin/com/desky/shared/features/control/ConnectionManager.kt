@@ -5,7 +5,6 @@ import com.desky.shared.core.Outcome
 import com.desky.shared.core.PairedDevice
 import com.desky.shared.core.Telemetry
 import com.desky.shared.core.ToRobotCounter
-import com.desky.shared.core.hexToBytes
 import com.desky.shared.features.pairing.GetPairPskUseCase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -56,8 +55,8 @@ enum class Aliveness {
  * telemetry is the ACK, and send failures never surface.
  *
  * Assumes [scope] confines the loops to one thread (Main or a test
- * dispatcher): tick counters are plain vars, the session cache serializes
- * under [sessionMutex] with lock order session-then-holder.
+ * dispatcher): tick counters are plain vars, cache access serializes
+ * under [sessionMutex].
  */
 class ConnectionManager(
     private val deviceRepo: DeviceRepository,
@@ -80,9 +79,8 @@ class ConnectionManager(
     val aliveness: StateFlow<Aliveness> = _aliveness.asStateFlow()
 
     private val sessionMutex = Mutex()
+    private val pskCache = SessionPskCache(getPairPsk, toRobotCounter)
     private val currentDevice = MutableStateFlow<PairedDevice?>(null)
-    private var sessionPsk: ByteArray? = null
-    private var pskMissingFor: String? = null
     private var pairRefreshInFlight = false
     private var refreshBackoffTicks = 0
     private var ticksSinceAlive = 0
@@ -127,8 +125,7 @@ class ConnectionManager(
             currentDevice.value = paired
             if (paired == null) {
                 sessionMutex.withLock {
-                    sessionPsk = null
-                    pskMissingFor = null
+                    pskCache.invalidate()
                     toRobotCounter.reset()
                 }
                 pairRefreshInFlight = false
@@ -200,7 +197,7 @@ class ConnectionManager(
         if (ticksSinceAlive < aliveTickEvery) ticksSinceAlive++
         if (ticksSinceAlive < aliveTickEvery) return
         ticksSinceAlive = 0
-        val prepared = sessionMutex.withLock { sessionCounterLocked(dev) } ?: return
+        val prepared = sessionMutex.withLock { pskCache.allocate(dev) } ?: return
         val (psk, counter) = prepared
         aliveUC(dev, psk, dev.era, counter)
     }
@@ -223,7 +220,7 @@ class ConnectionManager(
             try {
                 val result = pairRefreshUC?.invoke()
                 if (result is Outcome.Success) {
-                    sessionMutex.withLock { refreshSessionPskLocked() }
+                    sessionMutex.withLock { pskCache.invalidate() }
                 } else {
                     refreshBackoffTicks = refreshBackoffTickCount
                 }
@@ -237,47 +234,7 @@ class ConnectionManager(
         }
     }
 
-    private suspend fun sessionCounterLocked(dev: PairedDevice): Pair<ByteArray, UInt>? {
-        val psk = loadSessionPskLocked(dev) ?: return null
-        toRobotCounter.ensure(dev.id, dev.lastCounter, dev.persistEvery, dev.era)
-        return psk to (toRobotCounter.next() ?: return null)
-    }
-
-    private suspend fun loadSessionPskLocked(dev: PairedDevice): ByteArray? {
-        var psk = sessionPsk
-        if (psk == null) {
-            if (pskMissingFor == dev.id) return null
-            val hex = getPairPsk()
-            if (hex == null) {
-                pskMissingFor = dev.id
-                return null
-            }
-            val decoded = try {
-                hexToBytes(hex)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                null
-            }
-            if (decoded == null || decoded.size != PAIR_PSK_BYTE_LENGTH) {
-                pskMissingFor = dev.id
-                return null
-            }
-            psk = decoded
-            sessionPsk = psk
-        }
-        return psk
-    }
-
-    private suspend fun refreshSessionPskLocked() {
-        sessionPsk = null
-        pskMissingFor = null
-        val dev = currentDevice.value ?: return
-        loadSessionPskLocked(dev)
-    }
-
     private companion object {
-        const val PAIR_PSK_BYTE_LENGTH = 16
         const val REFRESH_RETRY_BACKOFF_MS = 5000L
         // Mirror the control ViewModel cadence: ALIVE every 500 ms sits far
         // inside the robot's 5 s alive window; silence past 2000 ms is dead.
