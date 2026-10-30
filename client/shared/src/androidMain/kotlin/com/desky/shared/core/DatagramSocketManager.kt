@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.net.DatagramPacket
@@ -75,6 +77,17 @@ internal class DatagramSocketManager(
     private var wifiBinder: UdpSocketBinder? = null
 
     /**
+     * Resolved peer addresses by host. `InetAddress.getByName` on
+     * `desky.local` hits mDNS per call — on a 50 Hz send loop that stacks a
+     * blocking lookup behind every radio stall, so resolve once per host and
+     * evict the entry only on send failure (roam/rekey), letting the next
+     * send re-resolve. Guarded by [addressMutex]; sends never hold it
+     * across the socket.
+     */
+    private val addressMutex = Mutex()
+    private val addressCache = mutableMapOf<String, InetAddress>()
+
+    /**
      * Close guard: [close] is idempotent — safe to call twice or racing a
      * `bindToWifiNetwork` (which treats a closed/null socket as no-op).
      * Volatile, not locked: every step inside is itself idempotent
@@ -126,9 +139,23 @@ internal class DatagramSocketManager(
     override suspend fun send(bytes: ByteArray, host: String, port: Int) {
         withContext(Dispatchers.IO) {
             val s = socket ?: throw IOException("UDP socket unavailable (creation failed)")
-            val address = InetAddress.getByName(host)
-            s.send(DatagramPacket(bytes, bytes.size, address, port))
+            val address = resolveHost(host)
+            try {
+                s.send(DatagramPacket(bytes, bytes.size, address, port))
+            } catch (e: IOException) {
+                // Stale mapping (roam/rekey): drop only our entry so the next
+                // send re-resolves; a concurrent winner is left alone.
+                addressMutex.withLock { addressCache.remove(host, address) }
+                throw e
+            }
         }
+    }
+
+    private suspend fun resolveHost(host: String): InetAddress {
+        addressMutex.withLock { addressCache[host]?.let { return it } }
+        val resolved = InetAddress.getByName(host)
+        addressMutex.withLock { addressCache[host] = resolved }
+        return resolved
     }
 
     /**
