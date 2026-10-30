@@ -1,5 +1,10 @@
-package com.desky.shared.core
+package com.desky.shared.features.control
 
+import com.desky.shared.core.Outcome
+import com.desky.shared.core.PairedDevice
+import com.desky.shared.core.UdpSocketManager
+import com.desky.shared.core.encodeAlive
+import com.desky.shared.core.encodeDisconnect
 import kotlinx.coroutines.CancellationException
 
 /**
@@ -11,12 +16,12 @@ import kotlinx.coroutines.CancellationException
  *   to the paired robot's address. Fire-and-forget: the robot never
  *   replies — steady telemetry is the ACK. The caller (the control
  *   ViewModel's send loop) owns the counter exactly like the drive path:
- *   allocated from the shared [ToRobotCounter] via its session helper, so
+ *   allocated from the shared [ToRobotCounter][com.desky.shared.core.ToRobotCounter] via its session helper, so
  *   `ALIVE` + `DRIVE` + `PAIR_REFRESH_REQ` share one strictly increasing
  *   sequence (a valid `ALIVE` consumes `lastCounter_` exactly like drive).
  * - [sendDisconnect] sends one `DISCONNECT` (`[0x56 | eraBE2 | counterBE4
  *   | tag6 | XOR]`); the caller repeats it 2x byte-identical (same
- *   counter — one allocation, like `UNPAIR`'s 3x in [ForgetDeviceUseCase])
+ *   counter — one allocation, like `UNPAIR`'s 3x in [ForgetDeviceUseCase][com.desky.shared.features.pairing.ForgetDeviceUseCase])
  *   on backgrounding. The robot refresh-then-clears (net peer dropped,
  *   pair KEPT).
  *

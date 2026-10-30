@@ -21,7 +21,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
-private class FakeUdpSocketManager(
+private class NoopSendUdpSocketManager(
     override val incoming: Flow<UdpDatagram>,
 ) : UdpSocketManager {
     override suspend fun send(bytes: ByteArray, host: String, port: Int) = Unit
@@ -40,7 +40,7 @@ class TelemetryHubTest {
     @Test
     fun firstSubscriberStartsCollectionAndGarbageIsDropped() = runTest {
         val incoming = MutableSharedFlow<UdpDatagram>(extraBufferCapacity = 64)
-        val hub = TelemetryHub(FakeUdpSocketManager(incoming), hubScope())
+        val hub = TelemetryHub(NoopSendUdpSocketManager(incoming), hubScope())
         assertNull(hub.latest)
 
         hub.telemetry.test {
@@ -60,7 +60,7 @@ class TelemetryHubTest {
     @Test
     fun lateSubscriberReplaysLatest() = runTest {
         val incoming = MutableSharedFlow<UdpDatagram>(extraBufferCapacity = 64)
-        val hub = TelemetryHub(FakeUdpSocketManager(incoming), hubScope())
+        val hub = TelemetryHub(NoopSendUdpSocketManager(incoming), hubScope())
         val firstSubscriber = CoroutineScope(UnconfinedTestDispatcher(testScheduler))
 
         val job = firstSubscriber.launch { hub.telemetry.collect {} }
@@ -82,7 +82,7 @@ class TelemetryHubTest {
         val counting = incoming
             .onStart { collections++ }
             .onCompletion { collections-- }
-        val hub = TelemetryHub(FakeUdpSocketManager(counting), hubScope(), stopTimeoutMillis = 10)
+        val hub = TelemetryHub(NoopSendUdpSocketManager(counting), hubScope(), stopTimeoutMillis = 10)
 
         assertEquals(0, collections)
         val job = launch { hub.telemetry.collect {} }

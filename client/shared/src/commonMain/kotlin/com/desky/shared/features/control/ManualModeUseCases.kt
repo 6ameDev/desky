@@ -1,5 +1,12 @@
-package com.desky.shared.core
+package com.desky.shared.features.control
 
+import com.desky.shared.core.ControlCommand
+import com.desky.shared.core.Outcome
+import com.desky.shared.core.PairedDevice
+import com.desky.shared.core.RobotMode
+import com.desky.shared.core.UdpSocketManager
+import com.desky.shared.core.encodeManualRelease
+import com.desky.shared.core.encodeManualTake
 import kotlinx.coroutines.CancellationException
 
 /**
@@ -8,7 +15,7 @@ import kotlinx.coroutines.CancellationException
  * counter))`) to the paired robot's address. Fire-and-forget: the robot
  * never replies — the telemetry `statusFlags` MANUAL bit is the ACK. The
  * caller (the control ViewModel's take action) owns the counter exactly
- * like the drive path: allocated from the shared [ToRobotCounter] via its
+ * like the drive path: allocated from the shared [ToRobotCounter][com.desky.shared.core.ToRobotCounter] via its
  * session helper, so `MANUAL_TAKE` consumes the monotonic sequence like
  * every other signed frame. Entry is deliberate: one frame per user
  * action, never repeated.

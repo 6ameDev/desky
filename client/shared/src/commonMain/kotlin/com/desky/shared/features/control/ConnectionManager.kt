@@ -1,14 +1,15 @@
 package com.desky.shared.features.control
 
-import com.desky.shared.core.AliveUseCase
 import com.desky.shared.core.DeviceRepository
-import com.desky.shared.core.ObserveRemoteDisconnectUseCase
-import com.desky.shared.core.ObserveTelemetryUseCase
 import com.desky.shared.core.Outcome
-import com.desky.shared.core.PairRefreshUseCase
 import com.desky.shared.core.PairedDevice
+import com.desky.shared.core.Telemetry
 import com.desky.shared.core.ToRobotCounter
 import com.desky.shared.core.hexToBytes
+import com.desky.shared.features.control.AliveUseCase
+import com.desky.shared.features.control.ObserveRemoteDisconnectUseCase
+import com.desky.shared.features.control.ObserveTelemetryUseCase
+import com.desky.shared.features.control.PairRefreshUseCase
 import com.desky.shared.features.pairing.GetPairPskUseCase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
