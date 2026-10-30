@@ -26,6 +26,12 @@ import com.desky.shared.core.TriggerExpressionUseCase
 import com.desky.shared.core.UdpSocketBinder
 import com.desky.shared.core.UdpSocketManager
 import com.desky.shared.features.pairing.PairingViewModel
+import com.desky.shared.features.control.ConnectionManager
+import com.desky.shared.features.control.DriveController
+import com.desky.shared.features.control.DrivingViewModel
+import com.desky.shared.features.control.ExpressionsViewModel
+import com.desky.shared.features.control.TelemetryHub
+import com.desky.shared.features.home.HomeViewModel
 import com.desky.shared.presentation.RobotControlViewModel
 import com.desky.shared.features.session.SessionGateViewModel
 import com.desky.shared.features.settings.SettingsViewModel
@@ -109,4 +115,39 @@ val settingsModule: Module = module {
 
 val sessionModule: Module = module {
     viewModel { SessionGateViewModel(get()) }
+}
+
+/** Session-scope holders plus the screens bound to them. */
+val controlModule: Module = module {
+    single {
+        ConnectionManager(
+            deviceRepo = get(),
+            getPairPsk = get(),
+            observeTelemetry = get(),
+            toRobotCounter = get(),
+            aliveUC = get(),
+            remoteDisconnectUC = get(),
+            scope = get(named("ioScope")),
+            pairRefreshUC = getOrNull(),
+        )
+    }
+    single { TelemetryHub(udp = get(), scope = get(named("ioScope"))) }
+    single {
+        DriveController(
+            deviceRepo = get(),
+            getPairPsk = get(),
+            toRobotCounter = get(),
+            sendUC = get(),
+            takeManualUC = get(),
+            releaseManualUC = get(),
+            scope = get(named("ioScope")),
+        )
+    }
+    viewModel { DrivingViewModel(get(), get(), get()) }
+    viewModel { ExpressionsViewModel(get(), get(), get(), getOrNull(), get(), get(), get()) }
+}
+
+/** Post-pairing landing. */
+val homeModule: Module = module {
+    viewModel { HomeViewModel(get(), get()) }
 }

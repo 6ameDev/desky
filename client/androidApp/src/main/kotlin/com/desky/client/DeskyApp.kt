@@ -5,7 +5,9 @@ import com.desky.shared.core.createPairSecretStore
 import com.desky.shared.core.createDeskyDatabase
 import com.desky.shared.core.createWifiSocketBinder
 import com.desky.shared.di.dataModule
+import com.desky.shared.di.controlModule
 import com.desky.shared.di.domainModule
+import com.desky.shared.di.homeModule
 import com.desky.shared.di.pairingModule
 import com.desky.shared.di.presentationModule
 import com.desky.shared.di.sessionModule
@@ -32,6 +34,8 @@ class DeskyApp : Application() {
                     createWifiSocketBinder(this@DeskyApp),
                 ),
                 domainModule,
+                controlModule,
+                homeModule,
                 presentationModule,
                 pairingModule,
                 settingsModule,

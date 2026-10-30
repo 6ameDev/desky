@@ -10,6 +10,9 @@ final class SharedGraph: ObservableObject {
     let pairingVM: PairingViewModel
     let controlVM: RobotControlViewModel
     let settingsVM: SettingsViewModel
+    let homeVM: HomeViewModel
+    let drivingVM: DrivingViewModel
+    let expressionsVM: ExpressionsViewModel
 
     init() {
         // Swift names come from SKIE/apinotes: SharedIosKoinKt ->
@@ -18,6 +21,9 @@ final class SharedGraph: ObservableObject {
         pairingVM = koin.pairingViewModel()
         controlVM = koin.robotControlViewModel()
         settingsVM = koin.settingsViewModel()
+        homeVM = koin.homeViewModel()
+        drivingVM = koin.drivingViewModel()
+        expressionsVM = koin.expressionsViewModel()
         // App-scope Wi-Fi rejoin monitor (TASK 4.ii): started once here so
         // it outlives any single tab; views observe `.wifiRejoined` /
         // `isOnWifi` on the shared singleton. Monitor-only, no Kotlin API.
@@ -27,6 +33,9 @@ final class SharedGraph: ObservableObject {
 
 enum DeskyTab: Hashable {
     case pairing
+    case home
+    case driving
+    case expressions
     case control
     case settings
 }
@@ -84,8 +93,17 @@ struct DeskyApp: App {
                 PairingView(vm: graph.pairingVM, selection: $selection)
                     .tabItem { Label("Pair", systemImage: "antenna.radiowaves.left.and.right") }
                     .tag(DeskyTab.pairing)
+                HomeView(vm: graph.homeVM, selection: $selection)
+                    .tabItem { Label("Home", systemImage: "house") }
+                    .tag(DeskyTab.home)
+                DrivingView(vm: graph.drivingVM, selection: $selection)
+                    .tabItem { Label("Drive", systemImage: "gamecontroller") }
+                    .tag(DeskyTab.driving)
+                ExpressionsView(vm: graph.expressionsVM, selection: $selection)
+                    .tabItem { Label("Expressions", systemImage: "face.smiling") }
+                    .tag(DeskyTab.expressions)
                 ControlView(vm: graph.controlVM)
-                    .tabItem { Label("Control", systemImage: "gamecontroller") }
+                    .tabItem { Label("Control", systemImage: "slider.horizontal.3") }
                     .tag(DeskyTab.control)
                 SettingsView(vm: graph.settingsVM, selection: $selection)
                     .tabItem { Label("Settings", systemImage: "gear") }
