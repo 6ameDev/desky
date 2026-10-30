@@ -7,7 +7,10 @@
     <ID>LargeClass:RobotControlViewModelTest.kt$RobotControlViewModelTest</ID>
     <ID>LateinitUsage:RoomRepositoriesTest.kt$RoomRepositoriesTest$private lateinit var db: DeskyDatabase</ID>
     <ID>LongMethod:Sha256.kt$private fun sha256(input: ByteArray): ByteArray</ID>
+    <ID>LongParameterList:ConnectionManager.kt$ConnectionManager$( private val deviceRepo: DeviceRepository, private val getPairPsk: GetPairPskUseCase, private val observeTelemetry: ObserveTelemetryUseCase, private val toRobotCounter: ToRobotCounter, private val aliveUC: AliveUseCase, private val remoteDisconnectUC: ObserveRemoteDisconnectUseCase, private val scope: CoroutineScope, private val pairRefreshUC: PairRefreshUseCase? = null, private val aliveIntervalMs: Long = DEFAULT_ALIVE_INTERVAL_MS, private val staleTimeoutMs: Long = DEFAULT_DEAD_TIMEOUT_MS / 2, private val deadTimeoutMs: Long = DEFAULT_DEAD_TIMEOUT_MS, private val tickMs: Long = 20, private val isRefreshDue: suspend () -&gt; Boolean = { toRobotCounter.needsPairRefresh() }, )</ID>
+    <ID>LongParameterList:DriveController.kt$DriveController$( private val deviceRepo: DeviceRepository, private val getPairPsk: GetPairPskUseCase, private val toRobotCounter: ToRobotCounter, private val sendUC: SendSignedControlUseCase, private val takeManualUC: TakeManualUseCase, private val releaseManualUC: ReleaseManualUseCase, private val scope: CoroutineScope, private val tickMs: Long = DEFAULT_TICK_MS, private val idleHeartbeatMs: Long = DEFAULT_IDLE_HEARTBEAT_MS, private val stickActiveThreshold: Float = DEFAULT_STICK_ACTIVE_THRESHOLD, )</ID>
     <ID>LongParameterList:ExpressionUseCases.kt$TriggerExpressionUseCase$( device: PairedDevice, psk: ByteArray, era: UShort, counter: UInt, id: Int, knownIds: Set&lt;Int&gt; = STATIC_EXPRESSION_IDS, )</ID>
+    <ID>LongParameterList:ExpressionsViewModel.kt$ExpressionsViewModel$( private val deviceRepo: DeviceRepository, private val getPairPsk: GetPairPskUseCase, private val toRobotCounter: ToRobotCounter, private val triggerUC: TriggerExpressionUseCase?, private val takeManualUC: TakeManualUseCase? = null, connectionManager: ConnectionManager, telemetryHub: TelemetryHub, )</ID>
     <ID>LongParameterList:PairRefreshUseCase.kt$PairRefreshUseCase$( private val deviceRepo: DeviceRepository, private val secretStore: PairSecretStore, private val udp: UdpSocketManager, private val getPairPsk: GetPairPskUseCase, private val toRobotCounter: ToRobotCounter, private val fromRobotCounter: FromRobotCounter, private val attemptTimeoutsMs: List&lt;Long&gt; = DEFAULT_PAIR_REFRESH_ATTEMPT_TIMEOUTS_MS, )</ID>
     <ID>LongParameterList:PairRefreshUseCaseTest.kt$PairRefreshUseCaseTest$( repo: FakeDeviceRepository, vault: FakePairSecretStore, udp: FakePairRefreshUdp, holder: ToRobotCounter, fromRobot: FromRobotCounter = FromRobotCounter(repo), attemptTimeoutsMs: List&lt;Long&gt; = DEFAULT_PAIR_REFRESH_ATTEMPT_TIMEOUTS_MS, )</ID>
     <ID>LongParameterList:PairingCrypto.kt$( psk: ByteArray, counter: UInt, mode: Byte, thr: Byte, str: Byte, flags: Byte, )</ID>
@@ -42,6 +45,13 @@
     <ID>MagicNumber:Sha256.kt$7</ID>
     <ID>MagicNumber:Sha256.kt$8</ID>
     <ID>MagicNumber:Sha256.kt$8L</ID>
+    <ID>ReturnCount:ConnectionManager.kt$ConnectionManager$private suspend fun loadSessionPskLocked(dev: PairedDevice): ByteArray?</ID>
+    <ID>ReturnCount:ConnectionManager.kt$ConnectionManager$private suspend fun sessionCounterLocked(dev: PairedDevice): Pair&lt;ByteArray, UInt&gt;?</ID>
+    <ID>ReturnCount:DriveController.kt$DriveController$private fun dueForSend(throttle: Float, steering: Float): Boolean</ID>
+    <ID>ReturnCount:DriveController.kt$DriveController$private suspend fun loadSessionPskLocked(dev: PairedDevice): ByteArray?</ID>
+    <ID>ReturnCount:DriveController.kt$DriveController$private suspend fun sessionCounterLocked(dev: PairedDevice): Pair&lt;ByteArray, UInt&gt;?</ID>
+    <ID>ReturnCount:ExpressionsViewModel.kt$ExpressionsViewModel$fun onTriggerExpression(id: Int)</ID>
+    <ID>ReturnCount:ExpressionsViewModel.kt$ExpressionsViewModel$private suspend fun loadSessionPskLocked(deviceId: String): ByteArray?</ID>
     <ID>ReturnCount:KeychainPairSecretStore.kt$KeychainPairSecretStore$override suspend fun loadPsk(deviceId: String): String?</ID>
     <ID>ReturnCount:ObserveRemoteDisconnectUseCase.kt$ObserveRemoteDisconnectUseCase$internal suspend fun handle(bytes: ByteArray): Unit?</ID>
     <ID>ReturnCount:PairDeviceWithCodeUseCase.kt$PairDeviceWithCodeUseCase$private fun validateCode(code: String): Outcome.Failure?</ID>
@@ -58,8 +68,9 @@
     <ID>ThrowsCount:ForgetDeviceUseCase.kt$ForgetDeviceUseCase$private suspend fun sendUnpairBestEffort(device: PairedDevice)</ID>
     <ID>ThrowsCount:PosixUdpSocketManager.kt$private fun createBoundSocket(): Int</ID>
     <ID>TooGenericExceptionCaught:AliveUseCase.kt$AliveUseCase$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:ControlSender.kt$EmergencyStopUseCase$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:ControlSender.kt$SendSignedControlUseCase$e: Exception</ID>
     <ID>TooGenericExceptionCaught:DeviceConfigUseCases.kt$SaveDeviceConfigUseCase$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:EmergencyStopUseCase.kt$EmergencyStopUseCase$e: Exception</ID>
     <ID>TooGenericExceptionCaught:ExpressionUseCases.kt$TriggerExpressionUseCase$e: Exception</ID>
     <ID>TooGenericExceptionCaught:ForgetDeviceUseCase.kt$ForgetDeviceUseCase$e: Exception</ID>
     <ID>TooGenericExceptionCaught:ManualModeUseCases.kt$ReleaseManualUseCase$e: Exception</ID>
@@ -67,6 +78,5 @@
     <ID>TooGenericExceptionCaught:PairDeviceWithCodeUseCase.kt$PairDeviceWithCodeUseCase$e: Exception</ID>
     <ID>TooGenericExceptionCaught:PairRefreshUseCase.kt$PairRefreshUseCase$e: Exception</ID>
     <ID>TooGenericExceptionCaught:PairingCryptoTest.kt$PairingCryptoTest$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:SendSignedControlUseCase.kt$SendSignedControlUseCase$e: Exception</ID>
   </CurrentIssues>
 </SmellBaseline>
