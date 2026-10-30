@@ -15,6 +15,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.concurrent.Volatile
 import kotlin.math.abs
 
 /**
@@ -64,11 +65,32 @@ class DriveController(
     private var ticksSinceActivity = 0
     private var ticksSinceIdleSend = 0
 
+    /**
+     * App-background pause: while set, the tick loop sends nothing (no
+     * vault/counter/socket use) and only delays — mirroring the legacy
+     * screen's `backgroundPaused`. Set by [onBackground], cleared by
+     * [onForeground]; both funnel from the platform lifecycle observers
+     * that already drive `ConnectionManager`. Volatile: the flag is written
+     * off the loop thread.
+     */
+    @Volatile
+    private var paused = false
+
     private val idleTickEvery: Int =
         maxOf(1, (idleHeartbeatMs / tickMs.coerceAtLeast(1)).toInt())
 
     init {
         start()
+    }
+
+    /** App backgrounded: stop all sends until [onForeground]. Idempotent. */
+    fun onBackground() {
+        paused = true
+    }
+
+    /** App foregrounded: resume the tick loop. Idempotent. */
+    fun onForeground() {
+        paused = false
     }
 
     /**
@@ -156,6 +178,10 @@ class DriveController(
 
     private suspend fun tickLoop() {
         while (true) {
+            if (paused) {
+                delay(tickMs)
+                continue
+            }
             val dev = currentDevice
             if (dev == null) {
                 delay(tickMs)
