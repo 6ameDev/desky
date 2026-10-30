@@ -1,15 +1,15 @@
 package com.desky.shared.presentation
 
-import com.desky.shared.domain.DEFAULT_UDP_PORT
-import com.desky.shared.domain.ROBOT_HOST
-import com.desky.shared.domain.PairSecretStore
-import com.desky.shared.domain.DeviceRepository
-import com.desky.shared.domain.PairedDevice
-import com.desky.shared.domain.RobotConfig
-import com.desky.shared.domain.SettingsRepository
-import com.desky.shared.domain.UdpDatagram
-import com.desky.shared.domain.UdpSocketBinder
-import com.desky.shared.domain.UdpSocketManager
+import com.desky.shared.core.DEFAULT_UDP_PORT
+import com.desky.shared.core.ROBOT_HOST
+import com.desky.shared.core.PairSecretStore
+import com.desky.shared.core.DeviceRepository
+import com.desky.shared.core.PairedDevice
+import com.desky.shared.core.RobotConfig
+import com.desky.shared.core.SettingsRepository
+import com.desky.shared.core.UdpDatagram
+import com.desky.shared.core.UdpSocketBinder
+import com.desky.shared.core.UdpSocketManager
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi

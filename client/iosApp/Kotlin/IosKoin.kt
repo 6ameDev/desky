@@ -1,10 +1,10 @@
 package com.desky.shared.di
 
-import com.desky.shared.data.createPairSecretStore
-import com.desky.shared.data.createDeskyDatabase
-import com.desky.shared.presentation.PairingViewModel
+import com.desky.shared.core.createPairSecretStore
+import com.desky.shared.core.createDeskyDatabase
+import com.desky.shared.features.pairing.PairingViewModel
 import com.desky.shared.presentation.RobotControlViewModel
-import com.desky.shared.presentation.SettingsViewModel
+import com.desky.shared.features.settings.SettingsViewModel
 import org.koin.core.Koin
 import org.koin.core.context.startKoin
 import platform.Foundation.NSLock
@@ -61,6 +61,9 @@ fun initKoinForIos(): Koin = guarded {
             dataModule(createDeskyDatabase(), createPairSecretStore()),
             domainModule,
             presentationModule,
+            pairingModule,
+            settingsModule,
+            sessionModule,
         )
     }.koin
     iosKoin = koin

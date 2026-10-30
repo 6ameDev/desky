@@ -7,7 +7,7 @@
 | Concern | Choice | Why it exists |
 |---|---|---|
 | Language/Toolchain | Kotlin 2.x (K2), Gradle wrapper, JDK 17 | Single language for cross-platform logic |
-| Architecture | Feature-First Clean Architecture | Groups code by product capability (`features/pairing`, `features/control`) to prevent flat file bloat |
+| Architecture | Slices over shared kernel | `core/` kernel plus `features/<name>` slices (flat today, internal layers only on graduation triggers) |
 | State & UI Flow | Coroutines + `StateFlow`, UDF | One immutable `StateFlow<UiState>` per screen + explicit intents |
 | DI | Koin (`core`, `viewmodel`, `android`, `compose`) | Shared dependency graph across targets |
 | Persistence | Room3 (`androidx.room3`) + `sqlite-bundled` | Paired device storage & local settings |
@@ -25,13 +25,16 @@
 
 ```text
 client/shared/src/commonMain/kotlin/com/desky/shared/
-├── core/                  // Cross-cutting networking and utilities
-├── data/                  // Database schemas, local storage, and repository implementations
-├── domain/                // Pure business models and repository interfaces
-└── features/              // Feature-centric slices (UI logic, ViewModels, feature state)
+├── core/                  // Shared kernel: protocol, crypto, counters, transport/vault boundaries,
+│                          // repository interfaces, Room impls, IPv4, socket factory
+├── data/                  // REMOVED (Phase 0): merged into core/
+├── domain/                // REMOVED (Phase 0): merged into core/
+├── di/                    // kernel module + one Koin module per feature
+└── features/              // Feature slices, flat until graduation triggers fire
     ├── pairing/
     ├── control/
-    └── settings/
+    ├── settings/
+    └── session/           // cross-cutting unpaired fence
 ```
 
 ## 3. Runtime Composition (Koin Graphs)
@@ -99,8 +102,8 @@ underlying commands directly.
 
 ## 6. Where to look next
 
-- Wire truth: `shared/protocol/README.md` → `embedded/.../udp_codec.h` → `domain/Codec.kt` (+`Models.kt`).
+- Wire truth: `shared/protocol/` (repo root) → `embedded/.../udp_codec.h` → `core/Codec.kt` (+`Models.kt`).
 - Byte order: `data/Ipv4.kt` KDoc first. Socket contract: `domain/UdpSocketManager.kt` + platform actuals.
-- State machines: `presentation/RobotControlViewModel.kt` (heartbeat/estop/unpair), `PairingViewModel.kt`, `SettingsViewModel.kt`.
+- State machines: `presentation/RobotControlViewModel.kt` (heartbeat/estop/unpair), `features/pairing/PairingViewModel.kt`, `features/settings/SettingsViewModel.kt`, `features/session/SessionGateViewModel.kt`.
 - Wiring: `di/AppModules.kt`, Android `DeskyApp.kt` + `ui/DeskyNavHost.kt`, iOS `Kotlin/IosKoin.kt` + `DeskyApp.swift`.
 - UI pattern: stateful `XScreen` + stateless `XContent` + `@Preview` (Android); `ObservableObject` wrapper + `.task { for await }` (iOS).

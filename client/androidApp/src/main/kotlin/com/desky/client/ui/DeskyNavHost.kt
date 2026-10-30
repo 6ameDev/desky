@@ -13,8 +13,8 @@ import com.desky.client.ui.control.ControlScreen
 import com.desky.client.ui.pairing.PairingScreen
 import com.desky.client.ui.scan.ScanQrScreen
 import com.desky.client.ui.settings.SettingsScreen
-import com.desky.shared.presentation.PairingViewModel
-import com.desky.shared.presentation.SessionGateViewModel
+import com.desky.shared.features.pairing.PairingViewModel
+import com.desky.shared.features.session.SessionGateViewModel
 import org.koin.androidx.compose.koinViewModel
 
 object DeskyRoutes {

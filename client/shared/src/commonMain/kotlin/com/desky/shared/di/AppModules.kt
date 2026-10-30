@@ -1,34 +1,34 @@
 package com.desky.shared.di
 
-import com.desky.shared.data.RoomDeviceRepository
-import com.desky.shared.data.RoomSettingsRepository
-import com.desky.shared.data.createUdpSocketManager
-import com.desky.shared.data.db.DeskyDatabase
-import com.desky.shared.domain.PairSecretStore
-import com.desky.shared.domain.DeviceRepository
-import com.desky.shared.domain.ToRobotCounter
-import com.desky.shared.domain.EmergencyStopUseCase
-import com.desky.shared.domain.FromRobotCounter
-import com.desky.shared.domain.ForgetDeviceUseCase
-import com.desky.shared.domain.GetPairPskUseCase
-import com.desky.shared.domain.ObserveDeviceConfigUseCase
-import com.desky.shared.domain.ObserveRemoteDisconnectUseCase
-import com.desky.shared.domain.ObserveTelemetryUseCase
-import com.desky.shared.domain.PairDeviceWithCodeUseCase
-import com.desky.shared.domain.AliveUseCase
-import com.desky.shared.domain.PairRefreshUseCase
-import com.desky.shared.domain.SaveDeviceConfigUseCase
-import com.desky.shared.domain.SendSignedControlUseCase
-import com.desky.shared.domain.ReleaseManualUseCase
-import com.desky.shared.domain.SettingsRepository
-import com.desky.shared.domain.TakeManualUseCase
-import com.desky.shared.domain.TriggerExpressionUseCase
-import com.desky.shared.domain.UdpSocketBinder
-import com.desky.shared.domain.UdpSocketManager
-import com.desky.shared.presentation.PairingViewModel
+import com.desky.shared.core.RoomDeviceRepository
+import com.desky.shared.core.RoomSettingsRepository
+import com.desky.shared.core.createUdpSocketManager
+import com.desky.shared.core.db.DeskyDatabase
+import com.desky.shared.core.PairSecretStore
+import com.desky.shared.core.DeviceRepository
+import com.desky.shared.core.ToRobotCounter
+import com.desky.shared.core.EmergencyStopUseCase
+import com.desky.shared.core.FromRobotCounter
+import com.desky.shared.features.pairing.ForgetDeviceUseCase
+import com.desky.shared.features.pairing.GetPairPskUseCase
+import com.desky.shared.features.settings.ObserveDeviceConfigUseCase
+import com.desky.shared.core.ObserveRemoteDisconnectUseCase
+import com.desky.shared.core.ObserveTelemetryUseCase
+import com.desky.shared.features.pairing.PairDeviceWithCodeUseCase
+import com.desky.shared.core.AliveUseCase
+import com.desky.shared.core.PairRefreshUseCase
+import com.desky.shared.features.settings.SaveDeviceConfigUseCase
+import com.desky.shared.core.SendSignedControlUseCase
+import com.desky.shared.core.ReleaseManualUseCase
+import com.desky.shared.core.SettingsRepository
+import com.desky.shared.core.TakeManualUseCase
+import com.desky.shared.core.TriggerExpressionUseCase
+import com.desky.shared.core.UdpSocketBinder
+import com.desky.shared.core.UdpSocketManager
+import com.desky.shared.features.pairing.PairingViewModel
 import com.desky.shared.presentation.RobotControlViewModel
-import com.desky.shared.presentation.SessionGateViewModel
-import com.desky.shared.presentation.SettingsViewModel
+import com.desky.shared.features.session.SessionGateViewModel
+import com.desky.shared.features.settings.SettingsViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -64,18 +64,13 @@ fun dataModule(
     socketBinder?.let { binder -> single<UdpSocketBinder> { binder } }
 }
 
-/** Domain-layer module: all use cases as factories + the shared counter holders. */
+/** Kernel module: shared counters + control use cases. Feature-specific use cases live in [pairingModule] / [settingsModule]. */
 val domainModule: Module = module {
     single { ToRobotCounter(get()) }
     single { FromRobotCounter(get()) }
-    factory { PairDeviceWithCodeUseCase(get(), get(), get(), get()) }
-    factory { GetPairPskUseCase(get(), get()) }
     factory { SendSignedControlUseCase(get()) }
     factory { ObserveTelemetryUseCase(get()) }
     factory { EmergencyStopUseCase(get()) }
-    factory { SaveDeviceConfigUseCase(get()) }
-    factory { ObserveDeviceConfigUseCase(get()) }
-    factory { ForgetDeviceUseCase(get(), get(), get(), get(), get(), get()) }
     factory { PairRefreshUseCase(get(), get(), get(), get(), get(), get()) }
     factory { AliveUseCase(get()) }
     factory { TakeManualUseCase(get()) }
@@ -87,15 +82,31 @@ val domainModule: Module = module {
 /**
  * Presentation-layer module. Koin 4 core `viewModel` DSL (from
  * `koin-core-viewmodel`) — no koin-android needed in :shared.
+ * Only the control ViewModel remains here; the rest moved to feature modules.
  */
 val presentationModule: Module = module {
-    viewModel { PairingViewModel(get(), get(), get()) }
     // pairRefreshUC/aliveUC/socketBinder are named (tickMs keeps its default):
     // the pair-refresh trigger stays inert when the domain module has no PairRefreshUseCase
     // binding, the ALIVE/DISCONNECT knock stays inert without an AliveUseCase
     // binding, and the rejoin knock stays inert without a UdpSocketBinder
     // binding (JVM/iOS — getOrNull, tests, legacy graphs).
     viewModel { RobotControlViewModel(get(), get(), get(), get(), get(), get(), get(), get(), pairRefreshUC = getOrNull<PairRefreshUseCase>(), aliveUC = getOrNull<AliveUseCase>(), socketBinder = getOrNull<UdpSocketBinder>(), forgetUC = get(), remoteDisconnectUC = getOrNull<ObserveRemoteDisconnectUseCase>(), takeManualUC = getOrNull<TakeManualUseCase>(), releaseManualUC = getOrNull<ReleaseManualUseCase>(), triggerExpressionUC = getOrNull<TriggerExpressionUseCase>()) }
+}
+
+/** Feature slice modules: canonical homes for pairing, settings, and session bindings. */
+val pairingModule: Module = module {
+    factory { PairDeviceWithCodeUseCase(get(), get(), get(), get()) }
+    factory { GetPairPskUseCase(get(), get()) }
+    factory { ForgetDeviceUseCase(get(), get(), get(), get(), get(), get()) }
+    viewModel { PairingViewModel(get(), get(), get()) }
+}
+
+val settingsModule: Module = module {
+    factory { SaveDeviceConfigUseCase(get()) }
+    factory { ObserveDeviceConfigUseCase(get()) }
     viewModel { SettingsViewModel(get(), get(), get()) }
+}
+
+val sessionModule: Module = module {
     viewModel { SessionGateViewModel(get()) }
 }
