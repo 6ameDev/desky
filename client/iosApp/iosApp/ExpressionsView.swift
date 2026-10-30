@@ -19,7 +19,8 @@ final class ExpressionsViewState: ObservableObject {
     }
 
     func onTriggerExpression(id: Int32) { vm.onTriggerExpression(id: id) }
-    func onEnter() { vm.onEnter() }
+    func activate() { vm.activate() }
+    func deactivate() { vm.deactivate() }
     func requestExit() { vm.requestExit() }
     func dismissExit() { vm.dismissExit() }
     func confirmExit() { vm.confirmExit() }
@@ -28,6 +29,8 @@ final class ExpressionsViewState: ObservableObject {
 struct ExpressionsView: View {
     @StateObject private var state: ExpressionsViewState
     @Binding var selection: DeskyTab
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var visible = false
 
     init(vm: ExpressionsViewModel, selection: Binding<DeskyTab>) {
         _state = StateObject(wrappedValue: ExpressionsViewState(vm: vm))
@@ -50,7 +53,20 @@ struct ExpressionsView: View {
             Spacer()
         }
         .padding()
-        .onAppear { state.onEnter() }
+        .onAppear { visible = true; state.activate() }
+        .onDisappear { visible = false; state.deactivate() }
+        // Home-button path: onAppear does not refire on foreground return,
+        // so re-take only while this tab is still the visible one.
+        .onChange(of: scenePhase) { phase in
+            switch phase {
+            case .background:
+                state.deactivate()
+            case .active:
+                if visible { state.activate() }
+            default:
+                break
+            }
+        }
         .task { await state.collect() }
         .alert(
             "Leave expressions?",

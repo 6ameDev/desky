@@ -21,7 +21,8 @@ final class DrivingViewState: ObservableObject {
     func onStick(throttle: Float, steering: Float) {
         vm.onStick(throttle: throttle, steering: steering)
     }
-    func onEnter() { vm.onEnter() }
+    func activate() { vm.activate() }
+    func deactivate() { vm.deactivate() }
     func requestExit() { vm.requestExit() }
     func dismissExit() { vm.dismissExit() }
     func confirmExit() { vm.confirmExit() }
@@ -30,6 +31,8 @@ final class DrivingViewState: ObservableObject {
 struct DrivingView: View {
     @StateObject private var state: DrivingViewState
     @Binding var selection: DeskyTab
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var visible = false
 
     init(vm: DrivingViewModel, selection: Binding<DeskyTab>) {
         _state = StateObject(wrappedValue: DrivingViewState(vm: vm))
@@ -55,7 +58,20 @@ struct DrivingView: View {
             Spacer()
         }
         .padding()
-        .onAppear { state.onEnter() }
+        .onAppear { visible = true; state.activate() }
+        .onDisappear { visible = false; state.deactivate() }
+        // Home-button path: onAppear does not refire on foreground return,
+        // so re-take only while this tab is still the visible one.
+        .onChange(of: scenePhase) { phase in
+            switch phase {
+            case .background:
+                state.deactivate()
+            case .active:
+                if visible { state.activate() }
+            default:
+                break
+            }
+        }
         .task { await state.collect() }
         .alert(
             "Leave driving?",

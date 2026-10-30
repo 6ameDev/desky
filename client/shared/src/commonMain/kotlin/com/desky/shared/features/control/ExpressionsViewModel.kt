@@ -35,7 +35,7 @@ data class ExpressionsUiState(
 /**
  * Expressions screen: plays one catalog expression per tap via
  * [TriggerExpressionUseCase], gated on a Connected link with the MANUAL
- * hold reported. Entry via [onEnter] takes MANUAL first so triggers work
+ * hold reported. Activation via [activate] takes MANUAL first so triggers work
  * without driving first. Collects [ConnectionManager] aliveness plus
  * [TelemetryHub] telemetry; owns no loops. Exit is explicit via
  * [requestExit] / [confirmExit] / [dismissExit].
@@ -71,11 +71,12 @@ class ExpressionsViewModel(
     }
 
     /**
-     * Screen entry: one `MANUAL_TAKE` so triggers work without driving
-     * first. Idempotent until exit; silent when unpaired, keyless, or
-     * counter-exhausted.
+     * Screen visible: one `MANUAL_TAKE` so triggers work without driving
+     * first. Idempotent while entered; silent when unpaired, keyless, or
+     * counter-exhausted. Every [deactivate] re-arms, so the take follows
+     * visibility, not navigation.
      */
-    fun onEnter() {
+    fun activate() {
         if (entered) return
         entered = true
         val take = takeManualUC ?: return
@@ -87,6 +88,16 @@ class ExpressionsViewModel(
             } ?: return@launch
             take(prepared.first, prepared.second, prepared.first.era, prepared.third)
         }
+    }
+
+    /**
+     * Screen hidden: releases the activation so the next [activate] takes
+     * MANUAL again. Sends nothing — the robot's own command-stale exit
+     * covers the hold, same as the pre-visibility exit path. Idempotent and
+     * silent by design: no exit confirmation, the shell stays put.
+     */
+    fun deactivate() {
+        entered = false
     }
 
     /**
@@ -124,7 +135,12 @@ class ExpressionsViewModel(
     }
 
     fun confirmExit() {
-        entered = false
+        deactivate()
         _state.update { it.copy(pendingExit = false) }
+    }
+
+    override fun onCleared() {
+        deactivate()
+        super.onCleared()
     }
 }

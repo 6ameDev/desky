@@ -25,10 +25,10 @@ data class DrivingUiState(
 )
 
 /**
- * Driving screen: binds [DriveController] with the stick input on [onEnter] and
- * collects [ConnectionManager] aliveness plus [TelemetryHub] telemetry.
- * Owns no loops — bind/collect only; entry and exit are explicit via
- * [onEnter] plus [requestExit] / [confirmExit] / [dismissExit].
+ * Driving screen: binds [DriveController] with the stick input while active
+ * and collects [ConnectionManager] aliveness plus [TelemetryHub] telemetry.
+ * Owns no loops — bind/collect only; visibility is explicit via [activate]
+ * / [deactivate] plus [requestExit] / [confirmExit] / [dismissExit].
  */
 class DrivingViewModel(
     private val drive: DriveController,
@@ -55,13 +55,26 @@ class DrivingViewModel(
     }
 
     /**
-     * Screen entry: one `MANUAL_TAKE` then full-rate input frames.
-     * Idempotent until exit — repeat appearances while bound are no-ops.
+     * Screen visible: one `MANUAL_TAKE` then full-rate input frames.
+     * Idempotent while bound — repeat activations (foreground return,
+     * recomposition) are no-ops. Every [deactivate] re-arms, so the take
+     * follows visibility, not navigation.
      */
-    fun onEnter() {
+    fun activate() {
         if (bound) return
         bound = true
         drive.bind { _state.value.throttle to _state.value.steering }
+    }
+
+    /**
+     * Screen hidden: best-effort `MANUAL_RELEASE` via [DriveController].
+     * Idempotent — safe to race navigation-away against backgrounding.
+     * Silent by design: no exit confirmation, the shell stays put.
+     */
+    fun deactivate() {
+        if (!bound) return
+        bound = false
+        drive.unbind()
     }
 
     /** Stick deflection in -1..1, snapped to center below the drive threshold. */
@@ -83,22 +96,16 @@ class DrivingViewModel(
     }
 
     /**
-     * Confirmed leave: best-effort `MANUAL_RELEASE` via [DriveController]
-     * then back to idle heartbeats; the shell navigates on this call.
+     * Confirmed leave: [deactivate] then clear the handshake; the shell
+     * navigates on this call.
      */
     fun confirmExit() {
-        if (bound) {
-            bound = false
-            drive.unbind()
-        }
+        deactivate()
         _state.update { it.copy(pendingExit = false) }
     }
 
     override fun onCleared() {
-        if (bound) {
-            bound = false
-            drive.unbind()
-        }
+        deactivate()
         super.onCleared()
     }
 
