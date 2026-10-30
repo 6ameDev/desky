@@ -1,10 +1,14 @@
 package com.desky.client
 
 import android.app.Application
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import com.desky.shared.core.createPairSecretStore
 import com.desky.shared.core.createDeskyDatabase
 import com.desky.shared.core.createWifiSocketBinder
 import com.desky.shared.di.dataModule
+import com.desky.shared.features.control.ConnectionManager
 import com.desky.shared.di.controlModule
 import com.desky.shared.di.domainModule
 import com.desky.shared.di.homeModule
@@ -25,7 +29,7 @@ import org.koin.core.context.startKoin
 class DeskyApp : Application() {
     override fun onCreate() {
         super.onCreate()
-        startKoin {
+        val koin = startKoin {
             androidContext(this@DeskyApp)
             modules(
                 dataModule(
@@ -41,6 +45,19 @@ class DeskyApp : Application() {
                 settingsModule,
                 sessionModule,
             )
-        }
+        }.koin
+        // App-wide link lifeline: background sends DISCONNECT (pair kept),
+        // foreground knocks ALIVE due. One observer — screens never own this.
+        ProcessLifecycleOwner.get().lifecycle.addObserver(
+            object : DefaultLifecycleObserver {
+                override fun onStop(owner: LifecycleOwner) {
+                    koin.get<ConnectionManager>().onBackground()
+                }
+
+                override fun onStart(owner: LifecycleOwner) {
+                    koin.get<ConnectionManager>().onForeground()
+                }
+            },
+        )
     }
 }

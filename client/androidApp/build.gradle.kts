@@ -31,6 +31,7 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.activity.compose)
     implementation(libs.lifecycle.runtime.compose)
+    implementation(libs.lifecycle.process)
     implementation(libs.navigation.compose)
     implementation(libs.camera.core)
     implementation(libs.camera.camera2)
