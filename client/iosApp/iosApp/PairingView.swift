@@ -91,10 +91,10 @@ struct PairingView: View {
         // Mirror Android's onPaired navigation (fires on launch too when a
         // pairing is already stored).
         .onAppear {
-            if state.snapshot.pairedDevice != nil { selection = .control }
+            if state.snapshot.pairedDevice != nil { selection = .home }
         }
         .onChange(of: state.snapshot.pairedDevice?.id) { newId in
-            if newId != nil { selection = .control }
+            if newId != nil { selection = .home }
         }
         .sheet(isPresented: $showScan) {
             ScanQrView(state: state)

@@ -10,6 +10,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.desky.client.ui.control.ControlScreen
+import com.desky.client.ui.driving.DrivingScreen
+import com.desky.client.ui.expressions.ExpressionsScreen
+import com.desky.client.ui.home.HomeScreen
 import com.desky.client.ui.pairing.PairingScreen
 import com.desky.client.ui.scan.ScanQrScreen
 import com.desky.client.ui.settings.SettingsScreen
@@ -19,6 +22,9 @@ import org.koin.androidx.compose.koinViewModel
 
 object DeskyRoutes {
     const val PAIRING = "pairing"
+    const val HOME = "home"
+    const val DRIVING = "driving"
+    const val EXPRESSIONS = "expressions"
     const val CONTROL = "control"
     const val SETTINGS = "settings"
     const val SCAN = "scan"
@@ -61,12 +67,12 @@ fun DeskyNavHost(
             PairingScreen(
                 vm = vm,
                 onPaired = {
-                    navController.navigate(DeskyRoutes.CONTROL) {
+                    navController.navigate(DeskyRoutes.HOME) {
                         popUpTo(DeskyRoutes.PAIRING) { inclusive = true }
                     }
                 },
                 onOpenControls = {
-                    navController.navigate(DeskyRoutes.CONTROL) {
+                    navController.navigate(DeskyRoutes.HOME) {
                         popUpTo(DeskyRoutes.PAIRING) { inclusive = true }
                     }
                 },
@@ -84,6 +90,23 @@ fun DeskyNavHost(
                     navController.popBackStack()
                 },
                 onClose = { navController.popBackStack() },
+            )
+        }
+        composable(DeskyRoutes.HOME) {
+            HomeScreen(
+                onDrive = { navController.navigate(DeskyRoutes.DRIVING) },
+                onExpressions = { navController.navigate(DeskyRoutes.EXPRESSIONS) },
+                onSettings = { navController.navigate(DeskyRoutes.SETTINGS) },
+            )
+        }
+        composable(DeskyRoutes.DRIVING) {
+            DrivingScreen(
+                onExit = { navController.popBackStack() },
+            )
+        }
+        composable(DeskyRoutes.EXPRESSIONS) {
+            ExpressionsScreen(
+                onExit = { navController.popBackStack() },
             )
         }
         composable(DeskyRoutes.CONTROL) {

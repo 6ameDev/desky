@@ -2,6 +2,9 @@ package com.desky.shared.di
 
 import com.desky.shared.core.createPairSecretStore
 import com.desky.shared.core.createDeskyDatabase
+import com.desky.shared.features.control.DrivingViewModel
+import com.desky.shared.features.control.ExpressionsViewModel
+import com.desky.shared.features.home.HomeViewModel
 import com.desky.shared.features.pairing.PairingViewModel
 import com.desky.shared.presentation.RobotControlViewModel
 import com.desky.shared.features.settings.SettingsViewModel
@@ -60,6 +63,8 @@ fun initKoinForIos(): Koin = guarded {
         modules(
             dataModule(createDeskyDatabase(), createPairSecretStore()),
             domainModule,
+            controlModule,
+            homeModule,
             presentationModule,
             pairingModule,
             settingsModule,
@@ -87,6 +92,9 @@ fun initKoinForIos(): Koin = guarded {
 private var sharedPairingVm: PairingViewModel? = null
 private var sharedControlVm: RobotControlViewModel? = null
 private var sharedSettingsVm: SettingsViewModel? = null
+private var sharedHomeVm: HomeViewModel? = null
+private var sharedDrivingVm: DrivingViewModel? = null
+private var sharedExpressionsVm: ExpressionsViewModel? = null
 
 fun Koin.pairingViewModel(): PairingViewModel = guarded {
     sharedPairingVm?.let { return@guarded it }
@@ -101,4 +109,19 @@ fun Koin.robotControlViewModel(): RobotControlViewModel = guarded {
 fun Koin.settingsViewModel(): SettingsViewModel = guarded {
     sharedSettingsVm?.let { return@guarded it }
     return@guarded get<SettingsViewModel>().also { sharedSettingsVm = it }
+}
+
+fun Koin.homeViewModel(): HomeViewModel = guarded {
+    sharedHomeVm?.let { return@guarded it }
+    return@guarded get<HomeViewModel>().also { sharedHomeVm = it }
+}
+
+fun Koin.drivingViewModel(): DrivingViewModel = guarded {
+    sharedDrivingVm?.let { return@guarded it }
+    return@guarded get<DrivingViewModel>().also { sharedDrivingVm = it }
+}
+
+fun Koin.expressionsViewModel(): ExpressionsViewModel = guarded {
+    sharedExpressionsVm?.let { return@guarded it }
+    return@guarded get<ExpressionsViewModel>().also { sharedExpressionsVm = it }
 }

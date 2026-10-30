@@ -123,7 +123,7 @@ private struct TelemetryBar: View {
 
 /// Expression picker: tap selects, Apply sends one trigger while MANUAL
 /// is reported (same gating language as the sticks).
-private struct ExpressionPicker: View {
+struct ExpressionPicker: View {
     let expressions: [ExpressionEntry]
     let enabled: Bool
     var onTrigger: (Int32) -> Void
@@ -160,7 +160,7 @@ private struct ExpressionPicker: View {
 /// Drag joystick: normalized stick deflection in -1…1, recentered on release.
 /// Up-drag is positive throttle (matches Android's `-y / radius`).
 /// Disabled gate: gestures move nothing and send nothing.
-private struct JoystickPad: View {
+struct JoystickPad: View {
     var enabled: Bool = true
     var onStick: (_ throttle: Float, _ steering: Float) -> Void
     @State private var knob = CGSize.zero
