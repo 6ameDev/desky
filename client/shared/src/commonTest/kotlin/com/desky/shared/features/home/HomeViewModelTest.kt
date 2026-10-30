@@ -1,9 +1,6 @@
 package com.desky.shared.features.home
 
 import com.desky.shared.core.DEFAULT_UDP_PORT
-import com.desky.shared.core.ObserveRemoteDisconnectUseCase
-import com.desky.shared.core.ObserveTelemetryUseCase
-import com.desky.shared.core.AliveUseCase
 import com.desky.shared.core.FromRobotCounter
 import com.desky.shared.core.PairedDevice
 import com.desky.shared.core.ROBOT_HOST
@@ -12,8 +9,11 @@ import com.desky.shared.core.Telemetry
 import com.desky.shared.core.TelemetryPacketCodec
 import com.desky.shared.core.ToRobotCounter
 import com.desky.shared.core.UdpDatagram
+import com.desky.shared.features.control.AliveUseCase
 import com.desky.shared.features.control.Aliveness
 import com.desky.shared.features.control.ConnectionManager
+import com.desky.shared.features.control.ObserveRemoteDisconnectUseCase
+import com.desky.shared.features.control.ObserveTelemetryUseCase
 import com.desky.shared.features.pairing.GetPairPskUseCase
 import com.desky.shared.presentation.FakeDeviceRepository
 import com.desky.shared.presentation.FakePairSecretStore

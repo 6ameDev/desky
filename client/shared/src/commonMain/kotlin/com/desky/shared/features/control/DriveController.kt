@@ -3,12 +3,12 @@ package com.desky.shared.features.control
 import com.desky.shared.core.ControlCommand
 import com.desky.shared.core.DeviceRepository
 import com.desky.shared.core.PairedDevice
-import com.desky.shared.core.ReleaseManualUseCase
 import com.desky.shared.core.RobotMode
-import com.desky.shared.core.TakeManualUseCase
 import com.desky.shared.core.ToRobotCounter
 import com.desky.shared.core.hexToBytes
+import com.desky.shared.features.control.ReleaseManualUseCase
 import com.desky.shared.features.control.SendSignedControlUseCase
+import com.desky.shared.features.control.TakeManualUseCase
 import com.desky.shared.features.pairing.GetPairPskUseCase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope

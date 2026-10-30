@@ -1,5 +1,8 @@
-package com.desky.shared.core
+package com.desky.shared.features.control
 
+import com.desky.shared.core.Telemetry
+import com.desky.shared.core.TelemetryPacketCodec
+import com.desky.shared.core.UdpSocketManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.mapNotNull
 

@@ -5,13 +5,11 @@ import androidx.lifecycle.viewModelScope
 import com.desky.shared.core.DeviceRepository
 import com.desky.shared.core.ExpressionEntry
 import com.desky.shared.core.Outcome
-import com.desky.shared.core.PICKER_EXPRESSIONS
-import com.desky.shared.core.STATIC_EXPRESSION_IDS
 import com.desky.shared.core.Telemetry
 import com.desky.shared.core.ToRobotCounter
-import com.desky.shared.core.TakeManualUseCase
-import com.desky.shared.core.TriggerExpressionUseCase
 import com.desky.shared.core.hexToBytes
+import com.desky.shared.features.control.TakeManualUseCase
+import com.desky.shared.features.control.TriggerExpressionUseCase
 import com.desky.shared.features.pairing.GetPairPskUseCase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow

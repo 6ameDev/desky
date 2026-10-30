@@ -1,5 +1,20 @@
-package com.desky.shared.core
+package com.desky.shared.features.control
 
+import com.desky.shared.core.DeviceRepository
+import com.desky.shared.core.FromRobotCounter
+import com.desky.shared.core.Outcome
+import com.desky.shared.core.PAIR_REFRESH_ACK_HEADER
+import com.desky.shared.core.PAIR_REFRESH_ACK_SIZE
+import com.desky.shared.core.PairSecretStore
+import com.desky.shared.core.ToRobotCounter
+import com.desky.shared.core.UdpDatagram
+import com.desky.shared.core.UdpSocketManager
+import com.desky.shared.core.decodePairRefreshAck
+import com.desky.shared.core.encodePairRefreshReq
+import com.desky.shared.core.hexToBytes
+import com.desky.shared.core.pairRefreshAckTag
+import com.desky.shared.core.pairRefreshPsk
+import com.desky.shared.core.toHex
 import com.desky.shared.features.pairing.GetPairPskUseCase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
@@ -25,9 +40,9 @@ private const val MAX_PAIR_REFRESH_ATTEMPTS = 5
  * `tag = first6(HMAC(oldPsk, "PAIRREFRESH" || era || counter))`), waits for
  * `PAIR_REFRESH_ACK` (`[0x54 | eraBE2 | tag6 | XOR]`,
  * `tag = first6(HMAC(newPsk, "PAIRREFRESHACK" || era))`), then persists the vault
- * PSK + Room era/counter and resets the shared [ToRobotCounter] to the new
+ * PSK + Room era/counter and resets the shared [ToRobotCounter][com.desky.shared.core.ToRobotCounter] to the new
  * era — so the next drive uses counter 1 under the new key, well before
- * [ToRobotCounter.EXHAUSTION_GATE].
+ * [ToRobotCounter.EXHAUSTION_GATE][com.desky.shared.core.ToRobotCounter.EXHAUSTION_GATE].
  *
  * Silent: no UI surface on success (callers log at debug only); on failure
  * the caller falls back to the Tier-2 repair copy ("session expired —

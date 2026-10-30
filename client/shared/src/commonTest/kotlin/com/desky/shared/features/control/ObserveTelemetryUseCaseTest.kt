@@ -1,4 +1,15 @@
-package com.desky.shared.core
+package com.desky.shared.features.control
+
+import com.desky.shared.core.ControlCommand
+import com.desky.shared.core.ControlPacketCodec
+import com.desky.shared.core.DEFAULT_UDP_PORT
+import com.desky.shared.core.ROBOT_HOST
+import com.desky.shared.core.RobotMode
+import com.desky.shared.core.TELEMETRY_SIZE
+import com.desky.shared.core.Telemetry
+import com.desky.shared.core.TelemetryPacketCodec
+import com.desky.shared.core.UdpDatagram
+import com.desky.shared.core.UdpSocketManager
 
 import app.cash.turbine.test
 import kotlinx.coroutines.flow.Flow

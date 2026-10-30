@@ -1,40 +1,40 @@
 package com.desky.shared.di
 
+import com.desky.shared.core.DeviceRepository
+import com.desky.shared.core.FromRobotCounter
+import com.desky.shared.core.PairSecretStore
 import com.desky.shared.core.RoomDeviceRepository
 import com.desky.shared.core.RoomSettingsRepository
-import com.desky.shared.core.createUdpSocketManager
-import com.desky.shared.core.db.DeskyDatabase
-import com.desky.shared.core.PairSecretStore
-import com.desky.shared.core.DeviceRepository
-import com.desky.shared.core.ToRobotCounter
-import com.desky.shared.core.FromRobotCounter
-import com.desky.shared.features.control.EmergencyStopUseCase
-import com.desky.shared.features.control.SendSignedControlUseCase
-import com.desky.shared.features.pairing.ForgetDeviceUseCase
-import com.desky.shared.features.pairing.GetPairPskUseCase
-import com.desky.shared.features.settings.ObserveDeviceConfigUseCase
-import com.desky.shared.core.ObserveRemoteDisconnectUseCase
-import com.desky.shared.core.ObserveTelemetryUseCase
-import com.desky.shared.features.pairing.PairDeviceWithCodeUseCase
-import com.desky.shared.core.AliveUseCase
-import com.desky.shared.core.PairRefreshUseCase
-import com.desky.shared.features.settings.SaveDeviceConfigUseCase
-import com.desky.shared.core.ReleaseManualUseCase
 import com.desky.shared.core.SettingsRepository
-import com.desky.shared.core.TakeManualUseCase
-import com.desky.shared.core.TriggerExpressionUseCase
+import com.desky.shared.core.ToRobotCounter
 import com.desky.shared.core.UdpSocketBinder
 import com.desky.shared.core.UdpSocketManager
-import com.desky.shared.features.pairing.PairingViewModel
+import com.desky.shared.core.createUdpSocketManager
+import com.desky.shared.core.db.DeskyDatabase
+import com.desky.shared.features.control.AliveUseCase
 import com.desky.shared.features.control.ConnectionManager
 import com.desky.shared.features.control.DriveController
 import com.desky.shared.features.control.DrivingViewModel
+import com.desky.shared.features.control.EmergencyStopUseCase
 import com.desky.shared.features.control.ExpressionsViewModel
+import com.desky.shared.features.control.ObserveRemoteDisconnectUseCase
+import com.desky.shared.features.control.ObserveTelemetryUseCase
+import com.desky.shared.features.control.PairRefreshUseCase
+import com.desky.shared.features.control.ReleaseManualUseCase
+import com.desky.shared.features.control.SendSignedControlUseCase
+import com.desky.shared.features.control.TakeManualUseCase
 import com.desky.shared.features.control.TelemetryHub
+import com.desky.shared.features.control.TriggerExpressionUseCase
 import com.desky.shared.features.home.HomeViewModel
-import com.desky.shared.presentation.RobotControlViewModel
+import com.desky.shared.features.pairing.ForgetDeviceUseCase
+import com.desky.shared.features.pairing.GetPairPskUseCase
+import com.desky.shared.features.pairing.PairDeviceWithCodeUseCase
+import com.desky.shared.features.pairing.PairingViewModel
 import com.desky.shared.features.session.SessionGateViewModel
+import com.desky.shared.features.settings.ObserveDeviceConfigUseCase
+import com.desky.shared.features.settings.SaveDeviceConfigUseCase
 import com.desky.shared.features.settings.SettingsViewModel
+import com.desky.shared.presentation.RobotControlViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -70,19 +70,10 @@ fun dataModule(
     socketBinder?.let { binder -> single<UdpSocketBinder> { binder } }
 }
 
-/** Kernel module: shared counters + control use cases. Feature-specific use cases live in [pairingModule] / [settingsModule]. */
+/** Kernel module: the shared counter holders. All use cases live in feature modules. */
 val domainModule: Module = module {
     single { ToRobotCounter(get()) }
     single { FromRobotCounter(get()) }
-    factory { SendSignedControlUseCase(get()) }
-    factory { ObserveTelemetryUseCase(get()) }
-    factory { EmergencyStopUseCase(get()) }
-    factory { PairRefreshUseCase(get(), get(), get(), get(), get(), get()) }
-    factory { AliveUseCase(get()) }
-    factory { TakeManualUseCase(get()) }
-    factory { ReleaseManualUseCase(get()) }
-    factory { TriggerExpressionUseCase(get()) }
-    factory { ObserveRemoteDisconnectUseCase(get(), get(), get(), get(), get(), get()) }
 }
 
 /**
@@ -92,7 +83,7 @@ val domainModule: Module = module {
  */
 val presentationModule: Module = module {
     // pairRefreshUC/aliveUC/socketBinder are named (tickMs keeps its default):
-    // the pair-refresh trigger stays inert when the domain module has no PairRefreshUseCase
+    // the pair-refresh trigger stays inert when the control module has no PairRefreshUseCase
     // binding, the ALIVE/DISCONNECT knock stays inert without an AliveUseCase
     // binding, and the rejoin knock stays inert without a UdpSocketBinder
     // binding (JVM/iOS — getOrNull, tests, legacy graphs).
@@ -145,6 +136,15 @@ val controlModule: Module = module {
     }
     viewModel { DrivingViewModel(get(), get(), get()) }
     viewModel { ExpressionsViewModel(get(), get(), get(), getOrNull(), get(), get(), get()) }
+    factory { SendSignedControlUseCase(get()) }
+    factory { ObserveTelemetryUseCase(get()) }
+    factory { EmergencyStopUseCase(get()) }
+    factory { PairRefreshUseCase(get(), get(), get(), get(), get(), get()) }
+    factory { AliveUseCase(get()) }
+    factory { TakeManualUseCase(get()) }
+    factory { ReleaseManualUseCase(get()) }
+    factory { TriggerExpressionUseCase(get()) }
+    factory { ObserveRemoteDisconnectUseCase(get(), get(), get(), get(), get(), get()) }
 }
 
 /** Post-pairing landing. */

@@ -1,5 +1,15 @@
-package com.desky.shared.core
+package com.desky.shared.features.control
 
+import com.desky.shared.core.DISCONNECT_HEADER
+import com.desky.shared.core.DISCONNECT_SIZE
+import com.desky.shared.core.DeviceRepository
+import com.desky.shared.core.FromRobotCounter
+import com.desky.shared.core.PairSecretStore
+import com.desky.shared.core.ToRobotCounter
+import com.desky.shared.core.UdpSocketManager
+import com.desky.shared.core.decodeDisconnect
+import com.desky.shared.core.disconnectTag
+import com.desky.shared.core.hexToBytes
 import com.desky.shared.features.pairing.GetPairPskUseCase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -24,7 +34,7 @@ private const val PSK_BYTE_LENGTH = 16
  * Verify order (mirrors the firmware receive funnel): len -> header ->
  * XOR ([decodeDisconnect]) -> paired (Room row + vault PSK present) ->
  * era equals the stored era -> counter wrap-aware strictly greater than
- * the RECEIVE sequence ([FromRobotCounter], same idiom as firmware
+ * the RECEIVE sequence ([FromRobotCounter][com.desky.shared.core.FromRobotCounter], same idiom as firmware
  * `isFreshCounter` — never the send sequence: the two 32-bit domains
  * advance independently, so a busy drive loop can no longer starve an
  * eviction stamp) -> tag
@@ -41,14 +51,14 @@ private const val PSK_BYTE_LENGTH = 16
  * half lands (no frame ever enters verify before then).
  *
  * On pass the accepted counter is consumed (persisted via
- * [FromRobotCounter.consume]), then the local pair is forgotten WITHOUT
+ * [FromRobotCounter.consume][com.desky.shared.core.FromRobotCounter.consume]), then the local pair is forgotten WITHOUT
  * any reply packet (the robot already cleared itself — an `UNPAIR` would
  * be a dead send, so this deliberately does NOT go through
- * [ForgetDeviceUseCase.invoke], which best-effort sends one): Room row
+ * [ForgetDeviceUseCase.invoke][com.desky.shared.features.pairing.ForgetDeviceUseCase.invoke], which best-effort sends one): Room row
  * deleted first (a throw leaves the vault entry referenced by the
- * surviving row, same order as [ForgetDeviceUseCase]), then the vault
- * entry, then both counter holders reset (send [ToRobotCounter] era +
- * receive [FromRobotCounter] peer). The control ViewModel's existing
+ * surviving row, same order as [ForgetDeviceUseCase][com.desky.shared.features.pairing.ForgetDeviceUseCase]), then the vault
+ * entry, then both counter holders reset (send [ToRobotCounter][com.desky.shared.core.ToRobotCounter] era +
+ * receive [FromRobotCounter][com.desky.shared.core.FromRobotCounter] peer). The control ViewModel's existing
  * unpair branch (repo null -> pause the send loop, drop the session
  * cache, surface Unpaired) plus the global session gate (repo null ->
  * force to Pairing) own the UI convergence — this flow just emits [Unit]
@@ -131,7 +141,7 @@ class ObserveRemoteDisconnectUseCase(
          * Wrap-aware strictly-greater for the 32-bit counter. Unsigned
          * subtraction: wrap-safe across the 2^32 rollover; a diff of exactly
          * half the range is rejected as ambiguous. Exact mirror of firmware
-         * `udpstatus::isFreshCounter` (canonical in [FromRobotCounter]).
+         * `udpstatus::isFreshCounter` (canonical in [FromRobotCounter][com.desky.shared.core.FromRobotCounter]).
          */
         fun isFreshCounter(lastSeen: UInt, got: UInt): Boolean =
             FromRobotCounter.isFresh(lastSeen, got)

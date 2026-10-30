@@ -1,5 +1,15 @@
-package com.desky.shared.core
+package com.desky.shared.features.control
 
+import com.desky.shared.core.ALIVE_HEADER
+import com.desky.shared.core.ALIVE_SIZE
+import com.desky.shared.core.DISCONNECT_HEADER
+import com.desky.shared.core.DISCONNECT_SIZE
+import com.desky.shared.core.Outcome
+import com.desky.shared.core.aliveTag
+import com.desky.shared.core.disconnectTag
+import com.desky.shared.core.encodeAlive
+import com.desky.shared.core.encodeDisconnect
+import com.desky.shared.core.hmacSha256
 import com.desky.shared.presentation.FakeUdpSocketManager
 import com.desky.shared.presentation.testDevice
 import kotlinx.coroutines.CancellationException

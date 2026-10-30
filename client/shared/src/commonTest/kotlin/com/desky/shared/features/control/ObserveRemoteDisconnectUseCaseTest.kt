@@ -1,6 +1,22 @@
-package com.desky.shared.core
+package com.desky.shared.features.control
 
 import app.cash.turbine.test
+import com.desky.shared.core.DEFAULT_UDP_PORT
+import com.desky.shared.core.FromRobotCounter
+import com.desky.shared.core.Outcome
+import com.desky.shared.core.PAIR_NONCE_SIZE
+import com.desky.shared.core.PAIR_OK_HEADER
+import com.desky.shared.core.PairedDevice
+import com.desky.shared.core.ROBOT_HOST
+import com.desky.shared.core.RobotMode
+import com.desky.shared.core.Telemetry
+import com.desky.shared.core.TelemetryPacketCodec
+import com.desky.shared.core.ToRobotCounter
+import com.desky.shared.core.UdpDatagram
+import com.desky.shared.core.aesGcmEncrypt
+import com.desky.shared.core.decodeDisconnect
+import com.desky.shared.core.encodeDisconnect
+import com.desky.shared.core.hkdfSha256
 import com.desky.shared.features.pairing.ForgetDeviceUseCase
 import com.desky.shared.features.pairing.GetPairPskUseCase
 import com.desky.shared.features.pairing.PairDeviceWithCodeUseCase

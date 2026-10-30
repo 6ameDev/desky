@@ -1,5 +1,10 @@
-package com.desky.shared.core
+package com.desky.shared.features.control
 
+import com.desky.shared.core.ExpressionEntry
+import com.desky.shared.core.Outcome
+import com.desky.shared.core.PairedDevice
+import com.desky.shared.core.UdpSocketManager
+import com.desky.shared.core.encodeExprTrigger
 import kotlinx.coroutines.CancellationException
 
 /**
