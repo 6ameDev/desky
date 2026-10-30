@@ -331,6 +331,9 @@ class UdpServer : public transport::IUdpTransport {
       // framework auto-retry stays off: two retriers would re-begin while
       // the other is mid-connect (ESP_ERR_WIFI_STATE by construction).
       WiFi.setAutoReconnect(false);
+      // Real-time UDP endpoint: modem sleep DTIM-gates RX/TX and stalls the
+      // 50 Hz control loop for hundreds of ms every couple of seconds.
+      WiFi.setSleep(false);
       staPending_ = (WiFi.begin(staSsid_, staPass_) == WL_DISCONNECTED);
       LOG_I("BOOT", "wifi STA ssid=%s ip=connecting udp=%u", staSsid_, kPort);
     } else {
