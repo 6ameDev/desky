@@ -136,6 +136,51 @@ class DriveControllerTest {
         }
     }
 
+    /**
+     * E-stop latches: one immediate flagged frame, then the full-rate
+     * flagged stream until release, after which idle cadence resumes.
+     */
+    @Test
+    fun emergencyStopLatchesFlaggedStreamUntilRelease() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val s = scope.setup()
+        try {
+            runCurrent()
+            s.udp.sent.clear()
+            s.controller.emergencyStop()
+            runCurrent()
+            runCurrent()
+            testScheduler.advanceTimeBy(101)
+
+            val stopped = s.udp.sent.filter { headerOf(it.bytes) == DRIVE_HEADER }
+            assertTrue(stopped.size >= 5, "latched stop pins full rate, got ${stopped.size}")
+            stopped.forEachIndexed { i, frame ->
+                val counter = counterOf(frame.bytes, DRIVE_COUNTER_AT)
+                val expected =
+                    encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f, ESTOP_FLAG), counter, psk())
+                assertTrue(frame.bytes.contentEquals(expected), "every latched frame zeroed and flagged")
+            }
+
+            s.controller.releaseEmergency()
+            s.udp.sent.clear()
+            testScheduler.advanceTimeBy(1001)
+            val after = s.udp.sent.filter { headerOf(it.bytes) == DRIVE_HEADER }
+            assertTrue(after.isNotEmpty(), "heartbeat resumes after release")
+            assertTrue(after.size < 50, "release drops back to idle cadence, got ${after.size}")
+            after.forEach { frame ->
+                val counter = counterOf(frame.bytes, DRIVE_COUNTER_AT)
+                assertTrue(
+                    frame.bytes.contentEquals(
+                        encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f), counter, psk()),
+                    ),
+                    "released frames unflagged",
+                )
+            }
+        } finally {
+            s.controller.stop()
+        }
+    }
+
     @Test
     fun takeOnBindThenFullRateInputFrames() = runTest {
         val scope = CoroutineScope(StandardTestDispatcher(testScheduler))

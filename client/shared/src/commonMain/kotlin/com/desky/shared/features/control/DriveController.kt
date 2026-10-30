@@ -83,7 +83,17 @@ class DriveController(
         start()
     }
 
-    /** App backgrounded: stop all sends until [onForeground]. Idempotent. */
+    /**
+     * Latched emergency stop: one immediate stop frame now, then the tick
+     * loop streams stop-flagged frames at full rate until [releaseEmergency].
+     * The latch survives link loss and screen hides — only an explicit
+     * release clears it. Volatile: set from the UI thread, read on the loop.
+     */
+    @Volatile
+    private var estopLatched = false
+
+    /**
+     * App backgrounded: stop all sends until [onForeground]. Idempotent. */
     fun onBackground() {
         paused = true
     }
@@ -91,6 +101,40 @@ class DriveController(
     /** App foregrounded: resume the tick loop. Idempotent. */
     fun onForeground() {
         paused = false
+    }
+
+    /**
+     * Latches the emergency stop: zeroes input, sends one stop frame
+     * immediately, and the loop streams the flagged variant at full rate
+     * until [releaseEmergency]. Best-effort like every fire-and-forget
+     * frame — a lost immediate frame is covered by the latched stream.
+     * Idempotent while latched.
+     */
+    fun emergencyStop() {
+        if (estopLatched) return
+        estopLatched = true
+        input = { 0f to 0f }
+        val session = sessionScope ?: return
+        session.launch {
+            try {
+                val dev = currentDevice ?: return@launch
+                val prepared = sessionMutex.withLock { pskCache.allocate(dev) } ?: return@launch
+                val (psk, counter) = prepared
+                // Same wire shape as EmergencyStopUseCase (the legacy
+                // screen's immediate-frame owner): zeroed MANUAL + ESTOP_FLAG.
+                // Outcome discarded — the latched stream covers a loss.
+                sendUC(dev, ControlCommand(RobotMode.MANUAL, 0f, 0f, ESTOP_FLAG), psk, counter)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Covered by the latched stream on the next tick.
+            }
+        }
+    }
+
+    /** Clears a latched emergency stop; the loop falls back to cadence. */
+    fun releaseEmergency() {
+        estopLatched = false
     }
 
     /**
@@ -188,12 +232,19 @@ class DriveController(
                 continue
             }
             try {
-                val (throttle, steering) = sampleInput()
-                if (!dueForSend(throttle, steering)) {
-                    delay(tickMs)
-                    continue
+                if (estopLatched) {
+                    // Stop pins full rate like active driving: a lost frame
+                    // costs one tick (20 ms), never an idle hole (200 ms).
+                    ticksSinceActivity = 0
+                    sendFrame(dev, 0f, 0f, ESTOP_FLAG)
+                } else {
+                    val (throttle, steering) = sampleInput()
+                    if (!dueForSend(throttle, steering)) {
+                        delay(tickMs)
+                        continue
+                    }
+                    sendFrame(dev, throttle, steering)
                 }
-                sendFrame(dev, throttle, steering)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -238,10 +289,10 @@ class DriveController(
     }
 
     /** One signed `MANUAL` drive frame on the shared counter. */
-    private suspend fun sendFrame(dev: PairedDevice, throttle: Float, steering: Float) {
+    private suspend fun sendFrame(dev: PairedDevice, throttle: Float, steering: Float, flags: Int = 0) {
         val prepared = sessionMutex.withLock { pskCache.allocate(dev) } ?: return
         val (psk, counter) = prepared
-        sendUC(dev, ControlCommand(RobotMode.MANUAL, throttle, steering), psk, counter)
+        sendUC(dev, ControlCommand(RobotMode.MANUAL, throttle, steering, flags), psk, counter)
     }
 
     private companion object {

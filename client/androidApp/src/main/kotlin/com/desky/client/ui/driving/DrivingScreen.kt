@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -76,6 +78,8 @@ fun DrivingScreen(
     DrivingContent(
         state = state,
         onStick = vm::onStick,
+        onEmergencyStop = vm::onEmergencyStop,
+        onRelease = vm::onReleaseEmergency,
     )
 }
 
@@ -84,6 +88,8 @@ fun DrivingScreen(
 fun DrivingContent(
     state: DrivingUiState,
     onStick: (Float, Float) -> Unit,
+    onEmergencyStop: () -> Unit,
+    onRelease: () -> Unit,
 ) {
     Scaffold(
         topBar = { TopAppBar(title = { Text("Driving") }) },
@@ -105,8 +111,19 @@ fun DrivingContent(
             }
             JoystickPad(
                 onStick = onStick,
-                enabled = state.aliveness == Aliveness.Connected,
+                enabled = state.aliveness == Aliveness.Connected && !state.eStopped,
             )
+            if (state.eStopped) {
+                Button(
+                    onClick = onRelease,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                ) { Text("STOPPED — tap to release") }
+            } else {
+                Button(
+                    onClick = onEmergencyStop,
+                    enabled = state.aliveness == Aliveness.Connected,
+                ) { Text("EMERGENCY STOP") }
+            }
             state.telemetry?.let {
                 Text(if (it.driving) "Driving" else "Idle")
             }
@@ -121,6 +138,8 @@ private fun DrivingContentPreview() {
         DrivingContent(
             state = DrivingUiState(aliveness = Aliveness.Connected),
             onStick = { _, _ -> },
+            onEmergencyStop = {},
+            onRelease = {},
         )
     }
 }
