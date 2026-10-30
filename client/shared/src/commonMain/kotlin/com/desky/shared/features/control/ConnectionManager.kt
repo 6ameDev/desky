@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -99,7 +100,7 @@ class ConnectionManager(
         maxOf(1, (REFRESH_RETRY_BACKOFF_MS / tickMs.coerceAtLeast(1)).toInt())
 
     private var jobs: List<Job>? = null
-    private var supervisor: Job? = null
+    private var sessionScope: CoroutineScope? = null
 
     init {
         start()
@@ -107,22 +108,24 @@ class ConnectionManager(
 
     /** Idempotent: launches the paired-gated loops as children of [scope]. */
     fun start() {
-        if (supervisor != null) return
-        val sup = SupervisorJob()
-        supervisor = sup
+        if (sessionScope != null) return
+        // Child scope supervised apart from the owner: stopping cancels every
+        // loop (including in-flight refresh) without touching the owner.
+        val session = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
+        sessionScope = session
         ticksSinceAlive = aliveTickEvery
         jobs = listOf(
-            scope.launch(sup) { collectPaired() },
-            scope.launch(sup) { collectTelemetry() },
-            scope.launch(sup) { collectRemoteDisconnect() },
-            scope.launch(sup) { runTickLoop() },
+            session.launch { collectPaired() },
+            session.launch { collectTelemetry() },
+            session.launch { collectRemoteDisconnect() },
+            session.launch { runTickLoop() },
         )
     }
 
     /** Cancels all loops including any in-flight refresh; [start] relaunches. */
     fun stop() {
-        supervisor?.cancel()
-        supervisor = null
+        sessionScope?.cancel()
+        sessionScope = null
         jobs = null
     }
 
@@ -179,39 +182,52 @@ class ConnectionManager(
                 delay(tickMs)
                 continue
             }
-            if (ticksSinceTelemetry < deadTimeoutTicks) ticksSinceTelemetry++
-            val degraded = when {
-                ticksSinceTelemetry >= deadTimeoutTicks -> Aliveness.Dead
-                ticksSinceTelemetry >= staleTimeoutTicks -> Aliveness.Stale
-                else -> null
-            }
-            val current = _aliveness.value
-            if (degraded != null && current != Aliveness.Unpaired && degraded > current) {
-                _aliveness.value = degraded
-            }
-            if (ticksSinceAlive < aliveTickEvery) ticksSinceAlive++
-            val aliveDue = ticksSinceAlive >= aliveTickEvery
-            if (aliveDue) ticksSinceAlive = 0
-            if (aliveDue) {
-                val prepared = sessionMutex.withLock { sessionCounterLocked(dev) }
-                if (prepared != null) {
-                    val (psk, counter) = prepared
-                    aliveUC(dev, psk, dev.era, counter)
-                }
-            }
-            if (refreshBackoffTicks > 0) {
-                refreshBackoffTicks--
-            } else if (pairRefreshUC != null && !pairRefreshInFlight && isRefreshDue()) {
-                triggerPairRefresh()
-            }
+            noteSilenceTick()
+            sendAliveIfDue(dev)
+            checkRefresh()
             delay(tickMs)
         }
     }
 
+    /** Watchdog: silence past the stale/dead marks demotes the link (monotonic). */
+    private fun noteSilenceTick() {
+        if (ticksSinceTelemetry < deadTimeoutTicks) ticksSinceTelemetry++
+        val degraded = when {
+            ticksSinceTelemetry >= deadTimeoutTicks -> Aliveness.Dead
+            ticksSinceTelemetry >= staleTimeoutTicks -> Aliveness.Stale
+            else -> null
+        }
+        val current = _aliveness.value
+        if (degraded != null && current != Aliveness.Unpaired && degraded > current) {
+            _aliveness.value = degraded
+        }
+    }
+
+    /** Sends one `ALIVE` when the cadence is due; skipped ticks cost nothing. */
+    private suspend fun sendAliveIfDue(dev: PairedDevice) {
+        if (ticksSinceAlive < aliveTickEvery) ticksSinceAlive++
+        if (ticksSinceAlive < aliveTickEvery) return
+        ticksSinceAlive = 0
+        val prepared = sessionMutex.withLock { sessionCounterLocked(dev) } ?: return
+        val (psk, counter) = prepared
+        aliveUC(dev, psk, dev.era, counter)
+    }
+
+    /** Fires the silent pair-refresh rotation when due (backed off on failure). */
+    private suspend fun checkRefresh() {
+        if (refreshBackoffTicks > 0) {
+            refreshBackoffTicks--
+            return
+        }
+        if (pairRefreshUC != null && !pairRefreshInFlight && isRefreshDue()) {
+            triggerPairRefresh()
+        }
+    }
+
     private fun triggerPairRefresh() {
-        val sup = supervisor ?: return
+        val session = sessionScope ?: return
         pairRefreshInFlight = true
-        scope.launch(sup) {
+        session.launch {
             try {
                 val result = pairRefreshUC?.invoke()
                 if (result is Outcome.Success) {

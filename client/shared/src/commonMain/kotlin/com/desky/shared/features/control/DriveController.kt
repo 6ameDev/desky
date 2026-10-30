@@ -14,6 +14,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -56,7 +57,7 @@ class DriveController(
     private val idleHeartbeatMs: Long = DEFAULT_IDLE_HEARTBEAT_MS,
     private val stickActiveThreshold: Float = DEFAULT_STICK_ACTIVE_THRESHOLD,
 ) {
-    private var supervisor: Job? = null
+    private var sessionScope: CoroutineScope? = null
     private var currentDevice: PairedDevice? = null
     private var bound = false
     private var input: () -> Pair<Float, Float> = { 0f to 0f }
@@ -82,9 +83,9 @@ class DriveController(
      * heartbeat below keeps the robot failsafe-fed either way.
      */
     fun bind(input: () -> Pair<Float, Float>) {
-        val sup = supervisor ?: return
+        val session = sessionScope ?: return
         this.input = input
-        scope.launch(sup) {
+        session.launch {
             try {
                 val dev = currentDevice ?: return@launch
                 val prepared = sessionMutex.withLock { sessionCounterLocked(dev) }
@@ -111,8 +112,8 @@ class DriveController(
     fun unbind() {
         bound = false
         input = { 0f to 0f }
-        val sup = supervisor ?: return
-        scope.launch(sup) {
+        val session = sessionScope ?: return
+        session.launch {
             try {
                 val dev = currentDevice ?: return@launch
                 val prepared = sessionMutex.withLock { sessionCounterLocked(dev) } ?: return@launch
@@ -128,16 +129,18 @@ class DriveController(
 
     /** Cancels the tick loop and any in-flight take/release; idempotent. */
     fun stop() {
-        supervisor?.cancel()
-        supervisor = null
+        sessionScope?.cancel()
+        sessionScope = null
     }
 
     private fun start() {
-        if (supervisor != null) return
-        val sup = SupervisorJob()
-        supervisor = sup
-        scope.launch(sup) { collectPaired() }
-        scope.launch(sup) { tickLoop() }
+        if (sessionScope != null) return
+        // Child scope supervised apart from the owner: stopping cancels the
+        // loops without touching the owner.
+        val session = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
+        sessionScope = session
+        session.launch { collectPaired() }
+        session.launch { tickLoop() }
     }
 
     private suspend fun collectPaired() {
@@ -165,37 +168,12 @@ class DriveController(
                 continue
             }
             try {
-                // A throwing input lambda must never kill the failsafe loop.
-                val supplied = try {
-                    if (bound) input() else (0f to 0f)
-                } catch (_: Exception) {
-                    0f to 0f
+                val (throttle, steering) = sampleInput()
+                if (!dueForSend(throttle, steering)) {
+                    delay(tickMs)
+                    continue
                 }
-                val throttle = supplied.first.coerceIn(-1f, 1f)
-                val steering = supplied.second.coerceIn(-1f, 1f)
-                val active = abs(throttle) > stickActiveThreshold ||
-                    abs(steering) > stickActiveThreshold
-                if (active) {
-                    ticksSinceActivity = 0
-                } else if (ticksSinceActivity < idleTickEvery) {
-                    ticksSinceActivity++
-                }
-                val fullRate = active || ticksSinceActivity < idleTickEvery
-                if (fullRate) {
-                    ticksSinceIdleSend = 0
-                } else {
-                    ticksSinceIdleSend++
-                    if (ticksSinceIdleSend < idleTickEvery) {
-                        delay(tickMs)
-                        continue
-                    }
-                    ticksSinceIdleSend = 0
-                }
-                val prepared = sessionMutex.withLock { sessionCounterLocked(dev) }
-                if (prepared != null) {
-                    val (psk, counter) = prepared
-                    sendUC(dev, ControlCommand(RobotMode.MANUAL, throttle, steering), psk, counter)
-                }
+                sendFrame(dev, throttle, steering)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -203,6 +181,47 @@ class DriveController(
             }
             delay(tickMs)
         }
+    }
+
+    /** Stick input in -1..1, snapped to center below the drive threshold. */
+    private fun sampleInput(): Pair<Float, Float> {
+        // A throwing input lambda must never kill the failsafe loop.
+        val supplied = try {
+            if (bound) input() else (0f to 0f)
+        } catch (_: Exception) {
+            0f to 0f
+        }
+        return supplied.first.coerceIn(-1f, 1f) to supplied.second.coerceIn(-1f, 1f)
+    }
+
+    /**
+     * True when this tick sends a frame. Full rate while the stick is
+     * active or inside the activity grace; otherwise the idle heartbeat
+     * cadence. Skipped ticks allocate no counter.
+     */
+    private fun dueForSend(throttle: Float, steering: Float): Boolean {
+        val active = abs(throttle) > stickActiveThreshold ||
+            abs(steering) > stickActiveThreshold
+        if (active) {
+            ticksSinceActivity = 0
+        } else if (ticksSinceActivity < idleTickEvery) {
+            ticksSinceActivity++
+        }
+        if (active || ticksSinceActivity < idleTickEvery) {
+            ticksSinceIdleSend = 0
+            return true
+        }
+        ticksSinceIdleSend++
+        if (ticksSinceIdleSend < idleTickEvery) return false
+        ticksSinceIdleSend = 0
+        return true
+    }
+
+    /** One signed `MANUAL` drive frame on the shared counter. */
+    private suspend fun sendFrame(dev: PairedDevice, throttle: Float, steering: Float) {
+        val prepared = sessionMutex.withLock { sessionCounterLocked(dev) } ?: return
+        val (psk, counter) = prepared
+        sendUC(dev, ControlCommand(RobotMode.MANUAL, throttle, steering), psk, counter)
     }
 
     private suspend fun sessionCounterLocked(dev: PairedDevice): Pair<ByteArray, UInt>? {
