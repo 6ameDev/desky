@@ -121,8 +121,8 @@ class PairRefreshUseCase(
             }
             // Commit: vault first (same order as pair — a Room throw after
             // leaves the key resting encrypted for the next attempt), then
-            // Room era/baseline, then the in-memory holder. The VM's session
-            // PSK cache refresh is the caller's (see maybePairRefresh TODO).
+            // Room era/baseline, then the in-memory holder. Refreshing the
+            // in-memory session PSK cache on success is the caller's job.
             secretStore.savePsk(device.id, nextPsk.toHex())
             deviceRepo.updatePairRefresh(device.id, 0u, nextEra)
             toRobotCounter.completePairRefresh(nextEra)
