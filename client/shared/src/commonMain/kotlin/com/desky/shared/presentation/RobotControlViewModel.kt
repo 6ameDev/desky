@@ -5,9 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.desky.shared.core.ControlCommand
 import com.desky.shared.core.DeviceRepository
 import com.desky.shared.core.ToRobotCounter
-import com.desky.shared.core.ESTOP_FLAG
 import com.desky.shared.core.AliveUseCase
-import com.desky.shared.core.EmergencyStopUseCase
 import com.desky.shared.core.ExpressionEntry
 import com.desky.shared.core.PICKER_EXPRESSIONS
 import com.desky.shared.core.STATIC_EXPRESSION_IDS
@@ -21,8 +19,10 @@ import com.desky.shared.core.PairedDevice
 import com.desky.shared.core.PairRefreshUseCase
 import com.desky.shared.core.ReleaseManualUseCase
 import com.desky.shared.core.RobotMode
-import com.desky.shared.core.SendSignedControlUseCase
 import com.desky.shared.core.TakeManualUseCase
+import com.desky.shared.features.control.ESTOP_FLAG
+import com.desky.shared.features.control.EmergencyStopUseCase
+import com.desky.shared.features.control.SendSignedControlUseCase
 import com.desky.shared.core.Telemetry
 import com.desky.shared.core.TriggerExpressionUseCase
 import com.desky.shared.core.UdpSocketBinder

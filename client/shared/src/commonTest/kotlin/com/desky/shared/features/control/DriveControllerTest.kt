@@ -9,7 +9,6 @@ import com.desky.shared.core.PairedDevice
 import com.desky.shared.core.ROBOT_HOST
 import com.desky.shared.core.ReleaseManualUseCase
 import com.desky.shared.core.RobotMode
-import com.desky.shared.core.SendSignedControlUseCase
 import com.desky.shared.core.TakeManualUseCase
 import com.desky.shared.core.ToRobotCounter
 import com.desky.shared.core.encodeManualRelease

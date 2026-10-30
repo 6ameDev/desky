@@ -9,8 +9,8 @@ import com.desky.shared.core.DISCONNECT_HEADER
 import com.desky.shared.core.DRIVE_HEADER
 import com.desky.shared.core.DRIVE_SIZE
 import com.desky.shared.core.ToRobotCounter
-import com.desky.shared.core.ESTOP_FLAG
-import com.desky.shared.core.EmergencyStopUseCase
+import com.desky.shared.features.control.ESTOP_FLAG
+import com.desky.shared.features.control.EmergencyStopUseCase
 import com.desky.shared.features.pairing.ForgetDeviceUseCase
 import com.desky.shared.core.FromRobotCounter
 import com.desky.shared.features.pairing.GetPairPskUseCase
@@ -28,7 +28,7 @@ import com.desky.shared.core.Outcome
 import com.desky.shared.core.ROBOT_HOST
 import com.desky.shared.core.ReleaseManualUseCase
 import com.desky.shared.core.RobotMode
-import com.desky.shared.core.SendSignedControlUseCase
+import com.desky.shared.features.control.SendSignedControlUseCase
 import com.desky.shared.core.TakeManualUseCase
 import com.desky.shared.core.Telemetry
 import com.desky.shared.core.TelemetryPacketCodec
