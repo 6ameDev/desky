@@ -6,10 +6,6 @@ import com.desky.shared.core.PairedDevice
 import com.desky.shared.core.Telemetry
 import com.desky.shared.core.ToRobotCounter
 import com.desky.shared.core.hexToBytes
-import com.desky.shared.features.control.AliveUseCase
-import com.desky.shared.features.control.ObserveRemoteDisconnectUseCase
-import com.desky.shared.features.control.ObserveTelemetryUseCase
-import com.desky.shared.features.control.PairRefreshUseCase
 import com.desky.shared.features.pairing.GetPairPskUseCase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -99,7 +95,6 @@ class ConnectionManager(
     private val refreshBackoffTickCount =
         maxOf(1, (REFRESH_RETRY_BACKOFF_MS / tickMs.coerceAtLeast(1)).toInt())
 
-    private var jobs: List<Job>? = null
     private var sessionScope: CoroutineScope? = null
 
     init {
@@ -114,19 +109,16 @@ class ConnectionManager(
         val session = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
         sessionScope = session
         ticksSinceAlive = aliveTickEvery
-        jobs = listOf(
-            session.launch { collectPaired() },
-            session.launch { collectTelemetry() },
-            session.launch { collectRemoteDisconnect() },
-            session.launch { runTickLoop() },
-        )
+        session.launch { collectPaired() }
+        session.launch { collectTelemetry() }
+        session.launch { collectRemoteDisconnect() }
+        session.launch { runTickLoop() }
     }
 
     /** Cancels all loops including any in-flight refresh; [start] relaunches. */
     fun stop() {
         sessionScope?.cancel()
         sessionScope = null
-        jobs = null
     }
 
     private suspend fun collectPaired() {

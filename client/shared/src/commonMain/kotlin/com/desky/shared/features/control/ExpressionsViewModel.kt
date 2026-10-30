@@ -8,8 +8,6 @@ import com.desky.shared.core.Outcome
 import com.desky.shared.core.Telemetry
 import com.desky.shared.core.ToRobotCounter
 import com.desky.shared.core.hexToBytes
-import com.desky.shared.features.control.TakeManualUseCase
-import com.desky.shared.features.control.TriggerExpressionUseCase
 import com.desky.shared.features.pairing.GetPairPskUseCase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
