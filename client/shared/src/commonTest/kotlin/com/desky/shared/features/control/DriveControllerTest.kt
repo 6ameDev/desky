@@ -109,6 +109,33 @@ class DriveControllerTest {
         }
     }
 
+    /**
+     * App background silences the loop: no vault, counter, or socket use
+     * while paused, and the loop resumes on foreground. Mirrors the legacy
+     * screen's `backgroundPaused` contract.
+     */
+    @Test
+    fun backgroundPausesAllSends() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val s = scope.setup()
+        try {
+            runCurrent()
+            testScheduler.advanceTimeBy(201)
+            assertTrue(s.udp.sent.isNotEmpty(), "heartbeats flow while foregrounded")
+
+            s.controller.onBackground()
+            s.udp.sent.clear()
+            testScheduler.advanceTimeBy(1000)
+            assertTrue(s.udp.sent.isEmpty(), "no frames of any kind while backgrounded")
+
+            s.controller.onForeground()
+            testScheduler.advanceTimeBy(201)
+            assertTrue(s.udp.sent.isNotEmpty(), "heartbeats resume on foreground")
+        } finally {
+            s.controller.stop()
+        }
+    }
+
     @Test
     fun takeOnBindThenFullRateInputFrames() = runTest {
         val scope = CoroutineScope(StandardTestDispatcher(testScheduler))

@@ -9,6 +9,7 @@ import com.desky.shared.core.createDeskyDatabase
 import com.desky.shared.core.createWifiSocketBinder
 import com.desky.shared.di.dataModule
 import com.desky.shared.features.control.ConnectionManager
+import com.desky.shared.features.control.DriveController
 import com.desky.shared.di.controlModule
 import com.desky.shared.di.domainModule
 import com.desky.shared.di.homeModule
@@ -46,16 +47,19 @@ class DeskyApp : Application() {
                 sessionModule,
             )
         }.koin
-        // App-wide link lifeline: background sends DISCONNECT (pair kept),
-        // foreground knocks ALIVE due. One observer — screens never own this.
+        // App-wide link lifeline: background sends DISCONNECT (pair kept) and
+        // pauses the drive loop, foreground knocks ALIVE due and resumes it.
+        // One observer — screens never own this.
         ProcessLifecycleOwner.get().lifecycle.addObserver(
             object : DefaultLifecycleObserver {
                 override fun onStop(owner: LifecycleOwner) {
                     koin.get<ConnectionManager>().onBackground()
+                    koin.get<DriveController>().onBackground()
                 }
 
                 override fun onStart(owner: LifecycleOwner) {
                     koin.get<ConnectionManager>().onForeground()
+                    koin.get<DriveController>().onForeground()
                 }
             },
         )
