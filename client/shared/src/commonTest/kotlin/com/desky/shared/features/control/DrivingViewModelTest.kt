@@ -111,22 +111,22 @@ class DrivingViewModelTest {
     )
 
     @Test
-    fun entryBindsAndStreamsStickInput() = runVmTest { main ->
+    fun activationBindsAndStreamsStickInput() = runVmTest { main ->
         val scope = CoroutineScope(StandardTestDispatcher(main))
         val s = scope.setup()
         try {
-            s.vm.onEnter()
+            s.vm.activate()
             main.runCurrent()
             main.runCurrent()
             val takes = s.udp.sent.filter { headerOf(it.bytes) == MANUAL_TAKE_HEADER }
             assertEquals(1, takes.size, "entry binds: exactly one take")
 
-            s.vm.onEnter()
+            s.vm.activate()
             main.runCurrent()
             assertEquals(
                 1,
                 s.udp.sent.count { headerOf(it.bytes) == MANUAL_TAKE_HEADER },
-                "repeat entry while bound is a no-op",
+                "repeat activation while bound is a no-op",
             )
 
             s.vm.onStick(0.5f, -0.25f)
@@ -156,6 +156,50 @@ class DrivingViewModelTest {
         }
     }
 
+    /**
+     * Background round-trip without navigation: deactivation releases and
+     * the next activation takes MANUAL again. Simulates app-background then
+     * foreground return while the screen stays visible.
+     */
+    @Test
+    fun backgroundReturnRetakesManual() = runVmTest { main ->
+        val scope = CoroutineScope(StandardTestDispatcher(main))
+        val s = scope.setup()
+        try {
+            s.vm.activate()
+            main.runCurrent()
+            main.runCurrent()
+            assertEquals(1, takes(s.udp).size, "first activation takes once")
+
+            s.vm.deactivate()
+            main.runCurrent()
+            assertEquals(
+                2,
+                s.udp.sent.count { headerOf(it.bytes) == MANUAL_RELEASE_HEADER },
+                "deactivation releases best-effort 2x",
+            )
+
+            s.vm.deactivate()
+            main.runCurrent()
+            assertEquals(
+                2,
+                s.udp.sent.count { headerOf(it.bytes) == MANUAL_RELEASE_HEADER },
+                "repeat deactivation is a no-op",
+            )
+
+            s.vm.activate()
+            main.runCurrent()
+            main.runCurrent()
+            assertEquals(2, takes(s.udp).size, "return re-takes MANUAL")
+        } finally {
+            s.manager.stop()
+            s.drive.stop()
+        }
+    }
+
+    private fun takes(udp: FakeUdpSocketManager) =
+        udp.sent.filter { headerOf(it.bytes) == MANUAL_TAKE_HEADER }
+
     @Test
     fun collectsAlivenessAndTelemetry() = runVmTest { main ->
         val scope = CoroutineScope(StandardTestDispatcher(main))
@@ -184,7 +228,7 @@ class DrivingViewModelTest {
         val scope = CoroutineScope(StandardTestDispatcher(main))
         val s = scope.setup()
         try {
-            s.vm.onEnter()
+            s.vm.activate()
             main.runCurrent()
             main.runCurrent()
             assertTrue(s.udp.sent.any { headerOf(it.bytes) == MANUAL_TAKE_HEADER })

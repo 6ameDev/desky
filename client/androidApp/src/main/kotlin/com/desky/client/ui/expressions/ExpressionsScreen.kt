@@ -17,7 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -26,6 +26,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.desky.shared.features.control.Aliveness
 import com.desky.shared.features.control.ExpressionsUiState
@@ -40,7 +43,22 @@ fun ExpressionsScreen(
     vm: ExpressionsViewModel = koinViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { vm.onEnter() }
+    // Screen-scope visibility: resumed = take MANUAL, paused = release.
+    // Same idiom as ControlScreen and DrivingScreen: scoped to this
+    // composable's LifecycleOwner so background/foreground and navigation
+    // both funnel through activate / deactivate.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, vm) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> vm.activate()
+                Lifecycle.Event.ON_PAUSE -> vm.deactivate()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     BackHandler { vm.requestExit() }
     if (state.pendingExit) {
         AlertDialog(

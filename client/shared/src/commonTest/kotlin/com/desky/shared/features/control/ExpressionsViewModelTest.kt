@@ -240,27 +240,51 @@ class ExpressionsViewModelTest {
     }
 
     @Test
-    fun entryTakesManualOnce() = runVmTest { main ->
+    fun activationTakesManualOnce() = runVmTest { main ->
         val scope = CoroutineScope(StandardTestDispatcher(main))
         val s = scope.setup()
         try {
             main.runCurrent()
             assertTrue(takes(s.udp).isEmpty(), "no take before entry")
 
-            s.vm.onEnter()
+            s.vm.activate()
             main.runCurrent()
             main.runCurrent()
-            assertEquals(1, takes(s.udp).size, "entry takes MANUAL exactly once")
+            assertEquals(1, takes(s.udp).size, "activation takes MANUAL exactly once")
 
-            s.vm.onEnter()
+            s.vm.activate()
             main.runCurrent()
-            assertEquals(1, takes(s.udp).size, "repeat entry while entered is a no-op")
+            assertEquals(1, takes(s.udp).size, "repeat activation while entered is a no-op")
 
             s.vm.confirmExit()
-            s.vm.onEnter()
+            s.vm.activate()
             main.runCurrent()
             main.runCurrent()
-            assertEquals(2, takes(s.udp).size, "re-entry after exit takes again")
+            assertEquals(2, takes(s.udp).size, "re-activation after exit takes again")
+        } finally {
+            s.manager.stop()
+        }
+    }
+
+    /**
+     * Background round-trip without navigation: deactivation re-arms and
+     * the next activation takes MANUAL again.
+     */
+    @Test
+    fun backgroundReturnRetakesManual() = runVmTest { main ->
+        val scope = CoroutineScope(StandardTestDispatcher(main))
+        val s = scope.setup()
+        try {
+            s.vm.activate()
+            main.runCurrent()
+            main.runCurrent()
+            assertEquals(1, takes(s.udp).size, "first activation takes once")
+
+            s.vm.deactivate()
+            s.vm.activate()
+            main.runCurrent()
+            main.runCurrent()
+            assertEquals(2, takes(s.udp).size, "return re-takes MANUAL")
         } finally {
             s.manager.stop()
         }
