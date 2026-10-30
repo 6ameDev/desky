@@ -19,6 +19,7 @@ final class ExpressionsViewState: ObservableObject {
     }
 
     func onTriggerExpression(id: Int32) { vm.onTriggerExpression(id: id) }
+    func onEnter() { vm.onEnter() }
     func requestExit() { vm.requestExit() }
     func dismissExit() { vm.dismissExit() }
     func confirmExit() { vm.confirmExit() }

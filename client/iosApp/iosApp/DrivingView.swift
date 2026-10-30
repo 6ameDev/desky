@@ -21,6 +21,7 @@ final class DrivingViewState: ObservableObject {
     func onStick(throttle: Float, steering: Float) {
         vm.onStick(throttle: throttle, steering: steering)
     }
+    func onEnter() { vm.onEnter() }
     func requestExit() { vm.requestExit() }
     func dismissExit() { vm.dismissExit() }
     func confirmExit() { vm.confirmExit() }
