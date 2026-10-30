@@ -21,6 +21,8 @@ final class DrivingViewState: ObservableObject {
     func onStick(throttle: Float, steering: Float) {
         vm.onStick(throttle: throttle, steering: steering)
     }
+    func onEmergencyStop() { vm.onEmergencyStop() }
+    func onReleaseEmergency() { vm.onReleaseEmergency() }
     func activate() { vm.activate() }
     func deactivate() { vm.deactivate() }
     func requestExit() { vm.requestExit() }
@@ -49,8 +51,15 @@ struct DrivingView: View {
             } else {
                 Text("Waiting for telemetry…")
             }
-            JoystickPad(enabled: snapshot.aliveness == Aliveness.connected) { throttle, steering in
+            JoystickPad(enabled: snapshot.aliveness == Aliveness.connected && !snapshot.eStopped) { throttle, steering in
                 state.onStick(throttle: throttle, steering: steering)
+            }
+            if snapshot.eStopped {
+                Button("STOPPED — tap to release") { state.onReleaseEmergency() }
+                    .tint(.red)
+            } else {
+                Button("EMERGENCY STOP") { state.onEmergencyStop() }
+                    .disabled(snapshot.aliveness != Aliveness.connected)
             }
             if let telemetry = snapshot.telemetry {
                 Text(telemetry.driving ? "Driving" : "Idle")

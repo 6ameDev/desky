@@ -197,6 +197,64 @@ class DrivingViewModelTest {
         }
     }
 
+    /**
+     * E-stop intent latches state and the flagged stream; release unlatches.
+     * Both are no-ops unless Connected — with no link the robot's own
+     * stale-command failsafe is already stopping it.
+     */
+    @Test
+    fun emergencyStopIntentLatchesAndReleases() = runVmTest { main ->
+        val scope = CoroutineScope(StandardTestDispatcher(main))
+        val s = scope.setup()
+        try {
+            s.vm.onEmergencyStop()
+            main.runCurrent()
+            assertFalse(s.vm.state.value.eStopped, "no latch while link is down")
+            s.udp.sent.filter { headerOf(it.bytes) == DRIVE_HEADER }.forEach { frame ->
+                val counter = counterOf(frame.bytes, DRIVE_COUNTER_AT)
+                assertTrue(
+                    frame.bytes.contentEquals(
+                        encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f), counter, hexToBytes(PSK_HEX)),
+                    ),
+                    "link-down frames stay unflagged idle",
+                )
+            }
+
+            s.udp.inbound.emit(telemetryDatagram())
+            main.runCurrent()
+            assertEquals(Aliveness.Connected, s.vm.state.value.aliveness)
+
+            s.vm.onStick(0.5f, 0.5f)
+            s.vm.onEmergencyStop()
+            assertTrue(s.vm.state.value.eStopped)
+            assertEquals(0f, s.vm.state.value.throttle, "stop zeroes the stick")
+            main.runCurrent()
+            main.runCurrent()
+            s.udp.sent.clear()
+            main.advanceTimeBy(101)
+            val stopped = s.udp.sent.filter { headerOf(it.bytes) == DRIVE_HEADER }
+            assertTrue(stopped.isNotEmpty(), "latched stream flows")
+            stopped.forEach { frame ->
+                val counter = counterOf(frame.bytes, DRIVE_COUNTER_AT)
+                assertTrue(
+                    frame.bytes.contentEquals(
+                        encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f, ESTOP_FLAG), counter, hexToBytes(PSK_HEX)),
+                    ),
+                    "latched frames zeroed and flagged",
+                )
+            }
+
+            s.udp.inbound.emit(telemetryDatagram())
+            main.runCurrent()
+            assertEquals(Aliveness.Connected, s.vm.state.value.aliveness)
+            s.vm.onReleaseEmergency()
+            assertFalse(s.vm.state.value.eStopped, "release unlatches while connected")
+        } finally {
+            s.manager.stop()
+            s.drive.stop()
+        }
+    }
+
     private fun takes(udp: FakeUdpSocketManager) =
         udp.sent.filter { headerOf(it.bytes) == MANUAL_TAKE_HEADER }
 
