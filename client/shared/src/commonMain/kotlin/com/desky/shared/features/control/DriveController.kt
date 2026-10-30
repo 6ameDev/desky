@@ -5,7 +5,6 @@ import com.desky.shared.core.DeviceRepository
 import com.desky.shared.core.PairedDevice
 import com.desky.shared.core.RobotMode
 import com.desky.shared.core.ToRobotCounter
-import com.desky.shared.core.hexToBytes
 import com.desky.shared.features.pairing.GetPairPskUseCase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -37,8 +36,8 @@ import kotlin.math.abs
  * ticks allocate no counter.
  *
  * Assumes [scope] confines the loops to one thread (Main or a test
- * dispatcher): tick counters and the bound flag are plain vars, the session
- * cache serializes under [sessionMutex] with lock order session-then-holder.
+ * dispatcher): tick counters and the bound flag are plain vars, cache
+ * access serializes under [sessionMutex].
  * Drive frames always carry [RobotMode.MANUAL]; the ViewModel's mode
  * snapshot and MANUAL-report gate arrive with the rewire.
  */
@@ -60,8 +59,7 @@ class DriveController(
     private var input: () -> Pair<Float, Float> = { 0f to 0f }
 
     private val sessionMutex = Mutex()
-    private var sessionPsk: ByteArray? = null
-    private var pskMissingFor: String? = null
+    private val pskCache = SessionPskCache(getPairPsk, toRobotCounter)
 
     private var ticksSinceActivity = 0
     private var ticksSinceIdleSend = 0
@@ -85,7 +83,7 @@ class DriveController(
         session.launch {
             try {
                 val dev = currentDevice ?: return@launch
-                val prepared = sessionMutex.withLock { sessionCounterLocked(dev) }
+                val prepared = sessionMutex.withLock { pskCache.allocate(dev) }
                 if (prepared != null) {
                     val (psk, counter) = prepared
                     takeManualUC(dev, psk, dev.era, counter)
@@ -113,7 +111,7 @@ class DriveController(
         session.launch {
             try {
                 val dev = currentDevice ?: return@launch
-                val prepared = sessionMutex.withLock { sessionCounterLocked(dev) } ?: return@launch
+                val prepared = sessionMutex.withLock { pskCache.allocate(dev) } ?: return@launch
                 val (psk, counter) = prepared
                 releaseManualUC(dev, psk, dev.era, counter)
             } catch (e: CancellationException) {
@@ -145,8 +143,7 @@ class DriveController(
             currentDevice = paired
             if (paired == null) {
                 sessionMutex.withLock {
-                    sessionPsk = null
-                    pskMissingFor = null
+                    pskCache.invalidate()
                     toRobotCounter.reset()
                 }
                 bound = false
@@ -216,45 +213,12 @@ class DriveController(
 
     /** One signed `MANUAL` drive frame on the shared counter. */
     private suspend fun sendFrame(dev: PairedDevice, throttle: Float, steering: Float) {
-        val prepared = sessionMutex.withLock { sessionCounterLocked(dev) } ?: return
+        val prepared = sessionMutex.withLock { pskCache.allocate(dev) } ?: return
         val (psk, counter) = prepared
         sendUC(dev, ControlCommand(RobotMode.MANUAL, throttle, steering), psk, counter)
     }
 
-    private suspend fun sessionCounterLocked(dev: PairedDevice): Pair<ByteArray, UInt>? {
-        val psk = loadSessionPskLocked(dev) ?: return null
-        toRobotCounter.ensure(dev.id, dev.lastCounter, dev.persistEvery, dev.era)
-        return psk to (toRobotCounter.next() ?: return null)
-    }
-
-    private suspend fun loadSessionPskLocked(dev: PairedDevice): ByteArray? {
-        var psk = sessionPsk
-        if (psk == null) {
-            if (pskMissingFor == dev.id) return null
-            val hex = getPairPsk()
-            if (hex == null) {
-                pskMissingFor = dev.id
-                return null
-            }
-            val decoded = try {
-                hexToBytes(hex)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                null
-            }
-            if (decoded == null || decoded.size != PAIR_PSK_BYTE_LENGTH) {
-                pskMissingFor = dev.id
-                return null
-            }
-            psk = decoded
-            sessionPsk = psk
-        }
-        return psk
-    }
-
     private companion object {
-        const val PAIR_PSK_BYTE_LENGTH = 16
         const val DEFAULT_TICK_MS = 20L
         const val DEFAULT_IDLE_HEARTBEAT_MS = 200L
         const val DEFAULT_STICK_ACTIVE_THRESHOLD = 0.02f
