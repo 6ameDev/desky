@@ -45,8 +45,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.desky.shared.domain.RobotMode
-import com.desky.shared.domain.Telemetry
+import com.desky.shared.core.RobotMode
+import com.desky.shared.core.Telemetry
 import com.desky.shared.presentation.Connectivity
 import com.desky.shared.presentation.RobotControlUiState
 import com.desky.shared.presentation.RobotControlViewModel

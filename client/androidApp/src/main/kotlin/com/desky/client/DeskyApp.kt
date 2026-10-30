@@ -1,12 +1,15 @@
 package com.desky.client
 
 import android.app.Application
-import com.desky.shared.data.createPairSecretStore
-import com.desky.shared.data.createDeskyDatabase
-import com.desky.shared.data.createWifiSocketBinder
+import com.desky.shared.core.createPairSecretStore
+import com.desky.shared.core.createDeskyDatabase
+import com.desky.shared.core.createWifiSocketBinder
 import com.desky.shared.di.dataModule
 import com.desky.shared.di.domainModule
+import com.desky.shared.di.pairingModule
 import com.desky.shared.di.presentationModule
+import com.desky.shared.di.sessionModule
+import com.desky.shared.di.settingsModule
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.startKoin
 
@@ -30,6 +33,9 @@ class DeskyApp : Application() {
                 ),
                 domainModule,
                 presentationModule,
+                pairingModule,
+                settingsModule,
+                sessionModule,
             )
         }
     }

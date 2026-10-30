@@ -33,8 +33,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.desky.shared.presentation.SettingsUiState
-import com.desky.shared.presentation.SettingsViewModel
+import com.desky.shared.features.settings.SettingsUiState
+import com.desky.shared.features.settings.SettingsViewModel
 import org.koin.androidx.compose.koinViewModel
 
 private val FloatInputRegex = Regex("^-?\\d*\\.?\\d*$")

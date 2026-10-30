@@ -2,32 +2,32 @@ package com.desky.shared.presentation
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.desky.shared.domain.ControlCommand
-import com.desky.shared.domain.DeviceRepository
-import com.desky.shared.domain.ToRobotCounter
-import com.desky.shared.domain.ESTOP_FLAG
-import com.desky.shared.domain.AliveUseCase
-import com.desky.shared.domain.EmergencyStopUseCase
-import com.desky.shared.domain.ExpressionEntry
-import com.desky.shared.domain.PICKER_EXPRESSIONS
-import com.desky.shared.domain.STATIC_EXPRESSION_IDS
-import com.desky.shared.domain.ForgetDeviceUseCase
-import com.desky.shared.domain.FromRobotCounter
-import com.desky.shared.domain.GetPairPskUseCase
-import com.desky.shared.domain.ObserveTelemetryUseCase
-import com.desky.shared.domain.ObserveRemoteDisconnectUseCase
-import com.desky.shared.domain.Outcome
-import com.desky.shared.domain.PairedDevice
-import com.desky.shared.domain.PairRefreshUseCase
-import com.desky.shared.domain.ReleaseManualUseCase
-import com.desky.shared.domain.RobotMode
-import com.desky.shared.domain.SendSignedControlUseCase
-import com.desky.shared.domain.TakeManualUseCase
-import com.desky.shared.domain.Telemetry
-import com.desky.shared.domain.TriggerExpressionUseCase
-import com.desky.shared.domain.UdpSocketBinder
-import com.desky.shared.domain.UdpSocketManager
-import com.desky.shared.domain.hexToBytes
+import com.desky.shared.core.ControlCommand
+import com.desky.shared.core.DeviceRepository
+import com.desky.shared.core.ToRobotCounter
+import com.desky.shared.core.ESTOP_FLAG
+import com.desky.shared.core.AliveUseCase
+import com.desky.shared.core.EmergencyStopUseCase
+import com.desky.shared.core.ExpressionEntry
+import com.desky.shared.core.PICKER_EXPRESSIONS
+import com.desky.shared.core.STATIC_EXPRESSION_IDS
+import com.desky.shared.features.pairing.ForgetDeviceUseCase
+import com.desky.shared.core.FromRobotCounter
+import com.desky.shared.features.pairing.GetPairPskUseCase
+import com.desky.shared.core.ObserveTelemetryUseCase
+import com.desky.shared.core.ObserveRemoteDisconnectUseCase
+import com.desky.shared.core.Outcome
+import com.desky.shared.core.PairedDevice
+import com.desky.shared.core.PairRefreshUseCase
+import com.desky.shared.core.ReleaseManualUseCase
+import com.desky.shared.core.RobotMode
+import com.desky.shared.core.SendSignedControlUseCase
+import com.desky.shared.core.TakeManualUseCase
+import com.desky.shared.core.Telemetry
+import com.desky.shared.core.TriggerExpressionUseCase
+import com.desky.shared.core.UdpSocketBinder
+import com.desky.shared.core.UdpSocketManager
+import com.desky.shared.core.hexToBytes
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -69,7 +69,7 @@ const val TELEMETRY_TIMEOUT_MS = 2000L
  * Idle heartbeat period: while the sticks sit centered (and the e-stop is
  * clear) the send loop transmits only this often instead of every [tickMs].
  * 200 ms is far below the robot's ~500 ms stale-command failsafe
- * ([STALE_MS][com.desky.shared.domain.STALE_MS]) — a 2.5x margin — so the
+ * ([STALE_MS][com.desky.shared.core.STALE_MS]) — a 2.5x margin — so the
  * failsafe can never trip, while radio/CPU/battery cost drops ~10x at rest.
  * Any stick deflection, latched e-stop, or stick activity within the last
  * [IDLE_HEARTBEAT_MS] restores full-rate ([tickMs]) sends immediately.
@@ -78,7 +78,7 @@ const val IDLE_HEARTBEAT_MS = 200L
 
 /**
  * Telemetry UI coalescing window: the robot streams telemetry at ~15 Hz
- * ([CFG_TELEMETRY_HZ][com.desky.shared.domain.CFG_TELEMETRY_HZ]), but the
+ * ([CFG_TELEMETRY_HZ][com.desky.shared.core.CFG_TELEMETRY_HZ]), but the
  * screen only needs ~5 Hz. Every packet still resets the link timeout and
  * promotes [RobotControlUiState.connectivity] to [Connectivity.Connected]
  * (cheap logic path), while the heavy `telemetry`/`mode` copy into [_state]
@@ -157,7 +157,7 @@ data class RobotControlUiState(
  *   full rate (every [tickMs], 50 Hz) while driving and idles down to one
  *   heartbeat every [IDLE_HEARTBEAT_MS] (~5 Hz) on centered sticks — either
  *   way the heartbeat defeats the robot's ~500 ms stale-command failsafe
- *   ([STALE_MS][com.desky.shared.domain.STALE_MS]). While
+ *   ([STALE_MS][com.desky.shared.core.STALE_MS]). While
  *   [RobotControlUiState.eStopped] is latched the loop sends centered
  *   sticks with [ESTOP_FLAG] at full rate.
  *
