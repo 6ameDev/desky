@@ -17,6 +17,12 @@ data class DrivingUiState(
     val telemetry: Telemetry? = null,
     val aliveness: Aliveness = Aliveness.Unpaired,
     /**
+     * Latched emergency stop: [onEmergencyStop] raises it (shell shows the
+     * release affordance), [onReleaseEmergency] clears it. Held across link
+     * loss and screen hides — only an explicit release unlatches.
+     */
+    val eStopped: Boolean = false,
+    /**
      * Exit handshake: [requestExit] raises it (shell shows the confirm
      * dialog), [confirmExit] unbinds and clears it (shell navigates away),
      * [dismissExit] clears it (shell stays).
@@ -85,6 +91,28 @@ class DrivingViewModel(
                 steering = steering.coerceIn(-1f, 1f).let { v -> if (abs(v) < STICK_SNAP) 0f else v },
             )
         }
+    }
+
+    /**
+     * Latches the emergency stop: zeroes the stick, one immediate stop
+     * frame, then full-rate flagged stream until [onReleaseEmergency].
+     * No-op unless Connected — with no link the robot's own stale-command
+     * failsafe is already stopping it.
+     */
+    fun onEmergencyStop() {
+        if (_state.value.aliveness != Aliveness.Connected) return
+        _state.update { it.copy(eStopped = true, throttle = 0f, steering = 0f) }
+        drive.emergencyStop()
+    }
+
+    /**
+     * Releases a latched stop. Gated like [onEmergencyStop] so a latch held
+     * across a link loss stays latched until telemetry re-enables.
+     */
+    fun onReleaseEmergency() {
+        if (_state.value.aliveness != Aliveness.Connected) return
+        _state.update { it.copy(eStopped = false) }
+        drive.releaseEmergency()
     }
 
     fun requestExit() {
