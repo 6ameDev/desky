@@ -3,14 +3,14 @@ package com.desky.shared.presentation
 import com.desky.shared.core.DEFAULT_UDP_PORT
 import com.desky.shared.core.EXPR_TRIGGER_HEADER
 import com.desky.shared.core.EXPR_TRIGGER_SIZE
-import com.desky.shared.core.EmergencyStopUseCase
+import com.desky.shared.features.control.EmergencyStopUseCase
 import com.desky.shared.core.FromRobotCounter
 import com.desky.shared.features.pairing.GetPairPskUseCase
 import com.desky.shared.core.ObserveTelemetryUseCase
 import com.desky.shared.core.RobotMode
 import com.desky.shared.core.ROBOT_HOST
 import com.desky.shared.core.PICKER_EXPRESSIONS
-import com.desky.shared.core.SendSignedControlUseCase
+import com.desky.shared.features.control.SendSignedControlUseCase
 import com.desky.shared.core.Telemetry
 import com.desky.shared.core.TelemetryPacketCodec
 import com.desky.shared.core.ToRobotCounter

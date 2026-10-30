@@ -7,8 +7,9 @@ import com.desky.shared.core.db.DeskyDatabase
 import com.desky.shared.core.PairSecretStore
 import com.desky.shared.core.DeviceRepository
 import com.desky.shared.core.ToRobotCounter
-import com.desky.shared.core.EmergencyStopUseCase
 import com.desky.shared.core.FromRobotCounter
+import com.desky.shared.features.control.EmergencyStopUseCase
+import com.desky.shared.features.control.SendSignedControlUseCase
 import com.desky.shared.features.pairing.ForgetDeviceUseCase
 import com.desky.shared.features.pairing.GetPairPskUseCase
 import com.desky.shared.features.settings.ObserveDeviceConfigUseCase
@@ -18,7 +19,6 @@ import com.desky.shared.features.pairing.PairDeviceWithCodeUseCase
 import com.desky.shared.core.AliveUseCase
 import com.desky.shared.core.PairRefreshUseCase
 import com.desky.shared.features.settings.SaveDeviceConfigUseCase
-import com.desky.shared.core.SendSignedControlUseCase
 import com.desky.shared.core.ReleaseManualUseCase
 import com.desky.shared.core.SettingsRepository
 import com.desky.shared.core.TakeManualUseCase
