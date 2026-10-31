@@ -1,7 +1,7 @@
 import SwiftUI
 import shared
 
-/// App-wide object graph (T8). Koin boots once via the Kotlin entry point
+/// App-wide object graph. Koin boots once via the Kotlin entry point
 /// (`initKoinForIos`, see `Kotlin/IosKoin.kt`); each ViewModel is resolved
 /// once here and the same instances are passed into every view's wrapper.
 /// No business logic lives in Swift: views render snapshots and call intents.
@@ -26,7 +26,7 @@ final class SharedGraph: ObservableObject {
         driveController = koin.driveController()
         drivingVM = koin.drivingViewModel()
         expressionsVM = koin.expressionsViewModel()
-        // App-scope Wi-Fi rejoin monitor (TASK 4.ii): started once here so
+        // App-scope Wi-Fi rejoin monitor: started once here so
         // it outlives any single tab; views observe `.wifiRejoined` /
         // `isOnWifi` on the shared singleton. Monitor-only, no Kotlin API.
         WifiRejoinMonitor.shared.start()
@@ -87,9 +87,9 @@ struct DeskyApp: App {
 
     var body: some Scene {
         WindowGroup {
-            // TabView mirrors Android's nav graph (pairing <-> control <->
-            // settings) with tabs instead of a back stack; auto-jumps below
-            // reproduce the onPaired / onUnpaired navigations.
+            // TabView mirrors Android's nav graph (pairing, home, driving,
+            // expressions, settings) with tabs instead of a back stack;
+            // auto-jumps below reproduce the onPaired / onUnpaired navigations.
             TabView(selection: $selection) {
                 PairingView(vm: graph.pairingVM, selection: $selection)
                     .tabItem { Label("Pair", systemImage: "antenna.radiowaves.left.and.right") }
