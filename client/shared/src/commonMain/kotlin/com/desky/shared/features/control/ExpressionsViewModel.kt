@@ -7,6 +7,8 @@ import com.desky.shared.core.ExpressionEntry
 import com.desky.shared.core.Outcome
 import com.desky.shared.core.Telemetry
 import com.desky.shared.features.session.SessionManager
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,8 +34,9 @@ data class ExpressionsUiState(
 /**
  * Expressions screen: plays one catalog expression per tap via
  * [TriggerExpressionUseCase], gated on a Connected link with the MANUAL
- * hold reported. Activation via [activate] takes MANUAL first so triggers work
- * without driving first. Collects [ConnectionManager] aliveness plus
+ * hold reported. Enter manual via [activate] takes the hold first so
+ * triggers work without driving first; exit manual via [deactivate] drops
+ * it, mirroring driving. Collects [ConnectionManager] aliveness plus
  * [TelemetryHub] telemetry; owns no loops. Exit is explicit via
  * [requestExit] / [confirmExit] / [dismissExit].
  */
@@ -42,6 +45,7 @@ class ExpressionsViewModel(
     private val sessionManager: SessionManager,
     private val triggerUC: TriggerExpressionUseCase?,
     private val takeManualUC: TakeManualUseCase? = null,
+    private val releaseManualUC: ReleaseManualUseCase? = null,
     connectionManager: ConnectionManager,
     telemetryHub: TelemetryHub,
 ) : ViewModel() {
@@ -50,6 +54,7 @@ class ExpressionsViewModel(
     val state: StateFlow<ExpressionsUiState> = _state.asStateFlow()
 
     private var entered = false
+    private val manualOps = Channel<ManualOp>(Channel.UNLIMITED)
 
     init {
         viewModelScope.launch {
@@ -62,34 +67,72 @@ class ExpressionsViewModel(
                 _state.update { it.copy(telemetry = telemetry) }
             }
         }
+        viewModelScope.launch { manualLoop() }
     }
 
-    /**
-     * Screen visible: one `MANUAL_TAKE` so triggers work without driving
-     * first. Idempotent while entered; silent when unpaired, keyless, or
-     * counter-exhausted. Every [deactivate] re-arms, so the take follows
-     * visibility, not navigation.
-     */
-    fun activate() {
-        if (entered) return
-        entered = true
-        val take = takeManualUC ?: return
-        viewModelScope.launch {
-            val device = deviceRepo.observePaired().first() ?: return@launch
-            val prepared = sessionManager.allocate(device) ?: return@launch
-            val (psk, counter) = prepared
-            take(device, psk, device.era, counter)
+    private suspend fun manualLoop() {
+        for (op in manualOps) {
+            try {
+                when (op) {
+                    ManualOp.Enter -> doEnterManual()
+                    ManualOp.Exit -> doExitManual()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private suspend fun doEnterManual() {
+        try {
+            val take = takeManualUC
+            val device = deviceRepo.observePaired().first()
+            val prepared = device?.let { sessionManager.allocate(it) }
+            if (take != null && device != null && prepared != null) {
+                take(device, prepared.first, device.era, prepared.second)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+        }
+    }
+
+    private suspend fun doExitManual() {
+        try {
+            val release = releaseManualUC
+            val device = deviceRepo.observePaired().first()
+            val prepared = device?.let { sessionManager.allocate(it) }
+            if (release != null && device != null && prepared != null) {
+                release(device, prepared.first, device.era, prepared.second)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
         }
     }
 
     /**
-     * Screen hidden: releases the activation so the next [activate] takes
-     * MANUAL again. Sends nothing — the robot's own command-stale exit
-     * covers the hold, same as the pre-visibility exit path. Idempotent and
-     * silent by design: no exit confirmation, the shell stays put.
+     * Screen visible: enter manual with one `MANUAL_TAKE` so triggers work
+     * without driving first. Idempotent while entered; silent when unpaired,
+     * keyless, or counter-exhausted. Every [deactivate] re-arms, so the take
+     * follows visibility, not navigation.
+     */
+    fun activate() {
+        if (entered) return
+        entered = true
+        manualOps.trySend(ManualOp.Enter)
+    }
+
+    /**
+     * Screen hidden: exit manual with best-effort `MANUAL_RELEASE`, mirroring
+     * driving, so the next [activate] takes again. Idempotent and silent by
+     * design: no exit confirmation, the shell stays put.
      */
     fun deactivate() {
+        if (!entered) return
         entered = false
+        manualOps.trySend(ManualOp.Exit)
     }
 
     /**
@@ -132,5 +175,10 @@ class ExpressionsViewModel(
     override fun onCleared() {
         deactivate()
         super.onCleared()
+    }
+
+    private sealed interface ManualOp {
+        data object Enter : ManualOp
+        data object Exit : ManualOp
     }
 }
