@@ -5,10 +5,12 @@ import com.desky.shared.core.Outcome
 import com.desky.shared.core.PairedDevice
 import com.desky.shared.core.Telemetry
 import com.desky.shared.core.ToRobotCounter
+import com.desky.shared.core.UdpSocketManager
 import com.desky.shared.features.session.SessionManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,6 +18,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 /**
  * Link aliveness from the app's side of a pairing.
@@ -63,6 +66,7 @@ class ConnectionManager(
     private val toRobotCounter: ToRobotCounter,
     private val aliveUC: AliveUseCase,
     private val remoteDisconnectUC: ObserveRemoteDisconnectUseCase,
+    private val udp: UdpSocketManager,
     private val scope: CoroutineScope,
     private val pairRefreshUC: PairRefreshUseCase? = null,
     private val aliveIntervalMs: Long = DEFAULT_ALIVE_INTERVAL_MS,
@@ -133,6 +137,10 @@ class ConnectionManager(
                 toRobotCounter.flush()
             } catch (e: CancellationException) {
                 throw e
+            } catch (_: Exception) {
+            }
+            try {
+                withContext(NonCancellable) { udp.evictAll() }
             } catch (_: Exception) {
             }
             val prepared = sessionManager.allocate(dev) ?: return@launch

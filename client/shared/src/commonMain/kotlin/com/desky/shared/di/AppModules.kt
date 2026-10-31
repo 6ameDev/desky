@@ -123,6 +123,7 @@ val controlModule: Module = module {
             toRobotCounter = get(),
             aliveUC = get(),
             remoteDisconnectUC = get(),
+            udp = get(),
             scope = get(named("sessionScope")),
             pairRefreshUC = getOrNull(),
         )

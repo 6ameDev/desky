@@ -69,6 +69,8 @@ private class FakePairingUdp : UdpSocketManager {
         sent += UdpDatagram(bytes, host, port)
     }
 
+    override suspend fun evictAll() = Unit
+
     override suspend fun close() = Unit
 }
 

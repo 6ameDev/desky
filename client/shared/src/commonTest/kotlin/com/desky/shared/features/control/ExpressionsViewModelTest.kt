@@ -76,6 +76,7 @@ class ExpressionsViewModelTest {
             toRobotCounter = toRobot,
             aliveUC = AliveUseCase(udp),
             remoteDisconnectUC = ObserveRemoteDisconnectUseCase(udp, repo, getPsk, vault, toRobot, fromRobot),
+            udp = udp,
             scope = this,
             aliveIntervalMs = 100,
             staleTimeoutMs = 100,

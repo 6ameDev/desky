@@ -146,10 +146,15 @@ class FakeUdpSocketManager : UdpSocketManager {
     override val incoming: Flow<UdpDatagram> = inbound
     val sent = mutableListOf<UdpDatagram>()
     var sendError: Throwable? = null
+    var evictCalls = 0
 
     override suspend fun send(bytes: ByteArray, host: String, port: Int) {
         sendError?.let { throw it }
         sent += UdpDatagram(bytes, host, port)
+    }
+
+    override suspend fun evictAll() {
+        evictCalls++
     }
 
     override suspend fun close() = Unit
