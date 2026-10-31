@@ -14,6 +14,7 @@ import com.desky.shared.features.control.Aliveness
 import com.desky.shared.features.control.ConnectionManager
 import com.desky.shared.features.control.ObserveRemoteDisconnectUseCase
 import com.desky.shared.features.control.ObserveTelemetryUseCase
+import com.desky.shared.features.control.TelemetryHub
 import com.desky.shared.features.pairing.ForgetDeviceUseCase
 import com.desky.shared.features.pairing.GetPairPskUseCase
 import com.desky.shared.features.session.SessionManager
@@ -71,12 +72,18 @@ class HomeViewModelTest {
             deadTimeoutMs = 300,
             tickMs = 20,
         )
-        return Setup(repo, udp, manager, sessions, HomeViewModel(repo, manager))
+        return Setup(repo, udp, manager, sessions, HomeViewModel(repo, manager, TelemetryHub(udp, this)))
     }
 
-    private fun telemetryDatagram(manual: Boolean = false) = UdpDatagram(
+    private fun telemetryDatagram(
+        manual: Boolean = false,
+        driving: Boolean = false,
+        cliff: Boolean = false,
+        distanceMm: Int = 3,
+        mode: RobotMode = RobotMode.MANUAL,
+    ) = UdpDatagram(
         TelemetryPacketCodec.encode(
-            Telemetry(1f, 2f, 3, cliff = false, driving = false, mode = RobotMode.MANUAL, manual = manual),
+            Telemetry(1f, 2f, distanceMm, cliff = cliff, driving = driving, mode = mode, manual = manual),
         ),
         ROBOT_HOST,
         DEFAULT_UDP_PORT,
@@ -116,6 +123,62 @@ class HomeViewModelTest {
             main.runCurrent()
             assertNull(s.vm.state.value.pairedDevice)
             assertEquals(Aliveness.Unpaired, s.vm.state.value.aliveness)
+        } finally {
+            s.manager.stop()
+            s.sessions.stop()
+        }
+    }
+
+    @Test
+    fun pillMappingUsesRealDataOnly() {
+        val empty = mapHomePills(Aliveness.Unpaired, null)
+        assertEquals(
+            listOf(
+                HomePill("Link", "Offline"),
+                HomePill("Status", "—"),
+            ),
+            empty,
+        )
+        val live = mapHomePills(
+            Aliveness.Connected,
+            Telemetry(1f, 2f, 850, cliff = true, driving = true, mode = RobotMode.MANUAL, manual = true),
+        )
+        assertEquals(
+            listOf(
+                HomePill("Link", "Online"),
+                HomePill("Status", "Driving · Cliff"),
+            ),
+            live,
+        )
+        val idle = mapHomePills(
+            Aliveness.Stale,
+            Telemetry(1f, 2f, 1200, cliff = false, driving = false, mode = RobotMode.AUTONOMOUS, manual = false),
+        )
+        assertEquals(
+            listOf(
+                HomePill("Link", "Offline"),
+                HomePill("Status", "Idle"),
+            ),
+            idle,
+        )
+    }
+
+    @Test
+    fun collectsTelemetryIntoPills() = runVmTest { main ->
+        val scope = CoroutineScope(StandardTestDispatcher(main))
+        val s = scope.setup()
+        try {
+            main.runCurrent()
+            s.repo.emit(pairedDevice())
+            main.runCurrent()
+            s.udp.inbound.emit(
+                telemetryDatagram(driving = true, cliff = false, distanceMm = 850, manual = true),
+            )
+            main.runCurrent()
+            main.runCurrent()
+            val pills = s.vm.state.value.pills
+            assertEquals("Online", pills.first { it.label == "Link" }.value)
+            assertEquals("Driving", pills.first { it.label == "Status" }.value)
         } finally {
             s.manager.stop()
             s.sessions.stop()

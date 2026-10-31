@@ -139,7 +139,7 @@ val controlModule: Module = module {
 
 /** Post-pairing landing. */
 val homeModule: Module = module {
-    viewModel { HomeViewModel(get(), get()) }
+    viewModel { HomeViewModel(get(), get(), get()) }
 }
 
 /** Single lane for session tick loops; sockets stay on the shared pool. */
