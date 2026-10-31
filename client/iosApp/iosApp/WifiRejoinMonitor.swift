@@ -12,7 +12,7 @@ extension Notification.Name {
     static let wifiRejoined = Notification.Name("desky.wifiRejoined")
 }
 
-/// App-scope Wi-Fi reachability monitor (TASK 4.ii).
+/// App-scope Wi-Fi reachability monitor.
 ///
 /// Started once from `SharedGraph.init()` so it outlives any single tab.
 /// `NWPathMonitor(requiredInterfaceType: .wifi)` reports `.satisfied` only

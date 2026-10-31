@@ -83,8 +83,8 @@ class SendSignedControlUseCaseTest {
         val udp = mock<UdpSocketManager>()
         everySuspend { udp.send(any(), any(), any()) } returns Unit
 
-        // Like the legacy sender, every throw (including the codec's
-        // require) maps to Outcome.Failure — never an escape.
+        // Every throw (including the codec's require) maps to
+        // Outcome.Failure — never an escape.
         val result = SendSignedControlUseCase(udp)(
             testDevice(),
             ControlCommand(RobotMode.MANUAL, 0f, 0f),

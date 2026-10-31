@@ -6,7 +6,7 @@ import androidx.room3.Upsert
 import kotlinx.coroutines.flow.Flow
 
 /**
- * Room DAOs (T5 data layer). Only the `observe*` queries return [Flow];
+ * Room DAOs. Only the `observe*` queries return [Flow];
  * every other function is suspending.
  */
 @Dao

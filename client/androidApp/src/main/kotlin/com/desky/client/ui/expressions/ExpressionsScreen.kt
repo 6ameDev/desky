@@ -43,10 +43,9 @@ fun ExpressionsScreen(
     vm: ExpressionsViewModel = koinViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
-    // Screen-scope visibility: resumed = take MANUAL, paused = release.
-    // Same idiom as ControlScreen and DrivingScreen: scoped to this
-    // composable's LifecycleOwner so background/foreground and navigation
-    // both funnel through activate / deactivate.
+    // Screen-scope visibility: resumed = enter manual, paused = exit.
+    // Scoped to this composable's LifecycleOwner so background/foreground
+    // and navigation both funnel through activate / deactivate.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, vm) {
         val observer = LifecycleEventObserver { _, event ->

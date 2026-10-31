@@ -64,16 +64,16 @@ data class Telemetry(
 }
 
 /**
- * A robot the app is paired with. [authToken] is a version marker (`"psk-v1"`)
- * since pairing/auth v1 — the pair secret itself lives only in the platform
- * vault ([PairSecretStore]) since Task 8, never in Room. [lastCounter] is the
- * last drive counter persisted to Room (Task 9: saved every 128 sends,
- * mirroring firmware A1); the drive session resumes from it, so the first
- * wire packet after a fresh pair uses counter 1. [persistEvery] is the
- * counter-persist cadence negotiated once at pair (v1.1 `PAIR_OK` interval
- * byte, sanitized 8..1024 else 128; a v1 robot sends no byte and the app
- * defaults to 128) — Room-persisted (v4 column) so the drive session keeps
- * the negotiated cadence across restarts. [era] is the Tier-1 pair-refresh epoch
+ * A robot the app is paired with. [authToken] is a version marker (`"psk-v1"`):
+ * the pair secret itself lives only in the platform vault
+ * ([PairSecretStore]), never in Room. [lastCounter] is the last drive
+ * counter persisted to Room (saved every [persistEvery] sends, mirroring
+ * firmware A1); the drive session resumes from it, so the first wire packet
+ * after a fresh pair uses counter 1. [persistEvery] is the counter-persist
+ * cadence negotiated once at pair (v1.1 `PAIR_OK` interval byte, sanitized
+ * 8..1024 else 128; a v1 robot sends no byte and the app defaults to
+ * 128) — Room-persisted (v4 column) so the drive session keeps the
+ * negotiated cadence across restarts. [era] is the pair-refresh epoch
  * (u16, fresh pair = 0, Room-persisted v5 column + firmware NVS "pera"):
  * every silent era+PSK rotation increments it and resets [lastCounter] to
  * the pair baseline (0 persisted, first post-pair-refresh drive uses 1). Never
@@ -106,7 +106,7 @@ data class PairedDevice(
 
 /** Plain robot settings holder (persistence lives elsewhere). */
 data class RobotConfig(
-    /** T5: defaults to full speed so `RobotConfig()` is the unset-config default. */
+    /** Defaults to full speed so `RobotConfig()` is the unset-config default. */
     val speedLimit: Float = 1f,
     val ledProfile: Int = 0,
     val pidP: Float = 0f,

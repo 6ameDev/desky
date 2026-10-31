@@ -5,7 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * M9 three-way mirror gate: literal pin of every frozen header/size.
+ * Three-way mirror gate: literal pin of every frozen header/size.
  * Mirrors `udp_codec.h` freeze table + `shared/protocol/README.md` §v1.
  * Any renumber/resize must break this test, not silently pass.
  */

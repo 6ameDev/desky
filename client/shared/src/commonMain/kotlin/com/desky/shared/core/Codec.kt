@@ -251,7 +251,7 @@ private fun getI16BE(bytes: ByteArray, at: Int): Short {
  * `[0xAA | mode | throttle | steering | flags | XOR]`.
  * Pure byte math mirroring `udp::encodeControl` / `udp::decodeControl`.
  *
- * Legacy post-pair: the firmware drops `0xAA` drive datagrams once paired,
+ * Post-pair: the firmware drops `0xAA` drive datagrams once paired,
  * so NOTHING in the app sends through [encode] anymore — bench/test frame
  * builder, not for drive path (telemetry-garbage fixtures, hello shape).
  * All drive traffic goes through [encodeSigned].
@@ -301,11 +301,10 @@ object ControlPacketCodec {
  * (frozen spec: `shared/protocol/README.md` §"Pairing + authenticated
  * drive v1").
  *
- * Sticks/mode/flags bytes sit at the same positions as the legacy
- * layout; `counter` (bytes 5..8, big-endian) is 1 for the first wire
- * packet and strictly increasing after (0 is never valid on the wire);
- * `tag = driveTag(psk, counter, mode, thr, str, flags)`; the trailing
- * byte is the XOR over bytes 0..14.
+ * Sticks/mode/flags bytes sit at fixed positions; `counter` (bytes 5..8,
+ * big-endian) is 1 for the first wire packet and strictly increasing after
+ * (0 is never valid on the wire); `tag = driveTag(psk, counter, mode, thr,
+ * str, flags)`; the trailing byte is the XOR over bytes 0..14.
  *
  * Top-level (not an `object` member) per the SKIE constraint documented in
  * `client/ARCHITECTURE.md` (house rule — `object` suspend members break

@@ -6,8 +6,7 @@ import kotlinx.coroutines.flow.Flow
  * Raw UDP transport boundary. Deliberately untyped ([ByteArray] in/out):
  * packet framing lives in the codecs ([ControlPacketCodec],
  * [TelemetryPacketCodec]) and the use cases that drive them, so this
- * interface never needs a single-impl wrapper per direction (T5 provides
- * the platform socket).
+ * interface never needs a single-impl wrapper per direction.
  */
 interface UdpSocketManager {
     /** Send a datagram to [host]:[port]. */

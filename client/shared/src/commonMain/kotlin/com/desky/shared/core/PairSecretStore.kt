@@ -1,19 +1,16 @@
 package com.desky.shared.core
 
 /**
- * Platform secure vault for pair PSKs (pairing/auth Task 8, vault-only
- * since Task 9).
- *
- * The vault is the ONLY at-rest home of the 16-byte pair secret (lowercase
- * hex): Room's `paired_device` table carries the drive counter alone and
- * never key material. [GetPairPskUseCase] is the single session-load entry
- * point.
+ * Platform secure vault for pair PSKs, the ONLY at-rest home of the 16-byte
+ * pair secret (lowercase hex): Room's `paired_device` table carries the
+ * drive counter alone and never key material. [GetPairPskUseCase] is the
+ * single session-load entry point.
  *
  * Semantics: [loadPsk] returns null when nothing is stored (never throws
  * for a missing entry); [savePsk] overwrites; [clear] removes the entry and
  * is a no-op when absent. Implementations MUST NEVER log key material.
  *
- * The vault is at-rest storage only: Task 9's send loop calls
+ * The vault is at-rest storage only: the send loop calls
  * [GetPairPskUseCase] once at startup and caches the key in memory — it
  * must never read the vault per tick.
  *

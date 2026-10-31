@@ -9,11 +9,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 /**
- * [SettingsRepository] backed by the single-row `robot_config` table
- * (T5 data layer).
+ * [SettingsRepository] backed by the single-row `robot_config` table.
  *
  * [observeConfig] maps a missing row to the default [RobotConfig]; [save]
- * upserts the fixed-id row. No DI wiring here (T6); construct manually.
+ * upserts the fixed-id row. No DI wiring here; construct manually.
  */
 class RoomSettingsRepository(
     private val dao: RobotConfigDao,

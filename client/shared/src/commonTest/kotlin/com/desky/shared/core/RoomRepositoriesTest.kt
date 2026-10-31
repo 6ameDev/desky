@@ -113,13 +113,13 @@ class RoomRepositoriesTest {
     }
 
     /**
-     * AP-era row (stored literal): reads resolve via mDNS like a fresh
-     * pair instead of wedging on the dead address, with the row id
-     * (vault/counter key), watermark, and port untouched. No schema change,
-     * so no migration — the next save heals the row.
+     * Stored-literal row (dotted quad from an earlier pair): reads resolve
+     * via mDNS like a fresh pair instead of wedging on the dead address,
+     * with the row id (vault/counter key), watermark, and port untouched.
+     * No schema change, so no migration — the next save heals the row.
      */
     @Test
-    fun legacyApRowResolvesViaHostnameKeepingId() = runTest {
+    fun storedLiteralRowResolvesViaHostnameKeepingId() = runTest {
         val repo = RoomDeviceRepository(db.pairedDeviceDao())
         repo.save(
             PairedDevice(

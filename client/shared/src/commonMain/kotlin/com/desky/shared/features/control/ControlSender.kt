@@ -10,7 +10,7 @@ import kotlinx.coroutines.CancellationException
 
 /**
  * Encode [cmd] as an authenticated `DRIVE` frame and send it to the
- * paired robot's address (pairing/auth Task 9).
+ * paired robot's address.
  *
  * The caller owns the counter: strictly increasing per device, 1 for the
  * first wire packet (0 is never valid), persisted to Room every 128 sends
@@ -48,9 +48,9 @@ class SendSignedControlUseCase(
 const val ESTOP_FLAG = 0x01
 
 /**
- * Send a signed zeroed MANUAL command with [ESTOP_FLAG] set (pairing/auth
- * Task 9: e-stop rides the same authenticated `DRIVE` path as every
- * other drive frame, via [SendSignedControlUseCase]).
+ * Send a signed zeroed MANUAL command with [ESTOP_FLAG] set: e-stop rides
+ * the same authenticated `DRIVE` path as every other drive frame, via
+ * [SendSignedControlUseCase].
  *
  * The caller owns the counter exactly like the drive loop (strictly
  * increasing, 1 first, never 0); the drive session allocates it so the

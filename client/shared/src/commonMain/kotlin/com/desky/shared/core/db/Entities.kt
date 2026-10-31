@@ -8,7 +8,7 @@ import com.desky.shared.core.ROBOT_HOST
 import com.desky.shared.core.RobotConfig
 
 /**
- * Room entities + entity <-> domain mapping (T5 data layer).
+ * Room entities + entity <-> domain mapping.
  *
  * `paired_device` holds 0..1 rows (the single current pairing; enforced by
  * [com.desky.shared.core.RoomDeviceRepository], not by schema).

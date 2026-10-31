@@ -140,7 +140,7 @@ class PairingCryptoTest {
     }
 
     @Test
-    fun unwrapLegacyPlaintextDefaultsTo128() {
+    fun unwrapV1PlaintextDefaultsTo128() {
         val (psk, persistEvery) = unwrapPairPlaintext(PSK)
         assertContentEquals(PSK, psk)
         kotlin.test.assertEquals(ToRobotCounter.COUNTER_PERSIST_EVERY, persistEvery)

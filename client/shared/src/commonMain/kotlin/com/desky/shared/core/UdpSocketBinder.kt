@@ -4,9 +4,9 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 
 /**
- * Never-emitting default for [UdpSocketBinder.networkAvailable]: legacy
- * platform impls that do not override the property (and the JVM/iOS null
- * binder path) collect zero events, so rejoin stays inert there and the
+ * Never-emitting default for [UdpSocketBinder.networkAvailable]: platform
+ * impls that do not override the property (and the JVM/iOS null binder
+ * path) collect zero events, so rejoin stays inert there and the
  * 2 Hz `ALIVE` cadence remains the only rejoin path.
  */
 private val NoopNetworkAvailable = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
