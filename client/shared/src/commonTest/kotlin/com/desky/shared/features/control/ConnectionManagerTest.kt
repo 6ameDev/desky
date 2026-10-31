@@ -218,8 +218,7 @@ class ConnectionManagerTest {
     }
 
     @Test
-    fun backgroundSendsGoodbyeAndFreezesLoop() = runTest {
-        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+    fun backgroundSendsGoodbyeAndFreezesLoop() = runTest {        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
         val s = scope.setup()
         try {
             runCurrent()
@@ -245,6 +244,22 @@ class ConnectionManagerTest {
                 s.manager.aliveness.value,
                 "watchdog frozen instead of demoted past the dead mark",
             )
+        } finally {
+            s.manager.stop(); s.sessions.stop()
+        }
+    }
+
+    @Test
+    fun backgroundFlushesPersistedCounter() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val s = scope.setup()
+        try {
+            runCurrent()
+            assertTrue(s.repo.counterSaves.isEmpty(), "no persist before the cadence")
+            s.manager.onBackground()
+            runCurrent()
+            runCurrent()
+            assertTrue(s.repo.counterSaves.isNotEmpty(), "background persists the live send counter")
         } finally {
             s.manager.stop(); s.sessions.stop()
         }
