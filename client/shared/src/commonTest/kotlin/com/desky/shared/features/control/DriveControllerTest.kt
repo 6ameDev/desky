@@ -194,7 +194,8 @@ class DriveControllerTest {
         try {
             runCurrent()
             var stick = 0.5f to -0.25f
-            s.controller.bind { stick }
+            s.controller.setInput { stick }
+            s.controller.enterManual()
             runCurrent()
             testScheduler.advanceTimeBy(101)
             assertTrue(s.udp.sent.any { headerOf(it.bytes) == DRIVE_HEADER })
@@ -265,7 +266,8 @@ class DriveControllerTest {
         val s = scope.setup()
         try {
             runCurrent()
-            s.controller.bind { 0.5f to -0.25f }
+            s.controller.setInput { 0.5f to -0.25f }
+            s.controller.enterManual()
             runCurrent()
 
             val takes = s.udp.sent.filter { headerOf(it.bytes) == MANUAL_TAKE_HEADER }
@@ -303,7 +305,8 @@ class DriveControllerTest {
         val s = scope.setup()
         try {
             runCurrent()
-            s.controller.bind { 0.5f to 0f }
+            s.controller.setInput { 0.5f to 0f }
+            s.controller.enterManual()
             runCurrent()
             testScheduler.advanceTimeBy(101)
             assertTrue(
@@ -311,7 +314,7 @@ class DriveControllerTest {
                 "drive flows while bound",
             )
 
-            s.controller.unbind()
+            s.controller.exitManual()
             runCurrent()
 
             val releases = s.udp.sent.filter { headerOf(it.bytes) == MANUAL_RELEASE_HEADER }
@@ -352,13 +355,14 @@ class DriveControllerTest {
         val s = scope.setup()
         try {
             runCurrent()
-            s.controller.bind { 0.5f to 0f }
+            s.controller.setInput { 0.5f to 0f }
+            s.controller.enterManual()
             runCurrent()
             testScheduler.advanceTimeBy(101)
             assertTrue(s.udp.sent.any { headerOf(it.bytes) == DRIVE_HEADER })
 
             s.udp.sendError = IllegalStateException("dead socket")
-            s.controller.unbind()
+            s.controller.exitManual()
             runCurrent()
             val frozen = s.udp.sent.size
             testScheduler.advanceTimeBy(200)
@@ -384,12 +388,52 @@ class DriveControllerTest {
     }
 
     @Test
+    fun rapidEnterExitLandsReleasedWithTakeBeforeRelease() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val s = scope.setup()
+        try {
+            runCurrent()
+            s.controller.setInput { 0.5f to 0f }
+            s.controller.enterManual()
+            s.controller.exitManual()
+            runCurrent()
+            runCurrent()
+            testScheduler.advanceTimeBy(101)
+
+            val takes = s.udp.sent.filter { headerOf(it.bytes) == MANUAL_TAKE_HEADER }
+            val releases = s.udp.sent.filter { headerOf(it.bytes) == MANUAL_RELEASE_HEADER }
+            assertEquals(1, takes.size, "exactly one take")
+            assertEquals(2, releases.size, "best-effort 2x release")
+            val takeCounter = counterOf(takes[0].bytes, SESSION_COUNTER_AT)
+            val releaseCounter = counterOf(releases[0].bytes, SESSION_COUNTER_AT)
+            assertTrue(releaseCounter > takeCounter, "wire order take then release")
+
+            s.udp.sent.clear()
+            testScheduler.advanceTimeBy(500)
+            val drives = s.udp.sent.filter { headerOf(it.bytes) == DRIVE_HEADER }
+            assertTrue(drives.isNotEmpty(), "idle heartbeat preserved")
+            drives.forEach { frame ->
+                val counter = counterOf(frame.bytes, DRIVE_COUNTER_AT)
+                assertTrue(
+                    frame.bytes.contentEquals(
+                        encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f), counter, psk()),
+                    ),
+                    "released stays idle zeroed",
+                )
+            }
+        } finally {
+            s.controller.stop(); s.sessions.stop()
+        }
+    }
+
+    @Test
     fun stopCancelsAllLoops() = runTest {
         val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
         val s = scope.setup()
         try {
             runCurrent()
-            s.controller.bind { 0.5f to 0f }
+            s.controller.setInput { 0.5f to 0f }
+            s.controller.enterManual()
             runCurrent()
             testScheduler.advanceTimeBy(101)
             assertTrue(s.udp.sent.isNotEmpty(), "drive flows before stop")
