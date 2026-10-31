@@ -30,8 +30,8 @@ struct PairingView: View {
     @Binding var selection: DeskyTab
     @State private var showScan = false
     // Hint-only: PairingViewModel owns no ALIVE loop, so the rejoin knock
-    // has no target here — the knock fires from ControlView (plus its
-    // onAppear covers pairing -> controls navigation).
+    // has no target here — it fires from the scenePhase foreground path
+    // via ConnectionManager; this view only reflects `isOnWifi`.
     @ObservedObject private var wifi = WifiRejoinMonitor.shared
 
     private func pairingLabel(_ snapshot: PairingUiState) -> String {
