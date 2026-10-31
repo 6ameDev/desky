@@ -8,7 +8,6 @@ import shared
 @MainActor
 final class SharedGraph: ObservableObject {
     let pairingVM: PairingViewModel
-    let controlVM: RobotControlViewModel
     let settingsVM: SettingsViewModel
     let homeVM: HomeViewModel
     let connectionManager: ConnectionManager
@@ -21,7 +20,6 @@ final class SharedGraph: ObservableObject {
         // IosKoinKt, SharedKoin_coreKoin -> Koin_coreKoin.
         let koin = IosKoinKt.doInitKoinForIos()
         pairingVM = koin.pairingViewModel()
-        controlVM = koin.robotControlViewModel()
         settingsVM = koin.settingsViewModel()
         homeVM = koin.homeViewModel()
         connectionManager = koin.connectionManager()
@@ -40,7 +38,6 @@ enum DeskyTab: Hashable {
     case home
     case driving
     case expressions
-    case control
     case settings
 }
 
@@ -106,9 +103,6 @@ struct DeskyApp: App {
                 ExpressionsView(vm: graph.expressionsVM, selection: $selection)
                     .tabItem { Label("Expressions", systemImage: "face.smiling") }
                     .tag(DeskyTab.expressions)
-                ControlView(vm: graph.controlVM)
-                    .tabItem { Label("Control", systemImage: "slider.horizontal.3") }
-                    .tag(DeskyTab.control)
                 SettingsView(vm: graph.settingsVM, selection: $selection)
                     .tabItem { Label("Settings", systemImage: "gear") }
                     .tag(DeskyTab.settings)
@@ -119,17 +113,15 @@ struct DeskyApp: App {
             .onChange(of: gate.provenDead) { dead in
                 if dead { selection = .pairing }
             }
-            // App-background pause/resume: ControlView's onDisappear covers
-            // tab leaves; this covers the home-button path while Controls
-            // is visible (both funnel into the same VM flags).
+            // App-background pause/resume: DrivingView onDisappear covers
+            // tab leaves; this covers the home-button path while driving
+            // is visible (both funnel into the same flags).
             .onChange(of: scenePhase) { phase in
                 switch phase {
                 case .background:
-                    graph.controlVM.onBackground()
                     graph.connectionManager.onBackground()
                     graph.driveController.onBackground()
                 case .active:
-                    graph.controlVM.onForeground()
                     graph.connectionManager.onForeground()
                     graph.driveController.onForeground()
                 default:
