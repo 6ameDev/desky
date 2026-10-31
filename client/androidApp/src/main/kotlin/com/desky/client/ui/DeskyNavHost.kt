@@ -69,11 +69,6 @@ fun DeskyNavHost(
                         popUpTo(DeskyRoutes.PAIRING) { inclusive = true }
                     }
                 },
-                onOpenControls = {
-                    navController.navigate(DeskyRoutes.HOME) {
-                        popUpTo(DeskyRoutes.PAIRING) { inclusive = true }
-                    }
-                },
                 onOpenScan = {
                     navController.navigate(DeskyRoutes.SCAN)
                 },

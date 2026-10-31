@@ -2,7 +2,6 @@ package com.desky.client.ui.pairing
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -30,7 +29,6 @@ import org.koin.androidx.compose.koinViewModel
 @Composable
 fun PairingScreen(
     onPaired: () -> Unit,
-    onOpenControls: () -> Unit,
     onOpenScan: () -> Unit,
     vm: PairingViewModel = koinViewModel(),
 ) {
@@ -43,7 +41,6 @@ fun PairingScreen(
         onPinChange = vm::onPinChange,
         onPair = vm::onPair,
         onUnpair = vm::onUnpair,
-        onOpenControls = onOpenControls,
         onOpenScan = onOpenScan,
     )
 }
@@ -54,7 +51,6 @@ fun PairingContent(
     onPinChange: (String) -> Unit,
     onPair: () -> Unit,
     onUnpair: () -> Unit,
-    onOpenControls: () -> Unit,
     onOpenScan: () -> Unit,
 ) {
     Scaffold { padding ->
@@ -100,10 +96,7 @@ fun PairingContent(
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             state.pairedDevice?.let { device ->
                 Text("Paired: ${device.alias}")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onOpenControls) { Text("Open Controls") }
-                    OutlinedButton(onClick = onUnpair) { Text("Unpair") }
-                }
+                OutlinedButton(onClick = onUnpair) { Text("Unpair") }
             }
         }
     }
@@ -125,7 +118,6 @@ private fun PairingContentPreview() {
             onPinChange = {},
             onPair = {},
             onUnpair = {},
-            onOpenControls = {},
             onOpenScan = {},
         )
     }
