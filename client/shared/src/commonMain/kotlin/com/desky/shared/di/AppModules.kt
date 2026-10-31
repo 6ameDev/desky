@@ -35,7 +35,6 @@ import com.desky.shared.features.session.SessionGateViewModel
 import com.desky.shared.features.settings.ObserveDeviceConfigUseCase
 import com.desky.shared.features.settings.SaveDeviceConfigUseCase
 import com.desky.shared.features.settings.SettingsViewModel
-import com.desky.shared.presentation.RobotControlViewModel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -78,20 +77,6 @@ fun dataModule(
 val domainModule: Module = module {
     single { ToRobotCounter(get()) }
     single { FromRobotCounter(get()) }
-}
-
-/**
- * Presentation-layer module. Koin 4 core `viewModel` DSL (from
- * `koin-core-viewmodel`) — no koin-android needed in :shared.
- * Only the control ViewModel remains here; the rest moved to feature modules.
- */
-val presentationModule: Module = module {
-    // pairRefreshUC/aliveUC/socketBinder are named (tickMs keeps its default):
-    // the pair-refresh trigger stays inert when the control module has no PairRefreshUseCase
-    // binding, the ALIVE/DISCONNECT knock stays inert without an AliveUseCase
-    // binding, and the rejoin knock stays inert without a UdpSocketBinder
-    // binding (JVM/iOS — getOrNull, tests, graphs without the binding).
-    viewModel { RobotControlViewModel(get(), get(), get(), get(), get(), get(), get(), get(), pairRefreshUC = getOrNull<PairRefreshUseCase>(), aliveUC = getOrNull<AliveUseCase>(), socketBinder = getOrNull<UdpSocketBinder>(), forgetUC = get(), remoteDisconnectUC = getOrNull<ObserveRemoteDisconnectUseCase>(), takeManualUC = getOrNull<TakeManualUseCase>(), releaseManualUC = getOrNull<ReleaseManualUseCase>(), triggerExpressionUC = getOrNull<TriggerExpressionUseCase>()) }
 }
 
 /** Feature slice modules: canonical homes for pairing, settings, and session bindings. */

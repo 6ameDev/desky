@@ -615,7 +615,7 @@ suspend fun encodeManualTake(psk: ByteArray, era: UShort, counter: UInt): ByteAr
  *
  * Fire-and-forget like [encodeManualTake] (no reply ever comes back): the
  * app sends it 2x byte-identical (same counter — one allocation, like
- * `DISCONNECT`'s 2x in `RobotControlViewModel`) on user release.
+ * `DISCONNECT`'s 2x) on user release.
  * See `shared/protocol/README.md` §"Pairing + authenticated drive v1" (MANUAL take/release).
  *
  * Top-level (not an `object` member) per the SKIE constraint documented in

@@ -7,9 +7,9 @@ import kotlinx.coroutines.sync.withLock
  * Single source of truth for the app-to-robot send counter (pairing/auth).
  *
  * Every counter-bearing send app-wide allocates here — the drive-loop tick,
- * the immediate e-stop frame (both via `RobotControlViewModel`), and the
- * signed `UNPAIR` (via [ForgetDeviceUseCase]) — so [next] always exceeds the
- * robot's `lastCounter`. The robot lags or equals the app, never leads: each
+ * the immediate e-stop frame, and the signed `UNPAIR` (via
+ * [ForgetDeviceUseCase]) — so [next] always exceeds the robot's
+ * `lastCounter`. The robot lags or equals the app, never leads: each
  * allocation is `lastSent + 1` from the live in-memory era, never from the
  * Room watermark (which leads the live sequence by up to one [persistEvery]
  * cadence — write-ahead, so an unclean kill restarts ahead of the robot).
@@ -163,11 +163,11 @@ class ToRobotCounter(
 
     /**
      * Proactive pair-refresh trigger: true when the live era has allocated at or
-     * beyond `EXHAUSTION_GATE - PAIR_REFRESH_MARGIN` — the VM's silent background
+     * beyond `EXHAUSTION_GATE - PAIR_REFRESH_MARGIN` — the silent background
      * rotation should fire now (gapless: ~1000 frames of margin at any
      * rate), instead of waiting for the fail-closed [isExhausted] latch
      * (which needs an explicit re-pair). False with no era. See
-     * [PairRefreshUseCase] + `RobotControlViewModel.maybePairRefresh` (trigger stub).
+     * [PairRefreshUseCase].
      */
     suspend fun needsPairRefresh(): Boolean {
         mutex.withLock {
