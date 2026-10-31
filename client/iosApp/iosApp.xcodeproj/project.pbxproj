@@ -10,7 +10,7 @@
 		707CE8DC4D1D36A020802B06 /* Pods_iosApp.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 451C814BE545B068A5D2925B /* Pods_iosApp.framework */; };
 		A1B2C3D400000111 /* DeskyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D400000101 /* DeskyApp.swift */; };
 		A1B2C3D400000112 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D400000102 /* PairingView.swift */; };
-		A1B2C3D400000113 /* ControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D400000103 /* ControlView.swift */; };
+		A1B2C3D400000131 /* SharedViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D400000130 /* SharedViews.swift */; };
 		A1B2C3D400000114 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D400000104 /* SettingsView.swift */; };
 		A1B2C3D400000115 /* WifiRejoinMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D400000107 /* WifiRejoinMonitor.swift */; };
 		A1B2C3D400000116 /* ScanQrView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D400000108 /* ScanQrView.swift */; };
@@ -24,7 +24,7 @@
 		851DA3FB94108576E4BC6DFF /* Pods-iosApp.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-iosApp.debug.xcconfig"; path = "Target Support Files/Pods-iosApp/Pods-iosApp.debug.xcconfig"; sourceTree = "<group>"; };
 		A1B2C3D400000101 /* DeskyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeskyApp.swift; sourceTree = "<group>"; };
 		A1B2C3D400000102 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
-		A1B2C3D400000103 /* ControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlView.swift; sourceTree = "<group>"; };
+		A1B2C3D400000130 /* SharedViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedViews.swift; sourceTree = "<group>"; };
 		A1B2C3D400000104 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A1B2C3D400000107 /* WifiRejoinMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WifiRejoinMonitor.swift; sourceTree = "<group>"; };
 		A1B2C3D400000108 /* ScanQrView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanQrView.swift; sourceTree = "<group>"; };
@@ -73,7 +73,7 @@
 			children = (
 				A1B2C3D400000101 /* DeskyApp.swift */,
 				A1B2C3D400000102 /* PairingView.swift */,
-				A1B2C3D400000103 /* ControlView.swift */,
+				A1B2C3D400000130 /* SharedViews.swift */,
 				A1B2C3D400000104 /* SettingsView.swift */,
 				A1B2C3D400000107 /* WifiRejoinMonitor.swift */,
 				A1B2C3D400000108 /* ScanQrView.swift */,
@@ -214,7 +214,7 @@
 			files = (
 				A1B2C3D400000111 /* DeskyApp.swift in Sources */,
 				A1B2C3D400000112 /* PairingView.swift in Sources */,
-				A1B2C3D400000113 /* ControlView.swift in Sources */,
+				A1B2C3D400000131 /* SharedViews.swift in Sources */,
 				A1B2C3D400000114 /* SettingsView.swift in Sources */,
 				A1B2C3D400000115 /* WifiRejoinMonitor.swift in Sources */,
 				A1B2C3D400000116 /* ScanQrView.swift in Sources */,
