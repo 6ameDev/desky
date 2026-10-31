@@ -33,9 +33,9 @@ data class DrivingUiState(
 )
 
 /**
- * Driving screen: binds [DriveController] with the stick input while active
- * and collects [ConnectionManager] aliveness plus [TelemetryHub] telemetry.
- * Owns no loops — bind/collect only; visibility is explicit via [activate]
+ * Driving screen: enters manual while visible and collects
+ * [ConnectionManager] aliveness plus [TelemetryHub] telemetry.
+ * Owns no loops — enter/exit plus visibility is explicit via [activate]
  * / [deactivate] plus [requestExit] / [confirmExit] / [dismissExit].
  */
 class DrivingViewModel(
@@ -48,7 +48,7 @@ class DrivingViewModel(
     private val _state = MutableStateFlow(DrivingUiState())
     val state: StateFlow<DrivingUiState> = _state.asStateFlow()
 
-    private var bound = false
+    private var manualEntered = false
 
     init {
         viewModelScope.launch {
@@ -69,26 +69,27 @@ class DrivingViewModel(
     }
 
     /**
-     * Screen visible: one `MANUAL_TAKE` then full-rate input frames.
-     * Idempotent while bound — repeat activations (foreground return,
-     * recomposition) are no-ops. Every [deactivate] re-arms, so the take
+     * Screen visible: enter manual then stream sticks at full rate.
+     * Idempotent while entered — repeat activations (foreground return,
+     * recomposition) are no-ops. Every [deactivate] re-arms, so the enter
      * follows visibility, not navigation.
      */
     fun activate() {
-        if (bound) return
-        bound = true
-        drive.bind { _state.value.throttle to _state.value.steering }
+        if (manualEntered) return
+        manualEntered = true
+        drive.setInput { _state.value.throttle to _state.value.steering }
+        drive.enterManual()
     }
 
     /**
-     * Screen hidden: best-effort `MANUAL_RELEASE` via [DriveController].
+     * Screen hidden: exit manual via [DriveController].
      * Idempotent — safe to race navigation-away against backgrounding.
      * Silent by design: no exit confirmation, the shell stays put.
      */
     fun deactivate() {
-        if (!bound) return
-        bound = false
-        drive.unbind()
+        if (!manualEntered) return
+        manualEntered = false
+        drive.exitManual()
     }
 
     /** Stick deflection in -1..1, snapped to center below the drive threshold. */
