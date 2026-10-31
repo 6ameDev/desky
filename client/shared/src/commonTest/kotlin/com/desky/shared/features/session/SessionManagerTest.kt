@@ -12,6 +12,8 @@ import com.desky.shared.presentation.FakePairSecretStore
 import com.desky.shared.presentation.FakeUdpSocketManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runCurrent
@@ -158,6 +160,28 @@ class SessionManagerTest {
             val second = s.sessions.allocate(device)
             assertTrue(second != null)
             assertTrue(!first.first.contentEquals(second.first), "post-refresh allocate uses the rotated key")
+        } finally {
+            s.sessions.stop()
+        }
+    }
+
+    @Test
+    fun concurrentAllocatesStayGapless() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val device = pairedDevice()
+        val s = scope.setup(device, seedKey = true)
+        try {
+            runCurrent()
+            val deferred = (1..50).map {
+                async { s.sessions.allocate(device) }
+            }
+            val results = deferred.awaitAll().filterNotNull()
+            assertEquals(50, results.size)
+            val sorted = results.map { it.second }.sorted()
+            sorted.forEachIndexed { i, counter ->
+                assertEquals((i + 1).toUInt(), counter, "gapless under concurrency at $i")
+            }
+            assertFalse(s.sessions.invalid.value)
         } finally {
             s.sessions.stop()
         }
