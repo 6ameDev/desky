@@ -90,7 +90,7 @@ val presentationModule: Module = module {
     // the pair-refresh trigger stays inert when the control module has no PairRefreshUseCase
     // binding, the ALIVE/DISCONNECT knock stays inert without an AliveUseCase
     // binding, and the rejoin knock stays inert without a UdpSocketBinder
-    // binding (JVM/iOS — getOrNull, tests, legacy graphs).
+    // binding (JVM/iOS — getOrNull, tests, graphs without the binding).
     viewModel { RobotControlViewModel(get(), get(), get(), get(), get(), get(), get(), get(), pairRefreshUC = getOrNull<PairRefreshUseCase>(), aliveUC = getOrNull<AliveUseCase>(), socketBinder = getOrNull<UdpSocketBinder>(), forgetUC = get(), remoteDisconnectUC = getOrNull<ObserveRemoteDisconnectUseCase>(), takeManualUC = getOrNull<TakeManualUseCase>(), releaseManualUC = getOrNull<ReleaseManualUseCase>(), triggerExpressionUC = getOrNull<TriggerExpressionUseCase>()) }
 }
 
