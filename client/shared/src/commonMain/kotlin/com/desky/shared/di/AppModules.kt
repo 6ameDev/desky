@@ -36,8 +36,10 @@ import com.desky.shared.features.settings.ObserveDeviceConfigUseCase
 import com.desky.shared.features.settings.SaveDeviceConfigUseCase
 import com.desky.shared.features.settings.SettingsViewModel
 import com.desky.shared.presentation.RobotControlViewModel
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import org.koin.core.module.Module
 import org.koin.core.module.dsl.viewModel
@@ -62,6 +64,7 @@ fun dataModule(
     single<DeviceRepository> { RoomDeviceRepository(get<DeskyDatabase>().pairedDeviceDao()) }
     single<SettingsRepository> { RoomSettingsRepository(get<DeskyDatabase>().robotConfigDao()) }
     single(named("ioScope")) { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
+    single(named("sessionScope")) { CoroutineScope(SupervisorJob() + sessionDispatcher()) }
     single<UdpSocketManager> {
         createUdpSocketManager(get(named("ioScope"))).also { socketBinder?.attach(it) }
     }
@@ -107,7 +110,7 @@ val settingsModule: Module = module {
 
 val sessionModule: Module = module {
     viewModel { SessionGateViewModel(get()) }
-    single { SessionManager(get(), get(), get(), get(), get(named("ioScope"))) }
+    single { SessionManager(get(), get(), get(), get(), get(named("sessionScope"))) }
 }
 
 /** Session-scope holders plus the screens bound to them. */
@@ -120,7 +123,7 @@ val controlModule: Module = module {
             toRobotCounter = get(),
             aliveUC = get(),
             remoteDisconnectUC = get(),
-            scope = get(named("ioScope")),
+            scope = get(named("sessionScope")),
             pairRefreshUC = getOrNull(),
         )
     }
@@ -132,7 +135,7 @@ val controlModule: Module = module {
             sendUC = get(),
             takeManualUC = get(),
             releaseManualUC = get(),
-            scope = get(named("ioScope")),
+            scope = get(named("sessionScope")),
         )
     }
     viewModel { DrivingViewModel(get(), get(), get(), get()) }
@@ -152,3 +155,7 @@ val controlModule: Module = module {
 val homeModule: Module = module {
     viewModel { HomeViewModel(get(), get()) }
 }
+
+/** Single lane for session tick loops; sockets stay on the shared pool. */
+@OptIn(ExperimentalCoroutinesApi::class)
+fun sessionDispatcher(): CoroutineDispatcher = Dispatchers.Default.limitedParallelism(1)
