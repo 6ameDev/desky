@@ -51,8 +51,8 @@ private const val PAIR_ERR_ROBOT_ERROR = 4
  * persist the pair.
  *
  * The unwrapped PSK is stored in the platform vault ([PairSecretStore]);
- * the Room row carries no key material (Task 9: no `pskHex` column) and
- * `lastCounter = 0` so the drive session's first wire packet uses counter 1.
+ * the Room row carries no key material and `lastCounter = 0` so the drive
+ * session's first wire packet uses counter 1.
  * The v1.1 trailing interval byte (when a 39B frame arrives) becomes
  * [PairedDevice.persistEvery] (sanitized 8..1024 else 128; a 38B v1 frame
  * defaults to 128) and is Room-persisted with the row, so the drive

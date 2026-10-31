@@ -2,8 +2,7 @@ package com.desky.shared.core
 
 /**
  * Domain-level result type. Plain sealed interface (instead of Kotlin
- * [Result]) so the type stays visible to SKIE-generated Swift and to any
- * future Koin/ViewModel consumers (T6).
+ * [Result]) so the type stays visible to SKIE-generated Swift.
  */
 sealed interface Outcome<out T> {
     data class Success<T>(val data: T) : Outcome<T>

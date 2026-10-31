@@ -41,7 +41,7 @@ private inline fun <T> guarded(block: () -> T): T {
 }
 
 /**
- * iOS entry point (T8). Starts Koin exactly once and returns the [Koin]
+ * iOS entry point. Starts Koin exactly once and returns the [Koin]
  * instance, wiring the same graph as Android's `DeskyApp`
  * (`dataModule` + `domainModule` + `presentationModule`) backed by the iOS
  * Room database actual ([createDeskyDatabase]).

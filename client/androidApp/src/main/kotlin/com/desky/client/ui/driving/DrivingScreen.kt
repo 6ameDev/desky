@@ -38,12 +38,12 @@ fun DrivingScreen(
     vm: DrivingViewModel = koinViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
-    // Screen-scope visibility: resumed = take MANUAL, paused = release.
-    // Same idiom as ControlScreen: scoped to this composable's LifecycleOwner
-    // so background/foreground and navigation both funnel through activate /
-    // deactivate, and other screens are unaffected. Adds while-resumed only —
-    // registering while already resumed dispatches ON_RESUME, so first entry
-    // is covered with no separate one-shot effect.
+    // Screen-scope visibility: resumed = enter manual, paused = exit.
+    // Scoped to this composable's LifecycleOwner so background/foreground
+    // and navigation both funnel through activate / deactivate, and other
+    // screens are unaffected. Adds while-resumed only — registering while
+    // already resumed dispatches ON_RESUME, so first entry is covered with
+    // no separate one-shot effect.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, vm) {
         val observer = LifecycleEventObserver { _, event ->

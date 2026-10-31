@@ -4,7 +4,7 @@ import com.desky.shared.core.UdpSocketManager
 import kotlinx.coroutines.CoroutineScope
 
 /**
- * Platform UDP socket manager factory (T5 data layer).
+ * Platform UDP socket manager factory.
  *
  * Each platform actual MUST honor this contract:
  * - the constructor binds an ephemeral-port UDP socket eagerly (so the local

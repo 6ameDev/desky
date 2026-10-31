@@ -164,9 +164,9 @@ class StatusFlagsTest {
     }
 
     @Test
-    fun manualDefaultsOffForLegacyCallers() {
-        // The default keeps every pre-manual call site (bench fixtures, old
-        // robots) encoding bit 4 clear.
+    fun manualDefaultsOffWhenFlagsOmitted() {
+        // The default keeps every call site that omits flags (bench
+        // fixtures, v1 robots) encoding bit 4 clear.
         for (mode in RobotMode.entries) {
             val flags = packStatusFlags(cliff = false, driving = false, mode = mode)
             assertEquals(false, statusManual(flags), "$mode")
@@ -376,7 +376,7 @@ class SignedControlPacketTest {
     }
 
     /**
-     * Full 16B golden frame through the Task 6 frozen `drive_tag`
+     * Full 16B golden frame through the frozen `drive_tag`
      * (`3ec8b625c9c1` for counter=1, mode=`0x00`, thr/str=`0x80`,
      * flags=`0x00`, psk=`0011...eeff`).
      */
@@ -389,7 +389,7 @@ class SignedControlPacketTest {
         assertEquals(DRIVE_SIZE, pkt.size)
         assertEquals(0xAC, pkt[0].unsigned())
         assertEquals(0x00, pkt[1].unsigned())
-        // Sticks identical to the legacy positions: 0 -> byte 128.
+        // Centered sticks: 0 -> byte 128.
         assertEquals(STICK_CENTER, pkt[2].unsigned())
         assertEquals(STICK_CENTER, pkt[3].unsigned())
         assertEquals(0x00, pkt[4].unsigned())

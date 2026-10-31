@@ -13,7 +13,7 @@ import dev.whyoleg.cryptography.random.CryptographyRandom
  * Pairing/auth v1 crypto (frozen spec: `shared/protocol/README.md`
  * §"Pairing + authenticated drive v1"). Thin suspend wrappers over
  * `dev.whyoleg.cryptography:0.6.0` (JCA/CryptoKit backends) — no
- * hand-rolled crypto ([Sha256.kt] stays for the legacy token only).
+ * hand-rolled crypto ([Sha256.kt] stays for pairing-token derivation only).
  */
 
 private const val BYTE_MASK = 0xFF
@@ -443,8 +443,7 @@ fun ByteArray.toHex(): String {
  * Inverse of [ByteArray.toHex]: even-length ASCII hex (upper or lower case)
  * -> bytes. Throws [IllegalArgumentException] on odd length or non-hex
  * digits. Used to rehydrate the vault-stored PSK hex into key bytes at
- * session start (Task 9: the vault is read once, the bytes cached in
- * memory).
+ * session start (the vault is read once, the bytes cached in memory).
  */
 fun hexToBytes(hex: String): ByteArray {
     require(hex.length % 2 == 0) { "hexToBytes: odd length (${hex.length})" }

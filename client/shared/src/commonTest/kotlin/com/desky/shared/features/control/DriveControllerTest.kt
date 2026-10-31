@@ -117,8 +117,8 @@ class DriveControllerTest {
 
     /**
      * App background silences the loop: no vault, counter, or socket use
-     * while paused, and the loop resumes on foreground. Mirrors the legacy
-     * screen's `backgroundPaused` contract.
+     * while paused, and the loop resumes on foreground. Matches the app
+     * background contract: paused sends nothing and only delays.
      */
     @Test
     fun backgroundPausesAllSends() = runTest {

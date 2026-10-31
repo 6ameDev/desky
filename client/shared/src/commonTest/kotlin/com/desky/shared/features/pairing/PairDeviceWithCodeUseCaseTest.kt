@@ -82,7 +82,7 @@ private suspend fun pairOkFor(
     psk: ByteArray = hex(PSK_HEX),
     /**
      * Interval byte appended to the GCM plaintext (v1.1 39B frame).
-     * Null builds the legacy v1 38B frame (no interval byte — old robot).
+     * Null builds the v1 38B frame (no interval byte — v1 robot).
      */
     persistEvery: Int? = 128,
 ): ByteArray {
@@ -202,7 +202,7 @@ class PairDeviceWithCodeUseCaseTest {
         assertEquals(ROBOT_HOST, outcome.data.ip)
         assertEquals(DEFAULT_UDP_PORT, outcome.data.port)
         assertEquals("psk-v1", outcome.data.authToken)
-        // Room never holds key material (no pskHex column since Task 9);
+        // Room never holds key material (no pskHex column);
         // the counter resets so the first drive packet is 1; the vault
         // holds the key. Default pairOkFor carries interval byte 128.
         assertEquals(0u, outcome.data.lastCounter)
@@ -235,7 +235,7 @@ class PairDeviceWithCodeUseCaseTest {
     }
 
     @Test
-    fun legacyFrameWithoutIntervalDefaultsTo128() = runTest {
+    fun v1FrameWithoutIntervalDefaultsTo128() = runTest {
         val deviceRepo = repo()
         everySuspend { deviceRepo.save(any()) } returns Unit
         val udp = FakePairingUdp()
@@ -335,7 +335,7 @@ class PairDeviceWithCodeUseCaseTest {
     fun oldAppShowsGenericForReason4() = runTest {
         // Interop old-app x new-robot: an old peer decodes any reason byte
         // (same 4B framing) but maps only 0-3, so 4 must fall to generic.
-        // Replicate the pre-M11 mapping here (decode-level, real framing).
+        // Replicate the 0-3-only mapping here (decode-level, real framing).
         fun oldMap(reason: Int, retryS: Int): String = when (reason) {
             0 -> "Pairing failed: incorrect code"
             1 -> "Pairing failed: robot locked, retry in ${retryS}s"
