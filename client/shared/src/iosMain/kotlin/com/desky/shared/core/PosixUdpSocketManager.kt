@@ -26,6 +26,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import platform.posix.AF_INET
 import platform.posix.INADDR_ANY
@@ -103,6 +105,17 @@ internal class PosixUdpSocketManager(
     var droppedIncoming = 0
         private set
 
+    /**
+     * Resolved peer addresses by host. Literals take the pure-Kotlin fast
+     * path with no lookup; hostnames resolve once via the system resolver
+     * and cache, so a 50 Hz send loop never stacks a blocking lookup behind
+     * a radio stall. Guarded by [addressMutex]; sends never hold it across
+     * the socket. Lifecycle signals (unpair, background) clear the map the
+     * same way as the send-error path, so a silent roam re-resolves.
+     */
+    private val addressMutex = Mutex()
+    private val addressCache = mutableMapOf<String, UInt>()
+
     private val receiveJob: Job
 
     init {
@@ -120,6 +133,20 @@ internal class PosixUdpSocketManager(
     }
 
     override suspend fun send(bytes: ByteArray, host: String, port: Int) {
+        // Literal fast path with no lock or lookup; hostnames resolve once
+        // and cache (blocking resolve stays outside the lock).
+        val cached = try {
+            parseIpv4ToNetworkOrder(host)
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+        val resolved = cached ?: run {
+            addressMutex.withLock { addressCache[host] } ?: run {
+                val fresh = resolveHostnameIpv4(host)
+                addressMutex.withLock { addressCache[host] = fresh }
+                fresh
+            }
+        }
         withContext(Dispatchers.Default) {
             memScoped {
                 val dest = alloc<sockaddr_in>()
@@ -127,10 +154,7 @@ internal class PosixUdpSocketManager(
                 dest.sin_len = sizeOf<sockaddr_in>().toUByte()
                 dest.sin_family = AF_INET.toUByte()
                 dest.sin_port = hostPortToNetworkOrder(port)
-                // Literal fast path; anything else (e.g. `desky.local`)
-                // resolves per send via the system resolver, so a reboot
-                // onto a new address re-resolves on the next datagram.
-                dest.sin_addr.s_addr = resolveIpv4(host)
+                dest.sin_addr.s_addr = resolved
                 val sent = bytes.usePinned { pinned ->
                     sendto(
                         fd,
@@ -141,7 +165,12 @@ internal class PosixUdpSocketManager(
                         sizeOf<sockaddr_in>().convert(),
                     )
                 }
-                if (sent < 0) throw IllegalStateException("sendto to $host:$port failed")
+                if (sent < 0) {
+                    addressMutex.withLock {
+                        if (addressCache[host] == resolved) addressCache.remove(host)
+                    }
+                    throw IllegalStateException("sendto to $host:$port failed")
+                }
             }
         }
     }
@@ -150,6 +179,10 @@ internal class PosixUdpSocketManager(
         closed = true
         receiveJob.cancel()
         close(fd)
+    }
+
+    override suspend fun evictAll() {
+        addressMutex.withLock { addressCache.clear() }
     }
 
     /**
@@ -189,19 +222,13 @@ internal class PosixUdpSocketManager(
 }
 
 /**
- * Host to IPv4 `s_addr`: dotted-quad literals take the pure-Kotlin fast
- * path; anything else resolves per call via the system resolver
- * (`getaddrinfo`, IPv4 only), which covers mDNS names like `desky.local`.
- * Per-send resolution keeps no stale peer: a reboot onto a new address
- * re-resolves on the next datagram. Throws on resolution failure — callers
- * already map send throws to [Outcome.Failure][com.desky.shared.core.Outcome.Failure].
+ * Hostname to IPv4 `s_addr` via the system resolver (`getaddrinfo`, IPv4
+ * only), covering mDNS names like `desky.local`. Called only on a cache
+ * miss — literals never reach here — and on send-error eviction the next
+ * send re-resolves. Throws on resolution failure — callers already map
+ * send throws to [Outcome.Failure][com.desky.shared.core.Outcome.Failure].
  */
-private fun resolveIpv4(host: String): UInt {
-    try {
-        return parseIpv4ToNetworkOrder(host)
-    } catch (_: IllegalArgumentException) {
-        // Not a literal — fall through to the system resolver.
-    }
+private fun resolveHostnameIpv4(host: String): UInt {
     memScoped {
         val hints = alloc<addrinfo>()
         memset(hints.ptr, 0, sizeOf<addrinfo>().convert())

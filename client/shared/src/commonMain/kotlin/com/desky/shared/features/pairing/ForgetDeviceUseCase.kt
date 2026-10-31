@@ -10,7 +10,9 @@ import com.desky.shared.core.UdpSocketManager
 import com.desky.shared.core.encodeUnpair
 import com.desky.shared.core.hexToBytes
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 
 /**
  * Drop the current pairing: tell the robot (best-effort signed `UNPAIR`),
@@ -50,6 +52,10 @@ class ForgetDeviceUseCase(
             }
             deviceRepo.clear()
             if (current != null) secretStore.clear(current.id)
+            try {
+                withContext(NonCancellable) { udp.evictAll() }
+            } catch (_: Exception) {
+            }
             // The peer is gone: the receive domain returns to the 0
             // baseline (the send holder keeps its live era — the control
             // ViewModel's unpair branch owns that reset).

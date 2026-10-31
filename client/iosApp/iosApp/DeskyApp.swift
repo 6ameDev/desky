@@ -113,9 +113,6 @@ struct DeskyApp: App {
             .onChange(of: gate.provenDead) { dead in
                 if dead { selection = .pairing }
             }
-            // App-background pause/resume: DrivingView onDisappear covers
-            // tab leaves; this covers the home-button path while driving
-            // is visible (both funnel into the same flags).
             .onChange(of: scenePhase) { phase in
                 switch phase {
                 case .background:

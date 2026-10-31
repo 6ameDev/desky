@@ -25,6 +25,7 @@ private class NoopSendUdpSocketManager(
     override val incoming: Flow<UdpDatagram>,
 ) : UdpSocketManager {
     override suspend fun send(bytes: ByteArray, host: String, port: Int) = Unit
+    override suspend fun evictAll() = Unit
     override suspend fun close() = Unit
 }
 

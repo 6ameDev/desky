@@ -91,6 +91,8 @@ internal class JvmDatagramSocketManager(
         }
     }
 
+    override suspend fun evictAll() = Unit
+
     override suspend fun close() {
         receiveJob.cancel()
         socket.close()

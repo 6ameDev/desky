@@ -16,6 +16,9 @@ interface UdpSocketManager {
     /** Hot stream of received datagrams. */
     val incoming: Flow<UdpDatagram>
 
+    /** Drop cached peer resolutions; the next send re-resolves. */
+    suspend fun evictAll()
+
     /** Release the underlying socket. */
     suspend fun close()
 }
