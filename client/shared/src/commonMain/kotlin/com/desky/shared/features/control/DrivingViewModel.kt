@@ -2,6 +2,7 @@ package com.desky.shared.features.control
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.desky.shared.core.DeviceRepository
 import com.desky.shared.core.Telemetry
 import com.desky.shared.features.session.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,12 +44,16 @@ class DrivingViewModel(
     connectionManager: ConnectionManager,
     telemetryHub: TelemetryHub,
     sessionManager: SessionManager,
+    deviceRepo: DeviceRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(DrivingUiState())
     val state: StateFlow<DrivingUiState> = _state.asStateFlow()
 
     private var manualEntered = false
+    private var pairingLoaded = false
+    private var lastPairedId: String? = null
+    private var lastPairedEra: UShort? = null
 
     init {
         viewModelScope.launch {
@@ -64,6 +69,30 @@ class DrivingViewModel(
         viewModelScope.launch {
             sessionManager.invalid.collect { invalid ->
                 _state.update { it.copy(error = if (invalid) SessionManager.REPAIR_COPY else null) }
+            }
+        }
+        viewModelScope.launch {
+            // Reused instances (iOS singleton) must re-take after unpair:
+            // the drive loop drops its hold on repo null, so drop the
+            // entered latch here too. Same-id counter persists fall through.
+            // Cold-start arm: the first emission only records, never resets,
+            // so an activate racing init still holds.
+            deviceRepo.observePaired().collect { paired ->
+                if (!pairingLoaded) {
+                    pairingLoaded = true
+                    lastPairedId = paired?.id
+                    lastPairedEra = paired?.era
+                    return@collect
+                }
+                if (paired == null) {
+                    manualEntered = false
+                    lastPairedId = null
+                    lastPairedEra = null
+                } else if (paired.id != lastPairedId || paired.era != lastPairedEra) {
+                    manualEntered = false
+                    lastPairedId = paired.id
+                    lastPairedEra = paired.era
+                }
             }
         }
     }
