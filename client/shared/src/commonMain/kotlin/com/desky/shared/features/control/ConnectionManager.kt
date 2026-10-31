@@ -121,12 +121,20 @@ class ConnectionManager(
      * allocated once and sent twice byte-identical, then ALIVE and refresh
      * pause until [onForeground] while the loops keep collecting. No pair
      * means no-op. Fed by one platform lifecycle observer — never by screens.
+     * Persists the live send counter first so a kill after background loses
+     * nothing; flush errors never block the goodbye.
      */
     fun onBackground() {
         backgrounded = true
         val dev = currentDevice.value ?: return
         val session = sessionScope ?: return
         session.launch {
+            try {
+                toRobotCounter.flush()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
             val prepared = sessionManager.allocate(dev) ?: return@launch
             val (psk, counter) = prepared
             aliveUC.sendDisconnect(dev, psk, dev.era, counter)
