@@ -12,9 +12,11 @@ import com.desky.shared.core.disconnectTag
 import com.desky.shared.core.hexToBytes
 import com.desky.shared.features.pairing.GetPairPskUseCase
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.withContext
 
 private const val BYTE_MASK = 0xFF
 private const val PSK_BYTE_LENGTH = 16
@@ -117,6 +119,10 @@ class ObserveRemoteDisconnectUseCase(
                 fromRobotCounter.consume(counter)
                 deviceRepo.clear()
                 secretStore.clear(device.id)
+                try {
+                    withContext(NonCancellable) { udp.evictAll() }
+                } catch (_: Exception) {
+                }
                 toRobotCounter.reset()
                 fromRobotCounter.reset()
             } catch (e: CancellationException) {

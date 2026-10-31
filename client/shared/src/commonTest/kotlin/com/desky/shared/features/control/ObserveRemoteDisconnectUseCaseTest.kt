@@ -141,6 +141,7 @@ class ObserveRemoteDisconnectUseCaseTest {
         assertNull(s.fromRobot.current(), "receive counter peer reset")
         assertEquals(listOf(device.id to 101u), s.repo.robotCounterSaves, "accepted counter persisted before clear")
         assertTrue(s.udp.sent.isEmpty(), "no reply packet ever sent")
+        assertEquals(1, s.udp.evictCalls, "verified eviction drops cached DNS")
     }
 
     /**

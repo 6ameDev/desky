@@ -82,7 +82,9 @@ internal class DatagramSocketManager(
      * blocking lookup behind every radio stall, so resolve once per host and
      * evict the entry only on send failure (roam/rekey), letting the next
      * send re-resolve. Guarded by [addressMutex]; sends never hold it
-     * across the socket.
+     * across the socket. Lifecycle signals ([bindToWifiNetwork], unpair,
+     * background) clear the map the same way so a silent roam with no send
+     * error still re-resolves.
      */
     private val addressMutex = Mutex()
     private val addressCache = mutableMapOf<String, InetAddress>()
@@ -151,6 +153,21 @@ internal class DatagramSocketManager(
         }
     }
 
+    override suspend fun evictAll() {
+        addressMutex.withLock { addressCache.clear() }
+    }
+
+    /** Best-effort clear for the non-suspending network callback; skips when contended. */
+    internal fun evictAllNow() {
+        if (addressMutex.tryLock()) {
+            try {
+                addressCache.clear()
+            } finally {
+                addressMutex.unlock()
+            }
+        }
+    }
+
     private suspend fun resolveHost(host: String): InetAddress {
         addressMutex.withLock { addressCache[host]?.let { return it } }
         val resolved = InetAddress.getByName(host)
@@ -170,6 +187,7 @@ internal class DatagramSocketManager(
         return try {
             val s = socket ?: return false
             network.bindSocket(s)
+            evictAllNow()
             true
         } catch (_: Exception) {
             // Socket already closed (close() won the race) — nothing to bind.

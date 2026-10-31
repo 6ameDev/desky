@@ -189,6 +189,18 @@ class ForgetDeviceUseCaseTest {
         assertEquals(0, vault.clearCalls)
     }
 
+    @Test
+    fun forgetEvictsPeerResolutions() = runTest {
+        val repo = FakeDeviceRepository(device)
+        val vault = FakePairSecretStore()
+        val udp = FakeUdpSocketManager()
+
+        val result = useCase(repo, vault, udp)()
+
+        assertIs<Outcome.Success<Unit>>(result)
+        assertEquals(1, udp.evictCalls, "unpair drops cached DNS so re-pair re-resolves")
+    }
+
     private companion object {
         const val HEX_RADIX = 16
         const val UNSAVED_DRIVE_SENDS = 10

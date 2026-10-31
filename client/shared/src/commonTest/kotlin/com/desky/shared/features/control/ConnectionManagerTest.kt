@@ -80,6 +80,7 @@ class ConnectionManagerTest {
             toRobotCounter = toRobot,
             aliveUC = AliveUseCase(udp),
             remoteDisconnectUC = ObserveRemoteDisconnectUseCase(udp, repo, getPsk, vault, toRobot, fromRobot),
+            udp = udp,
             scope = this,
             pairRefreshUC = pairRefreshUC,
             aliveIntervalMs = 100,
@@ -260,6 +261,21 @@ class ConnectionManagerTest {
             runCurrent()
             runCurrent()
             assertTrue(s.repo.counterSaves.isNotEmpty(), "background persists the live send counter")
+        } finally {
+            s.manager.stop(); s.sessions.stop()
+        }
+    }
+
+    @Test
+    fun backgroundEvictsPeerResolutions() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val s = scope.setup()
+        try {
+            runCurrent()
+            s.manager.onBackground()
+            runCurrent()
+            runCurrent()
+            assertEquals(1, s.udp.evictCalls, "background drops cached DNS so return re-resolves")
         } finally {
             s.manager.stop(); s.sessions.stop()
         }
