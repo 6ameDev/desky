@@ -140,7 +140,7 @@ val controlModule: Module = module {
         )
     }
     viewModel { DrivingViewModel(get(), get(), get(), get(), get()) }
-    viewModel { ExpressionsViewModel(get(), get(), getOrNull(), get(), get(), get()) }
+    viewModel { ExpressionsViewModel(get(), get(), getOrNull(), get(), get(), get(), get()) }
     factory { SendSignedControlUseCase(get()) }
     factory { ObserveTelemetryUseCase(get()) }
     factory { EmergencyStopUseCase(get()) }

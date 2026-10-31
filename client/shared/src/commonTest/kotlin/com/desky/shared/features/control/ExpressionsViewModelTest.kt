@@ -3,6 +3,7 @@ package com.desky.shared.features.control
 import com.desky.shared.core.DEFAULT_UDP_PORT
 import com.desky.shared.core.EXPR_TRIGGER_HEADER
 import com.desky.shared.core.FromRobotCounter
+import com.desky.shared.core.MANUAL_RELEASE_HEADER
 import com.desky.shared.core.MANUAL_TAKE_HEADER
 import com.desky.shared.core.PairedDevice
 import com.desky.shared.core.ROBOT_HOST
@@ -28,6 +29,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -88,6 +90,7 @@ class ExpressionsViewModelTest {
             sessions,
             if (withTrigger) TriggerExpressionUseCase(udp) else null,
             TakeManualUseCase(udp),
+            ReleaseManualUseCase(udp),
             manager,
             TelemetryHub(udp, this),
         )
@@ -297,6 +300,33 @@ class ExpressionsViewModelTest {
             main.runCurrent()
             main.runCurrent()
             assertEquals(2, takes(s.udp).size, "return re-takes MANUAL")
+        } finally {
+            s.manager.stop()
+            s.sessions.stop()
+        }
+    }
+
+    @Test
+    fun exitReleasesManualAfterTake() = runVmTest { main ->
+        val scope = CoroutineScope(StandardTestDispatcher(main))
+        val s = scope.setup()
+        try {
+            s.vm.activate()
+            main.runCurrent()
+            main.runCurrent()
+            assertEquals(1, takes(s.udp).size, "enter takes once")
+
+            s.vm.deactivate()
+            main.runCurrent()
+            main.runCurrent()
+            val releases = s.udp.sent.filter { (it.bytes[0].toInt() and BYTE_MASK) == MANUAL_RELEASE_HEADER }
+            assertEquals(2, releases.size, "exit releases best-effort 2x")
+            assertContentEquals(releases[0].bytes, releases[1].bytes, "byte-identical repeat: one allocation")
+
+            s.vm.activate()
+            main.runCurrent()
+            main.runCurrent()
+            assertEquals(2, takes(s.udp).size, "re-activation after exit takes again")
         } finally {
             s.manager.stop()
             s.sessions.stop()
