@@ -14,7 +14,9 @@ import com.desky.shared.features.control.Aliveness
 import com.desky.shared.features.control.ConnectionManager
 import com.desky.shared.features.control.ObserveRemoteDisconnectUseCase
 import com.desky.shared.features.control.ObserveTelemetryUseCase
+import com.desky.shared.features.pairing.ForgetDeviceUseCase
 import com.desky.shared.features.pairing.GetPairPskUseCase
+import com.desky.shared.features.session.SessionManager
 import com.desky.shared.presentation.FakeDeviceRepository
 import com.desky.shared.presentation.FakePairSecretStore
 import com.desky.shared.presentation.FakeUdpSocketManager
@@ -43,6 +45,7 @@ class HomeViewModelTest {
         val repo: FakeDeviceRepository,
         val udp: FakeUdpSocketManager,
         val manager: ConnectionManager,
+        val sessions: SessionManager,
         val vm: HomeViewModel,
     )
 
@@ -53,9 +56,10 @@ class HomeViewModelTest {
         val toRobot = ToRobotCounter(repo)
         val fromRobot = FromRobotCounter(repo)
         val getPsk = GetPairPskUseCase(vault, repo)
+        val sessions = SessionManager(repo, getPsk, toRobot, ForgetDeviceUseCase(repo, vault, udp, getPsk, toRobot, fromRobot), this)
         val manager = ConnectionManager(
             deviceRepo = repo,
-            getPairPsk = getPsk,
+            sessionManager = sessions,
             observeTelemetry = ObserveTelemetryUseCase(udp),
             toRobotCounter = toRobot,
             aliveUC = AliveUseCase(udp),
@@ -66,7 +70,7 @@ class HomeViewModelTest {
             deadTimeoutMs = 300,
             tickMs = 20,
         )
-        return Setup(repo, udp, manager, HomeViewModel(repo, manager))
+        return Setup(repo, udp, manager, sessions, HomeViewModel(repo, manager))
     }
 
     private fun telemetryDatagram(manual: Boolean = false) = UdpDatagram(
@@ -88,6 +92,7 @@ class HomeViewModelTest {
             assertEquals(listOf(HomeEntry.Drive, HomeEntry.Expressions, HomeEntry.Settings), s.vm.state.value.entries)
         } finally {
             s.manager.stop()
+            s.sessions.stop()
         }
     }
 
@@ -112,6 +117,7 @@ class HomeViewModelTest {
             assertEquals(Aliveness.Unpaired, s.vm.state.value.aliveness)
         } finally {
             s.manager.stop()
+            s.sessions.stop()
         }
     }
 }

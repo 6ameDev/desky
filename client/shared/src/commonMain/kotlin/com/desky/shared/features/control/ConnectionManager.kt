@@ -5,7 +5,7 @@ import com.desky.shared.core.Outcome
 import com.desky.shared.core.PairedDevice
 import com.desky.shared.core.Telemetry
 import com.desky.shared.core.ToRobotCounter
-import com.desky.shared.features.pairing.GetPairPskUseCase
+import com.desky.shared.features.session.SessionManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -16,8 +16,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 /**
  * Link aliveness from the app's side of a pairing.
@@ -37,9 +35,9 @@ enum class Aliveness {
  *
  * Runs while paired regardless of subscribers: all loops are children of
  * [scope] started on creation (or explicit [start]), never
- * subscription-driven. Screens only collect [aliveness]; unpair tears the
- * session down (counters reset, PSK cache dropped, [aliveness] back to
- * [Aliveness.Unpaired]) while the loops idle for the next pairing. [stop]
+ * subscription-driven. Screens only collect [aliveness]; unpair returns
+ * [aliveness] to [Aliveness.Unpaired] while [SessionManager] drops the key
+ * and resets the counter, and the loops idle for the next pairing. [stop]
  * cancels everything for owner teardown.
  *
  * Cadence/timeout production defaults mirror the control ViewModel:
@@ -55,12 +53,12 @@ enum class Aliveness {
  * telemetry is the ACK, and send failures never surface.
  *
  * Assumes [scope] confines the loops to one thread (Main or a test
- * dispatcher): tick counters are plain vars, cache access serializes
- * under [sessionMutex].
+ * dispatcher): tick counters are plain vars, session allocation
+ * serializes inside [SessionManager].
  */
 class ConnectionManager(
     private val deviceRepo: DeviceRepository,
-    private val getPairPsk: GetPairPskUseCase,
+    private val sessionManager: SessionManager,
     private val observeTelemetry: ObserveTelemetryUseCase,
     private val toRobotCounter: ToRobotCounter,
     private val aliveUC: AliveUseCase,
@@ -78,8 +76,6 @@ class ConnectionManager(
     /** Latest link state; replays to late subscribers. Never Unpaired while paired. */
     val aliveness: StateFlow<Aliveness> = _aliveness.asStateFlow()
 
-    private val sessionMutex = Mutex()
-    private val pskCache = SessionPskCache(getPairPsk, toRobotCounter)
     private val currentDevice = MutableStateFlow<PairedDevice?>(null)
     private var pairRefreshInFlight = false
     private var refreshBackoffTicks = 0
@@ -131,7 +127,7 @@ class ConnectionManager(
         val dev = currentDevice.value ?: return
         val session = sessionScope ?: return
         session.launch {
-            val prepared = sessionMutex.withLock { pskCache.allocate(dev) } ?: return@launch
+            val prepared = sessionManager.allocate(dev) ?: return@launch
             val (psk, counter) = prepared
             aliveUC.sendDisconnect(dev, psk, dev.era, counter)
             aliveUC.sendDisconnect(dev, psk, dev.era, counter)
@@ -154,10 +150,6 @@ class ConnectionManager(
             val prev = currentDevice.value
             currentDevice.value = paired
             if (paired == null) {
-                sessionMutex.withLock {
-                    pskCache.invalidate()
-                    toRobotCounter.reset()
-                }
                 pairRefreshInFlight = false
                 refreshBackoffTicks = 0
                 ticksSinceTelemetry = 0
@@ -227,7 +219,7 @@ class ConnectionManager(
         if (ticksSinceAlive < aliveTickEvery) ticksSinceAlive++
         if (ticksSinceAlive < aliveTickEvery) return
         ticksSinceAlive = 0
-        val prepared = sessionMutex.withLock { pskCache.allocate(dev) } ?: return
+        val prepared = sessionManager.allocate(dev) ?: return
         val (psk, counter) = prepared
         aliveUC(dev, psk, dev.era, counter)
     }
@@ -250,7 +242,7 @@ class ConnectionManager(
             try {
                 val result = pairRefreshUC?.invoke()
                 if (result is Outcome.Success) {
-                    sessionMutex.withLock { pskCache.invalidate() }
+                    sessionManager.invalidate()
                 } else {
                     refreshBackoffTicks = refreshBackoffTickCount
                 }

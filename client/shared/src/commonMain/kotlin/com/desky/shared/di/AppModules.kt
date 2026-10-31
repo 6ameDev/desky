@@ -25,6 +25,7 @@ import com.desky.shared.features.control.SendSignedControlUseCase
 import com.desky.shared.features.control.TakeManualUseCase
 import com.desky.shared.features.control.TelemetryHub
 import com.desky.shared.features.control.TriggerExpressionUseCase
+import com.desky.shared.features.session.SessionManager
 import com.desky.shared.features.home.HomeViewModel
 import com.desky.shared.features.pairing.ForgetDeviceUseCase
 import com.desky.shared.features.pairing.GetPairPskUseCase
@@ -106,6 +107,7 @@ val settingsModule: Module = module {
 
 val sessionModule: Module = module {
     viewModel { SessionGateViewModel(get()) }
+    single { SessionManager(get(), get(), get(), get(), get(named("ioScope"))) }
 }
 
 /** Session-scope holders plus the screens bound to them. */
@@ -113,7 +115,7 @@ val controlModule: Module = module {
     single {
         ConnectionManager(
             deviceRepo = get(),
-            getPairPsk = get(),
+            sessionManager = get(),
             observeTelemetry = get(),
             toRobotCounter = get(),
             aliveUC = get(),
@@ -126,16 +128,15 @@ val controlModule: Module = module {
     single {
         DriveController(
             deviceRepo = get(),
-            getPairPsk = get(),
-            toRobotCounter = get(),
+            sessionManager = get(),
             sendUC = get(),
             takeManualUC = get(),
             releaseManualUC = get(),
             scope = get(named("ioScope")),
         )
     }
-    viewModel { DrivingViewModel(get(), get(), get()) }
-    viewModel { ExpressionsViewModel(get(), get(), get(), getOrNull(), get(), get(), get()) }
+    viewModel { DrivingViewModel(get(), get(), get(), get()) }
+    viewModel { ExpressionsViewModel(get(), get(), getOrNull(), get(), get(), get()) }
     factory { SendSignedControlUseCase(get()) }
     factory { ObserveTelemetryUseCase(get()) }
     factory { EmergencyStopUseCase(get()) }

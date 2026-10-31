@@ -6,16 +6,13 @@ import com.desky.shared.core.DeviceRepository
 import com.desky.shared.core.ExpressionEntry
 import com.desky.shared.core.Outcome
 import com.desky.shared.core.Telemetry
-import com.desky.shared.core.ToRobotCounter
-import com.desky.shared.features.pairing.GetPairPskUseCase
+import com.desky.shared.features.session.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 /** Expressions-screen state (UDF: single [StateFlow] + explicit intents below). */
 data class ExpressionsUiState(
@@ -42,8 +39,7 @@ data class ExpressionsUiState(
  */
 class ExpressionsViewModel(
     private val deviceRepo: DeviceRepository,
-    private val getPairPsk: GetPairPskUseCase,
-    private val toRobotCounter: ToRobotCounter,
+    private val sessionManager: SessionManager,
     private val triggerUC: TriggerExpressionUseCase?,
     private val takeManualUC: TakeManualUseCase? = null,
     connectionManager: ConnectionManager,
@@ -53,8 +49,6 @@ class ExpressionsViewModel(
     private val _state = MutableStateFlow(ExpressionsUiState())
     val state: StateFlow<ExpressionsUiState> = _state.asStateFlow()
 
-    private val sessionMutex = Mutex()
-    private val pskCache = SessionPskCache(getPairPsk, toRobotCounter)
     private var entered = false
 
     init {
@@ -82,11 +76,9 @@ class ExpressionsViewModel(
         val take = takeManualUC ?: return
         viewModelScope.launch {
             val device = deviceRepo.observePaired().first() ?: return@launch
-            val prepared = sessionMutex.withLock {
-                val allocated = pskCache.allocate(device) ?: return@withLock null
-                Triple(device, allocated.first, allocated.second)
-            } ?: return@launch
-            take(prepared.first, prepared.second, prepared.first.era, prepared.third)
+            val prepared = sessionManager.allocate(device) ?: return@launch
+            val (psk, counter) = prepared
+            take(device, psk, device.era, counter)
         }
     }
 
@@ -113,9 +105,7 @@ class ExpressionsViewModel(
         val trigger = triggerUC ?: return
         viewModelScope.launch {
             val device = deviceRepo.observePaired().first() ?: return@launch
-            val prepared = sessionMutex.withLock {
-                pskCache.allocate(device)
-            } ?: return@launch
+            val prepared = sessionManager.allocate(device) ?: return@launch
             val (psk, counter) = prepared
             when (val result = trigger(device, psk, device.era, counter, id)) {
                 is Outcome.Success ->

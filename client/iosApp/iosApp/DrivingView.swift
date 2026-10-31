@@ -46,6 +46,9 @@ struct DrivingView: View {
         return VStack(spacing: 12) {
             Text("Driving").font(.title2).bold()
             Text("Link: \(snapshot.aliveness.name)")
+            if let sessionError = snapshot.error {
+                Text(sessionError).foregroundColor(.red)
+            }
             if let telemetry = snapshot.telemetry {
                 Text("Distance: \(telemetry.distanceMm) mm")
             } else {
