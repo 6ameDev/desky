@@ -14,7 +14,6 @@ import com.desky.shared.di.controlModule
 import com.desky.shared.di.domainModule
 import com.desky.shared.di.homeModule
 import com.desky.shared.di.pairingModule
-import com.desky.shared.di.presentationModule
 import com.desky.shared.di.sessionModule
 import com.desky.shared.di.settingsModule
 import org.koin.android.ext.koin.androidContext
@@ -41,7 +40,6 @@ class DeskyApp : Application() {
                 domainModule,
                 controlModule,
                 homeModule,
-                presentationModule,
                 pairingModule,
                 settingsModule,
                 sessionModule,

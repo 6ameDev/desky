@@ -15,8 +15,7 @@ import kotlinx.coroutines.CancellationException
  * [TriggerExpressionUseCase]) carries the tapped id.
  *
  * Single source: trigger validation ([TriggerExpressionUseCase]) and the
- * catalog pin test read the full list; the picker
- * ([com.desky.shared.presentation.RobotControlUiState.expressions]) reads
+ * catalog pin test read the full list; the picker reads
  * [PICKER_EXPRESSIONS] below. Mirror id + flags + name exactly; if the
  * firmware catalog grows, extend the full list and the pin test together.
  * Flags mirror the retired `EXPR_LIST_RESP` entry-flags byte (bit 0 =

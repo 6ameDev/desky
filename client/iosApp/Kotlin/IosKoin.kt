@@ -43,7 +43,7 @@ private inline fun <T> guarded(block: () -> T): T {
 /**
  * iOS entry point. Starts Koin exactly once and returns the [Koin]
  * instance, wiring the same graph as Android's `DeskyApp`
- * (`dataModule` + `domainModule` + `presentationModule`) backed by the iOS
+ * (`dataModule` + `domainModule` + feature modules) backed by the iOS
  * Room database actual ([createDeskyDatabase]).
  *
  * Why this file exists: Koin 4's bootstrap (`KoinApplication` /
@@ -55,8 +55,7 @@ private inline fun <T> guarded(block: () -> T): T {
  *
  * Location note: this file lives under `client/iosApp/Kotlin/` and is wired
  * into `:shared`'s `iosMain` via `srcDir` in `shared/build.gradle.kts`, so
- * it ships inside the `shared` framework/pod. `client/shared/src` is frozen
- * for other tasks; nothing under it was touched.
+ * it ships inside the `shared` framework/pod.
  */
 fun initKoinForIos(): Koin = guarded {
     iosKoin?.let { return@guarded it }
@@ -66,7 +65,6 @@ fun initKoinForIos(): Koin = guarded {
             domainModule,
             controlModule,
             homeModule,
-            presentationModule,
             pairingModule,
             settingsModule,
             sessionModule,
@@ -81,7 +79,7 @@ fun initKoinForIos(): Koin = guarded {
  * Objective-C representation, so Swift resolves the shared singletons
  * through these.
  *
- * Caching is load-bearing, not convenience: `presentationModule` declares
+ * Caching is load-bearing, not convenience: feature modules declare
  * the VMs with Koin 4's `viewModel { }` (factory semantics — every `get()`
  * mints a NEW instance; verified on JVM 2026-10-14: two `get()` calls return
  * distinct objects). Minting per view would fork state AND start duplicate
