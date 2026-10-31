@@ -16,7 +16,9 @@ import com.desky.shared.features.control.AliveUseCase
 import com.desky.shared.features.control.ObserveRemoteDisconnectUseCase
 import com.desky.shared.features.control.ObserveTelemetryUseCase
 import com.desky.shared.features.control.PairRefreshUseCase
+import com.desky.shared.features.pairing.ForgetDeviceUseCase
 import com.desky.shared.features.pairing.GetPairPskUseCase
+import com.desky.shared.features.session.SessionManager
 import com.desky.shared.presentation.FakeDeviceRepository
 import com.desky.shared.presentation.FakePairSecretStore
 import com.desky.shared.presentation.FakeUdpSocketManager
@@ -54,6 +56,7 @@ class ConnectionManagerTest {
         val udp: FakeUdpSocketManager,
         val toRobot: ToRobotCounter,
         val manager: ConnectionManager,
+        val sessions: SessionManager,
     )
 
     private fun CoroutineScope.setup(
@@ -67,11 +70,12 @@ class ConnectionManagerTest {
         val toRobot = ToRobotCounter(repo)
         val fromRobot = FromRobotCounter(repo)
         val getPsk = GetPairPskUseCase(vault, repo)
+        val sessions = SessionManager(repo, getPsk, toRobot, ForgetDeviceUseCase(repo, vault, udp, getPsk, toRobot, fromRobot), this)
         val pairRefreshUC =
             if (withPairRefresh) PairRefreshUseCase(repo, vault, udp, getPsk, toRobot, fromRobot) else null
         val manager = ConnectionManager(
             deviceRepo = repo,
-            getPairPsk = getPsk,
+            sessionManager = sessions,
             observeTelemetry = ObserveTelemetryUseCase(udp),
             toRobotCounter = toRobot,
             aliveUC = AliveUseCase(udp),
@@ -84,7 +88,7 @@ class ConnectionManagerTest {
             tickMs = 20,
             isRefreshDue = isRefreshDue,
         )
-        return Setup(repo, vault, udp, toRobot, manager)
+        return Setup(repo, vault, udp, toRobot, manager, sessions)
     }
 
     private fun telemetryDatagram() = UdpDatagram(
@@ -108,7 +112,7 @@ class ConnectionManagerTest {
             val total = s.udp.sent.count { headerOf(it.bytes) == ALIVE_HEADER }
             assertEquals(6, total)
         } finally {
-            s.manager.stop()
+            s.manager.stop(); s.sessions.stop()
         }
     }
 
@@ -127,7 +131,7 @@ class ConnectionManagerTest {
             testScheduler.advanceTimeBy(200)
             assertTrue(s.udp.sent.any { headerOf(it.bytes) == ALIVE_HEADER })
         } finally {
-            s.manager.stop()
+            s.manager.stop(); s.sessions.stop()
         }
     }
 
@@ -153,7 +157,7 @@ class ConnectionManagerTest {
             runCurrent()
             assertEquals(Aliveness.Connected, s.manager.aliveness.value)
         } finally {
-            s.manager.stop()
+            s.manager.stop(); s.sessions.stop()
         }
     }
 
@@ -175,7 +179,7 @@ class ConnectionManagerTest {
             testScheduler.advanceTimeBy(500)
             assertEquals(sentBefore, s.udp.sent.size)
         } finally {
-            s.manager.stop()
+            s.manager.stop(); s.sessions.stop()
         }
     }
 
@@ -194,7 +198,7 @@ class ConnectionManagerTest {
                 cancelAndIgnoreRemainingEvents()
             }
         } finally {
-            s.manager.stop()
+            s.manager.stop(); s.sessions.stop()
         }
     }
 
@@ -209,7 +213,7 @@ class ConnectionManagerTest {
             val reqs = s.udp.sent.count { headerOf(it.bytes) == PAIR_REFRESH_REQ_HEADER }
             assertEquals(3, reqs)
         } finally {
-            s.manager.stop()
+            s.manager.stop(); s.sessions.stop()
         }
     }
 
@@ -242,7 +246,7 @@ class ConnectionManagerTest {
                 "watchdog frozen instead of demoted past the dead mark",
             )
         } finally {
-            s.manager.stop()
+            s.manager.stop(); s.sessions.stop()
         }
     }
 
@@ -262,7 +266,7 @@ class ConnectionManagerTest {
             testScheduler.advanceTimeBy(20)
             assertEquals(2, s.udp.sent.count { headerOf(it.bytes) == ALIVE_HEADER })
         } finally {
-            s.manager.stop()
+            s.manager.stop(); s.sessions.stop()
         }
     }
 
@@ -282,7 +286,7 @@ class ConnectionManagerTest {
             assertTrue(s.udp.sent.isEmpty())
             assertEquals(Aliveness.Unpaired, s.manager.aliveness.value)
         } finally {
-            s.manager.stop()
+            s.manager.stop(); s.sessions.stop()
         }
     }
 }

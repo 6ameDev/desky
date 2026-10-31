@@ -17,7 +17,9 @@ import com.desky.shared.features.control.ObserveTelemetryUseCase
 import com.desky.shared.features.control.PICKER_EXPRESSIONS
 import com.desky.shared.features.control.TakeManualUseCase
 import com.desky.shared.features.control.TriggerExpressionUseCase
+import com.desky.shared.features.pairing.ForgetDeviceUseCase
 import com.desky.shared.features.pairing.GetPairPskUseCase
+import com.desky.shared.features.session.SessionManager
 import com.desky.shared.presentation.FakeDeviceRepository
 import com.desky.shared.presentation.FakePairSecretStore
 import com.desky.shared.presentation.FakeUdpSocketManager
@@ -52,6 +54,7 @@ class ExpressionsViewModelTest {
         val repo: FakeDeviceRepository,
         val udp: FakeUdpSocketManager,
         val manager: ConnectionManager,
+        val sessions: SessionManager,
         val vm: ExpressionsViewModel,
     )
 
@@ -65,9 +68,10 @@ class ExpressionsViewModelTest {
         val toRobot = ToRobotCounter(repo)
         val fromRobot = FromRobotCounter(repo)
         val getPsk = GetPairPskUseCase(vault, repo)
+        val sessions = SessionManager(repo, getPsk, toRobot, ForgetDeviceUseCase(repo, vault, udp, getPsk, toRobot, fromRobot), this)
         val manager = ConnectionManager(
             deviceRepo = repo,
-            getPairPsk = getPsk,
+            sessionManager = sessions,
             observeTelemetry = ObserveTelemetryUseCase(udp),
             toRobotCounter = toRobot,
             aliveUC = AliveUseCase(udp),
@@ -80,14 +84,13 @@ class ExpressionsViewModelTest {
         )
         val vm = ExpressionsViewModel(
             repo,
-            getPsk,
-            toRobot,
+            sessions,
             if (withTrigger) TriggerExpressionUseCase(udp) else null,
             TakeManualUseCase(udp),
             manager,
             TelemetryHub(udp, this),
         )
-        return Setup(repo, udp, manager, vm)
+        return Setup(repo, udp, manager, sessions, vm)
     }
 
     private fun telemetryDatagram(manual: Boolean) = UdpDatagram(
@@ -122,6 +125,7 @@ class ExpressionsViewModelTest {
             assertEquals(true, s.vm.state.value.telemetry?.manual)
         } finally {
             s.manager.stop()
+            s.sessions.stop()
         }
     }
 
@@ -142,6 +146,7 @@ class ExpressionsViewModelTest {
             assertNull(s.vm.state.value.error)
         } finally {
             s.manager.stop()
+            s.sessions.stop()
         }
     }
 
@@ -160,6 +165,7 @@ class ExpressionsViewModelTest {
             assertNull(s.vm.state.value.lastTriggeredId)
         } finally {
             s.manager.stop()
+            s.sessions.stop()
         }
     }
 
@@ -177,6 +183,7 @@ class ExpressionsViewModelTest {
             assertTrue(trigs(s.udp).isEmpty(), "no trigger while link-down")
         } finally {
             s.manager.stop()
+            s.sessions.stop()
         }
     }
 
@@ -194,6 +201,7 @@ class ExpressionsViewModelTest {
             assertNull(s.vm.state.value.error)
         } finally {
             s.manager.stop()
+            s.sessions.stop()
         }
     }
 
@@ -212,6 +220,7 @@ class ExpressionsViewModelTest {
             assertNotNull(s.vm.state.value.error)
         } finally {
             s.manager.stop()
+            s.sessions.stop()
         }
     }
 
@@ -236,6 +245,7 @@ class ExpressionsViewModelTest {
             assertTrue(trigs(s.udp).isEmpty(), "exit never transmits")
         } finally {
             s.manager.stop()
+            s.sessions.stop()
         }
     }
 
@@ -263,6 +273,7 @@ class ExpressionsViewModelTest {
             assertEquals(2, takes(s.udp).size, "re-activation after exit takes again")
         } finally {
             s.manager.stop()
+            s.sessions.stop()
         }
     }
 
@@ -287,6 +298,7 @@ class ExpressionsViewModelTest {
             assertEquals(2, takes(s.udp).size, "return re-takes MANUAL")
         } finally {
             s.manager.stop()
+            s.sessions.stop()
         }
     }
 

@@ -1,4 +1,4 @@
-package com.desky.shared.features.control
+package com.desky.shared.features.session
 
 import com.desky.shared.core.ROBOT_HOST
 import com.desky.shared.core.PairedDevice

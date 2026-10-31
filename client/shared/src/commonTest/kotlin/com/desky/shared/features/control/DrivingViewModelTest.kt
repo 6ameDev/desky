@@ -20,7 +20,9 @@ import com.desky.shared.features.control.ObserveRemoteDisconnectUseCase
 import com.desky.shared.features.control.ObserveTelemetryUseCase
 import com.desky.shared.features.control.ReleaseManualUseCase
 import com.desky.shared.features.control.TakeManualUseCase
+import com.desky.shared.features.pairing.ForgetDeviceUseCase
 import com.desky.shared.features.pairing.GetPairPskUseCase
+import com.desky.shared.features.session.SessionManager
 import com.desky.shared.presentation.FakeDeviceRepository
 import com.desky.shared.presentation.FakePairSecretStore
 import com.desky.shared.presentation.FakeUdpSocketManager
@@ -54,6 +56,7 @@ class DrivingViewModelTest {
         val udp: FakeUdpSocketManager,
         val drive: DriveController,
         val manager: ConnectionManager,
+        val sessions: SessionManager,
         val vm: DrivingViewModel,
     )
 
@@ -64,9 +67,10 @@ class DrivingViewModelTest {
         val toRobot = ToRobotCounter(repo)
         val fromRobot = FromRobotCounter(repo)
         val getPsk = GetPairPskUseCase(vault, repo)
+        val sessions = SessionManager(repo, getPsk, toRobot, ForgetDeviceUseCase(repo, vault, udp, getPsk, toRobot, fromRobot), this)
         val manager = ConnectionManager(
             deviceRepo = repo,
-            getPairPsk = getPsk,
+            sessionManager = sessions,
             observeTelemetry = ObserveTelemetryUseCase(udp),
             toRobotCounter = toRobot,
             aliveUC = AliveUseCase(udp),
@@ -79,8 +83,7 @@ class DrivingViewModelTest {
         )
         val drive = DriveController(
             deviceRepo = repo,
-            getPairPsk = getPsk,
-            toRobotCounter = toRobot,
+            sessionManager = sessions,
             sendUC = SendSignedControlUseCase(udp),
             takeManualUC = TakeManualUseCase(udp),
             releaseManualUC = ReleaseManualUseCase(udp),
@@ -88,8 +91,8 @@ class DrivingViewModelTest {
             tickMs = 20,
             idleHeartbeatMs = 100,
         )
-        val vm = DrivingViewModel(drive, manager, TelemetryHub(udp, this))
-        return Setup(repo, udp, drive, manager, vm)
+        val vm = DrivingViewModel(drive, manager, TelemetryHub(udp, this), sessions)
+        return Setup(repo, udp, drive, manager, sessions, vm)
     }
 
     private fun headerOf(bytes: ByteArray) = bytes[0].toInt() and BYTE_MASK
@@ -153,6 +156,7 @@ class DrivingViewModelTest {
         } finally {
             s.manager.stop()
             s.drive.stop()
+            s.sessions.stop()
         }
     }
 
@@ -194,6 +198,7 @@ class DrivingViewModelTest {
         } finally {
             s.manager.stop()
             s.drive.stop()
+            s.sessions.stop()
         }
     }
 
@@ -252,11 +257,61 @@ class DrivingViewModelTest {
         } finally {
             s.manager.stop()
             s.drive.stop()
+            s.sessions.stop()
         }
     }
 
     private fun takes(udp: FakeUdpSocketManager) =
         udp.sent.filter { headerOf(it.bytes) == MANUAL_TAKE_HEADER }
+
+    @Test
+    fun sessionInvalidSurfacesRepairCopy() = runVmTest { main ->
+        val scope = CoroutineScope(StandardTestDispatcher(main))
+        val repo = FakeDeviceRepository(pairedDevice())
+        val vault = FakePairSecretStore()
+        val udp = FakeUdpSocketManager()
+        val toRobot = ToRobotCounter(repo)
+        val fromRobot = FromRobotCounter(repo)
+        val getPsk = GetPairPskUseCase(vault, repo)
+        val sessions = SessionManager(repo, getPsk, toRobot, com.desky.shared.features.pairing.ForgetDeviceUseCase(repo, vault, udp, getPsk, toRobot, fromRobot), scope)
+        val manager = ConnectionManager(
+            deviceRepo = repo,
+            sessionManager = sessions,
+            observeTelemetry = ObserveTelemetryUseCase(udp),
+            toRobotCounter = toRobot,
+            aliveUC = AliveUseCase(udp),
+            remoteDisconnectUC = ObserveRemoteDisconnectUseCase(udp, repo, getPsk, vault, toRobot, fromRobot),
+            scope = scope,
+            aliveIntervalMs = 100,
+            staleTimeoutMs = 100,
+            deadTimeoutMs = 300,
+            tickMs = 20,
+        )
+        val drive = DriveController(
+            deviceRepo = repo,
+            sessionManager = sessions,
+            sendUC = SendSignedControlUseCase(udp),
+            takeManualUC = TakeManualUseCase(udp),
+            releaseManualUC = ReleaseManualUseCase(udp),
+            scope = scope,
+            tickMs = 20,
+            idleHeartbeatMs = 100,
+        )
+        val vm = DrivingViewModel(drive, manager, TelemetryHub(udp, scope), sessions)
+        try {
+            main.runCurrent()
+            vm.activate()
+            main.runCurrent()
+            main.runCurrent()
+            main.runCurrent()
+            assertEquals(SessionManager.REPAIR_COPY, vm.state.value.error)
+            assertEquals(1, repo.clearCalls)
+        } finally {
+            manager.stop()
+            drive.stop()
+            sessions.stop()
+        }
+    }
 
     @Test
     fun collectsAlivenessAndTelemetry() = runVmTest { main ->
@@ -278,6 +333,7 @@ class DrivingViewModelTest {
         } finally {
             s.manager.stop()
             s.drive.stop()
+            s.sessions.stop()
         }
     }
 
@@ -328,6 +384,7 @@ class DrivingViewModelTest {
         } finally {
             s.manager.stop()
             s.drive.stop()
+            s.sessions.stop()
         }
     }
 }

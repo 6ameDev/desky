@@ -3,6 +3,7 @@ package com.desky.shared.features.control
 import com.desky.shared.core.ControlCommand
 import com.desky.shared.core.DEFAULT_UDP_PORT
 import com.desky.shared.core.DRIVE_HEADER
+import com.desky.shared.core.FromRobotCounter
 import com.desky.shared.core.MANUAL_RELEASE_HEADER
 import com.desky.shared.core.MANUAL_TAKE_HEADER
 import com.desky.shared.core.PairedDevice
@@ -13,7 +14,9 @@ import com.desky.shared.core.encodeManualRelease
 import com.desky.shared.core.encodeManualTake
 import com.desky.shared.core.encodeSigned
 import com.desky.shared.core.hexToBytes
+import com.desky.shared.features.pairing.ForgetDeviceUseCase
 import com.desky.shared.features.pairing.GetPairPskUseCase
+import com.desky.shared.features.session.SessionManager
 import com.desky.shared.presentation.FakeDeviceRepository
 import com.desky.shared.presentation.FakePairSecretStore
 import com.desky.shared.presentation.FakeUdpSocketManager
@@ -58,6 +61,7 @@ class DriveControllerTest {
         val repo: FakeDeviceRepository,
         val udp: FakeUdpSocketManager,
         val controller: DriveController,
+        val sessions: SessionManager,
     )
 
     private fun CoroutineScope.setup(
@@ -69,10 +73,12 @@ class DriveControllerTest {
         val vault = FakePairSecretStore().apply { seed(pairedDevice().id, PSK_HEX) }
         val udp = FakeUdpSocketManager()
         val holder = ToRobotCounter(repo)
+        val fromRobot = FromRobotCounter(repo)
+        val getPsk = GetPairPskUseCase(vault, repo)
+        val sessionManager = SessionManager(repo, getPsk, holder, ForgetDeviceUseCase(repo, vault, udp, getPsk, holder, fromRobot), this)
         val controller = DriveController(
             deviceRepo = repo,
-            getPairPsk = GetPairPskUseCase(vault, repo),
-            toRobotCounter = holder,
+            sessionManager = sessionManager,
             sendUC = SendSignedControlUseCase(udp),
             takeManualUC = TakeManualUseCase(udp),
             releaseManualUC = ReleaseManualUseCase(udp),
@@ -80,7 +86,7 @@ class DriveControllerTest {
             tickMs = tickMs,
             idleHeartbeatMs = idleHeartbeatMs,
         )
-        return Setup(repo, udp, controller)
+        return Setup(repo, udp, controller, sessionManager)
     }
 
     @Test
@@ -105,7 +111,7 @@ class DriveControllerTest {
                 )
             }
         } finally {
-            s.controller.stop()
+            s.controller.stop(); s.sessions.stop()
         }
     }
 
@@ -132,7 +138,7 @@ class DriveControllerTest {
             testScheduler.advanceTimeBy(201)
             assertTrue(s.udp.sent.isNotEmpty(), "heartbeats resume on foreground")
         } finally {
-            s.controller.stop()
+            s.controller.stop(); s.sessions.stop()
         }
     }
 
@@ -177,7 +183,79 @@ class DriveControllerTest {
                 )
             }
         } finally {
-            s.controller.stop()
+            s.controller.stop(); s.sessions.stop()
+        }
+    }
+
+    @Test
+    fun emergencyStopPreservesBoundInputAcrossRelease() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val s = scope.setup()
+        try {
+            runCurrent()
+            var stick = 0.5f to -0.25f
+            s.controller.bind { stick }
+            runCurrent()
+            testScheduler.advanceTimeBy(101)
+            assertTrue(s.udp.sent.any { headerOf(it.bytes) == DRIVE_HEADER })
+
+            s.controller.emergencyStop()
+            runCurrent()
+            runCurrent()
+            testScheduler.advanceTimeBy(101)
+            val stopped = s.udp.sent.filter { headerOf(it.bytes) == DRIVE_HEADER }.takeLast(5)
+            stopped.forEach { frame ->
+                val counter = counterOf(frame.bytes, DRIVE_COUNTER_AT)
+                assertTrue(
+                    frame.bytes.contentEquals(
+                        encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f, ESTOP_FLAG), counter, psk()),
+                    ),
+                )
+            }
+
+            s.controller.releaseEmergency()
+            stick = -0.5f to 0.25f
+            s.udp.sent.clear()
+            testScheduler.advanceTimeBy(101)
+            val resumed = s.udp.sent.filter { headerOf(it.bytes) == DRIVE_HEADER }
+            assertTrue(resumed.isNotEmpty(), "drive resumes with no rebind")
+            val expected = ControlCommand(RobotMode.MANUAL, -0.5f, 0.25f)
+            resumed.forEach { frame ->
+                val counter = counterOf(frame.bytes, DRIVE_COUNTER_AT)
+                assertTrue(
+                    frame.bytes.contentEquals(encodeSigned(expected, counter, psk())),
+                    "post-release frames carry the live stick",
+                )
+            }
+        } finally {
+            s.controller.stop(); s.sessions.stop()
+        }
+    }
+
+    @Test
+    fun emergencyStopWhileUnboundResumesIdle() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val s = scope.setup()
+        try {
+            runCurrent()
+            s.controller.emergencyStop()
+            runCurrent()
+            runCurrent()
+            s.controller.releaseEmergency()
+            s.udp.sent.clear()
+            testScheduler.advanceTimeBy(1001)
+            val after = s.udp.sent.filter { headerOf(it.bytes) == DRIVE_HEADER }
+            assertTrue(after.isNotEmpty(), "idle resumes after unbound stop release")
+            after.forEach { frame ->
+                val counter = counterOf(frame.bytes, DRIVE_COUNTER_AT)
+                assertTrue(
+                    frame.bytes.contentEquals(
+                        encodeSigned(ControlCommand(RobotMode.MANUAL, 0f, 0f), counter, psk()),
+                    ),
+                )
+            }
+        } finally {
+            s.controller.stop(); s.sessions.stop()
         }
     }
 
@@ -215,7 +293,7 @@ class DriveControllerTest {
                 )
             }
         } finally {
-            s.controller.stop()
+            s.controller.stop(); s.sessions.stop()
         }
     }
 
@@ -264,7 +342,7 @@ class DriveControllerTest {
             }
             counters.zipWithNext { a, b -> assertEquals(a + 1u, b, "gapless after unbind") }
         } finally {
-            s.controller.stop()
+            s.controller.stop(); s.sessions.stop()
         }
     }
 
@@ -301,7 +379,7 @@ class DriveControllerTest {
                 )
             }
         } finally {
-            s.controller.stop()
+            s.controller.stop(); s.sessions.stop()
         }
     }
 
@@ -316,13 +394,13 @@ class DriveControllerTest {
             testScheduler.advanceTimeBy(101)
             assertTrue(s.udp.sent.isNotEmpty(), "drive flows before stop")
 
-            s.controller.stop()
+            s.controller.stop(); s.sessions.stop()
             val frozen = s.udp.sent.size
             testScheduler.advanceTimeBy(1000)
             runCurrent()
             assertEquals(frozen, s.udp.sent.size, "no sends after stop")
         } finally {
-            s.controller.stop()
+            s.controller.stop(); s.sessions.stop()
         }
     }
 }

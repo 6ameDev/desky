@@ -4,8 +4,7 @@ import com.desky.shared.core.ControlCommand
 import com.desky.shared.core.DeviceRepository
 import com.desky.shared.core.PairedDevice
 import com.desky.shared.core.RobotMode
-import com.desky.shared.core.ToRobotCounter
-import com.desky.shared.features.pairing.GetPairPskUseCase
+import com.desky.shared.features.session.SessionManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -13,8 +12,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlin.concurrent.Volatile
 import kotlin.math.abs
 
@@ -37,15 +34,14 @@ import kotlin.math.abs
  * ticks allocate no counter.
  *
  * Assumes [scope] confines the loops to one thread (Main or a test
- * dispatcher): tick counters and the bound flag are plain vars, cache
- * access serializes under [sessionMutex].
+ * dispatcher): tick counters and the bound flag are plain vars, session
+ * allocation serializes inside [SessionManager].
  * Drive frames always carry [RobotMode.MANUAL]; the ViewModel's mode
  * snapshot and MANUAL-report gate arrive with the rewire.
  */
 class DriveController(
     private val deviceRepo: DeviceRepository,
-    private val getPairPsk: GetPairPskUseCase,
-    private val toRobotCounter: ToRobotCounter,
+    private val sessionManager: SessionManager,
     private val sendUC: SendSignedControlUseCase,
     private val takeManualUC: TakeManualUseCase,
     private val releaseManualUC: ReleaseManualUseCase,
@@ -58,9 +54,6 @@ class DriveController(
     private var currentDevice: PairedDevice? = null
     private var bound = false
     private var input: () -> Pair<Float, Float> = { 0f to 0f }
-
-    private val sessionMutex = Mutex()
-    private val pskCache = SessionPskCache(getPairPsk, toRobotCounter)
 
     private var ticksSinceActivity = 0
     private var ticksSinceIdleSend = 0
@@ -104,21 +97,21 @@ class DriveController(
     }
 
     /**
-     * Latches the emergency stop: zeroes input, sends one stop frame
-     * immediately, and the loop streams the flagged variant at full rate
-     * until [releaseEmergency]. Best-effort like every fire-and-forget
-     * frame — a lost immediate frame is covered by the latched stream.
-     * Idempotent while latched.
+     * Latches the emergency stop: one stop frame immediately, then the loop
+     * streams the flagged variant at full rate until [releaseEmergency].
+     * The bound stick closure is preserved — latched ticks ignore it and send
+     * zeroed flagged frames, so release resumes driving with no rebind.
+     * Best-effort like every fire-and-forget frame — a lost immediate frame
+     * is covered by the latched stream. Idempotent while latched.
      */
     fun emergencyStop() {
         if (estopLatched) return
         estopLatched = true
-        input = { 0f to 0f }
         val session = sessionScope ?: return
         session.launch {
             try {
                 val dev = currentDevice ?: return@launch
-                val prepared = sessionMutex.withLock { pskCache.allocate(dev) } ?: return@launch
+                val prepared = sessionManager.allocate(dev) ?: return@launch
                 val (psk, counter) = prepared
                 // Same wire shape as EmergencyStopUseCase (the legacy
                 // screen's immediate-frame owner): zeroed MANUAL + ESTOP_FLAG.
@@ -149,7 +142,7 @@ class DriveController(
         session.launch {
             try {
                 val dev = currentDevice ?: return@launch
-                val prepared = sessionMutex.withLock { pskCache.allocate(dev) }
+                val prepared = sessionManager.allocate(dev)
                 if (prepared != null) {
                     val (psk, counter) = prepared
                     takeManualUC(dev, psk, dev.era, counter)
@@ -177,7 +170,7 @@ class DriveController(
         session.launch {
             try {
                 val dev = currentDevice ?: return@launch
-                val prepared = sessionMutex.withLock { pskCache.allocate(dev) } ?: return@launch
+                val prepared = sessionManager.allocate(dev) ?: return@launch
                 val (psk, counter) = prepared
                 releaseManualUC(dev, psk, dev.era, counter)
             } catch (e: CancellationException) {
@@ -208,10 +201,6 @@ class DriveController(
         deviceRepo.observePaired().collect { paired ->
             currentDevice = paired
             if (paired == null) {
-                sessionMutex.withLock {
-                    pskCache.invalidate()
-                    toRobotCounter.reset()
-                }
                 bound = false
                 input = { 0f to 0f }
                 ticksSinceActivity = 0
@@ -290,7 +279,7 @@ class DriveController(
 
     /** One signed `MANUAL` drive frame on the shared counter. */
     private suspend fun sendFrame(dev: PairedDevice, throttle: Float, steering: Float, flags: Int = 0) {
-        val prepared = sessionMutex.withLock { pskCache.allocate(dev) } ?: return
+        val prepared = sessionManager.allocate(dev) ?: return
         val (psk, counter) = prepared
         sendUC(dev, ControlCommand(RobotMode.MANUAL, throttle, steering, flags), psk, counter)
     }
