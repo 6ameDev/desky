@@ -103,6 +103,10 @@ fun DrivingContent(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text("Link: ${state.aliveness}")
+            val sessionError = state.error
+            if (sessionError != null) {
+                Text(sessionError, color = MaterialTheme.colorScheme.error)
+            }
             val telemetry = state.telemetry
             if (telemetry != null) {
                 Text("Distance: ${telemetry.distanceMm} mm")

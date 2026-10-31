@@ -3,6 +3,7 @@ package com.desky.shared.features.control
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.desky.shared.core.Telemetry
+import com.desky.shared.features.session.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,6 +17,7 @@ data class DrivingUiState(
     val steering: Float = 0f,
     val telemetry: Telemetry? = null,
     val aliveness: Aliveness = Aliveness.Unpaired,
+    val error: String? = null,
     /**
      * Latched emergency stop: [onEmergencyStop] raises it (shell shows the
      * release affordance), [onReleaseEmergency] clears it. Held across link
@@ -40,6 +42,7 @@ class DrivingViewModel(
     private val drive: DriveController,
     connectionManager: ConnectionManager,
     telemetryHub: TelemetryHub,
+    sessionManager: SessionManager,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(DrivingUiState())
@@ -56,6 +59,11 @@ class DrivingViewModel(
         viewModelScope.launch {
             telemetryHub.telemetry.collect { telemetry ->
                 _state.update { it.copy(telemetry = telemetry) }
+            }
+        }
+        viewModelScope.launch {
+            sessionManager.invalid.collect { invalid ->
+                _state.update { it.copy(error = if (invalid) SessionManager.REPAIR_COPY else null) }
             }
         }
     }
