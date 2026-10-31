@@ -46,11 +46,14 @@ The Koin dependency graphs are identical across platforms, but **ownership diffe
 - **iOS:** `initKoinForIos()` resolves and caches ViewModels for the app lifetime inside `SharedGraph` to prevent state-forking and duplicate UDP heartbeat loops.
     
 
-Both platforms share the singleton `ioScope` (`SupervisorJob` + `Dispatchers.Default`) feeding `UdpSocketManager`.
+Both platforms share the singleton scopes: `ioScope` (`SupervisorJob` +
+`Dispatchers.Default`) feeding `UdpSocketManager`, plus a dedicated
+single-lane `sessionScope` for the session tick loops
+(`ConnectionManager`, `DriveController`, `SessionManager`).
 
 ## 4. Key Data Flows
 
-- **Control Loop:** Joystick input → `RobotControlUiState` → 20 ms tick loop → `UdpSocketManager.send()` → Robot `:3333`. (Never pauses; maintains the 500 ms failsafe).
+- **Control Loop:** Joystick input → `DrivingUiState` → manual hold + 20 ms tick loop → `UdpSocketManager.send()` → Robot `:3333`. (Pauses on background; maintains the failsafe via idle heartbeats.)
     
 - **Telemetry:** Inbound datagrams → `ObserveTelemetryUseCase` → `StateFlow` updates → Compose / SwiftUI status bars.
     
@@ -104,6 +107,11 @@ underlying commands directly.
 
 - Wire truth: `shared/protocol/` (repo root) → `embedded/.../udp_codec.h` → `core/Codec.kt` (+`Models.kt`).
 - Byte order: `data/Ipv4.kt` KDoc first. Socket contract: `domain/UdpSocketManager.kt` + platform actuals.
-- State machines: `presentation/RobotControlViewModel.kt` (heartbeat/estop/unpair), `features/pairing/PairingViewModel.kt`, `features/settings/SettingsViewModel.kt`, `features/session/SessionGateViewModel.kt`.
+- State machines: `features/control/DriveController.kt` (manual hold + drive
+  loop) plus `features/control/DrivingViewModel.kt` (stick intents, e-stop),
+  `features/control/ConnectionManager.kt` (link aliveness, refresh),
+  `features/session/SessionManager.kt` (key cache, health, forget-once) and
+  `SessionGateViewModel.kt` (unpaired fence), `features/pairing/PairingViewModel.kt`,
+  `features/settings/SettingsViewModel.kt`.
 - Wiring: `di/AppModules.kt`, Android `DeskyApp.kt` + `ui/DeskyNavHost.kt`, iOS `Kotlin/IosKoin.kt` + `DeskyApp.swift`.
 - UI pattern: stateful `XScreen` + stateless `XContent` + `@Preview` (Android); `ObservableObject` wrapper + `.task { for await }` (iOS).
