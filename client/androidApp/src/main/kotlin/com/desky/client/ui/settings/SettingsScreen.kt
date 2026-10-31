@@ -3,11 +3,16 @@ package com.desky.client.ui.settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
@@ -33,6 +38,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.desky.client.ui.TAB_BAR_CLEARANCE_DP
 import com.desky.shared.features.settings.SettingsUiState
 import com.desky.shared.features.settings.SettingsViewModel
 import org.koin.androidx.compose.koinViewModel
@@ -86,6 +92,13 @@ fun SettingsContent(
     }
 
     Scaffold(
+        // Same page background as Home (canvas light, phone-dark card),
+        // so the floating tab bar reads identically on both tabs.
+        containerColor = if (isSystemInDarkTheme()) {
+            MaterialTheme.colorScheme.surfaceContainer
+        } else {
+            MaterialTheme.colorScheme.background
+        },
         topBar = {
             TopAppBar(
                 title = { Text("Settings") },
@@ -101,6 +114,7 @@ fun SettingsContent(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -166,6 +180,7 @@ fun SettingsContent(
             Button(onClick = onForgetDevice, modifier = Modifier.fillMaxWidth()) {
                 Text("Forget device")
             }
+            Spacer(modifier = Modifier.height(TAB_BAR_CLEARANCE_DP.dp))
         }
     }
 }

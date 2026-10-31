@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -23,7 +22,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -38,6 +36,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.desky.client.ui.TAB_BAR_CLEARANCE_DP
 import com.desky.client.ui.theme.DeskyTheme
 import com.desky.shared.core.RobotMode
 import com.desky.shared.core.Telemetry
@@ -52,7 +51,6 @@ import org.koin.androidx.compose.koinViewModel
 fun HomeScreen(
     onDrive: () -> Unit,
     onExpressions: () -> Unit,
-    onSettings: () -> Unit,
     vm: HomeViewModel = koinViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -60,7 +58,6 @@ fun HomeScreen(
         state = state,
         onDrive = onDrive,
         onExpressions = onExpressions,
-        onSettings = onSettings,
     )
 }
 
@@ -69,7 +66,6 @@ fun HomeContent(
     state: HomeUiState,
     onDrive: () -> Unit,
     onExpressions: () -> Unit,
-    onSettings: () -> Unit,
 ) {
     val ink = Color(0xFF1E1B16)
     val screen = if (isSystemInDarkTheme()) {
@@ -118,12 +114,7 @@ fun HomeContent(
                 }
             }
             Spacer(modifier = Modifier.weight(1f))
-            TextButton(
-                onClick = onSettings,
-                modifier = Modifier.heightIn(min = 48.dp),
-            ) {
-                Text("Settings", color = MaterialTheme.colorScheme.onBackground)
-            }
+            Spacer(modifier = Modifier.height(TAB_BAR_CLEARANCE_DP.dp))
         }
     }
 }
@@ -270,7 +261,6 @@ private fun HomeContentPreviewLight() {
             ),
             onDrive = {},
             onExpressions = {},
-            onSettings = {},
         )
     }
 }
@@ -283,7 +273,6 @@ private fun HomeContentPreviewDark() {
             state = HomeUiState(aliveness = Aliveness.Stale),
             onDrive = {},
             onExpressions = {},
-            onSettings = {},
         )
     }
 }

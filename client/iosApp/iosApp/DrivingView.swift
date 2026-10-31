@@ -32,13 +32,13 @@ final class DrivingViewState: ObservableObject {
 
 struct DrivingView: View {
     @StateObject private var state: DrivingViewState
-    @Binding var selection: DeskyTab
+    private let onExit: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @State private var visible = false
 
-    init(vm: DrivingViewModel, selection: Binding<DeskyTab>) {
+    init(vm: DrivingViewModel, onExit: @escaping () -> Void) {
         _state = StateObject(wrappedValue: DrivingViewState(vm: vm))
-        _selection = selection
+        self.onExit = onExit
     }
 
     var body: some View {
@@ -70,8 +70,15 @@ struct DrivingView: View {
             Spacer()
         }
         .padding()
-        .onAppear { visible = true; state.activate() }
-        .onDisappear { visible = false; state.deactivate() }
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Close") { state.requestExit() }
+            }
+        }
+        .toolbar(.hidden, for: .tabBar)
+        .onAppear { visible = true; state.activate(); OrientationLock.shared.mask = .all }
+        .onDisappear { visible = false; state.deactivate(); OrientationLock.shared.mask = .portrait }
         // Home-button path: onAppear does not refire on foreground return,
         // so re-take only while this tab is still the visible one.
         .onChange(of: scenePhase) { phase in
@@ -94,7 +101,7 @@ struct DrivingView: View {
         ) {
             Button("Leave", role: .destructive) {
                 state.confirmExit()
-                selection = .home
+                onExit()
             }
             Button("Stay", role: .cancel) { state.dismissExit() }
         } message: {

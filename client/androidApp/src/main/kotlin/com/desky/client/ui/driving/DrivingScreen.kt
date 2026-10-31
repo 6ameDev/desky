@@ -20,12 +20,15 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.app.Activity
+import android.content.pm.ActivityInfo
 import com.desky.client.ui.control.JoystickPad
 import com.desky.shared.features.control.Aliveness
 import com.desky.shared.features.control.DrivingUiState
@@ -38,6 +41,17 @@ fun DrivingScreen(
     vm: DrivingViewModel = koinViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    // Driving is the one orientation-free screen: release the manifest
+    // portrait lock while visible, restore it on leave. Recreation from the
+    // switch is safe — ViewModels survive and the nav stack is saved.
+    val context = LocalContext.current
+    DisposableEffect(context) {
+        val activity = context as? Activity
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        onDispose {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
     // Screen-scope visibility: resumed = enter manual, paused = exit.
     // Scoped to this composable's LifecycleOwner so background/foreground
     // and navigation both funnel through activate / deactivate, and other

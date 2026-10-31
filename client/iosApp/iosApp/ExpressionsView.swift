@@ -28,13 +28,13 @@ final class ExpressionsViewState: ObservableObject {
 
 struct ExpressionsView: View {
     @StateObject private var state: ExpressionsViewState
-    @Binding var selection: DeskyTab
+    private let onExit: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @State private var visible = false
 
-    init(vm: ExpressionsViewModel, selection: Binding<DeskyTab>) {
+    init(vm: ExpressionsViewModel, onExit: @escaping () -> Void) {
         _state = StateObject(wrappedValue: ExpressionsViewState(vm: vm))
-        _selection = selection
+        self.onExit = onExit
     }
 
     var body: some View {
@@ -53,6 +53,13 @@ struct ExpressionsView: View {
             Spacer()
         }
         .padding()
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Close") { state.requestExit() }
+            }
+        }
+        .toolbar(.hidden, for: .tabBar)
         .onAppear { visible = true; state.activate() }
         .onDisappear { visible = false; state.deactivate() }
         // Home-button path: onAppear does not refire on foreground return,
@@ -77,7 +84,7 @@ struct ExpressionsView: View {
         ) {
             Button("Leave", role: .destructive) {
                 state.confirmExit()
-                selection = .home
+                onExit()
             }
             Button("Stay", role: .cancel) { state.dismissExit() }
         } message: {

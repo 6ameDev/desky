@@ -27,7 +27,6 @@ final class SettingsViewState: ObservableObject {
 
 struct SettingsView: View {
     @StateObject private var state: SettingsViewState
-    @Binding var selection: DeskyTab
 
     // Draft text for the PID/SSID editors, mirroring Android's local editor
     // state. Initialized once from the first snapshot and NOT resynced, so a
@@ -38,9 +37,8 @@ struct SettingsView: View {
     @State private var pidD: String
     @State private var ssid: String
 
-    init(vm: SettingsViewModel, selection: Binding<DeskyTab>) {
+    init(vm: SettingsViewModel) {
         _state = StateObject(wrappedValue: SettingsViewState(vm: vm))
-        _selection = selection
         let config = vm.state.value.config
         _pidP = State(initialValue: String(config.pidP))
         _pidI = State(initialValue: String(config.pidI))
@@ -107,10 +105,6 @@ struct SettingsView: View {
         }
         .padding()
         .task { await state.collect() }
-        // Mirror Android's onUnpaired navigation back to pairing.
-        .onChange(of: state.snapshot.unpaired) { unpaired in
-            if unpaired { selection = .pairing }
-        }
     }
 
     private func applyPid() {

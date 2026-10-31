@@ -19,60 +19,89 @@ final class HomeViewState: ObservableObject {
     }
 }
 
+private enum HomeDestination: Hashable {
+    case driving
+    case expressions
+}
+
 struct HomeView: View {
     @StateObject private var state: HomeViewState
-    @Binding var selection: DeskyTab
-    @Environment(\.colorScheme) private var colorScheme
+    @State private var path = NavigationPath()
+    private let drivingVM: DrivingViewModel
+    private let expressionsVM: ExpressionsViewModel
 
     private let ink = Color(red: 0x1E/255.0, green: 0x1B/255.0, blue: 0x16/255.0)
     private let subInk = Color(red: 0x6F/255.0, green: 0x6A/255.0, blue: 0x5E/255.0)
 
-    init(vm: HomeViewModel, selection: Binding<DeskyTab>) {
-        _state = StateObject(wrappedValue: HomeViewState(vm: vm))
-        _selection = selection
+    init(
+        homeVM: HomeViewModel,
+        drivingVM: DrivingViewModel,
+        expressionsVM: ExpressionsViewModel
+    ) {
+        _state = StateObject(wrappedValue: HomeViewState(vm: homeVM))
+        self.drivingVM = drivingVM
+        self.expressionsVM = expressionsVM
     }
 
     var body: some View {
-        let snapshot = state.snapshot
-        let linkReady = snapshot.aliveness != Aliveness.unpaired
-        let eyesOpen = snapshot.aliveness == Aliveness.connected
-        let screen = colorScheme == .dark ? Color.deskyCard : Color.deskyCanvas
-        GeometryReader { geo in
-            ScrollView {
-                VStack(spacing: 16) {
-                    Spacer()
-                    BotHead(eyesOpen: eyesOpen)
-                    PillsRow(pills: snapshot.pills)
-                    Spacer()
-                        .frame(height: 8)
-                    HStack(spacing: 16) {
+        NavigationStack(path: $path) {
+            GeometryReader { geo in
+                ScrollView {
+                    VStack(spacing: 16) {
                         Spacer()
-                        ActionTile(
-                            title: "Drive",
-                            subtitle: linkReady ? "Manual control" : "Offline",
-                            enabled: linkReady
-                        ) { selection = .driving }
-                        ActionTile(
-                            title: "Expressions",
-                            subtitle: linkReady ? "Play moods" : "Offline",
-                            enabled: linkReady
-                        ) { selection = .expressions }
+                        BotHead(eyesOpen: state.snapshot.aliveness == Aliveness.connected)
+                        PillsRow(pills: state.snapshot.pills)
+                        Spacer()
+                            .frame(height: 8)
+                        HStack(spacing: 16) {
+                            Spacer()
+                            ActionTile(
+                                title: "Drive",
+                                subtitle: linkReady ? "Manual control" : "Offline",
+                                enabled: linkReady
+                            ) { path.append(HomeDestination.driving) }
+                            ActionTile(
+                                title: "Expressions",
+                                subtitle: linkReady ? "Play moods" : "Offline",
+                                enabled: linkReady
+                            ) { path.append(HomeDestination.expressions) }
+                            Spacer()
+                        }
                         Spacer()
                     }
-                    Spacer()
-                    Button("Settings") { selection = .settings }
-                        .buttonStyle(.plain)
-                        .foregroundColor(Color.deskyText)
-                        .frame(minHeight: 48)
+                    .frame(minHeight: geo.size.height - 40)
                 }
-                .frame(minHeight: geo.size.height - 40)
+                .scrollIndicators(.hidden)
             }
-            .scrollIndicators(.hidden)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 20)
+            .background(screen)
+            .task { await state.collect() }
+            .navigationDestination(for: HomeDestination.self) { destination in
+                switch destination {
+                case .driving:
+                    DrivingView(vm: drivingVM) { popPath() }
+                case .expressions:
+                    ExpressionsView(vm: expressionsVM) { popPath() }
+                }
+            }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 20)
-        .background(screen)
-        .task { await state.collect() }
+    }
+
+    private var linkReady: Bool {
+        state.snapshot.aliveness != Aliveness.unpaired
+    }
+
+    private var screen: Color {
+        colorScheme == .dark ? Color.deskyCard : Color.deskyCanvas
+    }
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    private func popPath() {
+        if !path.isEmpty {
+            path.removeLast()
+        }
     }
 }
 
