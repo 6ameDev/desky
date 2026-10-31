@@ -8,7 +8,6 @@ import com.desky.shared.features.control.DrivingViewModel
 import com.desky.shared.features.control.ExpressionsViewModel
 import com.desky.shared.features.home.HomeViewModel
 import com.desky.shared.features.pairing.PairingViewModel
-import com.desky.shared.presentation.RobotControlViewModel
 import com.desky.shared.features.settings.SettingsViewModel
 import org.koin.core.Koin
 import org.koin.core.context.startKoin
@@ -85,14 +84,12 @@ fun initKoinForIos(): Koin = guarded {
  * Caching is load-bearing, not convenience: `presentationModule` declares
  * the VMs with Koin 4's `viewModel { }` (factory semantics — every `get()`
  * mints a NEW instance; verified on JVM 2026-10-14: two `get()` calls return
- * distinct objects). Minting per view would fork state AND start one command
- * heartbeat loop per `RobotControlViewModel` instance. These accessors
- * resolve once and hand out the same app-lifetime instances that every Swift
- * view observes — the closest SwiftUI analogue of Android's per-destination
- * `koinViewModel()` owners.
+ * distinct objects). Minting per view would fork state AND start duplicate
+ * session loops. These accessors resolve once and hand out the same
+ * app-lifetime instances that every Swift view observes — the closest
+ * SwiftUI analogue of Android's per-destination `koinViewModel()` owners.
  */
 private var sharedPairingVm: PairingViewModel? = null
-private var sharedControlVm: RobotControlViewModel? = null
 private var sharedSettingsVm: SettingsViewModel? = null
 private var sharedHomeVm: HomeViewModel? = null
 private var sharedConnectionManager: ConnectionManager? = null
@@ -103,11 +100,6 @@ private var sharedExpressionsVm: ExpressionsViewModel? = null
 fun Koin.pairingViewModel(): PairingViewModel = guarded {
     sharedPairingVm?.let { return@guarded it }
     return@guarded get<PairingViewModel>().also { sharedPairingVm = it }
-}
-
-fun Koin.robotControlViewModel(): RobotControlViewModel = guarded {
-    sharedControlVm?.let { return@guarded it }
-    return@guarded get<RobotControlViewModel>().also { sharedControlVm = it }
 }
 
 fun Koin.settingsViewModel(): SettingsViewModel = guarded {

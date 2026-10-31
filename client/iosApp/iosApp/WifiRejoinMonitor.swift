@@ -4,11 +4,11 @@ import Network
 
 extension Notification.Name {
     /// Posted (1 s debounced, like Android's `WifiSocketBinder`) whenever the
-    /// Wi-Fi path becomes satisfied. Observers call the shared
-    /// `RobotControlViewModel.onForeground()` — the same idempotent ALIVE
-    /// due-flag Android's `networkAvailable` flow sets. Pure Swift:
-    /// no Kotlin binder hookup / cinterop, no socket rebind (iOS stays on
-    /// the raw BSD default route via `PosixUdpSocketManager`).
+    /// Wi-Fi path becomes satisfied. Observers set the shared link due-flag —
+    /// the same idempotent ALIVE knock Android's `networkAvailable` flow
+    /// sets. Pure Swift: no Kotlin binder hookup / cinterop, no socket
+    /// rebind (iOS stays on the raw BSD default route via
+    /// `PosixUdpSocketManager`).
     static let wifiRejoined = Notification.Name("desky.wifiRejoined")
 }
 

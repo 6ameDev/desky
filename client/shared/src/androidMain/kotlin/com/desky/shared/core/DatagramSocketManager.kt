@@ -52,11 +52,11 @@ private const val MAX_DATAGRAM_BYTES = 64
  * to the caller, never a startup crash).
  *
  * Ownership: app scope (`DeskyApp` Koin singleton), NOT any ViewModel.
- * ViewModels (e.g. `RobotControlViewModel`) hold the manager for API
- * symmetry but must never close it — closing the shared singleton would
- * break every other screen. Close/detach live and die with the process
- * (there is no `DeskyApp.onTerminate` wiring: it never runs on real
- * devices, so KDoc-only by design — no new lifecycle dependency).
+ * ViewModels hold the manager for API symmetry but must never close it —
+ * closing the shared singleton would break every other screen.
+ * Close/detach live and die with the process (there is no
+ * `DeskyApp.onTerminate` wiring: it never runs on real devices, so
+ * KDoc-only by design — no new lifecycle dependency).
  */
 actual fun createUdpSocketManager(scope: CoroutineScope): UdpSocketManager =
     DatagramSocketManager(scope)
