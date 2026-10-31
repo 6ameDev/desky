@@ -139,7 +139,7 @@ val controlModule: Module = module {
             scope = get(named("sessionScope")),
         )
     }
-    viewModel { DrivingViewModel(get(), get(), get(), get()) }
+    viewModel { DrivingViewModel(get(), get(), get(), get(), get()) }
     viewModel { ExpressionsViewModel(get(), get(), getOrNull(), get(), get(), get()) }
     factory { SendSignedControlUseCase(get()) }
     factory { ObserveTelemetryUseCase(get()) }

@@ -92,7 +92,7 @@ class DrivingViewModelTest {
             tickMs = 20,
             idleHeartbeatMs = 100,
         )
-        val vm = DrivingViewModel(drive, manager, TelemetryHub(udp, this), sessions)
+        val vm = DrivingViewModel(drive, manager, TelemetryHub(udp, this), sessions, repo)
         return Setup(repo, udp, drive, manager, sessions, vm)
     }
 
@@ -178,6 +178,7 @@ class DrivingViewModelTest {
 
             s.vm.deactivate()
             main.runCurrent()
+            main.runCurrent()
             assertEquals(
                 2,
                 s.udp.sent.count { headerOf(it.bytes) == MANUAL_RELEASE_HEADER },
@@ -196,6 +197,32 @@ class DrivingViewModelTest {
             main.runCurrent()
             main.runCurrent()
             assertEquals(2, takes(s.udp).size, "return re-takes MANUAL")
+        } finally {
+            s.manager.stop()
+            s.drive.stop()
+            s.sessions.stop()
+        }
+    }
+
+    @Test
+    fun unpairRearmsForFreshTakeAfterRepair() = runVmTest { main ->
+        val scope = CoroutineScope(StandardTestDispatcher(main))
+        val s = scope.setup()
+        try {
+            s.vm.activate()
+            main.runCurrent()
+            main.runCurrent()
+            assertEquals(1, takes(s.udp).size, "first activation takes once")
+
+            s.repo.emit(null)
+            main.runCurrent()
+            s.repo.emit(pairedDevice())
+            main.runCurrent()
+
+            s.vm.activate()
+            main.runCurrent()
+            main.runCurrent()
+            assertEquals(2, takes(s.udp).size, "reused instance re-takes after unpair")
         } finally {
             s.manager.stop()
             s.drive.stop()
@@ -299,7 +326,7 @@ class DrivingViewModelTest {
             tickMs = 20,
             idleHeartbeatMs = 100,
         )
-        val vm = DrivingViewModel(drive, manager, TelemetryHub(udp, scope), sessions)
+        val vm = DrivingViewModel(drive, manager, TelemetryHub(udp, scope), sessions, repo)
         try {
             main.runCurrent()
             vm.activate()
@@ -363,6 +390,7 @@ class DrivingViewModelTest {
 
             s.vm.requestExit()
             s.vm.confirmExit()
+            main.runCurrent()
             main.runCurrent()
             assertFalse(s.vm.state.value.pendingExit)
             val releases = s.udp.sent.filter { headerOf(it.bytes) == MANUAL_RELEASE_HEADER }
