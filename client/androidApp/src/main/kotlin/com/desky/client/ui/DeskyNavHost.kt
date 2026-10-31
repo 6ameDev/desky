@@ -9,7 +9,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.desky.client.ui.control.ControlScreen
 import com.desky.client.ui.driving.DrivingScreen
 import com.desky.client.ui.expressions.ExpressionsScreen
 import com.desky.client.ui.home.HomeScreen
@@ -25,7 +24,6 @@ object DeskyRoutes {
     const val HOME = "home"
     const val DRIVING = "driving"
     const val EXPRESSIONS = "expressions"
-    const val CONTROL = "control"
     const val SETTINGS = "settings"
     const val SCAN = "scan"
 }
@@ -107,11 +105,6 @@ fun DeskyNavHost(
         composable(DeskyRoutes.EXPRESSIONS) {
             ExpressionsScreen(
                 onExit = { navController.popBackStack() },
-            )
-        }
-        composable(DeskyRoutes.CONTROL) {
-            ControlScreen(
-                onOpenSettings = { navController.navigate(DeskyRoutes.SETTINGS) },
             )
         }
         composable(DeskyRoutes.SETTINGS) {
