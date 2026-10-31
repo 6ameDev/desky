@@ -78,7 +78,7 @@ struct PairingView: View {
             if let device = state.snapshot.pairedDevice {
                 Text("Paired: \(device.alias) (\(device.ip):\(device.port))")
                 HStack {
-                    Button("Open Controls") { selection = .control }
+                    Button("Open Controls") { selection = .home }
                         .buttonStyle(.borderedProminent)
                     Button("Unpair") { state.onUnpair() }
                         .buttonStyle(.bordered)
