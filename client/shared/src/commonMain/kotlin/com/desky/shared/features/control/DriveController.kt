@@ -33,8 +33,7 @@ import kotlin.math.abs
  * allocation serializes inside [SessionManager]. Manual take and release
  * serialize through one queue in call order, so a fast hide/show bounce
  * lands released with no take after release.
- * Drive frames always carry [RobotMode.MANUAL]; the ViewModel's mode
- * snapshot and MANUAL-report gate arrive with the rewire.
+ * Drive frames always carry [RobotMode.MANUAL].
  */
 class DriveController(
     private val deviceRepo: DeviceRepository,
@@ -59,11 +58,10 @@ class DriveController(
 
     /**
      * App-background pause: while set, the tick loop sends nothing (no
-     * vault/counter/socket use) and only delays — mirroring the legacy
-     * screen's `backgroundPaused`. Set by [onBackground], cleared by
-     * [onForeground]; both funnel from the platform lifecycle observers
-     * that already drive `ConnectionManager`. Volatile: the flag is written
-     * off the loop thread.
+     * vault/counter/socket use) and only delays. Set by [onBackground],
+     * cleared by [onForeground]; both funnel from the platform lifecycle
+     * observers that already drive `ConnectionManager`. Volatile: the flag
+     * is written off the loop thread.
      */
     @Volatile
     private var paused = false
@@ -112,9 +110,9 @@ class DriveController(
                 val dev = currentDevice ?: return@launch
                 val prepared = sessionManager.allocate(dev) ?: return@launch
                 val (psk, counter) = prepared
-                // Same wire shape as EmergencyStopUseCase (the legacy
-                // screen's immediate-frame owner): zeroed MANUAL + ESTOP_FLAG.
-                // Outcome discarded — the latched stream covers a loss.
+                // Same wire shape as EmergencyStopUseCase: zeroed MANUAL
+                // + ESTOP_FLAG. Outcome discarded — the latched stream covers
+                // a loss.
                 sendUC(dev, ControlCommand(RobotMode.MANUAL, 0f, 0f, ESTOP_FLAG), psk, counter)
             } catch (e: CancellationException) {
                 throw e

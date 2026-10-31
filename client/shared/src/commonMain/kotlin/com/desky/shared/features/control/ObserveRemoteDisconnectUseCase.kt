@@ -41,8 +41,7 @@ private const val PSK_BYTE_LENGTH = 16
  * advance independently, so a busy drive loop can no longer starve an
  * eviction stamp) -> tag
  * `first6(HMAC-SHA256(psk, "DISCONNECT" || era || counter))` in
- * constant time. Every `0x56` candidate logs one debug line at entry
- * (never key material — lengths and booleans only); any failure drops
+ * constant time. Every failure drops
  * silently with no state change. The unpaired case needs no extra branch:
  * with no Room row (hence no PSK) verify fails on its own down the same
  * path. Burst duplicates (same counter) drop as stale after the first —
@@ -90,8 +89,6 @@ class ObserveRemoteDisconnectUseCase(
         if (bytes.size != DISCONNECT_SIZE || (bytes[0].toInt() and BYTE_MASK) != DISCONNECT_HEADER) {
             return null
         }
-        // Entry log for every eviction-shaped frame (debug only, no key/tag bytes).
-        println("RemoteDisconnect candidate len=${bytes.size}")
         val decoded = decodeDisconnect(bytes) ?: return null
         val (era, counter, tag) = decoded
         return try {
@@ -128,10 +125,9 @@ class ObserveRemoteDisconnectUseCase(
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                // Commit-phase failure (verified frame, store error): log
-                // only — the observer flow must stay alive, and the drive
-                // loop's own missing-PSK/expiry convergence still fires.
-                println("RemoteDisconnect clearFailed")
+                // Commit-phase failure after a verified frame: drop silently —
+                // the observer flow must stay alive, and the drive loop's own
+                // missing-PSK/expiry convergence still fires.
                 return null
             }
             Unit
