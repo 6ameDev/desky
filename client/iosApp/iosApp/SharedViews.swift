@@ -58,6 +58,12 @@ struct JoystickPad: View {
         }
         .frame(width: radius * 2, height: radius * 2)
         .opacity(enabled ? 1 : 0.4)
+        .onChange(of: enabled) { newValue in
+            if !newValue {
+                knob = .zero
+                onStick(0, 0)
+            }
+        }
         .gesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { value in

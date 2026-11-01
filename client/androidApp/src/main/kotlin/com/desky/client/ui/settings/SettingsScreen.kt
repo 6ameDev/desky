@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -32,6 +33,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -58,6 +60,7 @@ private val FloatInputRegex = Regex("^-?\\d*\\.?\\d*$")
 private const val PERCENT_SCALE = 100
 private const val MAX_LED_PROFILE = 7
 private const val SPEED_STEP = 0.1f
+private const val MAX_SSID_LENGTH = 32
 
 private fun String.isValidFloatInput(): Boolean = isEmpty() || matches(FloatInputRegex)
 
@@ -78,17 +81,25 @@ private data class PidField(
     val onChange: (String) -> Unit,
 )
 
-private fun applyPidValues(
+private fun submitPidValues(
     pidP: String,
     pidI: String,
     pidD: String,
     onPid: (Float, Float, Float) -> Unit,
-): Boolean {
+): String? {
     val p = pidP.toFloatOrNull()
     val i = pidI.toFloatOrNull()
     val d = pidD.toFloatOrNull()
-    if (p != null && i != null && d != null) onPid(p, i, d)
-    return p != null && i != null && d != null
+    if (p == null || i == null || d == null) return "Enter valid numbers for P, I and D"
+    onPid(p, i, d)
+    return null
+}
+
+private fun submitSsidValue(ssid: String, onSsid: (String) -> Unit): String? {
+    val trimmed = ssid.trim()
+    if (trimmed.isEmpty()) return "Enter a Wi-Fi name"
+    onSsid(trimmed)
+    return null
 }
 
 @Composable
@@ -122,13 +133,15 @@ fun SettingsContent(
     var pidI by remember(config.pidI) { mutableStateOf(config.pidI.toString()) }
     var pidD by remember(config.pidD) { mutableStateOf(config.pidD.toString()) }
     var ssid by remember(config.wifiSsid) { mutableStateOf(config.wifiSsid) }
+    var pidError by remember { mutableStateOf<String?>(null) }
+    var ssidError by remember { mutableStateOf<String?>(null) }
 
     SettingsBody(
         state = state,
         callbacks = callbacks,
         onLedClick = { showLedSheet = true },
-        onPidClick = { showPidSheet = true },
-        onSsidClick = { showSsidSheet = true },
+        onPidClick = { pidError = null; showPidSheet = true },
+        onSsidClick = { ssidError = null; showSsidSheet = true },
     )
 
     if (showLedSheet) {
@@ -145,18 +158,26 @@ fun SettingsContent(
                 PidField("I", pidI) { if (it.isValidFloatInput()) pidI = it },
                 PidField("D", pidD) { if (it.isValidFloatInput()) pidD = it },
             ),
-            onDone = { if (applyPidValues(pidP, pidI, pidD, callbacks.onPid)) showPidSheet = false },
-            onApply = { if (applyPidValues(pidP, pidI, pidD, callbacks.onPid)) showPidSheet = false },
+            error = pidError,
+            onDone = {
+                pidError = submitPidValues(pidP, pidI, pidD, callbacks.onPid)
+                showPidSheet = pidError != null
+            },
+            onApply = {
+                pidError = submitPidValues(pidP, pidI, pidD, callbacks.onPid)
+                showPidSheet = pidError != null
+            },
             onDismiss = { showPidSheet = false },
         )
     }
     if (showSsidSheet) {
         SsidEditorSheet(
             ssid = ssid,
-            onSsidChange = { ssid = it },
+            error = ssidError,
+            onSsidChange = { ssid = it.take(MAX_SSID_LENGTH) },
             onApply = {
-                callbacks.onWifiSsid(ssid)
-                showSsidSheet = false
+                ssidError = submitSsidValue(ssid, callbacks.onWifiSsid)
+                showSsidSheet = ssidError != null
             },
             onDismiss = { showSsidSheet = false },
         )
@@ -234,10 +255,15 @@ private fun GeneralSettingsCard(
             title = "Speed limit",
             subtitle = speedSubtitle,
         )
+        var dragValue by remember { mutableStateOf<Float?>(null) }
         Slider(
-            value = config.speedLimit,
-            onValueChange = { onSpeedLimit(snapSpeed(it)) },
+            value = dragValue ?: config.speedLimit,
+            onValueChange = { dragValue = snapSpeed(it) },
             valueRange = 0f..1f,
+            onValueChangeFinished = {
+                dragValue?.let { onSpeedLimit(it) }
+                dragValue = null
+            },
         )
         SettingsDivider()
         SettingRow(
@@ -267,10 +293,29 @@ private fun NetworkSettingsCard(ssid: String, onClick: () -> Unit) {
 
 @Composable
 private fun DeviceSettingsCard(onForgetDevice: () -> Unit) {
+    var showConfirm by remember { mutableStateOf(false) }
     SettingsCard {
         DangerRow(
             title = "Forget device",
-            onClick = onForgetDevice,
+            onClick = { showConfirm = true },
+        )
+    }
+    if (showConfirm) {
+        AlertDialog(
+            onDismissRequest = { showConfirm = false },
+            title = { Text("Forget device?") },
+            text = { Text("This removes the paired device from this phone.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showConfirm = false
+                        onForgetDevice()
+                    },
+                ) { Text("Forget") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirm = false }) { Text("Cancel") }
+            },
         )
     }
 }
@@ -279,6 +324,7 @@ private fun DeviceSettingsCard(onForgetDevice: () -> Unit) {
 @Composable
 private fun PidEditorSheet(
     fields: List<PidField>,
+    error: String?,
     onDone: () -> Unit,
     onApply: () -> Unit,
     onDismiss: () -> Unit,
@@ -296,12 +342,14 @@ private fun PidEditorSheet(
                     onValueChange = { if (it.isValidFloatInput()) field.onChange(it) },
                     label = { Text(field.label) },
                     singleLine = true,
+                    isError = error != null,
                     keyboardOptions = pidKeys,
                     keyboardActions = KeyboardActions(onDone = { onDone() }),
                     modifier = Modifier.weight(1f),
                 )
             }
         }
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
 }
 
@@ -309,6 +357,7 @@ private fun PidEditorSheet(
 @Composable
 private fun SsidEditorSheet(
     ssid: String,
+    error: String?,
     onSsidChange: (String) -> Unit,
     onApply: () -> Unit,
     onDismiss: () -> Unit,
@@ -323,6 +372,8 @@ private fun SsidEditorSheet(
             onValueChange = onSsidChange,
             label = { Text("Wi-Fi SSID") },
             singleLine = true,
+            isError = error != null,
+            supportingText = { error?.let { Text(it) } },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { onApply() }),
             modifier = Modifier.fillMaxWidth(),

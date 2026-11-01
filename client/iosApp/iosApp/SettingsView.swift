@@ -46,7 +46,11 @@ struct SettingsView: View {
     @State private var showLedSheet = false
     @State private var showPidSheet = false
     @State private var showSsidSheet = false
+    @State private var showForgetConfirm = false
     @State private var stagedLed = 0
+    @State private var speedDraft: Double?
+    @State private var pidError: String?
+    @State private var ssidError: String?
 
     init(vm: SettingsViewModel) {
         _state = StateObject(wrappedValue: SettingsViewState(vm: vm))
@@ -80,9 +84,14 @@ struct SettingsView: View {
                             : "\(Int(config.speedLimit * 100))%"
                     )
                     Slider(value: Binding(
-                        get: { Double(config.speedLimit) },
-                        set: { state.onSpeedLimit(Float(snapSpeed($0))) }
-                    ), in: 0...1, step: speedStep)
+                        get: { speedDraft ?? Double(config.speedLimit) },
+                        set: { speedDraft = snapSpeed($0) }
+                    ), in: 0...1, step: speedStep, onEditingChanged: { editing in
+                        if !editing {
+                            if let draft = speedDraft { state.onSpeedLimit(Float(draft)) }
+                            speedDraft = nil
+                        }
+                    })
                     SettingsDivider()
                     SettingRow(
                         title: "LED profile",
@@ -96,6 +105,7 @@ struct SettingsView: View {
                         title: "PID gains",
                         subtitle: "P \(config.pidP) · I \(config.pidI) · D \(config.pidD)"
                     ) {
+                        pidError = nil
                         showPidSheet = true
                     }
                 }
@@ -105,6 +115,7 @@ struct SettingsView: View {
                         title: "Wi-Fi network",
                         subtitle: config.wifiSsid.isEmpty ? "Not set" : config.wifiSsid
                     ) {
+                        ssidError = nil
                         showSsidSheet = true
                     }
                 }
@@ -113,11 +124,21 @@ struct SettingsView: View {
                 }
                 SectionLabel("Device")
                 SettingsCard {
-                    Button("Forget device") { state.onForgetDevice() }
+                    Button("Forget device") { showForgetConfirm = true }
                         .font(.system(size: DeskyType.bSize))
                         .foregroundColor(.deskyDanger)
                         .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
                         .accessibilityLabel("Forget device")
+                        .confirmationDialog(
+                            "Forget device?",
+                            isPresented: $showForgetConfirm,
+                            titleVisibility: .visible
+                        ) {
+                            Button("Forget device", role: .destructive) { state.onForgetDevice() }
+                            Button("Cancel", role: .cancel) { }
+                        } message: {
+                            Text("This removes the paired device from this phone.")
+                        }
                 }
             }
             .padding(.horizontal, DeskySpacing.s16)
@@ -157,23 +178,42 @@ struct SettingsView: View {
                         .textFieldStyle(.roundedBorder)
                         .keyboardType(.decimalPad)
                 }
+                if let pidError {
+                    Text(pidError).foregroundColor(.deskyDanger)
+                }
             }
         }
         .sheet(isPresented: $showSsidSheet) {
             EditorSheet(title: "Wi-Fi network", onApply: {
-                state.onWifiSsid(ssid)
-                showSsidSheet = false
+                let trimmed = ssid.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty {
+                    ssidError = "Enter a Wi-Fi name"
+                } else {
+                    ssidError = nil
+                    state.onWifiSsid(trimmed)
+                    showSsidSheet = false
+                }
             }) {
-                TextField("Wi-Fi SSID", text: $ssid)
+                TextField("Wi-Fi SSID", text: Binding(
+                    get: { ssid },
+                    set: { ssid = String($0.prefix(32)) }
+                ))
                     .textFieldStyle(.roundedBorder)
                     .autocorrectionDisabled(true)
                     .textInputAutocapitalization(.never)
+                if let ssidError {
+                    Text(ssidError).foregroundColor(.deskyDanger)
+                }
             }
         }
     }
 
     private func applyPid() -> Bool {
-        guard let p = Float(pidP), let i = Float(pidI), let d = Float(pidD) else { return false }
+        guard let p = Float(pidP), let i = Float(pidI), let d = Float(pidD) else {
+            pidError = "Enter valid numbers for P, I and D"
+            return false
+        }
+        pidError = nil
         state.onPid(p: p, i: i, d: d)
         return true
     }
