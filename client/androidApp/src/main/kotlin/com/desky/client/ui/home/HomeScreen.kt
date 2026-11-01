@@ -127,6 +127,7 @@ private fun BotHead(eyesOpen: Boolean) {
     val screen = Color(0xFF1E1B16)
     Canvas(modifier = Modifier
         .fillMaxWidth()
+        .padding(horizontal = 24.dp)
         .aspectRatio(180f / 158f)
     ) {
         val shellW = size.width

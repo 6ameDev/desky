@@ -130,6 +130,7 @@ private struct BotHead: View {
             .frame(width: w, height: w * 158 / 180)
         }
         .aspectRatio(180 / 158, contentMode: .fit)
+        .padding(.horizontal, DeskySpacing.s24)
         .accessibilityHidden(true)
     }
 }
