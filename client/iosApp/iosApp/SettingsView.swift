@@ -350,7 +350,7 @@ private struct LedSheet: View {
         VStack(alignment: .leading, spacing: DeskySpacing.s8) {
             Text("LED profile")
                 .font(.system(size: DeskyType.bSize, weight: .semibold))
-            ForEach(0...7, id: \.self) { index in
+            ForEach(0...Int(ModelsKt.MAX_LED_PROFILE), id: \.self) { index in
                 Button {
                     staged = index
                 } label: {

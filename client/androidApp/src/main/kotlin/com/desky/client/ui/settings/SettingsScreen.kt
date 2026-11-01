@@ -57,6 +57,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.desky.client.ui.TAB_BAR_CLEARANCE_DP
+import com.desky.shared.core.MAX_LED_PROFILE
 import com.desky.shared.features.settings.SettingsUiState
 import com.desky.shared.features.settings.SettingsViewModel
 import org.koin.androidx.compose.koinViewModel
@@ -65,7 +66,6 @@ import kotlin.math.roundToInt
 private val FloatInputRegex = Regex("^-?\\d*\\.?\\d*$")
 
 private const val PERCENT_SCALE = 100
-private const val MAX_LED_PROFILE = 7
 private const val SPEED_STEP = 0.1f
 private const val MAX_SSID_LENGTH = 32
 
@@ -159,6 +159,10 @@ fun SettingsContent(
         )
     }
     if (showPidSheet) {
+        val submitPid = {
+            pidError = submitPidValues(pidP, pidI, pidD, callbacks.onPid)
+            showPidSheet = pidError != null
+        }
         PidEditorSheet(
             fields = listOf(
                 PidField("P", pidP) { if (it.isValidFloatInput()) pidP = it },
@@ -166,14 +170,8 @@ fun SettingsContent(
                 PidField("D", pidD) { if (it.isValidFloatInput()) pidD = it },
             ),
             error = pidError,
-            onDone = {
-                pidError = submitPidValues(pidP, pidI, pidD, callbacks.onPid)
-                showPidSheet = pidError != null
-            },
-            onApply = {
-                pidError = submitPidValues(pidP, pidI, pidD, callbacks.onPid)
-                showPidSheet = pidError != null
-            },
+            onDone = submitPid,
+            onApply = submitPid,
             onDismiss = { showPidSheet = false },
         )
     }

@@ -61,5 +61,7 @@ class DeskyTokensTest {
         assertEquals(28, DeskyTokens.Type.hSize)
         assertEquals(17, DeskyTokens.Type.bSize)
         assertEquals(13, DeskyTokens.Type.cSize)
+        assertEquals(16, DeskyTokens.Type.subSize)
+        assertEquals(400, DeskyTokens.Type.subWeight)
     }
 }

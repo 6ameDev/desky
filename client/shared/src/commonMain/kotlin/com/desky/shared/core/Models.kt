@@ -104,6 +104,9 @@ data class PairedDevice(
     val lastRobotCounter: UInt = 0u,
 )
 
+/** Highest valid LED profile id: profiles address 0..[MAX_LED_PROFILE]. */
+const val MAX_LED_PROFILE = 7
+
 /** Plain robot settings holder (persistence lives elsewhere). */
 data class RobotConfig(
     /** Defaults to full speed so `RobotConfig()` is the unset-config default. */
