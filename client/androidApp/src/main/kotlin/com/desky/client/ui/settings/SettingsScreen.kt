@@ -37,6 +37,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -44,6 +45,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
@@ -229,7 +236,13 @@ private fun SettingsBody(
                 ssid = config.wifiSsid,
                 onClick = onSsidClick,
             )
-            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            state.error?.let {
+                Text(
+                    it,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
+                )
+            }
             SectionLabel("Device")
             DeviceSettingsCard(onForgetDevice = callbacks.onForgetDevice)
             Spacer(modifier = Modifier.height(TAB_BAR_CLEARANCE_DP.dp))
@@ -256,6 +269,7 @@ private fun GeneralSettingsCard(
             subtitle = speedSubtitle,
         )
         var dragValue by remember { mutableStateOf<Float?>(null) }
+        val speedPercent = ((dragValue ?: config.speedLimit) * PERCENT_SCALE).toInt()
         Slider(
             value = dragValue ?: config.speedLimit,
             onValueChange = { dragValue = snapSpeed(it) },
@@ -264,6 +278,7 @@ private fun GeneralSettingsCard(
                 dragValue?.let { onSpeedLimit(it) }
                 dragValue = null
             },
+            modifier = Modifier.semantics { stateDescription = "$speedPercent%" },
         )
         SettingsDivider()
         SettingRow(
@@ -399,6 +414,7 @@ private fun SectionLabel(text: String) {
         text = text,
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.semantics { heading() },
     )
 }
 
@@ -447,6 +463,7 @@ private fun SettingRow(title: String, subtitle: String, onClick: () -> Unit) {
             .defaultMinSize(minHeight = 56.dp)
             .clip(RoundedCornerShape(16.dp))
             .clickable(role = Role.Button, onClick = onClick)
+            .semantics(mergeDescendants = true) { contentDescription = "$title, $subtitle" }
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -486,7 +503,7 @@ private fun DangerRow(title: String, onClick: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LedSheet(current: Int, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
-    var staged by remember { mutableStateOf(current) }
+    var staged by remember { mutableIntStateOf(current) }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier.padding(horizontal = 16.dp),

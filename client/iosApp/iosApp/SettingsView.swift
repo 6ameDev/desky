@@ -51,6 +51,7 @@ struct SettingsView: View {
     @State private var speedDraft: Double?
     @State private var pidError: String?
     @State private var ssidError: String?
+    @FocusState private var editorFocused: Bool
 
     init(vm: SettingsViewModel) {
         _state = StateObject(wrappedValue: SettingsViewState(vm: vm))
@@ -92,6 +93,21 @@ struct SettingsView: View {
                             speedDraft = nil
                         }
                     })
+                    .accessibilityValue("\(Int((speedDraft ?? Double(config.speedLimit)) * 100))%")
+                    .accessibilityAdjustableAction { direction in
+                        let current = speedDraft ?? Double(config.speedLimit)
+                        let next: Double
+                        switch direction {
+                        case .increment:
+                            next = snapSpeed(current + speedStep)
+                        case .decrement:
+                            next = snapSpeed(current - speedStep)
+                        @unknown default:
+                            next = current
+                        }
+                        speedDraft = nil
+                        state.onSpeedLimit(Float(next))
+                    }
                     SettingsDivider()
                     SettingRow(
                         title: "LED profile",
@@ -165,18 +181,27 @@ struct SettingsView: View {
                     ))
                         .textFieldStyle(.roundedBorder)
                         .keyboardType(.decimalPad)
+                        .focused($editorFocused)
                     TextField("I", text: Binding(
                         get: { pidI },
                         set: { if isValidFloatInput($0) { pidI = $0 } }
                     ))
                         .textFieldStyle(.roundedBorder)
                         .keyboardType(.decimalPad)
+                        .focused($editorFocused)
                     TextField("D", text: Binding(
                         get: { pidD },
                         set: { if isValidFloatInput($0) { pidD = $0 } }
                     ))
                         .textFieldStyle(.roundedBorder)
                         .keyboardType(.decimalPad)
+                        .focused($editorFocused)
+                }
+                .toolbar {
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button("Done") { editorFocused = false }
+                    }
                 }
                 if let pidError {
                     Text(pidError).foregroundColor(.deskyDanger)
@@ -201,6 +226,13 @@ struct SettingsView: View {
                     .textFieldStyle(.roundedBorder)
                     .autocorrectionDisabled(true)
                     .textInputAutocapitalization(.never)
+                    .focused($editorFocused)
+                    .toolbar {
+                        ToolbarItemGroup(placement: .keyboard) {
+                            Spacer()
+                            Button("Done") { editorFocused = false }
+                        }
+                    }
                 if let ssidError {
                     Text(ssidError).foregroundColor(.deskyDanger)
                 }
@@ -236,6 +268,7 @@ private struct SectionLabel: View {
         Text(text)
             .font(.system(size: DeskyType.cSize, weight: .medium))
             .foregroundColor(.deskySecondary)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 

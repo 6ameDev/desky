@@ -203,27 +203,37 @@ private fun EstopButton(
         disabledContainerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.4f),
         disabledContentColor = MaterialTheme.colorScheme.onError.copy(alpha = 0.7f),
     )
-    if (state.eStopped) {
-        Button(
-            onClick = onRelease,
-            colors = danger,
-            shape = CircleShape,
-            contentPadding = PaddingValues(0.dp),
-            modifier = Modifier
-                .size(76.dp)
-                .semantics { contentDescription = "Emergency stop engaged, tap to release" },
-        ) { EstopLetter() }
-    } else {
-        Button(
-            onClick = onEmergencyStop,
-            enabled = state.aliveness == Aliveness.Connected,
-            colors = danger,
-            shape = CircleShape,
-            contentPadding = PaddingValues(0.dp),
-            modifier = Modifier
-                .size(76.dp)
-                .semantics { contentDescription = "Emergency stop" },
-        ) { EstopLetter() }
+    val showOfflineHint = state.eStopped && state.aliveness != Aliveness.Connected
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        if (state.eStopped) {
+            Button(
+                onClick = onRelease,
+                colors = danger,
+                shape = CircleShape,
+                contentPadding = PaddingValues(0.dp),
+                modifier = Modifier
+                    .size(76.dp)
+                    .semantics { contentDescription = "Emergency stop engaged, tap to release" },
+            ) { EstopLetter() }
+        } else {
+            Button(
+                onClick = onEmergencyStop,
+                enabled = state.aliveness == Aliveness.Connected,
+                colors = danger,
+                shape = CircleShape,
+                contentPadding = PaddingValues(0.dp),
+                modifier = Modifier
+                    .size(76.dp)
+                    .semantics { contentDescription = "Emergency stop" },
+            ) { EstopLetter() }
+        }
+        if (showOfflineHint) {
+            Text(
+                text = "Reconnect to release",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

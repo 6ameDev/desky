@@ -138,16 +138,23 @@ private struct EstopButton: View {
     let onRelease: () -> Void
 
     var body: some View {
-        Button(action: { snapshot.eStopped ? onRelease() : onEmergencyStop() }) {
-            Text("E")
-                .font(.system(size: 28, weight: .bold))
-                .foregroundColor(.deskyCard)
-                .frame(width: 76, height: 76)
-                .background(Color.deskyDanger)
-                .clipShape(Circle())
+        VStack(spacing: 4) {
+            Button(action: { snapshot.eStopped ? onRelease() : onEmergencyStop() }) {
+                Text("E")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundColor(.deskyCard)
+                    .frame(width: 76, height: 76)
+                    .background(Color.deskyDanger)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!snapshot.eStopped && snapshot.aliveness != Aliveness.connected)
+            .accessibilityLabel(snapshot.eStopped ? "Emergency stop engaged, tap to release" : "Emergency stop")
+            if snapshot.eStopped && snapshot.aliveness != Aliveness.connected {
+                Text("Reconnect to release")
+                    .font(.system(size: DeskyType.subSize))
+                    .foregroundColor(.deskySecondary)
+            }
         }
-        .buttonStyle(.plain)
-        .disabled(!snapshot.eStopped && snapshot.aliveness != Aliveness.connected)
-        .accessibilityLabel(snapshot.eStopped ? "Emergency stop engaged, tap to release" : "Emergency stop")
     }
 }
