@@ -109,22 +109,27 @@ private struct BotHead: View {
     let eyesOpen: Bool
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 36)
-                .fill(Color(red: 0xC8/255.0, green: 0xCA/255.0, blue: 0xD2/255.0))
-                .frame(width: 180, height: 158)
-            RoundedRectangle(cornerRadius: 29)
-                .fill(Color(red: 0x1E/255.0, green: 0x1B/255.0, blue: 0x16/255.0))
-                .frame(width: 144, height: 126)
-            HStack(spacing: 13) {
-                RoundedRectangle(cornerRadius: 11)
-                    .fill(Color(red: 0x46/255.0, green: 0xD8/255.0, blue: 0xFF/255.0))
-                    .frame(width: 36, height: eyesOpen ? 38 : 8)
-                RoundedRectangle(cornerRadius: 11)
-                    .fill(Color(red: 0x46/255.0, green: 0xD8/255.0, blue: 0xFF/255.0))
-                    .frame(width: 36, height: eyesOpen ? 38 : 8)
+        GeometryReader { geo in
+            let w = geo.size.width
+            ZStack {
+                RoundedRectangle(cornerRadius: w * 0.20)
+                    .fill(Color(red: 0xC8/255.0, green: 0xCA/255.0, blue: 0xD2/255.0))
+                    .frame(width: w, height: w * 158 / 180)
+                RoundedRectangle(cornerRadius: w * 0.16)
+                    .fill(Color(red: 0x1E/255.0, green: 0x1B/255.0, blue: 0x16/255.0))
+                    .frame(width: w * 0.80, height: w * 126 / 180)
+                HStack(spacing: w * 13 / 180) {
+                    RoundedRectangle(cornerRadius: w * 11 / 180)
+                        .fill(Color(red: 0x46/255.0, green: 0xD8/255.0, blue: 0xFF/255.0))
+                        .frame(width: w * 0.20, height: eyesOpen ? w * 38 / 180 : 8)
+                    RoundedRectangle(cornerRadius: w * 11 / 180)
+                        .fill(Color(red: 0x46/255.0, green: 0xD8/255.0, blue: 0xFF/255.0))
+                        .frame(width: w * 0.20, height: eyesOpen ? w * 38 / 180 : 8)
+                }
             }
+            .frame(width: w, height: w * 158 / 180)
         }
+        .aspectRatio(180 / 158, contentMode: .fit)
         .accessibilityHidden(true)
     }
 }

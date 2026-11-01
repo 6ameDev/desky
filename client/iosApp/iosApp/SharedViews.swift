@@ -1,42 +1,6 @@
 import SwiftUI
 import shared
 
-/// Expression picker: tap selects, Apply sends one trigger while MANUAL
-/// is reported (same gating language as the sticks).
-struct ExpressionPicker: View {
-    let expressions: [ExpressionEntry]
-    let enabled: Bool
-    var onTrigger: (Int32) -> Void
-    @State private var selectedId: Int32?
-
-    var body: some View {
-        VStack(spacing: 4) {
-            Text("Expressions")
-            if !expressions.isEmpty {
-                let selected = selectedId ?? expressions[0].id
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(expressions, id: \.id) { entry in
-                            if entry.id == selected {
-                                Button(entry.name) { selectedId = entry.id }
-                                    .buttonStyle(.borderedProminent)
-                                    .disabled(!enabled)
-                            } else {
-                                Button(entry.name) { selectedId = entry.id }
-                                    .buttonStyle(.bordered)
-                                    .disabled(!enabled)
-                            }
-                        }
-                    }
-                }
-                Button("Apply") { onTrigger(selected) }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!enabled)
-            }
-        }
-    }
-}
-
 /// Drag joystick: normalized stick deflection in -1…1, recentered on release.
 /// Up-drag is positive throttle (matches Android's `-y / radius`).
 /// Disabled gate: gestures move nothing and send nothing.

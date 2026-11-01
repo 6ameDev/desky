@@ -1,16 +1,22 @@
 package com.desky.client.ui.expressions
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -19,11 +25,11 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -34,8 +40,6 @@ import com.desky.shared.features.control.Aliveness
 import com.desky.shared.features.control.ExpressionsUiState
 import com.desky.shared.features.control.ExpressionsViewModel
 import org.koin.androidx.compose.koinViewModel
-
-private const val VIRTUAL_COUNT_MULTIPLIER = 1000
 
 @Composable
 fun ExpressionsScreen(
@@ -104,32 +108,57 @@ fun ExpressionsContent(
             val entries = state.expressions
             val canTrigger = state.aliveness == Aliveness.Connected && state.telemetry?.manual == true
             if (entries.isEmpty()) return@Column
-            var selectedIndex by remember { mutableIntStateOf(0) }
-            val selected = selectedIndex.coerceIn(entries.indices)
-            val virtualCount = entries.size * VIRTUAL_COUNT_MULTIPLIER
-            val startIndex = virtualCount / 2 - (virtualCount / 2 % entries.size)
-            val listState = rememberLazyListState(initialFirstVisibleItemIndex = startIndex)
-            LazyRow(
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                state = listState,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f),
             ) {
-                items(virtualCount) { virtualIndex ->
-                    val index = virtualIndex % entries.size
-                    val entry = entries[index]
-                    FilterChip(
-                        selected = index == selected,
-                        onClick = { selectedIndex = index },
+                items(entries, key = { it.id }) { entry ->
+                    ExpressionTile(
+                        name = entry.name,
                         enabled = canTrigger,
-                        label = { Text(entry.name) },
+                        onClick = { onTriggerExpression(entry.id) },
                     )
                 }
             }
-            Button(
-                onClick = { onTriggerExpression(entries[selected].id) },
-                enabled = canTrigger,
-            ) { Text("Apply") }
             state.lastTriggeredId?.let { lastId -> Text("Last: ${entries.firstOrNull { it.id == lastId }?.name}") }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
+    }
+}
+
+@Composable
+private fun ExpressionTile(
+    name: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            disabledContainerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.6f),
+            disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+        ),
+        modifier = Modifier
+            .defaultMinSize(minHeight = 88.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                name,
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center,
+                maxLines = 3,
+            )
         }
     }
 }

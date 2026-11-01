@@ -40,19 +40,37 @@ struct ExpressionsView: View {
     var body: some View {
         let snapshot = state.snapshot
         let canTrigger = snapshot.aliveness == Aliveness.connected && snapshot.telemetry?.manual == true
-        return VStack(spacing: 12) {
-            Text("Expressions").font(.title2).bold()
-            Text("Link: \(snapshot.aliveness.name)")
-            ExpressionPicker(
-                expressions: snapshot.expressions,
-                enabled: canTrigger
-            ) { state.onTriggerExpression(id: $0) }
-            if let error = snapshot.error {
-                Text(error).foregroundColor(.red)
+        let columns = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
+        return ScrollView {
+            VStack(spacing: 12) {
+                Text("Expressions").font(.title2).bold()
+                Text("Link: \(snapshot.aliveness.name)")
+                LazyVGrid(columns: columns, spacing: 8) {
+                    ForEach(snapshot.expressions, id: \.id) { entry in
+                        Button {
+                            state.onTriggerExpression(id: entry.id)
+                        } label: {
+                            Text(entry.name)
+                                .font(.system(size: DeskyType.bSize))
+                                .multilineTextAlignment(.center)
+                                .lineLimit(3)
+                                .padding(8)
+                                .frame(maxWidth: .infinity, minHeight: 88)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.deskyText)
+                        .background(Color.deskyCard)
+                        .cornerRadius(16)
+                        .disabled(!canTrigger)
+                        .accessibilityLabel(entry.name)
+                    }
+                }
+                if let error = snapshot.error {
+                    Text(error).foregroundColor(.deskyDanger)
+                }
             }
-            Spacer()
+            .padding()
         }
-        .padding()
         .navigationBarBackButtonHidden(true)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {

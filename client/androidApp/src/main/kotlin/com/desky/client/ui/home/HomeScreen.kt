@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -124,7 +125,10 @@ private fun BotHead(eyesOpen: Boolean) {
     val shell = Color(0xFFC8CAD2)
     val glow = Color(0xFF46D8FF)
     val screen = Color(0xFF1E1B16)
-    Canvas(modifier = Modifier.size(width = 180.dp, height = 158.dp)) {
+    Canvas(modifier = Modifier
+        .fillMaxWidth()
+        .aspectRatio(180f / 158f)
+    ) {
         val shellW = size.width
         val shellH = size.height
         drawRoundRect(
