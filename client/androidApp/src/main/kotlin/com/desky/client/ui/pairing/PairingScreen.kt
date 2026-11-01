@@ -8,6 +8,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -74,6 +75,37 @@ enum class PairingMode {
     Code,
 }
 
+private val InkColor = Color(0xFF1E1B16)
+private val ErrorColor = Color(0xFFD93025)
+private val ShuttleGlow = Color(0xFF46D8FF)
+
+private const val PinLength = 6
+
+private const val ShuttleBodyCorner = 6f
+private const val ShuttleSmallCorner = 4f
+private const val ShuttleHeadCorner = 5f
+private const val ShuttleShadowLeft = 0.02f
+private const val ShuttleShadowTop = 0.78f
+private const val ShuttleShadowWidth = 0.96f
+private const val ShuttleShadowHeight = 0.20f
+private const val ShuttleBodyLeft = 0.05f
+private const val ShuttleBodyTop = 0.32f
+private const val ShuttleBodyWidth = 0.90f
+private const val ShuttleBodyHeight = 0.54f
+private const val ShuttleHeadLeft = 0.68f
+private const val ShuttleHeadWidth = 0.20f
+private const val ShuttleHeadHeight = 0.44f
+private const val ShuttleEyeWidthFraction = 0.22f
+private const val ShuttleEyeHeightFraction = 0.55f
+private const val ShuttleEyeLeftFraction = 0.62f
+
+data class PairingActions(
+    val onPinChange: (String) -> Unit,
+    val onPair: () -> Unit,
+    val onUnpair: () -> Unit,
+    val onOpenScan: () -> Unit,
+)
+
 @Composable
 fun PairingScreen(
     onPaired: () -> Unit,
@@ -86,20 +118,19 @@ fun PairingScreen(
     }
     PairingContent(
         state = state,
-        onPinChange = vm::onPinChange,
-        onPair = vm::onPair,
-        onUnpair = vm::onUnpair,
-        onOpenScan = onOpenScan,
+        actions = PairingActions(
+            onPinChange = vm::onPinChange,
+            onPair = vm::onPair,
+            onUnpair = vm::onUnpair,
+            onOpenScan = onOpenScan,
+        ),
     )
 }
 
 @Composable
 fun PairingContent(
     state: PairingUiState,
-    onPinChange: (String) -> Unit,
-    onPair: () -> Unit,
-    onUnpair: () -> Unit,
-    onOpenScan: () -> Unit,
+    actions: PairingActions,
     initialMode: PairingMode = PairingMode.Method,
 ) {
     var mode by remember { mutableStateOf(initialMode) }
@@ -119,90 +150,140 @@ fun PairingContent(
             }
             Spacer(modifier = Modifier.weight(1f))
             state.pairedDevice?.let { device ->
-                Text("Paired: ${device.alias}", color = onAccent)
-                Button(
-                    onClick = onUnpair,
-                    shape = RoundedCornerShape(18.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White,
-                        contentColor = Color(0xFF1E1B16),
-                    ),
-                ) { Text("Unpair") }
+                PairedDeviceBlock(
+                    alias = device.alias,
+                    accent = onAccent,
+                    onUnpair = actions.onUnpair,
+                )
             } ?: when (mode) {
-                PairingMode.Method -> {
-                    BotShuttle()
-                    Spacer(modifier = Modifier.weight(1f))
-                    QrTileCard(onClick = onOpenScan)
-                    TextButton(onClick = { mode = PairingMode.Code }) {
-                        Text("enter code instead", color = onAccent)
-                    }
-                }
-                PairingMode.Code -> {
-                    Text(
-                        "Enter code",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = onAccent,
-                        textAlign = TextAlign.Center,
-                    )
-                    CodeEntryField(
-                        pin = state.pin,
-                        onPinChange = onPinChange,
-                    )
-                    Button(
-                        onClick = onPair,
-                        enabled = !state.isPairing && state.pairedDevice == null,
-                        shape = RoundedCornerShape(28.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.White,
-                            contentColor = MaterialTheme.colorScheme.primary,
-                            disabledContainerColor = Color.White.copy(alpha = 0.6f),
-                            disabledContentColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                        ),
-                        modifier = Modifier
-                            .width(136.dp)
-                            .height(49.dp),
-                    ) {
-                        Text(
-                            text = if (state.isPairing) {
-                                if (state.pairingAttempt <= 1) {
-                                    "Pairing…"
-                                } else {
-                                    "Pairing… (attempt ${state.pairingAttempt})"
-                                }
-                            } else {
-                                "Connect"
-                            },
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                    TextButton(onClick = { mode = PairingMode.Method }) {
-                        Text("scan instead", color = onAccent)
-                    }
-                }
+                PairingMode.Method -> MethodModeContent(
+                    accent = onAccent,
+                    onOpenScan = actions.onOpenScan,
+                    onShowCode = { mode = PairingMode.Code },
+                )
+                PairingMode.Code -> CodeModeContent(
+                    state = state,
+                    accent = onAccent,
+                    onPinChange = actions.onPinChange,
+                    onPair = actions.onPair,
+                    onShowMethod = { mode = PairingMode.Method },
+                )
             }
-            state.error?.let {
-                Card(
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color.White,
-                    ),
-                ) {
-                    Text(
-                        it,
-                        color = Color(0xFFD93025),
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                    )
-                }
-            }
+            state.error?.let { PairingErrorCard(message = it) }
             Spacer(modifier = Modifier.weight(if (mode == PairingMode.Method) 2f else 1f))
         }
     }
 }
 
 @Composable
+private fun PairedDeviceBlock(
+    alias: String,
+    accent: Color,
+    onUnpair: () -> Unit,
+) {
+    Text("Paired: $alias", color = accent)
+    Button(
+        onClick = onUnpair,
+        shape = RoundedCornerShape(18.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color.White,
+            contentColor = InkColor,
+        ),
+    ) { Text("Unpair") }
+}
+
+@Composable
+private fun ColumnScope.MethodModeContent(
+    accent: Color,
+    onOpenScan: () -> Unit,
+    onShowCode: () -> Unit,
+) {
+    BotShuttle()
+    Spacer(modifier = Modifier.weight(1f))
+    QrTileCard(onClick = onOpenScan)
+    TextButton(onClick = onShowCode) {
+        Text("enter code instead", color = accent)
+    }
+}
+
+@Composable
+private fun CodeModeContent(
+    state: PairingUiState,
+    accent: Color,
+    onPinChange: (String) -> Unit,
+    onPair: () -> Unit,
+    onShowMethod: () -> Unit,
+) {
+    Text(
+        "Enter code",
+        style = MaterialTheme.typography.headlineSmall,
+        color = accent,
+        textAlign = TextAlign.Center,
+    )
+    CodeEntryField(
+        pin = state.pin,
+        onPinChange = onPinChange,
+    )
+    ConnectButton(state = state, onPair = onPair)
+    TextButton(onClick = onShowMethod) {
+        Text("scan instead", color = accent)
+    }
+}
+
+@Composable
+private fun ConnectButton(
+    state: PairingUiState,
+    onPair: () -> Unit,
+) {
+    Button(
+        onClick = onPair,
+        enabled = !state.isPairing && state.pairedDevice == null,
+        shape = RoundedCornerShape(28.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color.White,
+            contentColor = MaterialTheme.colorScheme.primary,
+            disabledContainerColor = Color.White.copy(alpha = 0.6f),
+            disabledContentColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+        ),
+        modifier = Modifier
+            .width(136.dp)
+            .height(49.dp),
+    ) {
+        Text(
+            text = if (state.isPairing) {
+                if (state.pairingAttempt <= 1) {
+                    "Pairing…"
+                } else {
+                    "Pairing… (attempt ${state.pairingAttempt})"
+                }
+            } else {
+                "Connect"
+            },
+            fontSize = 17.sp,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+@Composable
+private fun PairingErrorCard(message: String) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color.White,
+        ),
+    ) {
+        Text(
+            message,
+            color = ErrorColor,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        )
+    }
+}
+
+@Composable
 private fun QrTileCard(onClick: () -> Unit) {
-    val ink = Color(0xFF1E1B16)
+    val ink = InkColor
     Card(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
@@ -258,7 +339,7 @@ private fun CodeEntryField(
 ) {
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
-    val digits = pin.filter(Char::isDigit).take(6)
+    val digits = pin.filter(Char::isDigit).take(PinLength)
     var fieldValue by remember {
         mutableStateOf(TextFieldValue(digits, TextRange(digits.length)))
     }
@@ -272,7 +353,7 @@ private fun CodeEntryField(
     BasicTextField(
         value = fieldValue,
         onValueChange = { next ->
-            val d = next.text.filter(Char::isDigit).take(6)
+            val d = next.text.filter(Char::isDigit).take(PinLength)
             fieldValue = TextFieldValue(d, TextRange(next.selection.start.coerceIn(0, d.length)))
             if (d != digits) onPinChange(d)
         },
@@ -281,50 +362,78 @@ private fun CodeEntryField(
         cursorBrush = SolidColor(Color.Transparent),
         textStyle = TextStyle(color = Color.Transparent, fontSize = 1.sp),
         decorationBox = {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                repeat(6) { index ->
-                    val digit = digits.getOrNull(index)?.toString() ?: ""
-                    val showCursor = fieldValue.selection.collapsed &&
-                        fieldValue.selection.start == index &&
-                        index == digits.length
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(width = 48.dp, height = 56.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color.White)
-                            .clickable(
-                                indication = null,
-                                interactionSource = remember { MutableInteractionSource() },
-                            ) {
-                                fieldValue = TextFieldValue(
-                                    digits,
-                                    TextRange(index.coerceIn(0, digits.length)),
-                                )
-                                focusRequester.requestFocus()
-                                keyboard?.show()
-                            },
-                    ) {
-                        if (digit.isNotEmpty()) {
-                            Text(
-                                digit,
-                                fontSize = 24.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF1E1B16),
-                            )
-                        } else if (showCursor) {
-                            CursorBar()
-                        }
-                    }
-                }
-            }
+            DigitCellsRow(
+                digits = digits,
+                selection = fieldValue.selection,
+                onSelect = { index ->
+                    fieldValue = TextFieldValue(
+                        digits,
+                        TextRange(index.coerceIn(0, digits.length)),
+                    )
+                    focusRequester.requestFocus()
+                    keyboard?.show()
+                },
+            )
         },
         modifier = Modifier
             .size(width = 328.dp, height = 56.dp)
             .focusRequester(focusRequester),
     )
+}
+
+@Composable
+private fun DigitCellsRow(
+    digits: String,
+    selection: TextRange,
+    onSelect: (Int) -> Unit,
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        repeat(PinLength) { index ->
+            val digit = digits.getOrNull(index)?.toString() ?: ""
+            val showCursor = selection.collapsed &&
+                selection.start == index &&
+                index == digits.length
+            DigitCell(
+                digit = digit,
+                showCursor = showCursor,
+                onSelect = { onSelect(index) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun DigitCell(
+    digit: String,
+    showCursor: Boolean,
+    onSelect: () -> Unit,
+) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(width = 48.dp, height = 56.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White)
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() },
+            ) {
+                onSelect()
+            },
+    ) {
+        if (digit.isNotEmpty()) {
+            Text(
+                digit,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = InkColor,
+            )
+        } else if (showCursor) {
+            CursorBar()
+        }
+    }
 }
 
 @Composable
@@ -342,7 +451,7 @@ private fun CursorBar() {
         modifier = Modifier
             .width(2.dp)
             .height(28.dp)
-            .background(Color(0xFF1E1B16).copy(alpha = alpha)),
+            .background(InkColor.copy(alpha = alpha)),
     )
 }
 
@@ -365,9 +474,6 @@ private fun StepDot(active: Boolean) {
 
 @Composable
 private fun BotShuttle() {
-    val body = Color.White
-    val dark = Color(0xFF1E1B16)
-    val glow = Color(0xFF46D8FF)
     BoxWithConstraints(
         modifier = Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center,
@@ -391,50 +497,70 @@ private fun BotShuttle() {
         } else {
             amplitudePx - 2f * amplitudePx * (phase - 1f)
         }
-        Canvas(
-            modifier = Modifier
-                .size(width = 60.dp, height = 40.dp)
-                .graphicsLayer {
-                    translationX = offsetX
-                    scaleX = facing
-                },
-            onDraw = {
-            val corner = androidx.compose.ui.geometry.CornerRadius(6f, 6f)
+        ShuttleArt(offsetX = offsetX, facing = facing)
+    }
+}
+
+@Composable
+private fun ShuttleArt(
+    offsetX: Float,
+    facing: Float,
+) {
+    Canvas(
+        modifier = Modifier
+            .size(width = 60.dp, height = 40.dp)
+            .graphicsLayer {
+                translationX = offsetX
+                scaleX = facing
+            },
+        onDraw = {
+            val corner = androidx.compose.ui.geometry.CornerRadius(ShuttleBodyCorner, ShuttleBodyCorner)
             drawRoundRect(
-                dark,
-                topLeft = androidx.compose.ui.geometry.Offset(size.width * 0.02f, size.height * 0.78f),
-                size = androidx.compose.ui.geometry.Size(size.width * 0.96f, size.height * 0.20f),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(4f, 4f),
+                InkColor,
+                topLeft = androidx.compose.ui.geometry.Offset(
+                    size.width * ShuttleShadowLeft,
+                    size.height * ShuttleShadowTop,
+                ),
+                size = androidx.compose.ui.geometry.Size(
+                    size.width * ShuttleShadowWidth,
+                    size.height * ShuttleShadowHeight,
+                ),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(ShuttleSmallCorner, ShuttleSmallCorner),
             )
             drawRoundRect(
-                body,
-                topLeft = androidx.compose.ui.geometry.Offset(size.width * 0.05f, size.height * 0.32f),
-                size = androidx.compose.ui.geometry.Size(size.width * 0.90f, size.height * 0.54f),
+                Color.White,
+                topLeft = androidx.compose.ui.geometry.Offset(
+                    size.width * ShuttleBodyLeft,
+                    size.height * ShuttleBodyTop,
+                ),
+                size = androidx.compose.ui.geometry.Size(
+                    size.width * ShuttleBodyWidth,
+                    size.height * ShuttleBodyHeight,
+                ),
                 cornerRadius = corner,
             )
-            val headW = size.width * 0.20f
-            val headH = size.height * 0.44f
-            val headLeft = size.width * 0.68f
+            val headW = size.width * ShuttleHeadWidth
+            val headH = size.height * ShuttleHeadHeight
+            val headLeft = size.width * ShuttleHeadLeft
             drawRoundRect(
-                dark,
+                InkColor,
                 topLeft = androidx.compose.ui.geometry.Offset(headLeft, 0f),
                 size = androidx.compose.ui.geometry.Size(headW, headH),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(ShuttleHeadCorner, ShuttleHeadCorner),
             )
-            val eyeW = headW * 0.22f
-            val eyeH = headH * 0.55f
+            val eyeW = headW * ShuttleEyeWidthFraction
+            val eyeH = headH * ShuttleEyeHeightFraction
             drawRoundRect(
-                glow,
+                ShuttleGlow,
                 topLeft = androidx.compose.ui.geometry.Offset(
-                    headLeft + headW * 0.62f,
+                    headLeft + headW * ShuttleEyeLeftFraction,
                     (headH - eyeH) / 2f,
                 ),
                 size = androidx.compose.ui.geometry.Size(eyeW, eyeH),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(4f, 4f),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(ShuttleSmallCorner, ShuttleSmallCorner),
             )
         },
     )
-    }
 }
 
 @Preview(name = "Light")
@@ -450,10 +576,12 @@ private fun PairingContentPreviewLight() {
                     authToken = "psk-v1",
                 ),
             ),
-            onPinChange = {},
-            onPair = {},
-            onUnpair = {},
-            onOpenScan = {},
+            actions = PairingActions(
+                onPinChange = {},
+                onPair = {},
+                onUnpair = {},
+                onOpenScan = {},
+            ),
         )
     }
 }
@@ -464,10 +592,12 @@ private fun PairingContentPreviewDark() {
     DeskyTheme(darkTheme = true) {
         PairingContent(
             state = PairingUiState(pin = "123", isPairing = true, pairingAttempt = 2),
-            onPinChange = {},
-            onPair = {},
-            onUnpair = {},
-            onOpenScan = {},
+            actions = PairingActions(
+                onPinChange = {},
+                onPair = {},
+                onUnpair = {},
+                onOpenScan = {},
+            ),
             initialMode = PairingMode.Code,
         )
     }
@@ -480,10 +610,12 @@ private fun PairingContentPreviewMethod() {
         Box {
             PairingContent(
                 state = PairingUiState(),
-                onPinChange = {},
-                onPair = {},
-                onUnpair = {},
-                onOpenScan = {},
+                actions = PairingActions(
+                    onPinChange = {},
+                    onPair = {},
+                    onUnpair = {},
+                    onOpenScan = {},
+                ),
                 initialMode = PairingMode.Method,
             )
         }
