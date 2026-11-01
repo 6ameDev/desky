@@ -130,7 +130,7 @@ jobs:
       # No separate concurrency step: Swift 6 implies complete checking.
       - name: Upload static-analysis logs (report-only)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ios-lint-reports
           path: |
