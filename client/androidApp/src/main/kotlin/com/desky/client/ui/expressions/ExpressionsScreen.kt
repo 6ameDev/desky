@@ -41,6 +41,8 @@ import com.desky.shared.features.control.ExpressionsUiState
 import com.desky.shared.features.control.ExpressionsViewModel
 import org.koin.androidx.compose.koinViewModel
 
+private const val ExpressionGridColumns = 3
+
 @Composable
 fun ExpressionsScreen(
     onExit: () -> Unit,
@@ -109,7 +111,7 @@ fun ExpressionsContent(
             val canTrigger = state.aliveness == Aliveness.Connected && state.telemetry?.manual == true
             if (entries.isEmpty()) return@Column
             LazyVerticalGrid(
-                columns = GridCells.Fixed(3),
+                columns = GridCells.Fixed(ExpressionGridColumns),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.weight(1f),

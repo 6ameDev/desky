@@ -48,6 +48,24 @@ import com.desky.shared.features.home.HomeUiState
 import com.desky.shared.features.home.HomeViewModel
 import org.koin.androidx.compose.koinViewModel
 
+private val HomeInk = Color(0xFF1E1B16)
+private val BotShellColor = Color(0xFFC8CAD2)
+private val BotGlowColor = Color(0xFF46D8FF)
+private val BotSubtitleColor = Color(0xFF6F6A5E)
+private const val BotAspectWidth = 180f
+private const val BotAspectHeight = 158f
+private const val BotShellCornerFraction = 0.20f
+private const val BotFacePadFraction = 0.10f
+private const val BotFaceCornerFraction = 0.16f
+private const val BotEyeWidthFraction = 0.20f
+private const val BotEyeOpenHeightFraction = 0.24f
+private const val BotEyeClosedHeightFraction = 0.05f
+private const val BotEyeCornerFraction = 0.30f
+private const val BotEyeLeftXFraction = 0.275f
+private const val BotEyeRightXFraction = 0.525f
+private const val TileDisabledAlpha = 0.6f
+private const val PreviewBatteryMv = 850
+
 @Composable
 fun HomeScreen(
     onDrive: () -> Unit,
@@ -68,7 +86,7 @@ fun HomeContent(
     onDrive: () -> Unit,
     onExpressions: () -> Unit,
 ) {
-    val ink = Color(0xFF1E1B16)
+    val ink = HomeInk
     val screen = if (isSystemInDarkTheme()) {
         MaterialTheme.colorScheme.surfaceContainer
     } else {
@@ -122,13 +140,13 @@ fun HomeContent(
 
 @Composable
 private fun BotHead(eyesOpen: Boolean) {
-    val shell = Color(0xFFC8CAD2)
-    val glow = Color(0xFF46D8FF)
-    val screen = Color(0xFF1E1B16)
+    val shell = BotShellColor
+    val glow = BotGlowColor
+    val screen = HomeInk
     Canvas(modifier = Modifier
         .fillMaxWidth()
         .padding(horizontal = 24.dp)
-        .aspectRatio(180f / 158f)
+        .aspectRatio(BotAspectWidth / BotAspectHeight)
     ) {
         val shellW = size.width
         val shellH = size.height
@@ -136,34 +154,34 @@ private fun BotHead(eyesOpen: Boolean) {
             shell,
             size = androidx.compose.ui.geometry.Size(shellW, shellH),
             cornerRadius = androidx.compose.ui.geometry.CornerRadius(
-                shellW * 0.20f,
-                shellW * 0.20f,
+                shellW * BotShellCornerFraction,
+                shellW * BotShellCornerFraction,
             ),
         )
-        val padX = shellW * 0.10f
-        val padY = shellH * 0.10f
+        val padX = shellW * BotFacePadFraction
+        val padY = shellH * BotFacePadFraction
         drawRoundRect(
             screen,
             topLeft = androidx.compose.ui.geometry.Offset(padX, padY),
             size = androidx.compose.ui.geometry.Size(shellW - 2 * padX, shellH - 2 * padY),
             cornerRadius = androidx.compose.ui.geometry.CornerRadius(
-                shellW * 0.16f,
-                shellW * 0.16f,
+                shellW * BotFaceCornerFraction,
+                shellW * BotFaceCornerFraction,
             ),
         )
-        val eyeW = shellW * 0.20f
-        val eyeH = if (eyesOpen) shellH * 0.24f else shellH * 0.05f
+        val eyeW = shellW * BotEyeWidthFraction
+        val eyeH = if (eyesOpen) shellH * BotEyeOpenHeightFraction else shellH * BotEyeClosedHeightFraction
         val eyeY = (shellH - eyeH) / 2f
-        val eyeRadius = eyeW * 0.30f
+        val eyeRadius = eyeW * BotEyeCornerFraction
         drawRoundRect(
             glow,
-            topLeft = androidx.compose.ui.geometry.Offset(shellW * 0.275f, eyeY),
+            topLeft = androidx.compose.ui.geometry.Offset(shellW * BotEyeLeftXFraction, eyeY),
             size = androidx.compose.ui.geometry.Size(eyeW, eyeH),
             cornerRadius = androidx.compose.ui.geometry.CornerRadius(eyeRadius, eyeRadius),
         )
         drawRoundRect(
             glow,
-            topLeft = androidx.compose.ui.geometry.Offset(shellW * 0.525f, eyeY),
+            topLeft = androidx.compose.ui.geometry.Offset(shellW * BotEyeRightXFraction, eyeY),
             size = androidx.compose.ui.geometry.Size(eyeW, eyeH),
             cornerRadius = androidx.compose.ui.geometry.CornerRadius(eyeRadius, eyeRadius),
         )
@@ -218,9 +236,9 @@ private fun ActionTile(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = Color.White,
-            contentColor = Color(0xFF1E1B16),
-            disabledContainerColor = Color.White.copy(alpha = 0.6f),
-            disabledContentColor = Color(0xFF1E1B16).copy(alpha = 0.6f),
+            contentColor = HomeInk,
+            disabledContainerColor = Color.White.copy(alpha = TileDisabledAlpha),
+            disabledContentColor = HomeInk.copy(alpha = TileDisabledAlpha),
         ),
         modifier = Modifier
             .size(width = 106.dp, height = 104.dp)
@@ -246,7 +264,7 @@ private fun ActionTile(
                     subtitle,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Normal,
-                    color = Color(0xFF6F6A5E),
+                    color = BotSubtitleColor,
                     textAlign = TextAlign.Center,
                     maxLines = 2,
                 )
@@ -262,7 +280,7 @@ private fun HomeContentPreviewLight() {
         HomeContent(
             state = HomeUiState(
                 aliveness = Aliveness.Connected,
-                telemetry = Telemetry(1f, 2f, 850, cliff = false, driving = true, mode = RobotMode.MANUAL, manual = true),
+                telemetry = Telemetry(1f, 2f, PreviewBatteryMv, cliff = false, driving = true, mode = RobotMode.MANUAL, manual = true),
             ),
             onDrive = {},
             onExpressions = {},

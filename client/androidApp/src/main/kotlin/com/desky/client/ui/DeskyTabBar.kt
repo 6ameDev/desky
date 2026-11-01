@@ -45,6 +45,9 @@ private val items = listOf(
 /** Clearance tab screens reserve at the bottom so the floating bar never covers content. */
 internal const val TAB_BAR_CLEARANCE_DP = 96
 
+private const val TabPillScaleSelected = 1f
+private const val TabPillScaleUnselected = 0.96f
+
 /**
  * Floating tab bar for the two functional tabs. Shrink-wrapped around its
  * items: the accent pill covers the whole active tab (icon plus label),
@@ -101,7 +104,7 @@ private fun TabPill(
         label = "tabPillContent",
     )
     val scale by animateFloatAsState(
-        if (selected) 1f else 0.96f,
+        if (selected) TabPillScaleSelected else TabPillScaleUnselected,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessMedium,

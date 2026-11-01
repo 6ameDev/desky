@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -48,6 +49,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -59,6 +61,15 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import java.util.concurrent.atomic.AtomicBoolean
+
+private const val BoltTopX = 0.55f
+private const val BoltLeftX = 0.25f
+private const val BoltMidY = 0.55f
+private const val BoltInnerUpperX = 0.47f
+private const val BoltBottomX = 0.4f
+private const val BoltRightX = 0.75f
+private const val BoltRightY = 0.42f
+private const val BoltInnerLowerX = 0.52f
 
 /**
  * QR pairing shortcut: CameraX preview + bundled ML Kit barcode analyzer
@@ -151,7 +162,6 @@ private fun CameraPreview(
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
     val latestOnResult by rememberUpdatedState(onQrResult)
     // Single-shot stop: first VALID decode claims the result; in-flight
     // frames after the claim are dropped (debounce while finishing).
@@ -172,74 +182,136 @@ private fun CameraPreview(
             factory = { ctx -> PreviewView(ctx).also { previewView = it } },
             modifier = Modifier.fillMaxSize(),
         )
-        Column(modifier = Modifier.fillMaxSize()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .background(scrim),
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .windowInsetsPadding(WindowInsets.statusBars)
-                        .padding(horizontal = 8.dp, vertical = 12.dp),
-                ) {
-                    CloseButton(onClose = onClose)
-                    TorchButton(
-                        on = torchOn,
-                        onToggle = { torchOn = !torchOn },
-                    )
-                }
-            }
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(viewfinder)
-                        .background(scrim),
+        ScanScrimOverlay(
+            viewfinder = viewfinder,
+            scrim = scrim,
+            torchOn = torchOn,
+            onClose = onClose,
+            onToggleTorch = { torchOn = !torchOn },
+        )
+    }
+
+    ScanCameraBinding(
+        previewView = previewView,
+        executor = executor,
+        claimed = claimed,
+        latestOnResult = latestOnResult,
+        onCamera = { camera = it },
+    )
+}
+
+@Composable
+private fun ScanScrimOverlay(
+    viewfinder: Dp,
+    scrim: Color,
+    torchOn: Boolean,
+    onClose: () -> Unit,
+    onToggleTorch: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        ScanOverlayTop(scrim = scrim, torchOn = torchOn, onClose = onClose, onToggleTorch = onToggleTorch)
+        ScanOverlayMiddle(viewfinder = viewfinder, scrim = scrim)
+        ScanOverlayBottom(scrim = scrim, onClose = onClose)
+    }
+}
+
+@Composable
+private fun ColumnScope.ScanOverlayTop(
+    scrim: Color,
+    torchOn: Boolean,
+    onClose: () -> Unit,
+    onToggleTorch: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .weight(1f)
+            .background(scrim),
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(horizontal = 8.dp, vertical = 12.dp),
+        ) {
+            CloseButton(onClose = onClose)
+            TorchButton(
+                on = torchOn,
+                onToggle = onToggleTorch,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ScanOverlayMiddle(
+    viewfinder: Dp,
+    scrim: Color,
+) {
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(viewfinder)
+                .background(scrim),
+        )
+        Box(modifier = Modifier.size(viewfinder)) {
+            CornerBrackets(modifier = Modifier.fillMaxSize())
+        }
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(viewfinder)
+                .background(scrim),
+        )
+    }
+}
+
+@Composable
+private fun ColumnScope.ScanOverlayBottom(
+    scrim: Color,
+    onClose: () -> Unit,
+) {
+    Box(
+        contentAlignment = Alignment.TopCenter,
+        modifier = Modifier
+            .fillMaxWidth()
+            .weight(1f)
+            .background(scrim),
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(top = 24.dp),
+        ) {
+            Text(
+                "Point at Desky's QR code",
+                color = Color.White,
+                fontSize = 15.sp,
+            )
+            TextButton(onClick = onClose) {
+                Text(
+                    "enter code instead",
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
                 )
-                Box(modifier = Modifier.size(viewfinder)) {
-                    CornerBrackets(modifier = Modifier.fillMaxSize())
-                }
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(viewfinder)
-                        .background(scrim),
-                )
-            }
-            Box(
-                contentAlignment = Alignment.TopCenter,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .background(scrim),
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(top = 24.dp),
-                ) {
-                    Text(
-                        "Point at Desky's QR code",
-                        color = Color.White,
-                        fontSize = 15.sp,
-                    )
-                    TextButton(onClick = onClose) {
-                        Text(
-                            "enter code instead",
-                            color = Color.White,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                }
             }
         }
     }
+}
 
+@Composable
+private fun ScanCameraBinding(
+    previewView: PreviewView?,
+    executor: java.util.concurrent.Executor,
+    claimed: AtomicBoolean,
+    latestOnResult: (String) -> Unit,
+    onCamera: (Camera?) -> Unit,
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(previewView) {
         val view = previewView ?: return@DisposableEffect onDispose {}
         var provider: ProcessCameraProvider? = null
@@ -258,39 +330,15 @@ private fun CameraPreview(
             val preview = Preview.Builder().build().also {
                 it.setSurfaceProvider(view.surfaceProvider)
             }
-            val analysis = ImageAnalysis.Builder()
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build()
-                .also { a ->
-                    a.setAnalyzer(executor) { proxy ->
-                        if (claimed.get()) {
-                            proxy.close()
-                            return@setAnalyzer
-                        }
-                        val image = imageProxyToInputImage(proxy)
-                        if (image == null) {
-                            proxy.close()
-                            return@setAnalyzer
-                        }
-                        scanner.process(image)
-                            .addOnSuccessListener { barcodes ->
-                                val raw = barcodes.firstOrNull()?.rawValue
-                                val code = raw?.let(QrCodeParser::parse)
-                                if (code != null && claimed.compareAndSet(false, true)) {
-                                    bound.unbindAll()
-                                    latestOnResult(code)
-                                }
-                            }
-                            // Keep scanning through transient ML Kit errors.
-                            .addOnCompleteListener { proxy.close() }
-                    }
-                }
+            val analysis = buildScanAnalysis(executor, claimed, scanner, bound, latestOnResult)
             bound.unbindAll()
-            camera = bound.bindToLifecycle(
-                lifecycleOwner,
-                CameraSelector.DEFAULT_BACK_CAMERA,
-                preview,
-                analysis,
+            onCamera(
+                bound.bindToLifecycle(
+                    lifecycleOwner,
+                    CameraSelector.DEFAULT_BACK_CAMERA,
+                    preview,
+                    analysis,
+                ),
             )
         }
         future.addListener(listener, executor)
@@ -299,6 +347,42 @@ private fun CameraPreview(
             scanner.close()
         }
     }
+}
+
+private fun buildScanAnalysis(
+    executor: java.util.concurrent.Executor,
+    claimed: AtomicBoolean,
+    scanner: com.google.mlkit.vision.barcode.BarcodeScanner,
+    bound: ProcessCameraProvider,
+    latestOnResult: (String) -> Unit,
+): ImageAnalysis {
+    return ImageAnalysis.Builder()
+        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+        .build()
+        .also { analysis ->
+            analysis.setAnalyzer(executor) { proxy ->
+                if (claimed.get()) {
+                    proxy.close()
+                    return@setAnalyzer
+                }
+                val image = imageProxyToInputImage(proxy)
+                if (image == null) {
+                    proxy.close()
+                    return@setAnalyzer
+                }
+                scanner.process(image)
+                    .addOnSuccessListener { barcodes ->
+                        val raw = barcodes.firstOrNull()?.rawValue
+                        val code = raw?.let(QrCodeParser::parse)
+                        if (code != null && claimed.compareAndSet(false, true)) {
+                            bound.unbindAll()
+                            latestOnResult(code)
+                        }
+                    }
+                    // Keep scanning through transient ML Kit errors.
+                    .addOnCompleteListener { proxy.close() }
+            }
+        }
 }
 
 @Composable
@@ -340,12 +424,12 @@ private fun TorchButton(
             val w = size.width
             val h = size.height
             val bolt = Path().apply {
-                moveTo(w * 0.55f, 0f)
-                lineTo(w * 0.25f, h * 0.55f)
-                lineTo(w * 0.47f, h * 0.55f)
-                lineTo(w * 0.4f, h)
-                lineTo(w * 0.75f, h * 0.42f)
-                lineTo(w * 0.52f, h * 0.42f)
+                moveTo(w * BoltTopX, 0f)
+                lineTo(w * BoltLeftX, h * BoltMidY)
+                lineTo(w * BoltInnerUpperX, h * BoltMidY)
+                lineTo(w * BoltBottomX, h)
+                lineTo(w * BoltRightX, h * BoltRightY)
+                lineTo(w * BoltInnerLowerX, h * BoltRightY)
                 close()
             }
             drawPath(
