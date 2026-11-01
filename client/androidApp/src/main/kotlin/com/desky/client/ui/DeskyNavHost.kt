@@ -137,9 +137,7 @@ fun DeskyNavHost(
                 )
             }
             composable(DeskyRoutes.SETTINGS) {
-                SettingsScreen(
-                    onBack = { selectTab(DeskyTab.HOME) },
-                )
+                SettingsScreen()
             }
         }
         if (currentTab != null) {

@@ -76,4 +76,5 @@ enum DeskyType {
     static let hSize: CGFloat = 28
     static let bSize: CGFloat = 17
     static let cSize: CGFloat = 13
+    static let subSize: CGFloat = 16
 }
