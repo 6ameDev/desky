@@ -79,8 +79,16 @@ object DeskyTokens {
 
     fun argb(hex: String): Long {
         val h = hex.removePrefix("#")
-        require(h.length == 6 || h.length == 8) { "Expected #RRGGBB or #RRGGBBAA" }
-        val aarrggbb = if (h.length == 6) "FF$h" else h.substring(6, 8) + h.substring(0, 6)
-        return aarrggbb.toLong(16)
+        require(h.length == HEX_LENGTH_RGB || h.length == HEX_LENGTH_ARGB) { "Expected #RRGGBB or #RRGGBBAA" }
+        val aarrggbb = if (h.length == HEX_LENGTH_RGB) {
+            "FF$h"
+        } else {
+            h.substring(HEX_LENGTH_RGB, HEX_LENGTH_ARGB) + h.substring(0, HEX_LENGTH_RGB)
+        }
+        return aarrggbb.toLong(HEX_RADIX)
     }
+
+    private const val HEX_LENGTH_RGB = 6
+    private const val HEX_LENGTH_ARGB = 8
+    private const val HEX_RADIX = 16
 }
