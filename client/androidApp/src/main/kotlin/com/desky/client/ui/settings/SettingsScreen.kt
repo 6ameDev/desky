@@ -64,6 +64,33 @@ private fun String.isValidFloatInput(): Boolean = isEmpty() || matches(FloatInpu
 private fun snapSpeed(value: Float): Float =
     ((value / SPEED_STEP).roundToInt() * SPEED_STEP).coerceIn(0f, 1f)
 
+data class SettingsCallbacks(
+    val onSpeedLimit: (Float) -> Unit,
+    val onLedProfile: (Int) -> Unit,
+    val onPid: (Float, Float, Float) -> Unit,
+    val onWifiSsid: (String) -> Unit,
+    val onForgetDevice: () -> Unit,
+)
+
+private data class PidField(
+    val label: String,
+    val value: String,
+    val onChange: (String) -> Unit,
+)
+
+private fun applyPidValues(
+    pidP: String,
+    pidI: String,
+    pidD: String,
+    onPid: (Float, Float, Float) -> Unit,
+): Boolean {
+    val p = pidP.toFloatOrNull()
+    val i = pidI.toFloatOrNull()
+    val d = pidD.toFloatOrNull()
+    if (p != null && i != null && d != null) onPid(p, i, d)
+    return p != null && i != null && d != null
+}
+
 @Composable
 fun SettingsScreen(
     vm: SettingsViewModel = koinViewModel(),
@@ -71,11 +98,13 @@ fun SettingsScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     SettingsContent(
         state = state,
-        onSpeedLimit = vm::onSpeedLimit,
-        onLedProfile = vm::onLedProfile,
-        onPid = vm::onPid,
-        onWifiSsid = vm::onWifiSsid,
-        onForgetDevice = vm::onForgetDevice,
+        callbacks = SettingsCallbacks(
+            onSpeedLimit = vm::onSpeedLimit,
+            onLedProfile = vm::onLedProfile,
+            onPid = vm::onPid,
+            onWifiSsid = vm::onWifiSsid,
+            onForgetDevice = vm::onForgetDevice,
+        ),
     )
 }
 
@@ -83,11 +112,7 @@ fun SettingsScreen(
 @Composable
 fun SettingsContent(
     state: SettingsUiState,
-    onSpeedLimit: (Float) -> Unit,
-    onLedProfile: (Int) -> Unit,
-    onPid: (Float, Float, Float) -> Unit,
-    onWifiSsid: (String) -> Unit,
-    onForgetDevice: () -> Unit,
+    callbacks: SettingsCallbacks,
 ) {
     val config = state.config
     var showLedSheet by remember { mutableStateOf(false) }
@@ -98,14 +123,56 @@ fun SettingsContent(
     var pidD by remember(config.pidD) { mutableStateOf(config.pidD.toString()) }
     var ssid by remember(config.wifiSsid) { mutableStateOf(config.wifiSsid) }
 
-    fun applyPid(): Boolean {
-        val p = pidP.toFloatOrNull()
-        val i = pidI.toFloatOrNull()
-        val d = pidD.toFloatOrNull()
-        if (p != null && i != null && d != null) onPid(p, i, d)
-        return p != null && i != null && d != null
-    }
+    SettingsBody(
+        state = state,
+        callbacks = callbacks,
+        onLedClick = { showLedSheet = true },
+        onPidClick = { showPidSheet = true },
+        onSsidClick = { showSsidSheet = true },
+    )
 
+    if (showLedSheet) {
+        LedSheet(
+            current = config.ledProfile,
+            onPick = callbacks.onLedProfile,
+            onDismiss = { showLedSheet = false },
+        )
+    }
+    if (showPidSheet) {
+        PidEditorSheet(
+            fields = listOf(
+                PidField("P", pidP) { if (it.isValidFloatInput()) pidP = it },
+                PidField("I", pidI) { if (it.isValidFloatInput()) pidI = it },
+                PidField("D", pidD) { if (it.isValidFloatInput()) pidD = it },
+            ),
+            onDone = { if (applyPidValues(pidP, pidI, pidD, callbacks.onPid)) showPidSheet = false },
+            onApply = { if (applyPidValues(pidP, pidI, pidD, callbacks.onPid)) showPidSheet = false },
+            onDismiss = { showPidSheet = false },
+        )
+    }
+    if (showSsidSheet) {
+        SsidEditorSheet(
+            ssid = ssid,
+            onSsidChange = { ssid = it },
+            onApply = {
+                callbacks.onWifiSsid(ssid)
+                showSsidSheet = false
+            },
+            onDismiss = { showSsidSheet = false },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SettingsBody(
+    state: SettingsUiState,
+    callbacks: SettingsCallbacks,
+    onLedClick: () -> Unit,
+    onPidClick: () -> Unit,
+    onSsidClick: () -> Unit,
+) {
+    val config = state.config
     Scaffold(
         // Same page background as Home (canvas light, phone-dark card),
         // so the floating tab bar reads identically on both tabs.
@@ -130,123 +197,136 @@ fun SettingsContent(
             // that is always present, so saving never shifts the list.
             SavingSlot(isSaving = state.isSaving)
             SectionLabel("General")
-            SettingsCard {
-                val speedSubtitle = if (state.isSaving) {
-                    "${(config.speedLimit * PERCENT_SCALE).toInt()}% · Saving…"
-                } else {
-                    "${(config.speedLimit * PERCENT_SCALE).toInt()}%"
-                }
-                SettingTitle(
-                    title = "Speed limit",
-                    subtitle = speedSubtitle,
-                )
-                Slider(
-                    value = config.speedLimit,
-                    onValueChange = { onSpeedLimit(snapSpeed(it)) },
-                    valueRange = 0f..1f,
-                )
-                SettingsDivider()
-                SettingRow(
-                    title = "LED profile",
-                    subtitle = "Profile ${config.ledProfile}",
-                    onClick = { showLedSheet = true },
-                )
-                SettingsDivider()
-                SettingRow(
-                    title = "PID gains",
-                    subtitle = "P ${config.pidP} · I ${config.pidI} · D ${config.pidD}",
-                    onClick = { showPidSheet = true },
-                )
-            }
+            GeneralSettingsCard(
+                state = state,
+                onSpeedLimit = callbacks.onSpeedLimit,
+                onLedClick = onLedClick,
+                onPidClick = onPidClick,
+            )
             SectionLabel("Network")
-            SettingsCard {
-                SettingRow(
-                    title = "Wi-Fi network",
-                    subtitle = config.wifiSsid.ifEmpty { "Not set" },
-                    onClick = { showSsidSheet = true },
-                )
-            }
+            NetworkSettingsCard(
+                ssid = config.wifiSsid,
+                onClick = onSsidClick,
+            )
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             SectionLabel("Device")
-            SettingsCard {
-                DangerRow(
-                    title = "Forget device",
-                    onClick = onForgetDevice,
-                )
-            }
+            DeviceSettingsCard(onForgetDevice = callbacks.onForgetDevice)
             Spacer(modifier = Modifier.height(TAB_BAR_CLEARANCE_DP.dp))
         }
     }
+}
 
-    if (showLedSheet) {
-        LedSheet(
-            current = config.ledProfile,
-            onPick = onLedProfile,
-            onDismiss = { showLedSheet = false },
+@Composable
+private fun GeneralSettingsCard(
+    state: SettingsUiState,
+    onSpeedLimit: (Float) -> Unit,
+    onLedClick: () -> Unit,
+    onPidClick: () -> Unit,
+) {
+    val config = state.config
+    val speedSubtitle = if (state.isSaving) {
+        "${(config.speedLimit * PERCENT_SCALE).toInt()}% · Saving…"
+    } else {
+        "${(config.speedLimit * PERCENT_SCALE).toInt()}%"
+    }
+    SettingsCard {
+        SettingTitle(
+            title = "Speed limit",
+            subtitle = speedSubtitle,
+        )
+        Slider(
+            value = config.speedLimit,
+            onValueChange = { onSpeedLimit(snapSpeed(it)) },
+            valueRange = 0f..1f,
+        )
+        SettingsDivider()
+        SettingRow(
+            title = "LED profile",
+            subtitle = "Profile ${config.ledProfile}",
+            onClick = onLedClick,
+        )
+        SettingsDivider()
+        SettingRow(
+            title = "PID gains",
+            subtitle = "P ${config.pidP} · I ${config.pidI} · D ${config.pidD}",
+            onClick = onPidClick,
         )
     }
-    if (showPidSheet) {
-        val pidKeys = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done)
-        EditorSheet(
-            title = "PID gains",
-            onDismiss = { showPidSheet = false },
-            onApply = {
-                if (applyPid()) showPidSheet = false
-            },
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+}
+
+@Composable
+private fun NetworkSettingsCard(ssid: String, onClick: () -> Unit) {
+    SettingsCard {
+        SettingRow(
+            title = "Wi-Fi network",
+            subtitle = ssid.ifEmpty { "Not set" },
+            onClick = onClick,
+        )
+    }
+}
+
+@Composable
+private fun DeviceSettingsCard(onForgetDevice: () -> Unit) {
+    SettingsCard {
+        DangerRow(
+            title = "Forget device",
+            onClick = onForgetDevice,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PidEditorSheet(
+    fields: List<PidField>,
+    onDone: () -> Unit,
+    onApply: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val pidKeys = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done)
+    EditorSheet(
+        title = "PID gains",
+        onDismiss = onDismiss,
+        onApply = onApply,
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (field in fields) {
                 OutlinedTextField(
-                    value = pidP,
-                    onValueChange = { if (it.isValidFloatInput()) pidP = it },
-                    label = { Text("P") },
+                    value = field.value,
+                    onValueChange = { if (it.isValidFloatInput()) field.onChange(it) },
+                    label = { Text(field.label) },
                     singleLine = true,
                     keyboardOptions = pidKeys,
-                    keyboardActions = KeyboardActions(onDone = { if (applyPid()) showPidSheet = false }),
-                    modifier = Modifier.weight(1f),
-                )
-                OutlinedTextField(
-                    value = pidI,
-                    onValueChange = { if (it.isValidFloatInput()) pidI = it },
-                    label = { Text("I") },
-                    singleLine = true,
-                    keyboardOptions = pidKeys,
-                    keyboardActions = KeyboardActions(onDone = { if (applyPid()) showPidSheet = false }),
-                    modifier = Modifier.weight(1f),
-                )
-                OutlinedTextField(
-                    value = pidD,
-                    onValueChange = { if (it.isValidFloatInput()) pidD = it },
-                    label = { Text("D") },
-                    singleLine = true,
-                    keyboardOptions = pidKeys,
-                    keyboardActions = KeyboardActions(onDone = { if (applyPid()) showPidSheet = false }),
+                    keyboardActions = KeyboardActions(onDone = { onDone() }),
                     modifier = Modifier.weight(1f),
                 )
             }
         }
     }
-    if (showSsidSheet) {
-        EditorSheet(
-            title = "Wi-Fi network",
-            onDismiss = { showSsidSheet = false },
-            onApply = {
-                onWifiSsid(ssid)
-                showSsidSheet = false
-            },
-        ) {
-            OutlinedTextField(
-                value = ssid,
-                onValueChange = { ssid = it },
-                label = { Text("Wi-Fi SSID") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = {
-                    onWifiSsid(ssid)
-                    showSsidSheet = false
-                }),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SsidEditorSheet(
+    ssid: String,
+    onSsidChange: (String) -> Unit,
+    onApply: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    EditorSheet(
+        title = "Wi-Fi network",
+        onDismiss = onDismiss,
+        onApply = onApply,
+    ) {
+        OutlinedTextField(
+            value = ssid,
+            onValueChange = onSsidChange,
+            label = { Text("Wi-Fi SSID") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { onApply() }),
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
@@ -362,7 +442,7 @@ private fun LedSheet(current: Int, onPick: (Int) -> Unit, onDismiss: () -> Unit)
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(text = "LED profile", style = MaterialTheme.typography.bodyLarge)
-            (0..MAX_LED_PROFILE).forEach { index ->
+            for (index in 0..MAX_LED_PROFILE) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -427,11 +507,13 @@ private fun SettingsContentPreview() {
     MaterialTheme {
         SettingsContent(
             state = SettingsUiState(),
-            onSpeedLimit = {},
-            onLedProfile = { _ -> },
-            onPid = { _, _, _ -> },
-            onWifiSsid = {},
-            onForgetDevice = {},
+            callbacks = SettingsCallbacks(
+                onSpeedLimit = {},
+                onLedProfile = {},
+                onPid = { _, _, _ -> },
+                onWifiSsid = {},
+                onForgetDevice = {},
+            ),
         )
     }
 }
