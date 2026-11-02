@@ -126,13 +126,27 @@ class ExpressionsViewModel(
 
     /**
      * Screen hidden: exit manual with best-effort `MANUAL_RELEASE`, mirroring
-     * driving, so the next [activate] takes again. Idempotent and silent by
-     * design: no exit confirmation, the shell stays put.
+     * driving, so the next [activate] takes again. A forced mood is released
+     * first with two best-effort neutral sends (same hope-for-the-best
+     * pattern as the release itself). Idempotent and silent by design: no
+     * exit confirmation, the shell stays put.
      */
     fun deactivate() {
         if (!entered) return
         entered = false
+        clearForcedMood()
         manualOps.trySend(ManualOp.Exit)
+    }
+
+    /**
+     * Releases a manually forced mood with two best-effort neutral sends,
+     * mirroring the release double-send. Silent no-op while the link is not
+     * Connected or MANUAL is not reported; success reports Neutral as the
+     * current mood.
+     */
+    private fun clearForcedMood() {
+        onTriggerExpression(NEUTRAL_EXPRESSION_ID)
+        onTriggerExpression(NEUTRAL_EXPRESSION_ID)
     }
 
     /**

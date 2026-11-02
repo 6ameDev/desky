@@ -1,6 +1,40 @@
 import SwiftUI
 import shared
 
+/// Shared square tile: fixed size with centered content filling the card.
+/// Card token background with single-line theme-secondary subtitle.
+struct DeskyTile: View {
+    let title: String
+    let subtitle: String
+    let enabled: Bool
+    let onTap: () -> Void
+    var size: CGFloat = 106
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(spacing: 4) {
+                Text(title)
+                    .font(.system(size: 15, weight: .bold))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundColor(.deskySecondary)
+                    .lineLimit(1)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, 4)
+            .frame(width: size, height: size)
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(.deskyText)
+        .background(Color.deskyCard.opacity(enabled ? 1 : 0.6))
+        .cornerRadius(16)
+        .disabled(!enabled)
+        .accessibilityLabel("\(title), \(subtitle)")
+    }
+}
+
 /// Drag joystick: normalized stick deflection in -1…1, recentered on release.
 /// Up-drag is positive throttle (matches Android's `-y / radius`).
 /// Disabled gate: gestures move nothing and send nothing.

@@ -40,36 +40,35 @@ struct ExpressionsView: View {
     var body: some View {
         let snapshot = state.snapshot
         let canTrigger = snapshot.aliveness == Aliveness.connected && snapshot.telemetry?.manual == true
+        let moodId = snapshot.lastTriggeredId?.intValue
+        let moodName = moodId.flatMap { id in snapshot.expressions.first(where: { $0.id == id }) }?.name ?? "Neutral"
         let columns = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
-        return ScrollView {
-            VStack(spacing: 12) {
-                Text("Expressions").font(.title2).bold()
-                Text("Link: \(snapshot.aliveness.name)")
-                LazyVGrid(columns: columns, spacing: 8) {
-                    ForEach(snapshot.expressions, id: \.id) { entry in
-                        Button {
-                            state.onTriggerExpression(id: entry.id)
-                        } label: {
-                            Text(entry.name)
-                                .font(.system(size: DeskyType.bSize))
-                                .multilineTextAlignment(.center)
-                                .lineLimit(3)
-                                .padding(8)
-                                .frame(maxWidth: .infinity, minHeight: 88)
+        return GeometryReader { geo in
+            ScrollView {
+                // Fluid grid tiles: full size on wide phones, shrinking as
+                // the viewport narrows so tiles never overflow their cells.
+                let tile = max(84, min(106, (geo.size.width - 32 - 16) / 3))
+                VStack(spacing: 12) {
+                    Text("Expressions").font(.title2).bold()
+                    Text("Mood: \(moodName)")
+                    LazyVGrid(columns: columns, spacing: 8) {
+                        ForEach(snapshot.expressions, id: \.id) { entry in
+                            DeskyTile(
+                                title: entry.name,
+                                subtitle: "Priority \(entry.priority)",
+                                enabled: canTrigger,
+                                onTap: { state.onTriggerExpression(id: entry.id) },
+                                size: tile
+                            )
+                            .frame(maxWidth: .infinity, alignment: .center)
                         }
-                        .buttonStyle(.plain)
-                        .foregroundColor(.deskyText)
-                        .background(Color.deskyCard)
-                        .cornerRadius(16)
-                        .disabled(!canTrigger)
-                        .accessibilityLabel(entry.name)
+                    }
+                    if let error = snapshot.error {
+                        Text(error).foregroundColor(.deskyDanger)
                     }
                 }
-                if let error = snapshot.error {
-                    Text(error).foregroundColor(.deskyDanger)
-                }
+                .padding()
             }
-            .padding()
         }
         .navigationBarBackButtonHidden(true)
         .toolbar {

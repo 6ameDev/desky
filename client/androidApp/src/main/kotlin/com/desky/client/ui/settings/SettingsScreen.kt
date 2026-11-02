@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -200,13 +199,9 @@ private fun SettingsBody(
 ) {
     val config = state.config
     Scaffold(
-        // Same page background as Home (canvas light, phone-dark card),
-        // so the floating tab bar reads identically on both tabs.
-        containerColor = if (isSystemInDarkTheme()) {
-            MaterialTheme.colorScheme.surfaceContainer
-        } else {
-            MaterialTheme.colorScheme.background
-        },
+        // Page background stays on canvas in both themes so card tiles
+        // keep an edge against the screen, matching Expressions.
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(title = { Text("Settings") })
         },

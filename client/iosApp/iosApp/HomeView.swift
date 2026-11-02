@@ -30,9 +30,6 @@ struct HomeView: View {
     private let drivingVM: DrivingViewModel
     private let expressionsVM: ExpressionsViewModel
 
-    private let ink = Color(red: 0x1E/255.0, green: 0x1B/255.0, blue: 0x16/255.0)
-    private let subInk = Color(red: 0x6F/255.0, green: 0x6A/255.0, blue: 0x5E/255.0)
-
     init(
         homeVM: HomeViewModel,
         drivingVM: DrivingViewModel,
@@ -53,18 +50,35 @@ struct HomeView: View {
                         PillsRow(pills: state.snapshot.pills)
                         Spacer()
                             .frame(height: 8)
-                        HStack(spacing: 16) {
+                        // Fluid tiles: full size on wide phones, shrinking with
+                        // tighter gaps as the viewport narrows so three tiles
+                        // never clip or scroll.
+                        let fullTile = (geo.size.width - 32 - 16 * 2) / 3
+                        let gap: CGFloat = fullTile >= 106 ? 16 : 8
+                        let tile = max(84, min(106, (geo.size.width - 32 - gap * 2) / 3))
+                        HStack(spacing: gap) {
                             Spacer()
-                            ActionTile(
+                            DeskyTile(
                                 title: "Drive",
                                 subtitle: linkReady ? "Manual control" : "Offline",
-                                enabled: linkReady
-                            ) { path.append(HomeDestination.driving) }
-                            ActionTile(
+                                enabled: linkReady,
+                                onTap: { path.append(HomeDestination.driving) },
+                                size: tile
+                            )
+                            DeskyTile(
                                 title: "Expressions",
                                 subtitle: linkReady ? "Play moods" : "Offline",
-                                enabled: linkReady
-                            ) { path.append(HomeDestination.expressions) }
+                                enabled: linkReady,
+                                onTap: { path.append(HomeDestination.expressions) },
+                                size: tile
+                            )
+                            DeskyTile(
+                                title: "Camera",
+                                subtitle: "Take Snaps",
+                                enabled: true,
+                                onTap: { print("Camera tile tapped") },
+                                size: tile
+                            )
                             Spacer()
                         }
                         Spacer()
@@ -93,10 +107,8 @@ struct HomeView: View {
     }
 
     private var screen: Color {
-        colorScheme == .dark ? Color.deskyCard : Color.deskyCanvas
+        Color.deskyCanvas
     }
-
-    @Environment(\.colorScheme) private var colorScheme
 
     private func popPath() {
         if !path.isEmpty {
@@ -154,32 +166,5 @@ private struct PillsRow: View {
             }
             Spacer()
         }
-    }
-}
-
-private struct ActionTile: View {
-    let title: String
-    let subtitle: String
-    let enabled: Bool
-    let onTap: () -> Void
-
-    var body: some View {
-        Button(action: onTap) {
-            VStack(spacing: 4) {
-                Text(title)
-                    .font(.system(size: 15, weight: .bold))
-                Text(subtitle)
-                    .font(.system(size: 12))
-                    .foregroundColor(Color(red: 0x6F/255.0, green: 0x6A/255.0, blue: 0x5E/255.0))
-                    .lineLimit(2, reservesSpace: false)
-                    .multilineTextAlignment(.center)
-            }
-            .frame(width: 106, height: 104)
-        }
-        .buttonStyle(.plain)
-        .background(.white.opacity(enabled ? 1 : 0.6))
-        .foregroundColor(Color(red: 0x1E/255.0, green: 0x1B/255.0, blue: 0x16/255.0))
-        .cornerRadius(16)
-        .disabled(!enabled)
     }
 }

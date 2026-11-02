@@ -251,10 +251,8 @@ struct SettingsView: View {
     }
 
     private var screen: Color {
-        colorScheme == .dark ? Color.deskyCard : Color.deskyCanvas
+        Color.deskyCanvas
     }
-
-    @Environment(\.colorScheme) private var colorScheme
 }
 
 private struct SectionLabel: View {

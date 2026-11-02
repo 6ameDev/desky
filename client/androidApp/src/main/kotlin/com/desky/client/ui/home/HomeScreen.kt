@@ -2,10 +2,9 @@ package com.desky.client.ui.home
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -27,7 +25,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -37,7 +34,13 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.util.Log
 import com.desky.client.ui.TAB_BAR_CLEARANCE_DP
+import com.desky.client.ui.components.DeskyTile
+import com.desky.client.ui.components.DeskyTileMaxSize
+import com.desky.client.ui.components.DeskyTileMinSize
+import com.desky.client.ui.components.GapsPerRow
+import com.desky.client.ui.components.TilesPerRow
 import com.desky.client.ui.theme.DeskyTheme
 import com.desky.shared.core.RobotMode
 import com.desky.shared.core.Telemetry
@@ -51,7 +54,6 @@ import org.koin.androidx.compose.koinViewModel
 private val HomeInk = Color(0xFF1E1B16)
 private val BotShellColor = Color(0xFFC8CAD2)
 private val BotGlowColor = Color(0xFF46D8FF)
-private val BotSubtitleColor = Color(0xFF6F6A5E)
 private const val BotAspectWidth = 180f
 private const val BotAspectHeight = 158f
 private const val BotShellCornerFraction = 0.20f
@@ -63,8 +65,9 @@ private const val BotEyeClosedHeightFraction = 0.05f
 private const val BotEyeCornerFraction = 0.30f
 private const val BotEyeLeftXFraction = 0.275f
 private const val BotEyeRightXFraction = 0.525f
-private const val TileDisabledAlpha = 0.6f
 private const val PreviewBatteryMv = 850
+private val FullTileGap = 16.dp
+private val NarrowTileGap = 8.dp
 
 @Composable
 fun HomeScreen(
@@ -86,12 +89,7 @@ fun HomeContent(
     onDrive: () -> Unit,
     onExpressions: () -> Unit,
 ) {
-    val ink = HomeInk
-    val screen = if (isSystemInDarkTheme()) {
-        MaterialTheme.colorScheme.surfaceContainer
-    } else {
-        MaterialTheme.colorScheme.background
-    }
+    val screen = MaterialTheme.colorScheme.background
     Scaffold(containerColor = screen) { padding ->
         Column(
             modifier = Modifier
@@ -107,33 +105,61 @@ fun HomeContent(
             PillsRow(pills = state.pills)
             Spacer(modifier = Modifier.height(8.dp))
             val linkReady = state.aliveness != Aliveness.Unpaired
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(
-                    16.dp,
-                    Alignment.CenterHorizontally,
-                ),
-            ) {
-                state.entries.forEach { entry ->
-                    when (entry) {
-                        HomeEntry.Drive -> ActionTile(
-                            title = "Drive",
-                            subtitle = if (linkReady) "Manual control" else "Offline",
-                            enabled = linkReady,
-                            onClick = onDrive,
-                        )
-                        HomeEntry.Expressions -> ActionTile(
-                            title = "Expressions",
-                            subtitle = if (linkReady) "Play moods" else "Offline",
-                            enabled = linkReady,
-                            onClick = onExpressions,
-                        )
-                        HomeEntry.Settings -> Unit
-                    }
-                }
-            }
+            HomeTileRow(
+                entries = state.entries,
+                linkReady = linkReady,
+                onDrive = onDrive,
+                onExpressions = onExpressions,
+            )
             Spacer(modifier = Modifier.weight(1f))
             Spacer(modifier = Modifier.height(TAB_BAR_CLEARANCE_DP.dp))
+        }
+    }
+}
+
+@Composable
+private fun HomeTileRow(
+    entries: List<HomeEntry>,
+    linkReady: Boolean,
+    onDrive: () -> Unit,
+    onExpressions: () -> Unit,
+) {
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        // Fluid tiles: full size on wide phones, shrinking with tighter gaps
+        // as the viewport narrows so three tiles never clip or scroll.
+        val fullTile = (maxWidth - FullTileGap * GapsPerRow) / TilesPerRow
+        val gap = if (fullTile >= DeskyTileMaxSize) FullTileGap else NarrowTileGap
+        val tileSize = ((maxWidth - gap * GapsPerRow) / TilesPerRow).coerceIn(DeskyTileMinSize, DeskyTileMaxSize)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(gap, Alignment.CenterHorizontally),
+        ) {
+            entries.forEach { entry ->
+                when (entry) {
+                    HomeEntry.Drive -> DeskyTile(
+                        title = "Drive",
+                        subtitle = if (linkReady) "Manual control" else "Offline",
+                        enabled = linkReady,
+                        onClick = onDrive,
+                        tileSize = tileSize,
+                    )
+                    HomeEntry.Expressions -> DeskyTile(
+                        title = "Expressions",
+                        subtitle = if (linkReady) "Play moods" else "Offline",
+                        enabled = linkReady,
+                        onClick = onExpressions,
+                        tileSize = tileSize,
+                    )
+                    HomeEntry.Settings -> Unit
+                }
+            }
+            DeskyTile(
+                title = "Camera",
+                subtitle = "Take Snaps",
+                enabled = true,
+                onClick = { Log.d("HomeScreen", "Camera tile clicked") },
+                tileSize = tileSize,
+            )
         }
     }
 }
@@ -220,54 +246,6 @@ private fun PillsRow(pills: List<HomePill>) {
                         maxLines = 1,
                     )
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ActionTile(
-    title: String,
-    subtitle: String,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color.White,
-            contentColor = HomeInk,
-            disabledContainerColor = Color.White.copy(alpha = TileDisabledAlpha),
-            disabledContentColor = HomeInk.copy(alpha = TileDisabledAlpha),
-        ),
-        modifier = Modifier
-            .size(width = 106.dp, height = 104.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(enabled = enabled, onClick = onClick),
-    ) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.padding(horizontal = 8.dp),
-            ) {
-                Text(
-                    title,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center,
-                )
-                Text(
-                    subtitle,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Normal,
-                    color = BotSubtitleColor,
-                    textAlign = TextAlign.Center,
-                    maxLines = 2,
-                )
             }
         }
     }

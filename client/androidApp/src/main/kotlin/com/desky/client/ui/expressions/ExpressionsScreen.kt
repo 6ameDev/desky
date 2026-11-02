@@ -1,21 +1,17 @@
 package com.desky.client.ui.expressions
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -27,21 +23,24 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.desky.client.ui.components.DeskyTile
+import com.desky.client.ui.components.DeskyTileMaxSize
+import com.desky.client.ui.components.DeskyTileMinSize
+import com.desky.client.ui.components.GapsPerRow
+import com.desky.client.ui.components.TilesPerRow
 import com.desky.shared.features.control.Aliveness
 import com.desky.shared.features.control.ExpressionsUiState
 import com.desky.shared.features.control.ExpressionsViewModel
 import org.koin.androidx.compose.koinViewModel
 
 private const val ExpressionGridColumns = 3
+private val ExpressionGridGap = 8.dp
 
 @Composable
 fun ExpressionsScreen(
@@ -106,61 +105,39 @@ fun ExpressionsContent(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("Link: ${state.aliveness}")
+            val moodName = state.expressions.firstOrNull { it.id == state.lastTriggeredId }?.name ?: "Neutral"
+            Text("Mood: $moodName")
             val entries = state.expressions
             val canTrigger = state.aliveness == Aliveness.Connected && state.telemetry?.manual == true
             if (entries.isEmpty()) return@Column
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(ExpressionGridColumns),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.weight(1f),
-            ) {
-                items(entries, key = { it.id }) { entry ->
-                    ExpressionTile(
-                        name = entry.name,
-                        enabled = canTrigger,
-                        onClick = { onTriggerExpression(entry.id) },
-                    )
+            BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                // Fluid grid tiles: full size on wide phones, shrinking as
+                // the viewport narrows so tiles never overflow their cells.
+                val tileSize = ((maxWidth - ExpressionGridGap * GapsPerRow) / TilesPerRow)
+                    .coerceIn(DeskyTileMinSize, DeskyTileMaxSize)
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(ExpressionGridColumns),
+                    horizontalArrangement = Arrangement.spacedBy(ExpressionGridGap),
+                    verticalArrangement = Arrangement.spacedBy(ExpressionGridGap),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(entries, key = { it.id }) { entry ->
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            DeskyTile(
+                                title = entry.name,
+                                subtitle = "Priority ${entry.priority}",
+                                enabled = canTrigger,
+                                onClick = { onTriggerExpression(entry.id) },
+                                tileSize = tileSize,
+                            )
+                        }
+                    }
                 }
             }
-            state.lastTriggeredId?.let { lastId -> Text("Last: ${entries.firstOrNull { it.id == lastId }?.name}") }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        }
-    }
-}
-
-@Composable
-private fun ExpressionTile(
-    name: String,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainer,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            disabledContainerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.6f),
-            disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-        ),
-        modifier = Modifier
-            .defaultMinSize(minHeight = 88.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                name,
-                style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center,
-                maxLines = 3,
-            )
         }
     }
 }

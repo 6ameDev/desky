@@ -22,17 +22,17 @@ import kotlinx.coroutines.CancellationException
  * play-once), so only `surprised` carries flags 1.
  */
 val STATIC_EXPRESSIONS: List<ExpressionEntry> = listOf(
-    ExpressionEntry(id = 0, flags = 0, name = "boot"),
-    ExpressionEntry(id = 1, flags = 0, name = "happy"),
-    ExpressionEntry(id = 2, flags = 0, name = "sad"),
-    ExpressionEntry(id = 3, flags = 0, name = "blink"),
-    ExpressionEntry(id = 4, flags = 0, name = "alert"),
-    ExpressionEntry(id = 6, flags = 0, name = "curious"),
-    ExpressionEntry(id = 7, flags = 1, name = "surprised"),
-    ExpressionEntry(id = 8, flags = 0, name = "angry"),
-    ExpressionEntry(id = 9, flags = 0, name = "scared"),
-    ExpressionEntry(id = 10, flags = 0, name = "excited"),
-    ExpressionEntry(id = 11, flags = 0, name = "confused"),
+    ExpressionEntry(id = 0, flags = 0, name = "boot", priority = 0),
+    ExpressionEntry(id = 1, flags = 0, name = "happy", priority = 1),
+    ExpressionEntry(id = 2, flags = 0, name = "sad", priority = 3),
+    ExpressionEntry(id = 3, flags = 0, name = "blink", priority = 0),
+    ExpressionEntry(id = 4, flags = 0, name = "alert", priority = 4),
+    ExpressionEntry(id = 6, flags = 0, name = "curious", priority = 2),
+    ExpressionEntry(id = 7, flags = 1, name = "surprised", priority = 5),
+    ExpressionEntry(id = 8, flags = 0, name = "angry", priority = 8),
+    ExpressionEntry(id = 9, flags = 0, name = "scared", priority = 9),
+    ExpressionEntry(id = 10, flags = 0, name = "excited", priority = 7),
+    ExpressionEntry(id = 11, flags = 0, name = "confused", priority = 6),
 )
 
 /** Id set of [STATIC_EXPRESSIONS]: the trigger allow-list. */
@@ -44,16 +44,19 @@ val STATIC_EXPRESSION_IDS: Set<Int> = STATIC_EXPRESSIONS.map { it.id }.toSet()
  * the eight moods plus Neutral.
  */
 val PICKER_EXPRESSIONS: List<ExpressionEntry> = listOf(
-    ExpressionEntry(id = 0, flags = 0, name = "Neutral"),
-    ExpressionEntry(id = 1, flags = 0, name = "happy"),
-    ExpressionEntry(id = 2, flags = 0, name = "sad"),
-    ExpressionEntry(id = 6, flags = 0, name = "curious"),
-    ExpressionEntry(id = 7, flags = 1, name = "surprised"),
-    ExpressionEntry(id = 8, flags = 0, name = "angry"),
-    ExpressionEntry(id = 9, flags = 0, name = "scared"),
-    ExpressionEntry(id = 10, flags = 0, name = "excited"),
-    ExpressionEntry(id = 11, flags = 0, name = "confused"),
+    ExpressionEntry(id = 0, flags = 0, name = "Neutral", priority = 0),
+    ExpressionEntry(id = 1, flags = 0, name = "happy", priority = 1),
+    ExpressionEntry(id = 2, flags = 0, name = "sad", priority = 3),
+    ExpressionEntry(id = 6, flags = 0, name = "curious", priority = 2),
+    ExpressionEntry(id = 7, flags = 1, name = "surprised", priority = 5),
+    ExpressionEntry(id = 8, flags = 0, name = "angry", priority = 8),
+    ExpressionEntry(id = 9, flags = 0, name = "scared", priority = 9),
+    ExpressionEntry(id = 10, flags = 0, name = "excited", priority = 7),
+    ExpressionEntry(id = 11, flags = 0, name = "confused", priority = 6),
 )
+
+/** Catalog id the exit path re-sends to release a forced mood. */
+const val NEUTRAL_EXPRESSION_ID = 0
 
 /**
  * Expression play request: send one `EXPR_TRIGGER` (`[0x5B | id | eraBE2 |
