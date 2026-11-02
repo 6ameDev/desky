@@ -33,22 +33,11 @@ final class SharedGraph: ObservableObject {
     }
 }
 
-enum DeskyTab: Hashable {
-    case pairing
-    case home
-    case driving
-    case expressions
-    case settings
-}
-
-/// View-layer replica of the shared `SessionGateViewModel` fence. Koin
-/// exposes no typed accessor for that VM and Swift cannot mint the KClass
-/// token its generic get requires, so this replays the same rule over the
-/// pairing VM's state: the first emission only arms, later transitions to
-/// nil latch dead and non-nil latch alive.
+/// Unpaired gate: true while no device is paired. The root shows the pairing
+/// flow full-screen then, and the two-tab bar only once paired.
 @MainActor
 final class SessionGateState: ObservableObject {
-    @Published private(set) var provenDead = false
+    @Published private(set) var unpaired = true
     private let vm: PairingViewModel
 
     init(vm: PairingViewModel) {
@@ -56,27 +45,44 @@ final class SessionGateState: ObservableObject {
     }
 
     func collect() async {
-        var armed = false
-        var lastId: String?
         for await state in vm.state {
-            let id = state.pairedDevice?.id
-            guard armed else {
-                armed = true
-                lastId = id
-                continue
-            }
-            if lastId == id { continue }
-            lastId = id
-            provenDead = (id == nil)
+            unpaired = state.pairedDevice == nil
         }
+    }
+}
+
+/// Runtime orientation gate. The plist declares every iPhone orientation so
+/// the driving screen can rotate; this mask keeps everything else portrait.
+/// Driving unlocks on appear and re-locks on disappear. Plain shared state
+/// (no isolation) so the delegate can read it synchronously.
+/// All access happens on the main thread: SwiftUI appear handlers write it,
+/// the delegate reads it back on the main thread.
+final class OrientationLock: @unchecked Sendable {
+    static let shared = OrientationLock()
+    private let lock = NSLock()
+    private var gated: UIInterfaceOrientationMask = .portrait
+
+    var mask: UIInterfaceOrientationMask {
+        get { lock.withLock { gated } }
+        set { lock.withLock { gated = newValue } }
+    }
+}
+
+final class OrientationDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        supportedInterfaceOrientationsFor window: UIWindow?
+    ) -> UIInterfaceOrientationMask {
+        OrientationLock.shared.mask
     }
 }
 
 @main
 struct DeskyApp: App {
+    @UIApplicationDelegateAdaptor(OrientationDelegate.self) private var orientationDelegate
     @StateObject private var graph: SharedGraph
     @StateObject private var gate: SessionGateState
-    @State private var selection: DeskyTab = .pairing
+    @State private var selection: DeskyTab = .home
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -87,32 +93,29 @@ struct DeskyApp: App {
 
     var body: some Scene {
         WindowGroup {
-            // TabView mirrors Android's nav graph (pairing, home, driving,
-            // expressions, settings) with tabs instead of a back stack;
-            // auto-jumps below reproduce the onPaired / onUnpaired navigations.
-            TabView(selection: $selection) {
-                PairingView(vm: graph.pairingVM, selection: $selection)
-                    .tabItem { Label("Pair", systemImage: "antenna.radiowaves.left.and.right") }
-                    .tag(DeskyTab.pairing)
-                HomeView(vm: graph.homeVM, selection: $selection)
-                    .tabItem { Label("Home", systemImage: "house") }
-                    .tag(DeskyTab.home)
-                DrivingView(vm: graph.drivingVM, selection: $selection)
-                    .tabItem { Label("Drive", systemImage: "gamecontroller") }
-                    .tag(DeskyTab.driving)
-                ExpressionsView(vm: graph.expressionsVM, selection: $selection)
-                    .tabItem { Label("Expressions", systemImage: "face.smiling") }
-                    .tag(DeskyTab.expressions)
-                SettingsView(vm: graph.settingsVM, selection: $selection)
-                    .tabItem { Label("Settings", systemImage: "gear") }
-                    .tag(DeskyTab.settings)
+            Group {
+                if gate.unpaired {
+                    PairingView(vm: graph.pairingVM, selection: $selection)
+                } else {
+                    // Exactly the two functional tabs. Drive and
+                    // Expressions live in the Home tab's stack, pushed
+                    // from its tiles — never tabs themselves.
+                    TabView(selection: $selection) {
+                        HomeView(
+                            homeVM: graph.homeVM,
+                            drivingVM: graph.drivingVM,
+                            expressionsVM: graph.expressionsVM
+                        )
+                        .tabItem { Label("Home", systemImage: "house") }
+                        .tag(DeskyTab.home)
+                        SettingsView(vm: graph.settingsVM)
+                            .tabItem { Label("Settings", systemImage: "gear") }
+                            .tag(DeskyTab.settings)
+                    }
+                    .tint(Color.deskyPrimary)
+                }
             }
             .task { await gate.collect() }
-            // Global unpaired fence (mirrors DeskyNavHost's provenDead
-            // navigation): a pairing that dies mid-session forces pairing.
-            .onChange(of: gate.provenDead) { dead in
-                if dead { selection = .pairing }
-            }
             .onChange(of: scenePhase) { phase in
                 switch phase {
                 case .background:

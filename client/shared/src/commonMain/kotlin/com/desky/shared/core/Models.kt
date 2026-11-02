@@ -104,6 +104,9 @@ data class PairedDevice(
     val lastRobotCounter: UInt = 0u,
 )
 
+/** Highest valid LED profile id: profiles address 0..[MAX_LED_PROFILE]. */
+const val MAX_LED_PROFILE = 7
+
 /** Plain robot settings holder (persistence lives elsewhere). */
 data class RobotConfig(
     /** Defaults to full speed so `RobotConfig()` is the unset-config default. */
@@ -123,16 +126,20 @@ data class RobotConfig(
  * One hardcoded expression catalog entry (app-side mirror of the shared
  * firmware table — see [STATIC_EXPRESSIONS]). [id] is the catalog id the
  * `EXPR_TRIGGER` frame carries (0..255); [flags] is the opaque entry-flags
- * byte (bit 0 = play-once); [name] is the display name.
+ * byte (bit 0 = play-once); [name] is the display name; [priority] is the
+ * firmware preemption rank (higher preempts lower), hardcoded here until
+ * the list is queried instead of mirrored.
  */
 data class ExpressionEntry(
     val id: Int,
     val flags: Int,
     val name: String,
+    val priority: Int = 0,
 ) {
     init {
         require(id in 0..MAX_BYTE_VALUE) { "expression id out of range: $id" }
         require(flags in 0..MAX_BYTE_VALUE) { "expression flags out of range: $flags" }
+        require(priority in 0..MAX_BYTE_VALUE) { "expression priority out of range: $priority" }
     }
 
     /** True while the entry-flags play-once bit (bit 0) is set. */

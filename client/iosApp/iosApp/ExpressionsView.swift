@@ -28,31 +28,55 @@ final class ExpressionsViewState: ObservableObject {
 
 struct ExpressionsView: View {
     @StateObject private var state: ExpressionsViewState
-    @Binding var selection: DeskyTab
+    private let onExit: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @State private var visible = false
 
-    init(vm: ExpressionsViewModel, selection: Binding<DeskyTab>) {
+    init(vm: ExpressionsViewModel, onExit: @escaping () -> Void) {
         _state = StateObject(wrappedValue: ExpressionsViewState(vm: vm))
-        _selection = selection
+        self.onExit = onExit
     }
 
     var body: some View {
         let snapshot = state.snapshot
         let canTrigger = snapshot.aliveness == Aliveness.connected && snapshot.telemetry?.manual == true
-        return VStack(spacing: 12) {
-            Text("Expressions").font(.title2).bold()
-            Text("Link: \(snapshot.aliveness.name)")
-            ExpressionPicker(
-                expressions: snapshot.expressions,
-                enabled: canTrigger
-            ) { state.onTriggerExpression(id: $0) }
-            if let error = snapshot.error {
-                Text(error).foregroundColor(.red)
+        let moodId = snapshot.lastTriggeredId?.intValue
+        let moodName = moodId.flatMap { id in snapshot.expressions.first(where: { $0.id == id }) }?.name ?? "Neutral"
+        let columns = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
+        return GeometryReader { geo in
+            ScrollView {
+                // Fluid grid tiles: full size on wide phones, shrinking as
+                // the viewport narrows so tiles never overflow their cells.
+                let tile = max(84, min(106, (geo.size.width - 32 - 16) / 3))
+                VStack(spacing: 12) {
+                    Text("Expressions").font(.title2).bold()
+                    Text("Mood: \(moodName)")
+                    LazyVGrid(columns: columns, spacing: 8) {
+                        ForEach(snapshot.expressions, id: \.id) { entry in
+                            DeskyTile(
+                                title: entry.name,
+                                subtitle: "Priority \(entry.priority)",
+                                enabled: canTrigger,
+                                onTap: { state.onTriggerExpression(id: entry.id) },
+                                size: tile
+                            )
+                            .frame(maxWidth: .infinity, alignment: .center)
+                        }
+                    }
+                    if let error = snapshot.error {
+                        Text(error).foregroundColor(.deskyDanger)
+                    }
+                }
+                .padding()
             }
-            Spacer()
         }
-        .padding()
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Close") { state.requestExit() }
+            }
+        }
+        .toolbar(.hidden, for: .tabBar)
         .onAppear { visible = true; state.activate() }
         .onDisappear { visible = false; state.deactivate() }
         // Home-button path: onAppear does not refire on foreground return,
@@ -77,7 +101,7 @@ struct ExpressionsView: View {
         ) {
             Button("Leave", role: .destructive) {
                 state.confirmExit()
-                selection = .home
+                onExit()
             }
             Button("Stay", role: .cancel) { state.dismissExit() }
         } message: {

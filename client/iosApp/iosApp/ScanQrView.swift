@@ -15,54 +15,87 @@ struct ScanQrView: View {
     @ObservedObject var state: PairingViewState
     @Environment(\.dismiss) private var dismiss
     @State private var camera: CameraStatus = .checking
+    @State private var torchOn = false
 
     var body: some View {
-        NavigationStack {
-            ZStack(alignment: .bottom) {
-                switch camera {
-                case .checking:
-                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-                case .ready:
-                    QrCameraView(state: state, onAccepted: { dismiss() })
+        ZStack {
+            switch camera {
+            case .checking:
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .ready:
+                ZStack {
+                    QrCameraView(state: state, torchOn: $torchOn, onAccepted: { dismiss() })
                         .ignoresSafeArea()
-                    VStack(spacing: 8) {
-                        Text("Point at the QR on the robot display")
-                            .font(.footnote)
-                            .padding(8)
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(8)
-                        if let error = state.snapshot.error {
-                            Text(error)
-                                .font(.footnote)
-                                .foregroundColor(.red)
-                                .padding(8)
-                                .background(.ultraThinMaterial)
-                                .cornerRadius(8)
+                    GeometryReader { geo in
+                        let vf = min(geo.size.width - 70, 320)
+                        VStack(spacing: 0) {
+                            Color.black.opacity(0.6)
+                                .overlay(alignment: .top) {
+                                    HStack(spacing: 0) {
+                                        Button { dismiss() } label: {
+                                            Image(systemName: "xmark")
+                                                .font(.system(size: 22))
+                                                .foregroundColor(.white)
+                                                .frame(width: 48, height: 48)
+                                        }
+                                        Spacer()
+                                        Button { torchOn.toggle() } label: {
+                                            Image(systemName: torchOn ? "flashlight.on.fill" : "flashlight.off.fill")
+                                                .font(.system(size: 22))
+                                                .foregroundColor(.white)
+                                                .frame(width: 48, height: 48)
+                                        }
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 12)
+                                }
+                            HStack(spacing: 0) {
+                                Color.black.opacity(0.6)
+                                Color.clear
+                                    .frame(width: vf, height: vf)
+                                    .overlay { CornerBrackets() }
+                                Color.black.opacity(0.6)
+                            }
+                            .frame(height: vf)
+                            Color.black.opacity(0.6)
+                                .overlay(alignment: .top) {
+                                    VStack(spacing: 4) {
+                                        Text("Point at Desky's QR code")
+                                            .font(.system(size: 15))
+                                            .foregroundColor(.white)
+                                        Button("enter code instead") { dismiss() }
+                                            .font(.system(size: 15, weight: .bold))
+                                            .foregroundColor(.white)
+                                        if let error = state.snapshot.error {
+                                            Text(error)
+                                                .font(.footnote)
+                                                .foregroundColor(.red)
+                                                .padding(8)
+                                                .background(.ultraThinMaterial)
+                                                .cornerRadius(8)
+                                        }
+                                    }
+                                    .padding(.top, 24)
+                                }
                         }
+                        .ignoresSafeArea()
                     }
-                    .padding(.bottom, 24)
-                case .denied:
-                    VStack(spacing: 12) {
-                        Text("Camera access is only used to read the Desky QR on the robot display.")
-                            .font(.body)
-                            .multilineTextAlignment(.center)
-                        Button("Grant camera access") { requestCamera() }
-                            .buttonStyle(.borderedProminent)
-                        Text("Camera access was denied. Enable it in Settings to scan, or type the code manually.")
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                        Button("Back to manual entry") { dismiss() }
-                            .buttonStyle(.borderedProminent)
-                    }
-                    .padding()
                 }
-            }
-            .navigationTitle("Scan QR")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+            case .denied:
+                VStack(spacing: 12) {
+                    Text("Camera access is only used to read the Desky QR on the robot display.")
+                        .font(.body)
+                        .multilineTextAlignment(.center)
+                    Button("Grant camera access") { requestCamera() }
+                        .buttonStyle(.borderedProminent)
+                    Text("Camera access was denied. Enable it in Settings to scan, or type the code manually.")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button("Back to manual entry") { dismiss() }
+                        .buttonStyle(.borderedProminent)
                 }
+                .padding()
             }
         }
         .onAppear(perform: checkCamera)
@@ -92,11 +125,39 @@ private enum CameraStatus {
     case denied
 }
 
+private struct CornerBrackets: View {
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let length: CGFloat = 26
+            let thick: CGFloat = 5
+            let o = thick / 2
+            Path { p in
+                p.move(to: CGPoint(x: o, y: length))
+                p.addLine(to: CGPoint(x: o, y: o))
+                p.addLine(to: CGPoint(x: length, y: o))
+                p.move(to: CGPoint(x: w - o, y: length))
+                p.addLine(to: CGPoint(x: w - o, y: o))
+                p.addLine(to: CGPoint(x: w - length, y: o))
+                p.move(to: CGPoint(x: o, y: h - length))
+                p.addLine(to: CGPoint(x: o, y: h - o))
+                p.addLine(to: CGPoint(x: length, y: h - o))
+                p.move(to: CGPoint(x: w - o, y: h - length))
+                p.addLine(to: CGPoint(x: w - o, y: h - o))
+                p.addLine(to: CGPoint(x: w - length, y: h - o))
+            }
+            .stroke(.white, lineWidth: thick)
+        }
+    }
+}
+
 /// Camera host: owns the `AVCaptureSession` + Vision QR request. Single-shot
 /// stop on the first VALID scan (the VM confirms by entering `isPairing`);
 /// consecutive duplicate decodes are dropped so one QR doesn't spam intents.
 private struct QrCameraView: UIViewControllerRepresentable {
     @ObservedObject var state: PairingViewState
+    @Binding var torchOn: Bool
     var onAccepted: () -> Void
 
     func makeUIViewController(context: Context) -> QrCameraController {
@@ -107,6 +168,7 @@ private struct QrCameraView: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: QrCameraController, context: Context) {
         controller.onDecode = makeDecode(controller: controller)
+        controller.setTorch(torchOn)
     }
 
     private func makeDecode(controller: QrCameraController) -> (String) -> Void {
@@ -129,6 +191,7 @@ private final class QrCameraController: UIViewController {
 
     private let session = AVCaptureSession()
     private var previewLayer: AVCaptureVideoPreviewLayer?
+    private var torchDevice: AVCaptureDevice?
     private var lastForwarded: String?
     private lazy var qrRequest: VNDetectBarcodesRequest = {
         let request = VNDetectBarcodesRequest { [weak self] req, _ in
@@ -143,6 +206,7 @@ private final class QrCameraController: UIViewController {
         guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
               let input = try? AVCaptureDeviceInput(device: device),
               session.canAddInput(input) else { return }
+        torchDevice = device
         session.addInput(input)
         let output = AVCaptureVideoDataOutput()
         output.setSampleBufferDelegate(self, queue: DispatchQueue(label: "desky.qr-scan"))
@@ -180,6 +244,17 @@ private final class QrCameraController: UIViewController {
     func stop() {
         guard session.isRunning else { return }
         session.stopRunning()
+    }
+
+    func setTorch(_ on: Bool) {
+        guard let device = torchDevice, device.hasTorch else { return }
+        do {
+            try device.lockForConfiguration()
+            device.torchMode = on ? .on : .off
+            device.unlockForConfiguration()
+        } catch {
+            return
+        }
     }
 
     func captureOutput(

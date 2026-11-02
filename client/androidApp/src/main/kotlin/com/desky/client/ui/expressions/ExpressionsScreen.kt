@@ -2,15 +2,17 @@ package com.desky.client.ui.expressions
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -19,9 +21,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
@@ -30,12 +29,18 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.desky.client.ui.components.DeskyTile
+import com.desky.client.ui.components.DeskyTileMaxSize
+import com.desky.client.ui.components.DeskyTileMinSize
+import com.desky.client.ui.components.GapsPerRow
+import com.desky.client.ui.components.TilesPerRow
 import com.desky.shared.features.control.Aliveness
 import com.desky.shared.features.control.ExpressionsUiState
 import com.desky.shared.features.control.ExpressionsViewModel
 import org.koin.androidx.compose.koinViewModel
 
-private const val VIRTUAL_COUNT_MULTIPLIER = 1000
+private const val ExpressionGridColumns = 3
+private val ExpressionGridGap = 8.dp
 
 @Composable
 fun ExpressionsScreen(
@@ -100,35 +105,38 @@ fun ExpressionsContent(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("Link: ${state.aliveness}")
+            val moodName = state.expressions.firstOrNull { it.id == state.lastTriggeredId }?.name ?: "Neutral"
+            Text("Mood: $moodName")
             val entries = state.expressions
             val canTrigger = state.aliveness == Aliveness.Connected && state.telemetry?.manual == true
             if (entries.isEmpty()) return@Column
-            var selectedIndex by remember { mutableIntStateOf(0) }
-            val selected = selectedIndex.coerceIn(entries.indices)
-            val virtualCount = entries.size * VIRTUAL_COUNT_MULTIPLIER
-            val startIndex = virtualCount / 2 - (virtualCount / 2 % entries.size)
-            val listState = rememberLazyListState(initialFirstVisibleItemIndex = startIndex)
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                state = listState,
-            ) {
-                items(virtualCount) { virtualIndex ->
-                    val index = virtualIndex % entries.size
-                    val entry = entries[index]
-                    FilterChip(
-                        selected = index == selected,
-                        onClick = { selectedIndex = index },
-                        enabled = canTrigger,
-                        label = { Text(entry.name) },
-                    )
+            BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                // Fluid grid tiles: full size on wide phones, shrinking as
+                // the viewport narrows so tiles never overflow their cells.
+                val tileSize = ((maxWidth - ExpressionGridGap * GapsPerRow) / TilesPerRow)
+                    .coerceIn(DeskyTileMinSize, DeskyTileMaxSize)
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(ExpressionGridColumns),
+                    horizontalArrangement = Arrangement.spacedBy(ExpressionGridGap),
+                    verticalArrangement = Arrangement.spacedBy(ExpressionGridGap),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(entries, key = { it.id }) { entry ->
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            DeskyTile(
+                                title = entry.name,
+                                subtitle = "Priority ${entry.priority}",
+                                enabled = canTrigger,
+                                onClick = { onTriggerExpression(entry.id) },
+                                tileSize = tileSize,
+                            )
+                        }
+                    }
                 }
             }
-            Button(
-                onClick = { onTriggerExpression(entries[selected].id) },
-                enabled = canTrigger,
-            ) { Text("Apply") }
-            state.lastTriggeredId?.let { lastId -> Text("Last: ${entries.firstOrNull { it.id == lastId }?.name}") }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
     }

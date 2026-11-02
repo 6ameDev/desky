@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,6 +34,12 @@ fun JoystickPad(
     enabled: Boolean = true,
 ) {
     var knob by remember { mutableStateOf(Offset.Zero) }
+    LaunchedEffect(enabled) {
+        if (!enabled) {
+            knob = Offset.Zero
+            onStick(0f, 0f)
+        }
+    }
     Box(
         modifier = modifier
             .size(padSizeDp.dp)

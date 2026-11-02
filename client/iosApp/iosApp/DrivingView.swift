@@ -32,46 +32,43 @@ final class DrivingViewState: ObservableObject {
 
 struct DrivingView: View {
     @StateObject private var state: DrivingViewState
-    @Binding var selection: DeskyTab
+    private let onExit: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @State private var visible = false
 
-    init(vm: DrivingViewModel, selection: Binding<DeskyTab>) {
+    init(vm: DrivingViewModel, onExit: @escaping () -> Void) {
         _state = StateObject(wrappedValue: DrivingViewState(vm: vm))
-        _selection = selection
+        self.onExit = onExit
     }
 
     var body: some View {
         let snapshot = state.snapshot
-        return VStack(spacing: 12) {
-            Text("Driving").font(.title2).bold()
-            Text("Link: \(snapshot.aliveness.name)")
-            if let sessionError = snapshot.error {
-                Text(sessionError).foregroundColor(.red)
-            }
-            if let telemetry = snapshot.telemetry {
-                Text("Distance: \(telemetry.distanceMm) mm")
-            } else {
-                Text("Waiting for telemetry…")
-            }
-            JoystickPad(enabled: snapshot.aliveness == Aliveness.connected && !snapshot.eStopped) { throttle, steering in
-                state.onStick(throttle: throttle, steering: steering)
-            }
-            if snapshot.eStopped {
-                Button("STOPPED — tap to release") { state.onReleaseEmergency() }
-                    .tint(.red)
-            } else {
-                Button("EMERGENCY STOP") { state.onEmergencyStop() }
-                    .disabled(snapshot.aliveness != Aliveness.connected)
-            }
-            if let telemetry = snapshot.telemetry {
-                Text(telemetry.driving ? "Driving" : "Idle")
-            }
+        return VStack {
+            StatusCard(snapshot: snapshot)
+                .frame(maxWidth: 480)
+                .frame(maxWidth: .infinity, alignment: .top)
             Spacer()
+            HStack(alignment: .center) {
+                EstopButton(snapshot: snapshot, onEmergencyStop: { state.onEmergencyStop() }, onRelease: { state.onReleaseEmergency() })
+                Spacer()
+                JoystickPad(enabled: snapshot.aliveness == Aliveness.connected && !snapshot.eStopped) { throttle, steering in
+                    state.onStick(throttle: throttle, steering: steering)
+                }
+            }
+            .padding(.leading, DeskySpacing.s8)
+            .padding(.bottom, DeskySpacing.s8)
         }
-        .padding()
-        .onAppear { visible = true; state.activate() }
-        .onDisappear { visible = false; state.deactivate() }
+        .padding(.horizontal, DeskySpacing.s16)
+        .padding(.vertical, DeskySpacing.s8)
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Close") { state.requestExit() }
+            }
+        }
+        .toolbar(.hidden, for: .tabBar)
+        .onAppear { visible = true; state.activate(); OrientationLock.shared.mask = .landscape }
+        .onDisappear { visible = false; state.deactivate(); OrientationLock.shared.mask = .portrait }
         // Home-button path: onAppear does not refire on foreground return,
         // so re-take only while this tab is still the visible one.
         .onChange(of: scenePhase) { phase in
@@ -94,11 +91,70 @@ struct DrivingView: View {
         ) {
             Button("Leave", role: .destructive) {
                 state.confirmExit()
-                selection = .home
+                onExit()
             }
             Button("Stay", role: .cancel) { state.dismissExit() }
         } message: {
             Text("The robot will be released and stop.")
+        }
+    }
+}
+
+private struct StatusCard: View {
+    let snapshot: DrivingUiState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DeskySpacing.s8) {
+            if let sessionError = snapshot.error {
+                Text(sessionError).foregroundColor(.deskyDanger)
+            }
+            if let telemetry = snapshot.telemetry {
+                HStack {
+                    Text(snapshot.aliveness == Aliveness.connected ? "Online" : "Offline")
+                    Spacer()
+                    Text("\(telemetry.distanceMm) mm")
+                    Spacer()
+                    Text(telemetry.driving ? "Driving" : "Idle")
+                }
+            } else {
+                Text("Waiting for telemetry…")
+            }
+        }
+        .padding(.horizontal, DeskySpacing.s16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: 560, alignment: .leading)
+        .background(Color.deskyCard)
+        .cornerRadius(DeskyRadius.r16)
+        .overlay(
+            RoundedRectangle(cornerRadius: DeskyRadius.r16)
+                .stroke(Color.deskyMetal, lineWidth: 1)
+        )
+    }
+}
+
+private struct EstopButton: View {
+    let snapshot: DrivingUiState
+    let onEmergencyStop: () -> Void
+    let onRelease: () -> Void
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Button(action: { snapshot.eStopped ? onRelease() : onEmergencyStop() }) {
+                Text("E")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundColor(.deskyCard)
+                    .frame(width: 76, height: 76)
+                    .background(Color.deskyDanger)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!snapshot.eStopped && snapshot.aliveness != Aliveness.connected)
+            .accessibilityLabel(snapshot.eStopped ? "Emergency stop engaged, tap to release" : "Emergency stop")
+            if snapshot.eStopped && snapshot.aliveness != Aliveness.connected {
+                Text("Reconnect to release")
+                    .font(.system(size: DeskyType.subSize))
+                    .foregroundColor(.deskySecondary)
+            }
         }
     }
 }

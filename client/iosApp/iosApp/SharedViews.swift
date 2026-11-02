@@ -1,39 +1,37 @@
 import SwiftUI
 import shared
 
-/// Expression picker: tap selects, Apply sends one trigger while MANUAL
-/// is reported (same gating language as the sticks).
-struct ExpressionPicker: View {
-    let expressions: [ExpressionEntry]
+/// Shared square tile: fixed size with centered content filling the card.
+/// Card token background with single-line theme-secondary subtitle.
+struct DeskyTile: View {
+    let title: String
+    let subtitle: String
     let enabled: Bool
-    var onTrigger: (Int32) -> Void
-    @State private var selectedId: Int32?
+    let onTap: () -> Void
+    var size: CGFloat = 106
 
     var body: some View {
-        VStack(spacing: 4) {
-            Text("Expressions")
-            if !expressions.isEmpty {
-                let selected = selectedId ?? expressions[0].id
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(expressions, id: \.id) { entry in
-                            if entry.id == selected {
-                                Button(entry.name) { selectedId = entry.id }
-                                    .buttonStyle(.borderedProminent)
-                                    .disabled(!enabled)
-                            } else {
-                                Button(entry.name) { selectedId = entry.id }
-                                    .buttonStyle(.bordered)
-                                    .disabled(!enabled)
-                            }
-                        }
-                    }
-                }
-                Button("Apply") { onTrigger(selected) }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!enabled)
+        Button(action: onTap) {
+            VStack(spacing: 4) {
+                Text(title)
+                    .font(.system(size: 15, weight: .bold))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundColor(.deskySecondary)
+                    .lineLimit(1)
+                    .multilineTextAlignment(.center)
             }
+            .padding(.horizontal, 4)
+            .frame(width: size, height: size)
         }
+        .buttonStyle(.plain)
+        .foregroundColor(.deskyText)
+        .background(Color.deskyCard.opacity(enabled ? 1 : 0.6))
+        .cornerRadius(16)
+        .disabled(!enabled)
+        .accessibilityLabel("\(title), \(subtitle)")
     }
 }
 
@@ -58,6 +56,12 @@ struct JoystickPad: View {
         }
         .frame(width: radius * 2, height: radius * 2)
         .opacity(enabled ? 1 : 0.4)
+        .onChange(of: enabled) { newValue in
+            if !newValue {
+                knob = .zero
+                onStick(0, 0)
+            }
+        }
         .gesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { value in

@@ -333,6 +333,51 @@ class ExpressionsViewModelTest {
         }
     }
 
+    @Test
+    fun deactivateClearsForcedMoodToNeutral() = runVmTest { main ->
+        val scope = CoroutineScope(StandardTestDispatcher(main))
+        val s = scope.setup()
+        try {
+            s.vm.activate()
+            promote(main, s, manual = true)
+
+            s.vm.onTriggerExpression(HAPPY_EXPRESSION_ID)
+            main.runCurrent()
+            main.runCurrent()
+            assertEquals(HAPPY_EXPRESSION_ID, s.vm.state.value.lastTriggeredId)
+
+            s.vm.deactivate()
+            main.runCurrent()
+            main.runCurrent()
+            val neutrals = trigs(s.udp).filter { (it.bytes[1].toInt() and BYTE_MASK) == NEUTRAL_EXPRESSION_ID }
+            assertEquals(2, neutrals.size, "exit re-sends neutral best-effort 2x")
+            assertEquals(NEUTRAL_EXPRESSION_ID, s.vm.state.value.lastTriggeredId)
+        } finally {
+            s.manager.stop()
+            s.sessions.stop()
+        }
+    }
+
+    @Test
+    fun deactivateSkipsClearWhileLinkDown() = runVmTest { main ->
+        val scope = CoroutineScope(StandardTestDispatcher(main))
+        val s = scope.setup()
+        try {
+            s.vm.activate()
+            main.runCurrent()
+            assertEquals(Aliveness.Stale, s.vm.state.value.aliveness)
+
+            s.vm.deactivate()
+            main.runCurrent()
+            main.runCurrent()
+            assertTrue(trigs(s.udp).isEmpty(), "no neutral send while link-down")
+            assertNull(s.vm.state.value.lastTriggeredId)
+        } finally {
+            s.manager.stop()
+            s.sessions.stop()
+        }
+    }
+
     private fun takes(udp: FakeUdpSocketManager) =
         udp.sent.filter { (it.bytes[0].toInt() and BYTE_MASK) == MANUAL_TAKE_HEADER }
 }
